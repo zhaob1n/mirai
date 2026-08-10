@@ -1,0 +1,459 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Huang Zhaobin
+//! `MoveTreeView` — the branch graph. Step 10.
+//!
+//! Nodes sit on a fixed grid: the column is the node's depth from the root and the row is
+//! a *lane* handed out by a depth-first walk that keeps the main line on lane 0. The
+//! layout is cached and only recomputed when [`GameTree::revision`] moves, because it is
+//! the one part of the widget that is O(tree) rather than O(visible).
+
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+
+use gtk::gdk;
+use gtk::glib;
+use gtk::graphene;
+use gtk::gsk;
+use gtk::prelude::*;
+use gtk::subclass::prelude::*;
+
+use mirai_core::{Color, GameTree, NodeId};
+
+use crate::app::{AppState, signal};
+
+/// Grid geometry. Cells are square-ish so long games stay scannable.
+const CELL_W: f32 = 20.0;
+const CELL_H: f32 = 20.0;
+const MARGIN: f32 = 10.0;
+const RADIUS: f32 = 6.0;
+
+/// A node placed on the grid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Placed {
+    pub id: NodeId,
+    /// Depth from the root; the root is column 0.
+    pub col: u32,
+    /// Branch lane; the main line is lane 0.
+    pub lane: u32,
+    /// Index into [`TreeLayout::nodes`] of this node's parent.
+    pub parent: Option<usize>,
+}
+
+/// The whole tree, placed.
+#[derive(Debug, Default)]
+pub(crate) struct TreeLayout {
+    pub nodes: Vec<Placed>,
+    pub index: HashMap<NodeId, usize>,
+    pub cols: u32,
+    pub lanes: u32,
+}
+
+/// Places every node of `tree` on the grid.
+///
+/// The walk is depth-first in child order, and `children[0]` is the main line, so lane 0
+/// is claimed by the main line before any variation can ask for it. A branch takes the
+/// lowest lane at or below its parent's that is still free from its column onwards, which
+/// lets a short variation share a lane with a later, disjoint one.
+pub(crate) fn lay_out(tree: &GameTree) -> TreeLayout {
+    let mut layout = TreeLayout::default();
+    // `free[l]` is the first column in lane `l` that nothing occupies yet.
+    let mut free: Vec<u32> = Vec::new();
+    // (node, column, parent lane, parent slot)
+    let mut stack: Vec<(NodeId, u32, u32, Option<usize>)> = vec![(tree.root(), 0, 0, None)];
+
+    while let Some((id, col, parent_lane, parent)) = stack.pop() {
+        let mut lane = parent_lane;
+        while (lane as usize) < free.len() && free[lane as usize] > col {
+            lane += 1;
+        }
+        while free.len() <= lane as usize {
+            free.push(0);
+        }
+        free[lane as usize] = col + 1;
+
+        let slot = layout.nodes.len();
+        layout.nodes.push(Placed {
+            id,
+            col,
+            lane,
+            parent,
+        });
+        layout.index.insert(id, slot);
+        layout.cols = layout.cols.max(col);
+        layout.lanes = layout.lanes.max(lane);
+
+        // Reversed, so `children[0]` is popped first and keeps the parent's lane.
+        for &child in tree.children(id).iter().rev() {
+            stack.push((child, col + 1, lane, Some(slot)));
+        }
+    }
+    layout
+}
+
+/// Centre of a grid cell in widget coordinates.
+#[inline]
+fn cell_xy(col: u32, lane: u32) -> (f32, f32) {
+    (
+        MARGIN + RADIUS + col as f32 * CELL_W,
+        MARGIN + RADIUS + lane as f32 * CELL_H,
+    )
+}
+
+fn with_alpha(c: gdk::RGBA, a: f32) -> gdk::RGBA {
+    gdk::RGBA::new(c.red(), c.green(), c.blue(), a)
+}
+
+mod imp {
+    use super::*;
+
+    #[derive(Default)]
+    pub struct MoveTreeView {
+        pub state: RefCell<Option<AppState>>,
+        pub(super) layout: RefCell<TreeLayout>,
+        /// Tree revision the cached layout was built from; `None` means "never built".
+        pub revision: Cell<Option<u64>>,
+    }
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for MoveTreeView {
+        const NAME: &'static str = "MiraiMoveTreeView";
+        type Type = super::MoveTreeView;
+        type ParentType = gtk::Widget;
+    }
+
+    impl ObjectImpl for MoveTreeView {}
+
+    impl WidgetImpl for MoveTreeView {
+        fn snapshot(&self, snapshot: &gtk::Snapshot) {
+            self.obj().draw(snapshot);
+        }
+    }
+}
+
+glib::wrapper! {
+    pub struct MoveTreeView(ObjectSubclass<imp::MoveTreeView>)
+        @extends gtk::Widget,
+        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
+}
+
+impl MoveTreeView {
+    pub fn new(state: &AppState) -> MoveTreeView {
+        let this: MoveTreeView = glib::Object::new();
+        *this.imp().state.borrow_mut() = Some(state.clone());
+        this.add_css_class("mirai-movetree");
+        this.set_halign(gtk::Align::Start);
+        this.set_valign(gtk::Align::Start);
+
+        {
+            let weak = this.downgrade();
+            state.connect_local(signal::TREE_CHANGED, false, move |_| {
+                if let Some(this) = weak.upgrade() {
+                    this.refresh();
+                }
+                None
+            });
+        }
+        {
+            let weak = this.downgrade();
+            state.connect_local(signal::CURSOR_CHANGED, false, move |_| {
+                if let Some(this) = weak.upgrade() {
+                    this.queue_draw();
+                    this.scroll_to_cursor();
+                }
+                None
+            });
+        }
+
+        let click = gtk::GestureClick::new();
+        click.set_button(gdk::BUTTON_PRIMARY);
+        {
+            let weak = this.downgrade();
+            click.connect_pressed(move |_, _, x, y| {
+                if let Some(this) = weak.upgrade() {
+                    this.click_at(x as f32, y as f32);
+                }
+            });
+        }
+        this.add_controller(click);
+
+        this.refresh();
+        this
+    }
+
+    pub fn state(&self) -> AppState {
+        self.imp()
+            .state
+            .borrow()
+            .clone()
+            .expect("MoveTreeView was built without an AppState")
+    }
+
+    /// Wraps the view in the `gtk::ScrolledWindow` the window packs.
+    pub fn in_scroller(&self) -> gtk::ScrolledWindow {
+        gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Automatic)
+            .vscrollbar_policy(gtk::PolicyType::Automatic)
+            .child(self)
+            .build()
+    }
+
+    /// Rebuilds the cached layout if the tree changed, then redraws.
+    fn refresh(&self) {
+        self.ensure_layout();
+        self.queue_draw();
+        self.scroll_to_cursor();
+    }
+
+    /// Recomputes the layout only when the tree's revision counter has moved.
+    fn ensure_layout(&self) {
+        let state = self.state();
+        let revision = state.tree().revision();
+        if self.imp().revision.get() == Some(revision) {
+            return;
+        }
+        let layout = lay_out(&state.tree());
+        let w = (MARGIN * 2.0 + RADIUS * 2.0 + layout.cols as f32 * CELL_W).ceil() as i32;
+        let h = (MARGIN * 2.0 + RADIUS * 2.0 + layout.lanes as f32 * CELL_H).ceil() as i32;
+        *self.imp().layout.borrow_mut() = layout;
+        self.imp().revision.set(Some(revision));
+        // The ScrolledWindow pans over this; we never implement gtk::Scrollable.
+        if self.width_request() != w || self.height_request() != h {
+            self.set_size_request(w, h);
+        }
+    }
+
+    fn click_at(&self, x: f32, y: f32) {
+        self.ensure_layout();
+        let layout = self.imp().layout.borrow();
+        let hit = layout.nodes.iter().find(|n| {
+            let (cx, cy) = cell_xy(n.col, n.lane);
+            (cx - x).abs() <= CELL_W * 0.5 && (cy - y).abs() <= CELL_H * 0.5
+        });
+        let Some(&hit) = hit else { return };
+        drop(layout);
+        self.state().set_cursor(hit.id);
+    }
+
+    /// Nudges the enclosing `ScrolledWindow` so the current node stays visible.
+    fn scroll_to_cursor(&self) {
+        let Some(scroller) = self
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .and_then(|w| w.downcast::<gtk::ScrolledWindow>().ok())
+        else {
+            return;
+        };
+        self.ensure_layout();
+        let cursor = self.state().cursor();
+        let layout = self.imp().layout.borrow();
+        let Some(&slot) = layout.index.get(&cursor) else {
+            return;
+        };
+        let node = layout.nodes[slot];
+        drop(layout);
+        let (cx, cy) = cell_xy(node.col, node.lane);
+
+        for (adj, pos, pad) in [
+            (scroller.hadjustment(), cx, CELL_W * 1.5),
+            (scroller.vadjustment(), cy, CELL_H * 1.5),
+        ] {
+            let page = adj.page_size();
+            if page <= 0.0 {
+                continue;
+            }
+            let value = adj.value();
+            let lo = (pos - pad) as f64;
+            let hi = (pos + pad) as f64;
+            let target = if lo < value {
+                lo
+            } else if hi > value + page {
+                hi - page
+            } else {
+                continue;
+            };
+            adj.set_value(target.clamp(adj.lower(), (adj.upper() - page).max(adj.lower())));
+        }
+    }
+
+    fn draw(&self, snapshot: &gtk::Snapshot) {
+        self.ensure_layout();
+        let state = self.state();
+        let layout = self.imp().layout.borrow();
+        if layout.nodes.is_empty() {
+            return;
+        }
+        let cursor = state.cursor();
+        let tree = state.tree();
+
+        let fg = self.color();
+        let accent = adw::StyleManager::default()
+            .accent_color()
+            .to_standalone_rgba(adw::StyleManager::default().is_dark());
+        let edge_color = with_alpha(fg, 0.45);
+        let outline = with_alpha(fg, 0.7);
+        let black = gdk::RGBA::new(0.09, 0.09, 0.11, 1.0);
+        let white = gdk::RGBA::new(0.94, 0.94, 0.95, 1.0);
+
+        // Edges first: right-angle elbows, vertical at the parent then across.
+        let edges = gsk::PathBuilder::new();
+        for node in &layout.nodes {
+            let Some(parent) = node.parent else { continue };
+            let p = layout.nodes[parent];
+            let (px, py) = cell_xy(p.col, p.lane);
+            let (cx, cy) = cell_xy(node.col, node.lane);
+            edges.move_to(px, py);
+            if (py - cy).abs() > 0.01 {
+                edges.line_to(px, cy);
+            }
+            edges.line_to(cx, cy);
+        }
+        let edge_stroke = gsk::Stroke::new(1.5);
+        edge_stroke.set_line_join(gsk::LineJoin::Round);
+        edge_stroke.set_line_cap(gsk::LineCap::Round);
+        snapshot.append_stroke(&edges.to_path(), &edge_stroke, &edge_color);
+
+        // Nodes.
+        let hollow_stroke = gsk::Stroke::new(1.5);
+        for node in &layout.nodes {
+            let (cx, cy) = cell_xy(node.col, node.lane);
+            let centre = graphene::Point::new(cx, cy);
+            let disc = gsk::PathBuilder::new();
+            disc.add_circle(&centre, RADIUS);
+            let disc = disc.to_path();
+
+            match tree.node(node.id).mv {
+                Some((color, mv)) => {
+                    let fill = match color {
+                        Color::Black => black,
+                        Color::White => white,
+                    };
+                    snapshot.append_fill(&disc, gsk::FillRule::Winding, &fill);
+                    snapshot.append_stroke(&disc, &gsk::Stroke::new(1.0), &outline);
+                    if mv.is_pass() {
+                        // A pass reads as a bar through the stone.
+                        let bar = gsk::PathBuilder::new();
+                        bar.move_to(cx - RADIUS * 0.55, cy);
+                        bar.line_to(cx + RADIUS * 0.55, cy);
+                        let ink = match color {
+                            Color::Black => white,
+                            Color::White => black,
+                        };
+                        snapshot.append_stroke(&bar.to_path(), &gsk::Stroke::new(2.0), &ink);
+                    }
+                }
+                // Root and pure setup nodes are hollow.
+                None => {
+                    snapshot.append_fill(
+                        &disc,
+                        gsk::FillRule::Winding,
+                        &with_alpha(fg, 0.08),
+                    );
+                    snapshot.append_stroke(&disc, &hollow_stroke, &outline);
+                }
+            }
+
+            if node.id == cursor {
+                let ring = gsk::PathBuilder::new();
+                ring.add_circle(&centre, RADIUS + 2.5);
+                snapshot.append_stroke(&ring.to_path(), &gsk::Stroke::new(2.0), &accent);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mirai_core::{GameInfo, Size};
+
+    fn lane(layout: &TreeLayout, id: NodeId) -> Option<u32> {
+        layout.index.get(&id).map(|&i| layout.nodes[i].lane)
+    }
+
+    fn tree19() -> (GameTree, Size) {
+        let size = Size::square(19);
+        (GameTree::new(GameInfo::new(size, Default::default())), size)
+    }
+
+    /// Main line D4-D16-Q16-Q4-C10, a variation off move 3, and a variation off that.
+    #[test]
+    fn lanes_keep_the_main_line_on_zero() {
+        let (mut tree, size) = tree19();
+        let p = |x: u8, y: u8| size.point(x, y);
+        let root = tree.root();
+
+        let m1 = tree.play(root, Color::Black, p(3, 15)).unwrap();
+        let m2 = tree.play(m1, Color::White, p(3, 3)).unwrap();
+        let m3 = tree.play(m2, Color::Black, p(15, 3)).unwrap();
+        let m4 = tree.play(m3, Color::White, p(15, 15)).unwrap();
+        let m5 = tree.play(m4, Color::Black, p(9, 9)).unwrap();
+
+        // Variation off move 3: a second child of m3.
+        let v1 = tree.add_variation(m3, Color::White, p(9, 3)).unwrap();
+        let v2 = tree.play(v1, Color::Black, p(9, 15)).unwrap();
+        // Variation off the variation: a second child of v1.
+        let w1 = tree.add_variation(v1, Color::Black, p(2, 9)).unwrap();
+
+        let layout = lay_out(&tree);
+        assert_eq!(layout.nodes.len(), 9);
+        for id in [root, m1, m2, m3, m4, m5] {
+            assert_eq!(lane(&layout, id), Some(0), "main line node {id:?}");
+        }
+        assert_eq!(lane(&layout, v1), Some(1));
+        assert_eq!(lane(&layout, v2), Some(1));
+        assert_eq!(lane(&layout, w1), Some(2));
+        assert_eq!(layout.lanes, 2);
+        assert_eq!(layout.cols, 5);
+    }
+
+    #[test]
+    fn columns_follow_depth_and_parents_are_linked() {
+        let (mut tree, size) = tree19();
+        let root = tree.root();
+        let a = tree.play(root, Color::Black, size.point(3, 3)).unwrap();
+        let b = tree.play(a, Color::White, size.point(15, 15)).unwrap();
+
+        let layout = lay_out(&tree);
+        let slot = |id: NodeId| layout.nodes[layout.index[&id]];
+        assert_eq!(slot(root).col, 0);
+        assert_eq!(slot(a).col, 1);
+        assert_eq!(slot(b).col, 2);
+        assert_eq!(slot(root).parent, None);
+        assert_eq!(layout.nodes[slot(b).parent.unwrap()].id, a);
+    }
+
+    /// Siblings of the same parent never collide, and a variation never rises above the
+    /// lane of the branch it hangs off.
+    #[test]
+    fn sibling_variations_get_distinct_lanes() {
+        let (mut tree, size) = tree19();
+        let p = |x: u8, y: u8| size.point(x, y);
+        let root = tree.root();
+        let main = tree.play(root, Color::Black, p(3, 3)).unwrap();
+        let a = tree.add_variation(root, Color::Black, p(15, 15)).unwrap();
+        let b = tree.add_variation(root, Color::Black, p(15, 3)).unwrap();
+
+        let layout = lay_out(&tree);
+        assert_eq!(lane(&layout, root), Some(0));
+        assert_eq!(lane(&layout, main), Some(0));
+        assert_eq!(lane(&layout, a), Some(1));
+        assert_eq!(lane(&layout, b), Some(2));
+    }
+
+    /// The walk is iterative, so a long game must not blow the stack.
+    #[test]
+    fn deep_lines_do_not_recurse() {
+        let (mut tree, size) = tree19();
+        let mut cur = tree.root();
+        // A long ladder of passes: legal under every ruleset and cheap to build.
+        for i in 0..2000u32 {
+            let color = if i % 2 == 0 { Color::Black } else { Color::White };
+            cur = tree.add_variation(cur, color, mirai_core::Point::PASS).unwrap();
+        }
+        let _ = size;
+        let layout = lay_out(&tree);
+        assert_eq!(layout.nodes.len(), 2001);
+        assert_eq!(layout.cols, 2000);
+        assert_eq!(layout.lanes, 0);
+        assert_eq!(lane(&layout, cur), Some(0));
+    }
+}

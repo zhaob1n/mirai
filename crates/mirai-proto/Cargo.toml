@@ -1,0 +1,20 @@
+[package]
+name = "mirai-proto"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+mirai-core.workspace = true
+serde.workspace = true
+postcard.workspace = true
+zstd.workspace = true
+quinn.workspace = true
+rustls.workspace = true
+rcgen.workspace = true
+tokio.workspace = true
+bytes.workspace = true
+thiserror.workspace = true
+bitflags.workspace = true
+tracing.workspace = true

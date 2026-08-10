@@ -1,0 +1,285 @@
+# mirai
+
+A KataGo analysis and playing GUI for the Linux desktop, plus a purpose-built protocol for
+driving KataGo over a network.
+
+Point it at a local KataGo and it analyses positions, reviews SGF files and plays games
+against you. Point it at `mirai-server` on the machine with the GPU and it behaves
+identically from a laptop that has none.
+
+```
+cargo run -p mirai
+```
+
+---
+
+## What it does
+
+**Analysis and review**
+- Live pondering of the position under the cursor, with candidate moves drawn on the board:
+  win rate, score lead and visit count, coloured by relative visits.
+- Ownership and policy heat maps.
+- Hover any candidate to preview its principal variation, numbered, without touching the tree.
+- Win-rate and score-lead curves over the game, with a blunder strip along the bottom.
+- A branch graph of the whole game tree; variations are first-class.
+- Whole-game analysis with bounded concurrency, producing a blunder list that jumps to the move.
+- SGF load and save, including multi-game collections, with unknown properties preserved
+  byte-for-byte so files from other programs survive a round trip.
+
+**Playing**
+- Play KataGo at a chosen strength (visit cap, time budget, or a human-imitation profile when
+  the model provides one), on any board from 2×2 to 19×19, with handicap and any of nine
+  rulesets.
+- Byo-yomi, Fischer increment or absolute time controls, with clocks in the header bar.
+- Two passes open scoring: dead stones are derived from KataGo's ownership map, and clicking a
+  group toggles its status with the total updating instantly and locally.
+- "Analyse after game" hands the finished game to whole-game analysis.
+
+**Remote**
+- `mirai-server` hosts one or more KataGo instances and shares them across clients. Concurrency
+  comes from KataGo's own `numAnalysisThreads`, not from spawning a process per client.
+- Token authentication, and trust-on-first-use certificate pinning.
+- Cancelling an analysis discards buffered results rather than delivering them.
+
+---
+
+## Requirements
+
+- Rust 1.92 or newer (edition 2024).
+- GTK 4.22+ and libadwaita 1.9+ with their development packages.
+- A KataGo binary, a model, and an analysis config. Any recent KataGo works; mirai uses the
+  JSON analysis engine (`katago analysis`), never GTP.
+
+On Arch: `pacman -S gtk4 libadwaita`. On Debian/Ubuntu:
+`apt install libgtk-4-dev libadwaita-1-dev`.
+
+```
+cargo build --release --workspace
+```
+
+---
+
+## Getting started
+
+On first run mirai looks for a KataGo installation and, if it finds one, writes a working
+`local-default` engine profile. Otherwise it opens Preferences with a prompt to add one:
+you need three paths — the `katago` binary, a model (`.bin.gz`), and an analysis config.
+
+Everything else is discoverable from the interface. The parts that are not:
+
+| | |
+|---|---|
+| <kbd>space</kbd> | toggle live analysis |
+| <kbd>←</kbd> <kbd>→</kbd> | previous / next move |
+| <kbd>Page Up</kbd> <kbd>Page Down</kbd> | jump ten moves |
+| <kbd>Home</kbd> <kbd>End</kbd> | start / end of the line |
+| <kbd>↑</kbd> <kbd>↓</kbd> | previous / next variation |
+| <kbd>o</kbd> | ownership overlay |
+| <kbd>y</kbd> | policy overlay |
+| <kbd>c</kbd> | coordinates |
+| <kbd>n</kbd> | move numbers |
+| <kbd>p</kbd> | pass |
+| <kbd>Delete</kbd> | delete this branch |
+| <kbd>Ctrl</kbd>+<kbd>n</kbd> | new game |
+| <kbd>Ctrl</kbd>+<kbd>z</kbd> | undo |
+| <kbd>Ctrl</kbd>+<kbd>e</kbd> | score estimate |
+| <kbd>Ctrl</kbd>+<kbd>a</kbd> | analyse the whole game |
+| <kbd>Ctrl</kbd>+<kbd>o</kbd> / <kbd>Ctrl</kbd>+<kbd>s</kbd> | open / save SGF |
+| <kbd>Ctrl</kbd>+<kbd>c</kbd> / <kbd>Ctrl</kbd>+<kbd>v</kbd> | copy / paste SGF |
+
+Right-click the board for "Play here", "Set as main line", "Delete branch" and "Copy SGF".
+
+---
+
+## Configuration
+
+`$XDG_CONFIG_HOME/mirai/config.toml`, editable from Preferences or by hand:
+
+```toml
+active_engine = "local-default"
+
+[[engine_profile]]
+name   = "local-default"
+kind   = "local"
+katago = "/path/to/katago"
+model  = "/path/to/model.bin.gz"
+config = "/path/to/analysis.cfg"
+analysis_threads = 2          # numAnalysisThreads
+search_threads   = 16         # numSearchThreadsPerAnalysisThread
+
+[[engine_profile]]
+name        = "workstation"
+kind        = "remote"
+url         = "mirai://192.168.1.10:9678"
+token       = "…"
+engine      = "default"       # which of the server's engines
+cert_sha256 = "…"             # filled in on first connect
+
+[analysis]
+live_max_visits    = 1000000  # ceiling for pondering one position
+report_interval_ms = 100
+batch_visits       = 1000     # per move, for whole-game analysis
+max_suggestions    = 10
+
+[play]
+temperature      = 0.0        # > 0 samples among candidates instead of always the best
+resign_threshold = 0.05
+resign_streak    = 3
+rules            = "Chinese"
+
+[play.strength]
+kind   = "visits"
+visits = 800
+
+[ui]
+show_coordinates    = true
+show_move_numbers   = false
+ownership_overlay   = false
+policy_overlay      = false
+save_analysis_in_sgf = false  # store cached analysis in an MRAI property
+```
+
+Autosave and KataGo's logs live under `$XDG_DATA_HOME/mirai/`.
+
+---
+
+## Running over a network
+
+On the machine with the GPU:
+
+```
+mirai-server --generate-token          # prints a token; put it in server.toml
+mirai-server --config server.toml
+```
+
+`server.toml` (see `crates/mirai-server/server.example.toml` for the annotated version):
+
+```toml
+listen = "0.0.0.0:9678"
+cert   = "cert.pem"                    # generated on first start if missing
+key    = "key.pem"
+
+[[engine]]
+name   = "default"
+katago = "/path/to/katago"
+model  = "/path/to/model.bin.gz"
+config = "/path/to/analysis.cfg"
+analysis_threads = 4
+search_threads   = 8
+
+[[token]]
+value    = "…64 hex chars…"
+name     = "laptop"
+max_subs = 4
+```
+
+The server prints its certificate fingerprint at boot (`--print-fingerprint` prints it on its
+own). Add a remote profile in the client's Preferences; on the first connection mirai shows
+the fingerprint for confirmation and pins it. A different certificate afterwards is a hard
+connection failure, not a warning.
+
+Every configured engine starts eagerly at boot — loading a large net takes seconds, and a lazy
+first query would look like a hang. If one engine fails to start it is logged and skipped; the
+server exits only if none came up.
+
+---
+
+## Architecture
+
+```
+mirai-core ── geometry, rules, scoring, game tree, SGF        (no I/O, no GUI)
+     │
+     ├── mirai-proto ── MRP/1 types, frame codec, QUIC transport
+     │        │
+     │        ├── mirai-engine ── Engine trait
+     │        │        ├── LocalEngine   → katago analysis subprocess
+     │        │        └── RemoteEngine  → mirai-server over MRP/1
+     │        │
+     │        └── mirai-server ── hosts LocalEngines for remote clients
+     │
+     └── mirai ── the GTK application
+```
+
+Four decisions shape everything else:
+
+**One engine interface: KataGo's JSON analysis engine.** Analysis queries are stateless — each
+carries its own `moves`, `initialStones`, `rules` and `komi` — so there is no engine-side state
+to keep in sync, no replay or undo machinery, and the remote protocol is a pure request/stream
+forwarder. Moves in play mode are chosen by mirai from the returned `playSelectionValue`s.
+
+**KataGo's point encoding, unchanged.** `index = y * width + x`, `y = 0` is the top row. The
+ownership and policy arrays therefore share their ordering with the board array, and overlays
+need no index remapping.
+
+**All engine values are Black-perspective.** KataGo is launched with
+`reportAnalysisWinratesAs=BLACK`, so stored values are sign-stable; the UI converts to
+side-to-move only where it displays them.
+
+**Quantised integers on the wire.** Every float that crosses the network is fixed-point, and
+the conversion lives in the type. A live report with 50 candidates, principal variations and a
+full ownership map is **2622 bytes framed** — against roughly 45 KB of equivalent KataGo JSON —
+with a bounded round-trip error (win rate ≤ 1e-4, score lead ≤ 0.02 points, ownership ≤ 0.005).
+Dropping a subscription terminates the underlying search; cancelling a remote one resets the
+QUIC stream so buffered stale reports are discarded rather than delivered.
+
+The board, win-rate graph and move tree are custom `gtk::Widget` subclasses drawn with `gsk`
+in `snapshot()`. There is no `GtkDrawingArea` and no cairo anywhere.
+
+---
+
+## Development
+
+```
+cargo test --workspace                                   # 140 tests
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+Check an engine end to end without the GUI — the same binary drives either path:
+
+```
+cargo run -p mirai-engine --example probe -- \
+    --katago /path/to/katago --model /path/to/model.bin.gz \
+    --config /path/to/analysis.cfg --visits 200
+
+cargo run -p mirai-engine --example probe -- \
+    --remote mirai://127.0.0.1:9678 --token <token> --visits 200
+```
+
+Debug builds carry a scripted-UI harness for driving and screenshotting the real application.
+It activates the application's own actions — the same handlers the keyboard accelerators reach —
+and renders through the live GSK renderer, so it works on Wayland with no external tooling:
+
+```
+MIRAI_HARNESS="wait:2500,action:win.next10,action:win.toggle-analysis,\
+wait:10000,shot:/tmp/board.png,quit" cargo run -p mirai -- game.sgf
+```
+
+Steps are `wait:<ms>`, `action:<prefix.name>[=<arg>]`, `press:<button label>`, `shot:<path>`
+and `quit`.
+
+[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) is a retrospective of building this: the obstacles,
+how the GUI was actually debugged and tested, and the defects that only showed up when the
+application was driven for real.
+
+---
+
+## Scope
+
+Deliberately not included: online-server game fetching, screen-board OCR, joseki dictionaries,
+KataGo auto-download or benchmark wizards, theme skinning, and dual-engine comparison.
+
+Board sizes are 2×2 to 19×19, matching stock KataGo builds. Rulesets are Tromp-Taylor, Chinese,
+Chinese (OGS), Japanese, Korean, stone scoring, AGA, AGA (button) and New Zealand, transcribed
+from KataGo's own definitions so local legality never disagrees with the engine.
+
+---
+
+## License
+
+GNU General Public License, version 3 or later ([`LICENSE`](LICENSE)).
+
+mirai is free software: you can redistribute it and/or modify it under the terms of the GNU
+General Public License as published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version. It is distributed in the hope that it will be
+useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.

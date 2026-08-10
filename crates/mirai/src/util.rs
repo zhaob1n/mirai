@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Huang Zhaobin
+//! Small shared helpers.
+
+use mirai_core::{Candidate, NodeAnalysis, Point, Size};
+use mirai_engine::Report;
+
+/// Converts a wire [`Report`] into the dequantised, Black-perspective [`NodeAnalysis`]
+/// that the tree stores and the SGF writer persists.
+pub fn analysis_of(report: &Report, max_candidates: usize) -> NodeAnalysis {
+    NodeAnalysis {
+        visits: report.root.visits,
+        winrate: report.root.winrate_f32(),
+        score_lead: report.root.score_lead_f32(),
+        score_stdev: report.root.score_stdev_f32(),
+        candidates: report
+            .moves
+            .iter()
+            .take(max_candidates.max(1))
+            .map(|m| Candidate {
+                mv: m.mv,
+                visits: m.visits,
+                winrate: m.winrate_f32(),
+                score_lead: m.score_lead_f32(),
+                prior: m.prior_f32(),
+                pv: m.pv.clone(),
+            })
+            .collect(),
+        ownership: report
+            .ownership
+            .as_ref()
+            .map(|o| o.clone().into_boxed_slice()),
+    }
+}
+
+/// SI-abbreviated visit count: `947`, `1.2k`, `34k`, `1.1m`.
+pub fn si_visits(v: u32) -> String {
+    match v {
+        0..=999 => v.to_string(),
+        1_000..=9_999 => format!("{:.1}k", v as f32 / 1000.0),
+        10_000..=999_999 => format!("{}k", v / 1000),
+        _ => format!("{:.1}m", v as f32 / 1_000_000.0),
+    }
+}
+
+/// `56.3` — a win rate as a one-decimal percentage.
+pub fn pct1(v: f32) -> String {
+    format!("{:.1}", v * 100.0)
+}
+
+/// `+3.4` / `-0.8` — a signed score lead with one decimal.
+pub fn signed1(v: f32) -> String {
+    format!("{v:+.1}")
+}
+
+/// Formats a clock as `M:SS` or `H:MM:SS`.
+pub fn clock_text(seconds: f32) -> String {
+    let s = seconds.max(0.0).round() as u32;
+    if s >= 3600 {
+        format!("{}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60)
+    } else {
+        format!("{}:{:02}", s / 60, s % 60)
+    }
+}
+
+/// The GTP name of a point, for labels and lists.
+pub fn gtp(size: Size, p: Point) -> String {
+    size.to_gtp(p).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn si_visits_matches_the_documented_shape() {
+        assert_eq!(si_visits(947), "947");
+        assert_eq!(si_visits(1234), "1.2k");
+        assert_eq!(si_visits(34_000), "34k");
+        assert_eq!(si_visits(1_100_000), "1.1m");
+        assert_eq!(si_visits(999), "999");
+        assert_eq!(si_visits(1000), "1.0k");
+    }
+
+    #[test]
+    fn clock_text_switches_to_hours() {
+        assert_eq!(clock_text(0.0), "0:00");
+        assert_eq!(clock_text(59.4), "0:59");
+        assert_eq!(clock_text(600.0), "10:00");
+        assert_eq!(clock_text(3661.0), "1:01:01");
+        assert_eq!(clock_text(-5.0), "0:00");
+    }
+}

@@ -1,0 +1,39 @@
+# mirai-server — example configuration.
+#
+# Copy to $XDG_CONFIG_HOME/mirai/server.toml (usually ~/.config/mirai/server.toml), or
+# pass it with --config. Relative paths resolve against the directory holding this file,
+# not the working directory, so a config plus its cert/key can be moved as a unit.
+
+# Address to bind. --listen on the command line overrides this.
+listen = "0.0.0.0:9678"
+
+# TLS material. Both files are generated as a self-signed pair on first start if either
+# is missing; clients pin the certificate's SHA-256 (trust on first use), which the server
+# prints at boot and `mirai-server --print-fingerprint` prints on its own.
+cert = "cert.pem"
+key  = "key.pem"
+
+# One [[engine]] block per KataGo instance. Every block is started eagerly at boot and
+# shared by all clients — concurrency comes from numAnalysisThreads, not from extra
+# processes. If a block fails to start it is logged and skipped; the server only exits
+# when no engine at all came up. `Open { engine: None }` resolves to the first block.
+[[engine]]
+name   = "default"
+katago = "/home/ykpcx/2026-04-26-linux64.with-katago/Lizzieyzy/engines/katago/linux-x64/katago"
+model  = "/home/ykpcx/2026-04-26-linux64.with-katago/Lizzieyzy/weights/default.bin.gz"
+config = "/home/ykpcx/2026-04-26-linux64.with-katago/Lizzieyzy/engines/katago/configs/analysis.cfg"
+
+# Optional KataGo overrides. Omit one to keep whatever the analysis.cfg above sets.
+analysis_threads = 2               # numAnalysisThreads: positions searched concurrently
+search_threads   = 8               # numSearchThreadsPerAnalysisThread
+# nn_cache_size_power_of_two = 20  # nnCacheSizePowerOfTwo
+# log_dir = "katago-logs"          # KataGo's logDir; defaults to the temp directory
+# startup_timeout_s = 180          # raise this if first-run OpenCL tuning times out
+
+# One [[token]] block per client. A token is a bearer secret compared in constant time;
+# generate one with `mirai-server --generate-token`. With no [[token]] block at all the
+# server starts but rejects every client.
+[[token]]
+value    = "0000000000000000000000000000000000000000000000000000000000000000"
+name     = "laptop"
+max_subs = 4                       # concurrent subscriptions this token may hold open

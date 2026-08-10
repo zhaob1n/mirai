@@ -1,0 +1,55 @@
+/* mirai — application styling. Keep it minimal: libadwaita supplies the rest. */
+
+.board-area {
+  background-color: @window_bg_color;
+}
+
+.mirai-clock {
+  font-family: monospace;
+  font-size: 1.1em;
+  font-weight: bold;
+  padding: 0 6px;
+}
+
+.mirai-clock.active {
+  color: @accent_color;
+}
+
+.mirai-clock.low {
+  color: @error_color;
+}
+
+.mirai-readout {
+  font-family: monospace;
+  /* Keeps the move scale from jiggling as the readout text changes width. */
+  min-width: 168px;
+}
+
+.mirai-winrate {
+  min-height: 120px;
+}
+
+.mirai-movetree {
+  min-height: 90px;
+}
+
+.mirai-blunder-major {
+  color: #e85038;
+}
+
+.mirai-blunder-medium {
+  color: #e8802c;
+}
+
+.mirai-blunder-minor {
+  color: #e8c838;
+}
+
+.mirai-pv-label {
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+.mirai-status-dim {
+  opacity: 0.6;
+}

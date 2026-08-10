@@ -1,0 +1,16 @@
+[package]
+name = "mirai-core"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+smallvec.workspace = true
+arrayvec.workspace = true
+encoding_rs.workspace = true
+base64.workspace = true
+zstd.workspace = true
+postcard.workspace = true

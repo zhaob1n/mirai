@@ -1,0 +1,8 @@
+# Build output
+/target/
+
+# Local engine profiles, autosaves and generated TLS material can end up here when the
+# server is run from the repository root.
+/cert.pem
+/key.pem
+/server.toml
