@@ -154,6 +154,15 @@ fn circle(cx: f32, cy: f32, r: f32) -> gsk::Path {
     pb.to_path()
 }
 
+/// The highlight applied to the stone just played, in the two shades that read against
+/// the stone underneath it.
+fn last_move_tint(color: Color) -> gdk::RGBA {
+    match color {
+        Color::Black => gdk::RGBA::new(1.0, 0.35, 0.25, 1.0),
+        Color::White => gdk::RGBA::new(0.85, 0.15, 0.10, 1.0),
+    }
+}
+
 fn is_dark() -> bool {
     adw::StyleManager::default().is_dark()
 }
@@ -468,7 +477,7 @@ mod imp {
                 }
                 let scene = Scene { l, size, board: &board, dark };
                 self.draw_stones(snapshot, scene, None);
-                self.draw_numbers(snapshot, scene, &seq);
+                self.draw_numbers(snapshot, scene, &seq, None);
                 return;
             }
 
@@ -479,6 +488,10 @@ mod imp {
                 self.draw_territory(snapshot, scene, territory);
             }
             drop(dead);
+
+            // The stone just played, when it survived the capture resolution.
+            let last = { state.tree().node(cursor).mv }
+                .filter(|&(color, p)| !p.is_pass() && position.board.at(p) == Some(color));
 
             if state.show_move_numbers() {
                 let mut nums = vec![0u16; size.points()];
@@ -493,21 +506,15 @@ mod imp {
                         }
                     }
                 }
-                self.draw_numbers(snapshot, scene, &nums);
-            } else if let Some((color, p)) = { state.tree().node(cursor).mv }
-                && !p.is_pass()
-                && position.board.at(p) == Some(color)
-            {
+                // The number itself carries the highlight; a mark would only hide it.
+                self.draw_numbers(snapshot, scene, &nums, last.map(|(_, p)| p));
+            } else if let Some((color, p)) = last {
                 let (x, y) = size.xy(p);
                 let (cx, cy) = l.xy(x, y);
-                let mark = match color {
-                    Color::Black => gdk::RGBA::new(1.0, 0.35, 0.25, 1.0),
-                    Color::White => gdk::RGBA::new(0.85, 0.15, 0.10, 1.0),
-                };
                 snapshot.append_fill(
                     &circle(cx, cy, l.stone_r * 0.34),
                     gsk::FillRule::Winding,
-                    &mark,
+                    &last_move_tint(color),
                 );
             }
 
@@ -602,12 +609,14 @@ mod imp {
             }
         }
 
-        /// Draws `nums[i] > 0` centred on the stone at `i`.
+        /// Draws `nums[i] > 0` centred on the stone at `i`. The number at `highlight`, if any,
+        /// is tinted instead of drawn in the stone's contrast colour.
         fn draw_numbers(
             &self,
             snapshot: &gtk::Snapshot,
             scene: Scene,
             nums: &[u16],
+            highlight: Option<Point>,
         ) {
             let Scene { l, size, board, .. } = scene;
             let obj = self.obj();
@@ -631,9 +640,13 @@ mod imp {
                     fd.set_absolute_size((l.cell * scale) as f64 * pango::SCALE as f64);
                     let layout = obj.create_pango_layout(Some(&text));
                     layout.set_font_description(Some(&fd));
-                    let fg = match color {
-                        Color::Black => gdk::RGBA::new(1.0, 1.0, 1.0, 0.95),
-                        Color::White => gdk::RGBA::new(0.05, 0.05, 0.05, 0.95),
+                    let fg = if highlight == Some(p) {
+                        last_move_tint(color)
+                    } else {
+                        match color {
+                            Color::Black => gdk::RGBA::new(1.0, 1.0, 1.0, 0.95),
+                            Color::White => gdk::RGBA::new(0.05, 0.05, 0.05, 0.95),
+                        }
                     };
                     let (cx, cy) = l.xy(x, y);
                     draw_text(snapshot, &layout, cx, cy, &fg);

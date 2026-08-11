@@ -1032,7 +1032,7 @@ fn appearance_page(state: &AppState) -> adw::PreferencesPage {
     board.add(&bound_switch(
         state,
         "Move numbers",
-        "Number every stone on the board",
+        "Number every stone; the last move's number is red",
         "show-move-numbers",
     ));
 

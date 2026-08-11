@@ -104,7 +104,7 @@ disk.
 | Region | What it shows |
 |---|---|
 | **Header bar** | Open, Save, the ▶ live-analysis toggle, the engine button (name + KataGo version; click for your profiles and *Preferences…*), the file name with `•` while unsaved, the engine or current status beneath it, the clocks during a timed game, **New game**, and ☰ |
-| **Board** | wood, grid, star points, optional coordinates, stones. A red dot marks the last move unless move numbers are on. SGF marks (triangle, square, circle, cross, text labels) are drawn |
+| **Board** | wood, grid, star points, optional coordinates, stones. The last move is marked with a red dot, or — when move numbers are on — by its number in red. SGF marks (triangle, square, circle, cross, text labels) are drawn |
 | **Win-rate graph** | solid curve = Black's win rate (left axis 0/50/100); dashed curve = score lead (right axis, never tighter than ±5); vertical line = where you are; coloured bars along the bottom = the blunder strip |
 | **Sidebar** | three pages — **Analysis** (readout, candidate list, blunder list), **Moves** (the branch graph), **Comment** (the current move's comment). Collapses to an overlay on a narrow window |
 | **Bottom bar** | first / previous / next / last, previous / next variation, a slider along the current line, and a readout of side to move, win rate, score lead, visits and — while a search is running — its speed in visits per second; or the status message when there is no analysis |
@@ -209,6 +209,12 @@ you choose. <kbd>Ctrl</kbd>+<kbd>V</kbd> pastes a record from the clipboard,
 <kbd>Ctrl</kbd>+<kbd>C</kbd> copies the current one out. Anything mirai does not understand in
 an SGF file is kept verbatim and written back, so files from other programs survive a round
 trip.
+
+**Several records at once.** Opening a file while mirai is running — from your file manager, or
+another `mirai game.sgf` on the command line — gives that record its own window rather than
+replacing what you are looking at; passing several files at once opens one window each. The
+windows are independent, but they share one KataGo: a second window costs no extra GPU memory
+and no second startup wait, and the engine shuts down when the last window using it closes.
 
 **Navigating.** Beyond the [keys](#9-keyboard-reference): the scroll wheel on the board, the
 slider in the bottom bar, a click on the graph (hold and drag to scrub), and a click on any
@@ -489,7 +495,7 @@ Four pages. Every change is written to disk immediately; there is no Apply butto
 | Setting | Default | Effect |
 |---|---|---|
 | **Coordinates** | on | letters and numbers around the board |
-| **Move numbers** | off | number every stone instead of dotting only the last move |
+| **Move numbers** | off | number every stone; the last move's number is red, so the dot is not needed |
 | **Ownership** | off | the ownership heat map |
 | **Policy** | off | the raw-network heat map |
 | **Save analysis in SGF** | off | writes stored win rates and candidates into the SGF, so the curves survive a save and reload. Larger files; other programs ignore the extra data |
@@ -528,19 +534,19 @@ the board's right-click menu.
 | Path | What |
 |---|---|
 | `~/.config/mirai/config.toml` | settings and engine profiles |
-| `~/.local/share/mirai/autosave.sgf` | the record you were last looking at |
-| `~/.local/share/mirai/clean-exit` | marker written on a normal close |
+| `~/.local/share/mirai/autosave-*.sgf` | the record each open window is looking at, one file per window |
 | `~/.local/share/mirai/katago-logs/` | KataGo's own logs, one file per engine start |
 | `~/.config/mirai/server.toml` | `mirai-server`'s settings, on the machine running it |
 
 (`$XDG_CONFIG_HOME` and `$XDG_DATA_HOME` are honoured if set.)
 
-Autosave runs every 30 seconds and again on close, and only when there is something worth
-keeping — a move, a setup stone or a comment; a blank board is never saved and marks alone do
-not count. The autosave is not your file: restoring it does not make it the target of a plain
-Save. The clean-exit marker is how mirai knows whether it crashed. KataGo's logs accumulate and
-can be deleted at any time. Nothing else is written; your KataGo installation, model and
-analysis config are never modified.
+Autosave runs every 30 seconds, and only when there is something worth keeping — a move, a
+setup stone or a comment; a blank board is never saved and marks alone do not count. Closing a
+window **deletes** its autosave, so a file still there on the next start is one a crash left
+behind, and that is what mirai offers to restore. The autosave is not your file: restoring it
+does not make it the target of a plain Save. KataGo's logs accumulate and can be deleted at any
+time. Nothing else is written; your KataGo installation, model and analysis config are never
+modified.
 
 ---
 
@@ -594,9 +600,10 @@ analyse the whole game"*.
 ### "mirai did not shut down cleanly"
 
 A dialog on start offering to restore the last record. The previous session ended without
-writing its clean-exit marker: a crash, a kill, a power cut, or a logout that did not let the
-window close. **Restore** loads the autosaved record — untitled, so the first Save asks where
-to put it, and nothing of yours is overwritten. **Discard** deletes it.
+closing its windows: a crash, a kill, a power cut, or a logout that did not let the window
+close, so its autosave was never cleaned up. **Restore** loads the autosaved record — untitled,
+so the first Save asks where to put it, and nothing of yours is overwritten. **Discard** deletes
+it. If several windows were open, each new window is offered one of them, most recent first.
 
 ### An SGF from another program looks wrong
 
