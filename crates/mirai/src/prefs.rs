@@ -892,7 +892,7 @@ fn play_page(state: &AppState) -> adw::PreferencesPage {
         let cfg = state.config();
         visits.set_value(800.0);
         seconds.set_value(5.0);
-        human.set_text("rank_5d");
+        human.set_text(crate::play::DEFAULT_HUMAN_PROFILE);
         match &cfg.play.strength {
             StrengthSetting::Visits { visits: v } => {
                 visits.set_value(*v as f64);

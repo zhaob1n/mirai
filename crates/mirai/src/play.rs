@@ -24,6 +24,12 @@ use mirai_engine::{MoveInfo, Report, SubEvent, Want};
 use crate::app::AppState;
 use crate::widgets::BoardView;
 
+/// Default KataGo human-SL profile offered in the UI.
+///
+/// One constant because the New Game dialog and Preferences both prefill it, and they used
+/// to disagree — a user who set strength in one place saw a different rank in the other.
+pub const DEFAULT_HUMAN_PROFILE: &str = "rank_5k";
+
 /// How strong the AI plays.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Strength {

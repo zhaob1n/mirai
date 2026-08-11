@@ -404,6 +404,9 @@ fn primary_menu() -> gio::Menu {
 
     let file = gio::Menu::new();
     file.append(Some("_New Game…"), Some("win.new-game"));
+    // Passing and undo have accelerators; resigning deliberately does not, but it still
+    // needs a way in — otherwise only the engine can ever concede a game.
+    file.append(Some("_Resign"), Some("win.resign"));
     file.append(Some("_Open…"), Some("win.open"));
     file.append(Some("_Save"), Some("win.save"));
     file.append(Some("Save _As…"), Some("win.save-as"));

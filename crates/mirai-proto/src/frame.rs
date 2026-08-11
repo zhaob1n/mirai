@@ -23,6 +23,8 @@ pub const MAX_FRAME: usize = 8 * 1024 * 1024;
 pub const COMPRESS_THRESHOLD: usize = 4096;
 
 const FLAG_ZSTD: u8 = 0x01;
+/// Every flag bit this version understands. Anything else is a hard error.
+const FLAG_KNOWN: u8 = FLAG_ZSTD;
 const ZSTD_LEVEL: i32 = 1;
 
 #[derive(Debug, thiserror::Error)]
@@ -119,6 +121,11 @@ fn decode_payload<T: DeserializeOwned>(
     flags: u8,
     payload: &[u8],
 ) -> Result<T, FrameError> {
+    // Postcard is positional and the header has no other extension point, so an unknown
+    // flag means the sender is speaking a dialect we would silently misparse. Reject it.
+    if flags & !FLAG_KNOWN != 0 {
+        return Err(FrameError::Codec(format!("unknown frame flags {flags:#04x}")));
+    }
     let bytes: &[u8] = if flags & FLAG_ZSTD != 0 {
         buf.plain.clear();
         zstd::stream::copy_decode(payload, Bounded(&mut buf.plain))?;
@@ -216,6 +223,26 @@ mod tests {
         let mut buf = FrameBuf::new();
         let r: Result<u32, _> = read_msg(&mut rd, &mut buf).await;
         assert!(matches!(r, Err(FrameError::TooLarge(_))));
+    }
+
+    #[tokio::test]
+    async fn unknown_flag_bits_are_rejected_not_ignored() {
+        // A reserved bit set by a future dialect must fail loudly. Postcard is positional,
+        // so parsing the payload anyway would produce plausible-looking wrong values.
+        let payload = postcard::to_stdvec(&7u32).unwrap();
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        frame.push(0x02);
+        frame.extend_from_slice(&payload);
+
+        let mut buf = FrameBuf::new();
+        let r: Result<u32, _> = read_msg(&mut &frame[..], &mut buf).await;
+        assert!(matches!(r, Err(FrameError::Codec(_))), "got {r:?}");
+
+        // The same bytes with no flags still decode, so the payload itself was fine.
+        frame[4] = 0x00;
+        let ok: u32 = read_msg(&mut &frame[..], &mut buf).await.unwrap();
+        assert_eq!(ok, 7);
     }
 
     #[test]

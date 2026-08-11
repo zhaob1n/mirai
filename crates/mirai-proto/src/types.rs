@@ -23,6 +23,13 @@ pub const UTILITY_SCALE: f64 = 8192.0;
 pub const SCORE_SCALE: f64 = 32.0;
 pub const STDEV_SCALE: f64 = 32.0;
 
+/// Steps per unit for [`RootInfo::raw_var_time_left`]. KataGo's `rawVarTimeLeft` is in "no
+/// particular units" and runs to a few hundred, so a quarter-unit step covers it in `u16`.
+///
+/// It lives here with the other scales rather than beside its decoder: a peer decoding MRP/1
+/// must be able to learn every scale from this crate alone.
+pub const RAW_VAR_TIME_SCALE: f64 = 4.0;
+
 /// Quantise a probability in `[0, 1]` to 16 bits.
 #[inline]
 pub fn q16(v: f64) -> u16 {
@@ -101,10 +108,19 @@ bitflags::bitflags! {
     /// Optional extras a client wants in the reports.
     #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
     pub struct Want: u8 {
+        /// Fill [`Report::ownership`].
         const OWNERSHIP = 1;
+        /// Fill [`Report::policy`].
         const POLICY = 2;
+        /// Fill [`MoveInfo::pv_visits`].
         const PV_VISITS = 4;
+        /// Reserved. `MoveInfo` has no per-move ownership field, so there is nowhere for the
+        /// result to land; a v1 engine MUST NOT ask KataGo for it and burn search time on a
+        /// value it will discard. Kept so the bit is not reused before a v2 adds the field.
         const MOVES_OWNERSHIP = 8;
+        /// Advisory. The `raw_*` fields of [`RootInfo`] are filled whenever the engine
+        /// reported them, whether or not this bit is set — KataGo has no switch for it.
+        /// Set it for forward compatibility; never rely on it to suppress them.
         const ROOT_RAW = 16;
     }
 }

@@ -51,10 +51,10 @@ pub fn build_query(id: &str, req: &AnalyzeReq) -> Value {
         "includePVVisits".into(),
         json!(req.want.contains(Want::PV_VISITS)),
     );
-    q.insert(
-        "includeMovesOwnership".into(),
-        json!(req.want.contains(Want::MOVES_OWNERSHIP)),
-    );
+    // `Want::MOVES_OWNERSHIP` is reserved: `MoveInfo` has no field for the result, so asking
+    // for it would cost KataGo an ownership map per candidate that the decoder then throws
+    // away. Always off until a protocol version adds somewhere to put it.
+    q.insert("includeMovesOwnership".into(), json!(false));
 
     if let Some(ms) = req.report_every_ms {
         q.insert(

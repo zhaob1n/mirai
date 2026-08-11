@@ -11,14 +11,10 @@
 
 use mirai_core::{Color, Point, Size};
 use mirai_proto::types::{
-    LCB_SCALE, MoveInfo, Report, RootInfo, SCORE_SCALE, STDEV_SCALE, UTILITY_SCALE, q16, q_own,
-    q_policy, qs, qu,
+    LCB_SCALE, MoveInfo, RAW_VAR_TIME_SCALE, Report, RootInfo, SCORE_SCALE, STDEV_SCALE,
+    UTILITY_SCALE, q16, q_own, q_policy, qs, qu,
 };
 use serde_json::Value;
-
-/// Steps per unit for `RootInfo::raw_var_time_left`. KataGo's `rawVarTimeLeft` is in "no
-/// particular units" and runs to a few hundred, so a quarter-unit step covers it in `u16`.
-pub const RAW_VAR_TIME_SCALE: f64 = 4.0;
 
 /// One classified line of KataGo's stdout.
 #[derive(Clone, Debug, PartialEq)]

@@ -189,7 +189,7 @@ pub fn new_game(
     let visits_row = spin_row("Visits per move", 1.0, 1_000_000.0, 100.0, 0);
     let seconds_row = spin_row("Seconds per move", 0.1, 600.0, 0.5, 1);
     let profile_row = adw::EntryRow::builder().title("Human-like profile").build();
-    profile_row.set_text("rank_5k");
+    profile_row.set_text(crate::play::DEFAULT_HUMAN_PROFILE);
 
     strength_group.add(&strength_row);
     strength_group.add(&visits_row);

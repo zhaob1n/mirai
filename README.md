@@ -84,7 +84,7 @@ Everything else is discoverable from the interface. The parts that are not:
 | <kbd>Ctrl</kbd>+<kbd>z</kbd> | undo |
 | <kbd>Ctrl</kbd>+<kbd>e</kbd> | score estimate |
 | <kbd>Ctrl</kbd>+<kbd>a</kbd> | analyse the whole game |
-| <kbd>Ctrl</kbd>+<kbd>o</kbd> / <kbd>Ctrl</kbd>+<kbd>s</kbd> | open / save SGF |
+| <kbd>Ctrl</kbd>+<kbd>o</kbd> / <kbd>Ctrl</kbd>+<kbd>s</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>s</kbd> | open / save / save as SGF |
 | <kbd>Ctrl</kbd>+<kbd>c</kbd> / <kbd>Ctrl</kbd>+<kbd>v</kbd> | copy / paste SGF |
 
 Right-click the board for "Play here", "Set as main line", "Delete branch" and "Copy SGF".
@@ -230,7 +230,7 @@ in `snapshot()`. There is no `GtkDrawingArea` and no cairo anywhere.
 ## Development
 
 ```
-cargo test --workspace                                   # 140 tests
+cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
@@ -257,9 +257,18 @@ wait:10000,shot:/tmp/board.png,quit" cargo run -p mirai -- game.sgf
 Steps are `wait:<ms>`, `action:<prefix.name>[=<arg>]`, `press:<button label>`, `shot:<path>`
 and `quit`.
 
-[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) is a retrospective of building this: the obstacles,
-how the GUI was actually debugged and tested, and the defects that only showed up when the
-application was driven for real.
+---
+
+## Documentation
+
+| | |
+|---|---|
+| [`docs/user/GUIDE.md`](docs/user/GUIDE.md) | the user manual: interface, analysis, review, playing, remote engines, settings, troubleshooting |
+| [`AGENTS.md`](AGENTS.md) | start here to work on the code — invariants, conventions, known traps |
+| [`docs/dev/ARCHITECTURE.md`](docs/dev/ARCHITECTURE.md) | module map, data model, concurrency, extension recipes |
+| [`docs/dev/PROTOCOL.md`](docs/dev/PROTOCOL.md) | the normative MRP/1 specification — enough to write an interoperable client in any language |
+| [`docs/dev/TESTING.md`](docs/dev/TESTING.md) | how to prove a change works, including driving the GUI |
+| [`docs/dev/RETROSPECTIVE.md`](docs/dev/RETROSPECTIVE.md) | how this was built: obstacles, how the GUI was debugged, defects found |
 
 ---
 
