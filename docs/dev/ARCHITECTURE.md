@@ -210,11 +210,12 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 | file | owns | key symbols |
 |---|---|---|
 | `build.rs` | compiles `resources/mirai.gresource.xml` into the binary | — |
-| `src/main.rs` | process entry: tracing, the single tokio runtime, resources, CSS, `activate`/`open` | `APP_ID`, `RESOURCE_PREFIX` |
-| `src/app.rs` | **INV-7.** `AppState`: the single source of truth — properties, signals, tree/cursor API, engine activation, the live-analysis pump, the search-speed meter | `AppState`, `mod signal`, `with_tree_mut`, `with_tree_cached`, `set_cursor`, `play_move`, the `go_*` navigators, `activate_profile`, `request_for_node`, `restart_analysis`, `set_report`, `analysis_speed`, `SpeedMeter` (+`SPEED_SMOOTHING`), `build_engine` |
-| `src/config.rs` | `$XDG_CONFIG_HOME/mirai/config.toml`: engine profiles and preferences | `Config` (`load`, `save`, `seeded`, `profile`, `active_profile`, `set_pin`, `default_path`, `data_dir`), `EngineProfile`, `ProfileKind`, `AnalysisSettings`, `PlaySettings`, `StrengthSetting`, `UiSettings` |
+| `src/main.rs` | process entry: tracing, the single tokio runtime, resources, CSS, the shared `EnginePool`, `activate`/`open` (one window per file) | `APP_ID`, `RESOURCE_PREFIX` |
+| `src/app.rs` | **INV-7.** `AppState`: the single source of truth *for one window* — properties, signals, tree/cursor API, engine activation, the live-analysis pump, the search-speed meter | `AppState`, `mod signal`, `with_tree_mut`, `with_tree_cached`, `set_cursor`, `play_move`, the `go_*` navigators, `activate_profile`, `remember_active`, `request_for_node`, `restart_analysis`, `set_report`, `analysis_speed`, `SpeedMeter` (+`SPEED_SMOOTHING`) |
+| `src/engines.rs` | the application-wide engines: one per profile, shared by every window, held weakly so the last window to let go takes KataGo with it | `EnginePool` (`running`, `acquire`), `Built`, private `key`, `start`, `build` |
+| `src/config.rs` | `$XDG_CONFIG_HOME/mirai/config.toml`: engine profiles and preferences | `Config` (`load`, `save`, `save_merged`, `seeded`, `profile`, `active_profile`, `set_pin`, `default_path`, `data_dir`), private `overlay`, `EngineProfile`, `ProfileKind`, `AnalysisSettings`, `PlaySettings`, `StrengthSetting`, `UiSettings` |
 | `src/util.rs` | formatting helpers and the one `Report` → `NodeAnalysis` conversion | `analysis_of`, `si_visits`, `visits_per_second`, `pct1`, `signed1`, `clock_text`, `gtp` |
-| `src/window.rs` | **INV-8.** The window: layout, every `win.*` action and accelerator, SGF I/O, autosave, score estimate, shortcuts/about | `Ui`, `present`, `with_ui`, `connect_close`, `install_actions`, `primary_menu`, the `update_*` refreshers, `load_sgf`/`do_open`/`do_save`/`do_save_as`, `adopt`, `write_autosave`/`offer_restore`/`tree_has_content`, `do_score`/`show_estimate`, `delete_branch`, `AUTOSAVE_SECS`, `SCORE_VISITS`, `DEAD_THRESHOLD` |
+| `src/window.rs` | **INV-8.** The window: layout, every `win.*` action and accelerator, SGF I/O, autosave, score estimate, shortcuts/about | `Ui`, `present`, `with_ui`, `connect_close`, `install_actions`, `primary_menu`, the `update_*` refreshers, `load_sgf`/`do_open`/`do_save`/`do_save_as`, `adopt`, `write_autosave`/`next_autosave_path`/`stale_autosaves`/`offer_restore`/`tree_has_content`, `do_score`/`show_estimate`, `delete_branch`, `AUTOSAVE_SECS`, `AUTOSAVE_PREFIX`, `SCORE_VISITS`, `DEAD_THRESHOLD` |
 | `src/widgets/mod.rs` | widget root; states the no-cairo rule | re-exports `BoardView`, `MoveTreeView`, `WinrateGraph` |
 | `src/widgets/board.rs` | the goban: static-layer cache, stones, marks, move numbers, ownership/policy heat maps, candidate blobs, PV preview, click/hover/context menu | `BoardView` (`point_at`, `set_click_hook`, `set_score_overlay`, `set_pv_preview`), `Layout` (`compute`, `hit`), `Scene`, `StaticKey`, **`VISIT_RAMP`/`ramp_rgb`**, `draw_stones`/`draw_territory`/`draw_numbers`/`draw_marks`/`draw_candidates`, `blit`, `text_on` |
 | `src/widgets/winrate.rs` | win-rate curve, score-lead curve and blunder strip, drawn from cached `NodeAnalysis` on the main line | `WinrateGraph`, `Severity` (+`color`), `severity_of_drop`, `blunder_severity`, private `Sample`, `Geom` |
@@ -695,9 +696,22 @@ The rule, as a contributor follows it:
    `with_ui` is generic over the pointee purely so the discipline is unit-testable without a
    display.
 
-`connect_close` also defines the shutdown order: flush the comment, autosave, write the clean-exit
-flag, cancel the batch, stop play mode, abort the score pump, turn live analysis **off** (so the
-pump releases its subscription), save the config, clear the engine, then drop.
+`connect_close` also defines the shutdown order: flush the comment, delete this window's autosave
+(a window that closed cleanly leaves nothing to restore), cancel the batch, stop play mode, abort
+the score pump, turn live analysis **off** (so the pump releases its subscription), save the
+config, clear the engine, then drop.
+
+### More than one window
+
+`activate` and `open` both call `window::present`, and `open` calls it once per file, so several
+windows in one process is a normal state, not an edge case. Each owns a complete `AppState`
+(INV-7 is per window); three things are process-wide and each had to be made safe for it:
+
+| Shared | Rule |
+|---|---|
+| Engines | `EnginePool` in `main`, keyed on the whole `EngineProfile`. A window adopts a running engine synchronously through `running`, or joins an in-flight start through `acquire`; entries are `Weak`, so KataGo exits with the last window using it. Sharing is only sound because of INV-4 — no engine-side session state — and because `LocalEngine` already multiplexes queries by id |
+| `config.toml` | Each window holds the `Config` it loaded, so writing the whole thing back would revert another window's edits. `Config::save_merged` applies only this window's own diff onto the file as it stands |
+| Autosave | One file per window, `autosave-<pid>-<start>-<n>.sgf`. A clean close deletes it; anything found at startup is therefore a crash leftover, and each new window is offered one, most recent first. This replaced the single `autosave.sgf` plus `clean-exit` flag, which could not say which window had exited |
 
 ### RefCell discipline (INV-10)
 
@@ -753,7 +767,8 @@ and how a violation shows up.
 3. Re-export the type from `mirai-engine/src/lib.rs`.
 4. Add a `ProfileKind` variant in `mirai/src/config.rs` (`#[serde(tag = "kind")]`, so the variant
    name is the on-disk discriminant).
-5. Handle that variant in `build_engine` in `mirai/src/app.rs`.
+5. Handle that variant in `build` in `mirai/src/engines.rs`, and check that `key` still tells
+   two profiles of the new kind apart — an over-broad key shares the wrong engine.
 6. Add an editor subpage in `mirai/src/prefs.rs` alongside the local and remote ones.
 7. Verify with `examples/probe.rs` before touching the GUI — it exercises the trait with no GTK.
 

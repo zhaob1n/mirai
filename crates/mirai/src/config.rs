@@ -202,6 +202,35 @@ impl Config {
         std::fs::write(path, text).map_err(|e| ConfigError::Io(path.to_path_buf(), e))
     }
 
+    /// Writes the configuration, keeping edits another window has made meanwhile.
+    ///
+    /// Every window holds the `Config` it loaded when it opened, so the plain overwrite
+    /// above would revert whatever a second window changed since — the last window to close
+    /// would win, silently. This is a three-way merge at the TOML level: only the keys that
+    /// differ between `base` (what this window loaded) and `self` (what it holds now) are
+    /// written over the file as it stands, so untouched keys keep the file's values.
+    pub fn save_merged(&self, base: &Config, path: &Path) -> Result<(), ConfigError> {
+        if self == base && path.exists() {
+            return Ok(());
+        }
+        let current = toml::Value::try_from(self)?;
+        let previous = toml::Value::try_from(base)?;
+        // `toml::from_str`, not `str::parse`: the latter reads a bare value, so a whole
+        // document silently comes back as an error and every other window's edit with it.
+        let mut merged = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+            // A missing or unreadable file is simply one with nothing to preserve.
+            .unwrap_or_else(|| toml::Value::Table(toml::map::Map::new()));
+        overlay(&previous, &current, &mut merged);
+
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| ConfigError::Io(dir.to_path_buf(), e))?;
+        }
+        let text = toml::to_string_pretty(&merged)?;
+        std::fs::write(path, text).map_err(|e| ConfigError::Io(path.to_path_buf(), e))
+    }
+
     /// A first-run configuration. If the bundled KataGo is present, seed a working local
     /// profile from it; otherwise leave the profile list empty so the UI can prompt.
     pub fn seeded() -> Config {
@@ -248,9 +277,100 @@ impl Config {
     }
 }
 
+/// Applies the `previous → current` difference onto `file`, leaving everything else alone.
+///
+/// Recursing per key rather than replacing whole tables is the point: two windows editing
+/// different keys of the same `[analysis]` table must both survive.
+fn overlay(previous: &toml::Value, current: &toml::Value, file: &mut toml::Value) {
+    if previous == current {
+        return;
+    }
+    let (Some(prev), Some(cur)) = (previous.as_table(), current.as_table()) else {
+        *file = current.clone();
+        return;
+    };
+    let Some(out) = file.as_table_mut() else {
+        *file = current.clone();
+        return;
+    };
+    for (name, value) in cur {
+        match (prev.get(name), out.get_mut(name)) {
+            (Some(before), Some(target)) => overlay(before, value, target),
+            // Untouched by this window but absent from the file: nothing to preserve.
+            (Some(before), None) if before == value => {}
+            _ => {
+                out.insert(name.clone(), value.clone());
+            }
+        }
+    }
+    for name in prev.keys() {
+        if !cur.contains_key(name) {
+            out.remove(name);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two windows each hold the config they loaded. One changing a setting must not revert
+    /// the other's change to a different setting — the defect that made the last window to
+    /// close win.
+    #[test]
+    fn a_save_keeps_another_windows_edit() {
+        let dir = std::env::temp_dir().join(format!("mirai-cfg-{}", std::process::id()));
+        let path = dir.join("merge.toml");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // Both windows opened on this.
+        let base = Config::default();
+        base.save(&path).expect("write the baseline");
+
+        // The other window raised the visit cap and wrote it out.
+        let mut other = base.clone();
+        other.analysis.live_max_visits = 4242;
+        other.save_merged(&base, &path).expect("other window saves");
+
+        // This window only ever touched a display toggle.
+        let mut mine = base.clone();
+        mine.ui.show_coordinates = !base.ui.show_coordinates;
+        mine.save_merged(&base, &path).expect("this window saves");
+
+        let merged = Config::load(&path).expect("reload");
+        assert_eq!(merged.analysis.live_max_visits, 4242, "the other edit was reverted");
+        assert_eq!(merged.ui.show_coordinates, mine.ui.show_coordinates);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Deleting a profile has to reach the file even though the merge is additive per key.
+    #[test]
+    fn a_removed_profile_is_removed_from_the_file() {
+        let dir = std::env::temp_dir().join(format!("mirai-cfg-rm-{}", std::process::id()));
+        let path = dir.join("merge.toml");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let base = Config {
+            engine_profiles: vec![EngineProfile {
+                name: "gone".into(),
+                kind: ProfileKind::Remote {
+                    url: "mirai://h".into(),
+                    token: "t".into(),
+                    engine: None,
+                    cert_sha256: None,
+                },
+            }],
+            ..Config::default()
+        };
+        base.save(&path).expect("write the baseline");
+
+        let mut mine = base.clone();
+        mine.engine_profiles.clear();
+        mine.save_merged(&base, &path).expect("save");
+
+        assert!(Config::load(&path).expect("reload").engine_profiles.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn round_trips_through_toml_with_both_profile_kinds() {

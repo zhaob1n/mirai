@@ -8,6 +8,7 @@
 
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -18,7 +19,8 @@ use gtk::subclass::prelude::*;
 use mirai_core::{Color, GameInfo, GameTree, IllegalMove, NodeId, Point, Position, RuleSet, Size};
 use mirai_engine::{AnalyzeReq, Engine, EngineDesc, EngineError, Report, SubEvent, Want};
 
-use crate::config::{Config, EngineProfile, ProfileKind};
+use crate::config::Config;
+use crate::engines::EnginePool;
 
 /// Signal names, so typos are compile-time-ish rather than silent no-ops.
 pub mod signal {
@@ -80,8 +82,13 @@ mod imp {
         pub tree: RefCell<GameTree>,
         pub cursor: Cell<NodeId>,
         pub config: RefCell<Config>,
+        /// The configuration as this window loaded it, so a save can tell which keys this
+        /// window actually changed and leave another window's edits alone.
+        pub config_base: RefCell<Config>,
         pub config_path: RefCell<PathBuf>,
         pub engine: RefCell<Option<Arc<dyn Engine>>>,
+        /// The application-wide engines, shared with every other window.
+        pub pool: RefCell<Rc<EnginePool>>,
         pub runtime: RefCell<Option<tokio::runtime::Handle>>,
         pub report: RefCell<Option<Arc<Report>>>,
         /// The live-analysis pump. Aborting it drops the `Subscription`, which terminates
@@ -115,8 +122,10 @@ mod imp {
                 tree: RefCell::new(tree),
                 cursor: Cell::new(root),
                 config: RefCell::new(Config::default()),
+                config_base: RefCell::new(Config::default()),
                 config_path: RefCell::new(PathBuf::new()),
                 engine: RefCell::new(None),
+                pool: RefCell::new(Rc::new(EnginePool::default())),
                 runtime: RefCell::new(None),
                 report: RefCell::new(None),
                 pump: RefCell::new(None),
@@ -199,17 +208,28 @@ impl Default for AppState {
 }
 
 impl AppState {
-    pub fn new(config: Config, config_path: PathBuf, runtime: tokio::runtime::Handle) -> AppState {
+    pub fn new(
+        config: Config,
+        config_path: PathBuf,
+        runtime: tokio::runtime::Handle,
+        pool: Rc<EnginePool>,
+    ) -> AppState {
         let this: AppState = glib::Object::new();
         let imp = this.imp();
         this.set_show_coordinates(config.ui.show_coordinates);
         this.set_show_move_numbers(config.ui.show_move_numbers);
         this.set_ownership_overlay(config.ui.ownership_overlay);
         this.set_policy_overlay(config.ui.policy_overlay);
+        *imp.config_base.borrow_mut() = config.clone();
         *imp.config.borrow_mut() = config;
         *imp.config_path.borrow_mut() = config_path;
         *imp.runtime.borrow_mut() = Some(runtime);
+        *imp.pool.borrow_mut() = pool;
         this
+    }
+
+    pub fn pool(&self) -> Rc<EnginePool> {
+        self.imp().pool.borrow().clone()
     }
 
     // -- configuration ------------------------------------------------------------------
@@ -227,6 +247,10 @@ impl AppState {
     }
 
     /// Mirrors the current display toggles into the config and writes it out.
+    ///
+    /// Only the keys this window changed are written: every window holds its own `Config`,
+    /// loaded when it opened, so a plain overwrite would revert whatever another window has
+    /// changed since. See [`Config::save_merged`].
     pub fn save_config(&self) {
         {
             let mut cfg = self.imp().config.borrow_mut();
@@ -236,10 +260,17 @@ impl AppState {
             cfg.ui.policy_overlay = self.policy_overlay();
         }
         let path = self.config_path();
-        let result = self.imp().config.borrow().save(&path);
-        if let Err(e) = result {
-            tracing::warn!(%e, "could not save the configuration");
-            self.toast(format!("Could not save settings: {e}"));
+        let result = {
+            let cfg = self.imp().config.borrow();
+            cfg.save_merged(&self.imp().config_base.borrow(), &path)
+        };
+        match result {
+            // What this window holds is now the baseline for its next save.
+            Ok(()) => *self.imp().config_base.borrow_mut() = self.imp().config.borrow().clone(),
+            Err(e) => {
+                tracing::warn!(%e, "could not save the configuration");
+                self.toast(format!("Could not save settings: {e}"));
+            }
         }
     }
 
@@ -424,8 +455,8 @@ impl AppState {
 
     /// Starts (or connects to) the named profile and installs it as the active engine.
     ///
-    /// Runs the blocking work on the tokio runtime and lands the result back on the GTK
-    /// main context.
+    /// The engine comes from the application-wide [`EnginePool`], so a second window on the
+    /// same profile adopts the running KataGo instead of starting its own.
     pub fn activate_profile(&self, name: &str) {
         let Some(profile) = self.config().profile(name).cloned() else {
             self.toast(format!("No engine profile named “{name}”"));
@@ -441,23 +472,29 @@ impl AppState {
             .wrapping_add(1);
         self.imp().activation.set(activation);
 
+        // Already running, here or in another window: adopt it without blanking the readout
+        // or restarting KataGo.
+        if let Some(engine) = self.pool().running(&profile) {
+            self.set_busy(false);
+            self.set_status(String::new());
+            self.remember_active(name, None);
+            self.set_engine(Some(engine));
+            return;
+        }
+
         self.set_engine(None);
         self.set_busy(true);
         self.set_status(format!("Starting {}…", profile.name));
 
-        let handle = self.runtime();
-        let (tx, rx) = tokio::sync::oneshot::channel();
         let log_dir = crate::config::Config::data_dir()
             .unwrap_or_else(|_| std::env::temp_dir())
             .join("katago-logs");
-        handle.spawn(async move {
-            let _ = tx.send(build_engine(profile, log_dir).await);
-        });
+        let acquire = self.pool().acquire(profile, log_dir, self.runtime());
 
         let this = self.clone();
         let profile_name = name.to_string();
         glib::spawn_future_local(async move {
-            let result = rx.await;
+            let result = acquire.await;
             if this.imp().activation.get() != activation {
                 tracing::debug!(
                     profile = %profile_name,
@@ -466,30 +503,38 @@ impl AppState {
                 return;
             }
             this.set_busy(false);
+            this.set_status(String::new());
             match result {
-                Ok(Ok((engine, fingerprint))) => {
-                    {
-                        let mut cfg = this.config_mut();
-                        if let Some(fp) = fingerprint {
-                            cfg.set_pin(&profile_name, &fp);
-                        }
-                        cfg.active_engine = Some(profile_name.clone());
-                    }
-                    this.save_config();
-                    this.set_status(String::new());
+                Ok((engine, fingerprint)) => {
+                    this.remember_active(&profile_name, fingerprint.as_deref());
                     this.set_engine(Some(engine));
                 }
-                Ok(Err(e)) => {
-                    this.set_status(String::new());
+                Err(e) => {
                     this.toast(format!("{profile_name}: {e}"));
                     this.set_engine(None);
                 }
-                Err(_) => {
-                    this.set_status(String::new());
-                    this.toast("Engine startup was cancelled".to_string());
-                }
             }
         });
+    }
+
+    /// Records the profile now in use, and any certificate fingerprint worth pinning.
+    fn remember_active(&self, name: &str, fingerprint: Option<&str>) {
+        let changed = {
+            let mut cfg = self.config_mut();
+            // A fingerprint only ever arrives from a first connect, so it is always news.
+            let mut changed = fingerprint.is_some();
+            if let Some(fp) = fingerprint {
+                cfg.set_pin(name, fp);
+            }
+            if cfg.active_engine.as_deref() != Some(name) {
+                cfg.active_engine = Some(name.to_string());
+                changed = true;
+            }
+            changed
+        };
+        if changed {
+            self.save_config();
+        }
     }
 
     // -- analysis -----------------------------------------------------------------------
@@ -727,41 +772,6 @@ impl SpeedMeter {
     }
 }
 
-/// Builds an engine from a profile. Returns the engine and, for remote profiles, the
-/// certificate fingerprint that should be pinned.
-async fn build_engine(
-    profile: EngineProfile,
-    log_dir: PathBuf,
-) -> Result<(Arc<dyn Engine>, Option<String>), EngineError> {
-    match profile.kind {
-        ProfileKind::Local {
-            katago,
-            model,
-            config,
-            analysis_threads,
-            search_threads,
-        } => {
-            let mut cfg =
-                mirai_engine::LocalEngineConfig::new(profile.name.clone(), katago, model, config);
-            cfg.log_dir = log_dir;
-            cfg.analysis_threads = analysis_threads;
-            cfg.search_threads = search_threads;
-            let engine = mirai_engine::LocalEngine::spawn(cfg).await?;
-            Ok((Arc::new(engine) as Arc<dyn Engine>, None))
-        }
-        ProfileKind::Remote {
-            url,
-            token,
-            engine,
-            cert_sha256,
-        } => {
-            let remote =
-                mirai_engine::RemoteEngine::connect(&url, &token, engine, cert_sha256).await?;
-            let fingerprint = remote.fingerprint().to_string();
-            Ok((Arc::new(remote) as Arc<dyn Engine>, Some(fingerprint)))
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -780,10 +790,7 @@ mod tests {
 
         // A steady 1200/s must stay at 1200/s however it is smoothed.
         for i in 1..=10 {
-            m.sample(
-                600 + i * 120,
-                t0 + Duration::from_millis(500 + i as u64 * 100),
-            );
+            m.sample(600 + i * 120, t0 + Duration::from_millis(500 + i as u64 * 100));
         }
         assert!((m.rate().unwrap() - 1200.0).abs() < 1.0, "{:?}", m.rate());
     }

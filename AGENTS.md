@@ -65,9 +65,13 @@ engine-side session state, and adding some would collapse the remote design.
 score lead ≤ 0.02 points, ownership ≤ 0.005. Changing a scale means updating
 `tests/wire_size.rs` and bumping the protocol version.
 
-**INV-7 — one source of truth.** `AppState` (`crates/mirai/src/app.rs`) owns application state.
-Widgets never talk to each other; they read `AppState` and listen to its signals. A widget
-holding a pointer to another widget is a bug.
+**INV-7 — one source of truth, per window.** `AppState` (`crates/mirai/src/app.rs`) owns
+application state. Widgets never talk to each other; they read `AppState` and listen to its
+signals. A widget holding a pointer to another widget is a bug. There is one `AppState` per
+window and **several windows are normal** — `open` builds one per file. Exactly three things
+are process-wide, and anything else you make process-wide is a bug: the `EnginePool`
+(`engines.rs`, one KataGo per profile, held weakly), the config file (written through
+`Config::save_merged`, never a whole-file overwrite), and the per-window autosave files.
 
 **INV-8 — `Rc<Ui>` discipline.** Long-lived GTK handlers capture `Weak<Ui>` through the
 `with_ui` helper. Exactly **one** strong `Rc<Ui>` exists, parked in a `Cell<Option<Rc<Ui>>>`

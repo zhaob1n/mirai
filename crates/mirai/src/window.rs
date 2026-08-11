@@ -9,7 +9,8 @@
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use adw::prelude::*;
 use gtk::gdk;
@@ -61,10 +62,20 @@ pub struct Ui {
     scale_guard: Cell<bool>,
     /// The one-off score-estimate pump, aborted if a second estimate is asked for.
     score_task: RefCell<Option<glib::JoinHandle<()>>>,
+    /// This window's autosave file; `None` only when there is no data directory to write to.
+    autosave: Option<PathBuf>,
 }
 
 /// Builds and presents a window for `app`, optionally opening `path`.
-pub fn present(app: &adw::Application, runtime: tokio::runtime::Handle, path: Option<PathBuf>) {
+///
+/// Every window owns its own `AppState`; the engines are the one thing they share, through
+/// `pool`, so a second window does not start a second KataGo.
+pub fn present(
+    app: &adw::Application,
+    runtime: tokio::runtime::Handle,
+    pool: Rc<crate::engines::EnginePool>,
+    path: Option<PathBuf>,
+) {
     let config_path = Config::default_path().unwrap_or_else(|_| PathBuf::from("mirai.toml"));
     let config = match Config::load(&config_path) {
         Ok(c) => c,
@@ -73,7 +84,7 @@ pub fn present(app: &adw::Application, runtime: tokio::runtime::Handle, path: Op
             Config::seeded()
         }
     };
-    let state = AppState::new(config, config_path, runtime);
+    let state = AppState::new(config, config_path, runtime, pool);
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
@@ -324,6 +335,7 @@ pub fn present(app: &adw::Application, runtime: tokio::runtime::Handle, path: Op
         comment_node: Cell::new(None),
         scale_guard: Cell::new(false),
         score_task: RefCell::new(None),
+        autosave: next_autosave_path(),
     });
 
     connect_toasts(&ui);
@@ -355,28 +367,12 @@ pub fn present(app: &adw::Application, runtime: tokio::runtime::Handle, path: Op
     update_subtitle(&ui);
     load_comment(&ui);
 
-    // A crash leaves the clean-exit flag missing; that is how the restore offer is armed.
-    // An autosave with nothing in it is never worth offering, and a corrupt one is deleted
-    // rather than shown.
-    let stale_autosave = match autosave_paths() {
-        Some((autosave, flag)) => {
-            let stale = !flag.exists() && autosave.exists();
-            let _ = std::fs::remove_file(&flag);
-            stale.then_some(autosave).filter(|path| {
-                match std::fs::read(path)
-                    .ok()
-                    .and_then(|bytes| mirai_core::sgf::parse(&bytes).ok())
-                {
-                    Some(games) => games.iter().any(tree_has_content),
-                    None => {
-                        let _ = std::fs::remove_file(path);
-                        false
-                    }
-                }
-            })
-        }
-        None => None,
-    };
+    // Whatever an earlier run left behind, one record per window, most recent first. A
+    // window that closed cleanly deleted its file, so anything here really is a leftover.
+    let stale_autosave = stale_autosaves()
+        .lock()
+        .ok()
+        .and_then(|mut stale| stale.pop());
 
     install_autosave(&ui);
     connect_close(&ui);
@@ -601,20 +597,18 @@ fn connect_close(ui: &Rc<Ui>) {
             return glib::Propagation::Proceed;
         };
         flush_comment(&ui);
-        write_autosave(&ui);
-        if let Some((_, flag)) = autosave_paths() {
-            if let Some(dir) = flag.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
-            let _ = std::fs::write(&flag, b"clean\n");
+        // A window that closed cleanly leaves nothing behind to restore; anything still on
+        // disk after the process ends is a crash leftover.
+        if let Some(autosave) = ui.autosave.as_ref() {
+            let _ = std::fs::remove_file(autosave);
         }
         ui.batch.cancel();
         ui.play.stop();
         if let Some(task) = ui.score_task.borrow_mut().take() {
             task.abort();
         }
-        // Dropping the engine terminates KataGo; live analysis has to stop first so the
-        // pump releases its subscription.
+        // Dropping the engine terminates KataGo once the last window using it has let go;
+        // live analysis has to stop first so the pump releases its subscription.
         ui.state.set_live_analysis(false);
         ui.state.save_config();
         ui.state.set_engine(None);
@@ -1001,10 +995,74 @@ fn do_save_as(ui: &Rc<Ui>) {
 
 // -- autosave ---------------------------------------------------------------------------
 
-/// `(autosave.sgf, clean-exit)` in the data directory.
-fn autosave_paths() -> Option<(PathBuf, PathBuf)> {
-    let dir = Config::data_dir().ok()?;
-    Some((dir.join("autosave.sgf"), dir.join("clean-exit")))
+/// This window's autosave file, `autosave-<pid>-<start>-<n>.sgf` in the data directory.
+///
+/// One file per window, not per process: windows used to share `autosave.sgf` and overwrite
+/// each other, and the companion `clean-exit` flag could not say *which* window had exited
+/// cleanly. Now a window deletes its own file as it closes, so whatever is left on disk is by
+/// definition what a crash left behind.
+fn next_autosave_path() -> Option<PathBuf> {
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    Some(Config::data_dir().ok()?.join(format!("{}{n}.sgf", *AUTOSAVE_PREFIX)))
+}
+
+/// Identifies this process's autosaves. The start time is in there because a pid alone is
+/// reused, and a stale file wrongly taken for ours would never be offered back to the user.
+static AUTOSAVE_PREFIX: LazyLock<String> = LazyLock::new(|| {
+    let start = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default();
+    format!("autosave-{}-{start}-", std::process::id())
+});
+
+/// Autosaves left by an earlier run, newest last, each offered to at most one window.
+///
+/// Scanned once per process. Files that no longer parse, or hold nothing worth restoring,
+/// are deleted here rather than shown.
+fn stale_autosaves() -> &'static Mutex<Vec<PathBuf>> {
+    static STALE: LazyLock<Mutex<Vec<PathBuf>>> = LazyLock::new(|| {
+        let Ok(dir) = Config::data_dir() else {
+            return Mutex::new(Vec::new());
+        };
+        // A pre-per-window autosave is stale exactly when the old clean-exit flag is absent.
+        let legacy = dir.join("autosave.sgf");
+        let flag = dir.join("clean-exit");
+        let mut found: Vec<PathBuf> = Vec::new();
+        if legacy.exists() && !flag.exists() {
+            found.push(legacy);
+        }
+        let _ = std::fs::remove_file(&flag);
+
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let Some(name) = name.to_str() else { continue };
+                if name.starts_with("autosave-")
+                    && name.ends_with(".sgf")
+                    && !name.starts_with(AUTOSAVE_PREFIX.as_str())
+                {
+                    found.push(entry.path());
+                }
+            }
+        }
+        found.retain(|path| {
+            match std::fs::read(path)
+                .ok()
+                .and_then(|bytes| sgf::parse(&bytes).ok())
+            {
+                Some(games) => games.iter().any(tree_has_content),
+                None => {
+                    let _ = std::fs::remove_file(path);
+                    false
+                }
+            }
+        });
+        found.sort();
+        Mutex::new(found)
+    });
+    &STALE
 }
 
 /// A game record is only worth autosaving if it holds something the user would miss: a
@@ -1023,12 +1081,12 @@ fn tree_has_content(tree: &mirai_core::GameTree) -> bool {
 }
 
 fn write_autosave(ui: &Rc<Ui>) {
-    let Some((autosave, _)) = autosave_paths() else {
+    let Some(autosave) = ui.autosave.as_ref() else {
         return;
     };
     if !tree_has_content(&ui.state.tree()) {
         // Leave no bait for the restore prompt.
-        let _ = std::fs::remove_file(&autosave);
+        let _ = std::fs::remove_file(autosave);
         return;
     }
     if let Some(dir) = autosave.parent()
@@ -1038,7 +1096,7 @@ fn write_autosave(ui: &Rc<Ui>) {
         return;
     }
     let text = sgf_text(ui);
-    if let Err(e) = std::fs::write(&autosave, text) {
+    if let Err(e) = std::fs::write(autosave, text) {
         tracing::warn!(%e, "could not write the autosave");
     }
 }
@@ -1062,9 +1120,10 @@ fn offer_restore(ui: &Rc<Ui>, autosave: PathBuf) {
         if response == "restore" {
             // Deliberately not remembered as the save target: it is not the user's file.
             load_sgf(&ui2, &autosave, false);
-        } else {
-            let _ = std::fs::remove_file(&autosave);
         }
+        // Answered either way, the crash leftover has served its purpose. The window's own
+        // autosave now holds the record.
+        let _ = std::fs::remove_file(&autosave);
     });
     dialog.present(Some(&ui.window));
 }
