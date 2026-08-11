@@ -8,11 +8,61 @@ use mirai_core::RuleSet;
 use mirai_engine::EngineTuning;
 use serde::{Deserialize, Serialize};
 
-/// Bundled KataGo shipped with LizzieYzy. Only ever used to seed a first-run profile;
-/// nothing in the code depends on it existing.
-const SEED_KATAGO: &str =
-    "/home/ykpcx/2026-04-26-linux64.with-katago/Lizzieyzy/engines/katago/linux-x64/katago";
-const SEED_MODEL: &str = "/home/ykpcx/2026-04-26-linux64.with-katago/Lizzieyzy/weights/default.bin.gz";
+/// Looks for a usable KataGo: the binary on `PATH`, then a network in the places one is
+/// conventionally kept. Both or nothing — a binary with no network cannot start.
+///
+/// This is a convenience for the first run only. Nothing depends on it succeeding, and a
+/// wrong guess costs the user one trip to Preferences, so the search stays shallow and
+/// never recurses into a user's home directory.
+fn discover_katago() -> Option<(PathBuf, PathBuf)> {
+    let katago = which("katago")?;
+    let bin_dir = katago.parent().unwrap_or(Path::new("."));
+    let mut dirs = vec![
+        bin_dir.to_path_buf(),
+        bin_dir.join("models"),
+        bin_dir.join("weights"),
+    ];
+    // A distro package puts the network beside its data, not its binary.
+    if let Some(prefix) = bin_dir.parent() {
+        dirs.push(prefix.join("share/katago"));
+    }
+    dirs.push(PathBuf::from("/usr/share/katago"));
+    // KataGo's own home directory, where `katago contribute` and the tuner write.
+    if let Some(dirs_) = directories::BaseDirs::new() {
+        dirs.push(dirs_.home_dir().join(".katago"));
+        dirs.push(dirs_.data_dir().join("katago"));
+    }
+    let model = dirs.iter().find_map(|d| newest_network(d))?;
+    Some((katago, model))
+}
+
+/// The first executable named `name` on `PATH`.
+fn which(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(name))
+        .find(|candidate| candidate.is_file())
+}
+
+/// The most recently modified `*.bin.gz` directly inside `dir`. KataGo networks are always
+/// named that way, and taking the newest means an upgraded network wins over the one it
+/// replaced without the user having to clean up.
+fn newest_network(dir: &Path) -> Option<PathBuf> {
+    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if !path.to_str().is_some_and(|s| s.ends_with(".bin.gz")) {
+            continue;
+        }
+        let Ok(modified) = entry.metadata().and_then(|m| m.modified()) else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|(best, _)| modified > *best) {
+            best = Some((modified, path));
+        }
+    }
+    best.map(|(_, path)| path)
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -271,16 +321,16 @@ impl Config {
         std::fs::write(path, text).map_err(|e| ConfigError::Io(path.to_path_buf(), e))
     }
 
-    /// A first-run configuration. If the bundled KataGo is present, seed a working local
-    /// profile from it; otherwise leave the profile list empty so the UI can prompt.
+    /// A first-run configuration: a working local profile if a KataGo installation can be
+    /// found, otherwise an empty profile list so the UI prompts for one.
     pub fn seeded() -> Config {
         let mut cfg = Config::default();
-        if Path::new(SEED_KATAGO).exists() && Path::new(SEED_MODEL).exists() {
+        if let Some((katago, model)) = discover_katago() {
             cfg.engine_profiles.push(EngineProfile {
                 name: "local-default".into(),
                 kind: ProfileKind::Local {
-                    katago: SEED_KATAGO.into(),
-                    model: SEED_MODEL.into(),
+                    katago,
+                    model,
                     // No analysis config and no tuning: mirai generates both.
                     config: None,
                     analysis_threads: None,
@@ -356,6 +406,35 @@ fn overlay(previous: &toml::Value, current: &toml::Value, file: &mut toml::Value
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// First-run discovery must pick a KataGo network and nothing else. Getting this wrong
+    /// seeds a profile that cannot start, and the failure surfaces as an engine error
+    /// rather than as the "no engine configured" prompt the user could act on.
+    #[test]
+    fn network_discovery_takes_the_newest_bin_gz_and_ignores_everything_else() {
+        let dir = std::env::temp_dir().join("mirai-discovery-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(newest_network(&dir), None, "an empty directory holds no network");
+
+        for name in ["analysis.cfg", "katago", "notes.bin.gz.txt", "model.bin.gz.tmp"] {
+            std::fs::write(dir.join(name), "x").unwrap();
+        }
+        assert_eq!(newest_network(&dir), None, "only *.bin.gz is a network");
+
+        std::fs::write(dir.join("old.bin.gz"), "x").unwrap();
+        // Second-resolution timestamps on some filesystems would otherwise tie.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        std::fs::write(dir.join("new.bin.gz"), "x").unwrap();
+        assert_eq!(
+            newest_network(&dir),
+            Some(dir.join("new.bin.gz")),
+            "an upgraded network must win over the one it replaced"
+        );
+
+        assert_eq!(newest_network(&dir.join("absent")), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// Two windows each hold the config they loaded. One changing a setting must not revert
     /// the other's change to a different setting — the defect that made the last window to

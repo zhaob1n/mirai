@@ -269,8 +269,9 @@ mapped — usually a too-short preceding `wait:`, or a modal that grabbed before
 Preconditions: a debug build, and an engine profile already in
 `~/.config/mirai/config.toml` — with none, `window::present` opens Preferences at startup and
 every action below lands on the wrong window. `Config::seeded` writes a working local profile
-on first run *if* the bundled KataGo and network exist at the paths its `SEED_*` constants
-name; otherwise configure one by hand once. A local KataGo takes ~6 s to load its net, which
+on first run if `discover_katago` finds both a `katago` on `PATH` and a `*.bin.gz` beside it
+or in one of the usual network directories; otherwise configure one by hand once, or put a
+symlink to each on `PATH`. A local KataGo takes ~6 s to load its net, which
 is why each first `wait:` is generous; toggling analysis before it is ready is safe, because
 `AppState::set_engine` calls `restart_analysis` when the engine lands.
 
@@ -612,7 +613,7 @@ Reported, not fixed.
 | Gap | Detail |
 |---|---|
 | **The SGF fixture is not in the repo** | `sgf.rs`'s `REAL_SGF` const is an absolute path under `/home/ykpcx/…`; the LizzieYzy test panics with `fixture` on any other machine, so the suite is not reproducible off this box. Vendoring the 25 765-byte file under `crates/mirai-core/tests/data/` and using `include_bytes!` would fix it |
-| **First-run seed paths are machine-specific** | `config.rs`'s `SEED_*` constants point at the same tree. Harmless — the code checks `exists()` — but a fresh checkout elsewhere always lands in Preferences |
+| **First-run discovery is best-effort** | `discover_katago` searches `PATH` and a handful of conventional network directories, one level deep. A KataGo installed somewhere else — the usual case for a downloaded release tree — still lands the user in Preferences. Deliberate: the alternative is walking the home directory |
 | **No end-to-end client↔server test** | `remote.rs` covers the pin store, backoff, engine selection and two failure paths. Nothing spawns a server on loopback and runs a real `Open`/`Report`/`Cancel` exchange, so the handshake and INV-3's remote half are hand-verified only. This is the largest gap; a `#[tokio::test]` with an in-process server and a stub `Engine` would close it without needing KataGo |
 | **No test for a changed fingerprint** | Pins round-trip, but nothing asserts that a *different* fingerprint is refused |
 | **`app.rs` tests cover only `SpeedMeter`** | `AppState` is the single source of truth (INV-7) and its property/signal wiring — precisely what the `explicit_notify` defect broke — is still uncovered. A display-free test could assert that every generated setter still emits `notify::` |

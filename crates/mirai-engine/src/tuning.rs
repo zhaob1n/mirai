@@ -12,6 +12,14 @@
 //! set of defaults, [`EngineTuning::default`]; nothing is detected or measured at runtime.
 //! They are a good starting point on a mid-range GPU, not an optimum for every machine,
 //! which is why every value is editable in Preferences.
+//!
+//! `nnCacheSizePowerOfTwo` is the one key set for a reason other than being required.
+//! KataGo's default *for the analysis engine* is 2^23, chosen for the batch-server use the
+//! engine was written for: the table is `2^N` entries that fill and then evict, at about
+//! 3 KiB each with ownership, so it settles around 24 GiB and costs 128 MiB of pointers
+//! before a single query. 2^20 — KataGo's own GTP default — settles around 3 GiB for
+//! 16 MiB of pointers, which is the right shape for a desktop sharing the machine. A cache
+//! miss only costs a re-evaluation.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -82,24 +90,18 @@ numSearchThreadsPerAnalysisThread = {}
 # Positions handed to the GPU in one batch. Wants to be at least the product above.
 nnMaxBatchSize = {}
 
-# Neural-net evaluation cache: 2^N entries of about 3 KiB each with ownership
-# included, so roughly {} MiB once warm.
+# Neural-net evaluation cache, a fixed-size table that fills and then evicts:
+# 2^N entries of about 3 KiB each with ownership included, so it settles at
+# roughly {} MiB. KataGo's own analysis default is 2^23, sized for a batch server
+# rather than a desktop, which would settle 8x higher.
 nnCacheSizePowerOfTwo = {}
-nnMutexPoolSizePowerOfTwo = {}
 ",
             self.analysis_threads,
             self.search_threads,
             self.nn_max_batch_size,
             self.cache_bytes() / (1024 * 1024),
             self.nn_cache_size_power_of_two,
-            self.mutex_pool_power(),
         )
-    }
-
-    /// The mutex pool only has to spread contention across the cache; KataGo's own configs
-    /// keep it a few powers below.
-    fn mutex_pool_power(&self) -> u8 {
-        self.nn_cache_size_power_of_two.saturating_sub(4).clamp(12, 17)
     }
 
     /// Writes the config into `dir` and returns its path.
@@ -142,7 +144,7 @@ mod tests {
         assert_eq!(t.analysis_threads, 4);
         assert_eq!(t.search_threads, 16);
         assert!(t.batch_covers_threads());
-        assert!(t.mutex_pool_power() < t.nn_cache_size_power_of_two);
+        assert!(t.nn_max_batch_size >= t.search_threads);
         // 2^20 entries at 3 KiB is 3 GiB: a desktop can spare it, and a cache miss only
         // costs a re-evaluation.
         assert_eq!(t.cache_bytes(), 3 * 1024 * 1024 * 1024);

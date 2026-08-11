@@ -481,10 +481,12 @@ Four pages. Every change is written to disk immediately; there is no Apply butto
 
 With **Managed by mirai**, `0` in any of those four rows means mirai's own default; with
 *Custom file* it means *keep what the file says*, and the row subtitles change to say so. The
-generated config sets only those four values, plus a mutex-pool size derived from the cache —
-everything else is KataGo's own default. KataGo refuses to start without
+generated config sets those four values and nothing else — everything else is KataGo's own
+default. Three of them are there because KataGo refuses to start without
 `numAnalysisThreads`, `numSearchThreadsPerAnalysisThread` and `nnMaxBatchSize`, which is why
-there is a file at all rather than a handful of command-line overrides.
+there is a file at all rather than a handful of command-line overrides. The cache is the
+exception: KataGo's own analysis-engine default is 2^23, meant for a server analysing games
+in bulk, and would settle around 24 GiB on a desktop.
 
 ### Analysis
 

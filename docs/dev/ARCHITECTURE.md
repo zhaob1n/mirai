@@ -101,8 +101,12 @@ uses that file as it stands.
   RX 6800: 1 → 4 analysis threads takes the cost of moving the cursor to another node from
   112 ms to 2.4 ms with no loss of single-position speed; 8 → 16 search threads is worth 14% on
   a single position, where 16 → 32 adds only 8% and worsens in-tree contention. A batch of 64
-  covers those 4 × 16 threads. `nnMutexPoolSizePowerOfTwo` is derived from the cache size and
-  never shown to the user.
+  covers those 4 × 16 threads. The cache is the one value set for a reason beyond being
+  required: KataGo's analysis default of 2^23 is sized for the batch server the engine was
+  written for, and settles near 24 GiB with ownership for 128 MiB of pointers up front.
+  2^20 — KataGo's GTP default — settles near 3 GiB for 16 MiB, and a miss only costs a
+  re-evaluation. `nnMutexPoolSizePowerOfTwo` is *not* set: its cost is a few MiB either way,
+  so there is nothing to gain by disagreeing with KataGo about it.
 - **Costs.** mirai owns a file on disk, in the profile's log directory. Its name carries the
   four values (`katago-analysis-a4-s16-b64-c20.cfg`), so profiles tuned differently cannot race
   each other through one path — engines start concurrently, one per window — while an identical
@@ -222,7 +226,7 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 | `src/query.rs` | KataGo analysis-engine query construction — the only place KataGo field names are written | `build_query`, `action_query`, `terminate_query` |
 | `src/decode.rs` | the only place KataGo JSON becomes a `Report`; classifies every stdout line | `RawResponse::classify`, `decode_report`, `RAW_VAR_TIME_SCALE` |
 | `src/local.rs` | one `katago analysis` subprocess: three tasks, id routing, startup handshake, shutdown | `LocalEngine::spawn`, `LocalEngineConfig`, private `Inner` (`cancel`, `handle`, `deliver`, `fail_all`), `write_lines`, `read_responses`, `drain_stderr`, `supervise`, `handshake`, `override_config` |
-| `src/tuning.rs` | the analysis config mirai writes for itself: the three required KataGo keys, one fixed set of defaults, everything else left to KataGo | `EngineTuning` (`analysis_threads`, `search_threads`, `nn_max_batch_size`, `nn_cache_size_power_of_two`; `Default`, `render`, `write_to` — rewrites only on change, `cache_bytes`, `batch_covers_threads`, the `MAX_*`/`*_CACHE_POWER` bounds), private `mutex_pool_power`, `CACHE_ENTRY_BYTES` |
+| `src/tuning.rs` | the analysis config mirai writes for itself: the three required KataGo keys plus the cache size, one fixed set of defaults, everything else left to KataGo | `EngineTuning` (`analysis_threads`, `search_threads`, `nn_max_batch_size`, `nn_cache_size_power_of_two`; `Default`, `render`, `write_to` — rewrites only on change, `cache_bytes`, `batch_covers_threads`, the `MAX_*`/`*_CACHE_POWER` bounds), `CACHE_ENTRY_BYTES` |
 | `src/remote.rs` | MRP/1 client: one background task owns the connection, control stream and subscription table | `RemoteEngine::connect`, `RemoteStatus`, `TofuStore`, private `run`, `serve`, `handle_cmd`, `handle_int`, `control_reader`, `uni_acceptor`, `sub_reader`, `reconnect`, `backoff` |
 | `examples/probe.rs` | CLI that drives either backend through the same trait and prints every report — the local-vs-remote comparison harness | `--katago/--model/--config` or `--remote/--token` |
 
