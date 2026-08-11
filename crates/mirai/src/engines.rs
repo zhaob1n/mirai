@@ -143,14 +143,37 @@ async fn start(
 async fn build(profile: EngineProfile, log_dir: PathBuf) -> Result<Built, EngineError> {
     match profile.kind {
         ProfileKind::Local {
-            katago,
-            model,
-            config,
+            ref katago,
+            ref model,
+            ref config,
             analysis_threads,
             search_threads,
+            ..
         } => {
-            let mut cfg =
-                mirai_engine::LocalEngineConfig::new(profile.name.clone(), katago, model, config);
+            // A custom config is the user's file, used as it stands with only the two
+            // thread values overridable; otherwise mirai writes one next to the logs.
+            let (config, analysis_threads, search_threads) = match config {
+                Some(path) => (path.clone(), analysis_threads, search_threads),
+                None => {
+                    let tuning = profile.kind.tuning();
+                    let path = tuning.write_to(&log_dir).map_err(|e| {
+                        EngineError::Startup(format!(
+                            "could not write the analysis config into {}: {e}",
+                            log_dir.display()
+                        ))
+                    })?;
+                    // The generated file already carries them; passing them again would
+                    // only make the two sources of truth able to disagree.
+                    (path, None, None)
+                }
+            };
+
+            let mut cfg = mirai_engine::LocalEngineConfig::new(
+                profile.name.clone(),
+                katago.clone(),
+                model.clone(),
+                config,
+            );
             cfg.log_dir = log_dir;
             cfg.analysis_threads = analysis_threads;
             cfg.search_threads = search_threads;
@@ -196,9 +219,11 @@ mod tests {
             kind: ProfileKind::Local {
                 katago: PathBuf::from("/opt/katago"),
                 model: PathBuf::from("/opt/net.bin.gz"),
-                config: PathBuf::from("/opt/analysis.cfg"),
+                config: None,
                 analysis_threads: Some(2),
                 search_threads: threads,
+                nn_max_batch_size: None,
+                nn_cache_size_power_of_two: None,
             },
         }
     }

@@ -171,16 +171,14 @@ fn activate(app: &adw::Application, full: &str, arg: Option<&str>) -> bool {
     }
 }
 
-/// Activates the first `gtk::Button` whose label contains `needle`, searching the whole
+/// Activates the first `gtk::Button` whose text contains `needle`, searching the whole
 /// widget tree under the active window. A presented `adw::Dialog` is a descendant of the
 /// window, so this reaches dialog buttons too.
 fn press(app: &adw::Application, needle: &str) -> bool {
     fn walk(w: &gtk::Widget, needle: &str) -> bool {
         if w.is_visible()
             && let Some(button) = w.downcast_ref::<gtk::Button>()
-            && button
-                .label()
-                .is_some_and(|l| l.replace('_', "").contains(needle))
+            && button_text(button).is_some_and(|l| l.replace('_', "").contains(needle))
         {
             button.emit_clicked();
             return true;
@@ -198,6 +196,31 @@ fn press(app: &adw::Application, needle: &str) -> bool {
         Some(w) => walk(w.upcast_ref::<gtk::Widget>(), needle),
         None => false,
     }
+}
+
+/// A button's user-visible text. `GtkButton:label` is empty whenever the button holds a
+/// child widget instead — an `adw::ButtonContent`, for one — so fall back to the first
+/// label in its subtree, and then to the tooltip, which is the only text an icon-only
+/// button ever shows.
+fn button_text(button: &gtk::Button) -> Option<String> {
+    fn first_label(w: &gtk::Widget) -> Option<String> {
+        if let Some(label) = w.downcast_ref::<gtk::Label>() {
+            return Some(label.text().to_string());
+        }
+        let mut child = w.first_child();
+        while let Some(c) = child {
+            if let Some(text) = first_label(&c) {
+                return Some(text);
+            }
+            child = c.next_sibling();
+        }
+        None
+    }
+    button
+        .label()
+        .map(|l| l.to_string())
+        .or_else(|| button.child().and_then(|c| first_label(&c)))
+        .or_else(|| button.tooltip_text().map(|t| t.to_string()))
 }
 
 /// Renders the active window through its live `gsk` renderer and writes a PNG.

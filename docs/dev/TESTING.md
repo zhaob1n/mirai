@@ -55,9 +55,10 @@ the rest defend the surrounding behaviour and are named so you can find them.
 | `decode.rs` | INV-1 at the decode boundary; candidates in KataGo's `order` with Black-perspective values; policy has a pass slot and `POLICY_ILLEGAL` markers; malformed output errors instead of panicking | **`ownership_keeps_katago_row_major_top_left_order`** (the unit-test counterpart of recipe (b)), **`decodes_a_report_in_order_with_black_perspective_values`** |
 | `local.rs` | INV-2 at the source; unset tuning is omitted rather than overriding the user's `analysis.cfg`; a comma in a path is a startup error because KataGo splits `-override-config` on commas | **`overrides_always_pin_the_reporting_perspective_and_logging`**, `a_comma_in_a_path_is_reported_rather_than_silently_truncated` |
 | `remote.rs` | Pin storage, reconnect backoff cap, engine-name resolution, and that a dead address fails instead of hanging | `tofu_store_round_trips_pins`, `connect_to_a_dead_port_never_succeeds` |
+| `tuning.rs` | The generated analysis config: KataGo refuses to start unless `numAnalysisThreads`, `numSearchThreadsPerAnalysisThread` and `nnMaxBatchSize` are all present, so the rendered file must carry every one of them; the batch must cover the thread product; rewriting an unchanged file would churn a config two windows share | **`the_rendered_config_carries_every_key_katago_demands`**, **`writing_is_idempotent_so_shared_engines_do_not_churn`**, `the_defaults_are_internally_consistent`, `a_batch_smaller_than_the_thread_product_is_reported` |
 | **mirai-server** | | |
 | `main.rs` | Token shape and entropy; the cert carries the names a client will dial; the CLI does not drift from the docs | `a_generated_token_is_64_lowercase_hex_characters`, `the_cli_matches_the_documented_flags` |
-| `config.rs` | A misspelled key is an error, never silently ignored; relative paths resolve against the config directory so a config plus its cert moves as a unit; `server.example.toml` stays parseable | **`typos_and_duplicates_are_rejected_rather_than_silently_ignored`**, `relative_paths_resolve_against_the_config_directory`, `the_documented_minimal_example_parses` |
+| `config.rs` | A misspelled key is an error, never silently ignored; relative paths resolve against the config directory so a config plus its cert moves as a unit; an engine with no `config` file gets a generated one; `server.example.toml` stays parseable | **`typos_and_duplicates_are_rejected_rather_than_silently_ignored`**, `relative_paths_resolve_against_the_config_directory`, `an_engine_without_a_config_file_gets_a_generated_one`, `the_documented_minimal_example_parses` |
 | `session.rs` | Exact-match auth, and no `[[token]]` means reject everyone rather than admit everyone; the zero-copy send path is byte-identical to what a client decodes; a client cannot escalate its own priority | **`authentication_accepts_only_an_exact_token`**, **`sub_msg_ref_is_byte_identical_to_sub_msg`**, `priority_is_clamped_into_the_served_band` |
 | **mirai (GUI)** — display-free logic only; everything visual is section 5 | | |
 | `config.rs` | A missing file is a first run, a corrupt one is an error; a TOFU pin can never land on a local profile; a save keeps the keys another window changed meanwhile, but a profile this window deleted really goes | `missing_file_yields_a_seeded_config_not_an_error`, `pins_are_recorded_on_remote_profiles_only`, **`a_save_keeps_another_windows_edit`**, `a_removed_profile_is_removed_from_the_file` |
@@ -166,8 +167,9 @@ printf '%s\n' '{"id":"gt","boardXSize":19,"boardYSize":19,"rules":"chinese","kom
 ## 5. Testing the GUI
 
 Everything below is derived from `crates/mirai/src/harness.rs`, `window.rs` and `main.rs`.
-**The recipes were not executed while writing this document**; treat the `wait:` values as
-starting points and read the harness's stderr trace to see what actually happened.
+**The recipes were not executed while writing this document** — except (g), whose command and
+output below are transcribed from a real run; treat the other `wait:` values as starting
+points and read the harness's stderr trace to see what actually happened.
 
 ### Why external capture does not work
 
@@ -212,8 +214,12 @@ the prefix through the widget's action muxer. `action:win.toggle-analysis` there
 feature code. Names beginning `app.` are routed to the `adw::Application` instead.
 
 Dialogs are not action-driven, so `harness::press` walks the widget tree from the window root
-and clicks the first **visible** `gtk::Button` whose label contains the needle; a presented
-`adw::Dialog` is a descendant of the window, so this reaches dialog buttons. Three traps:
+and clicks the first **visible** `gtk::Button` matching the needle. Three things are tried per
+button, in order: `GtkButton:label`; the first `gtk::Label` in its subtree, which is how an
+`adw::ButtonContent` child is matched; then `tooltip_text`, which is how an icon-only button
+with no label at all is reached — `press:Edit this profile` in Preferences works on the tooltip.
+A presented `adw::Dialog` is a descendant of the window, so this reaches dialog buttons too.
+Three traps:
 
 - Mnemonic underscores are stripped before matching (`press:Save` matches `_Save`).
 - Substring match, depth-first from the window root: the first hit wins. `press:New game`
@@ -414,6 +420,31 @@ sleep 10; pgrep -f 'linux-x64/katago analysis' | wc -l   # still 1
 sleep 30; ls "$XDG_DATA_HOME/mirai"                 # two autosave-… files: two live windows
 ```
 
+**(g) The local-engine editor in Preferences — managed and custom analysis config.** *This
+recipe was executed; the trace below is its real output.* The icon button on a profile row is
+matched by its tooltip, so the editor page is drivable.
+
+```sh
+s=/tmp/mirai-ui; mkdir -p "$s/config/mirai"
+# one local profile in config.toml, carrying only the katago and model paths
+XDG_CONFIG_HOME="$s/config" XDG_DATA_HOME="$s/data" \
+  MIRAI_HARNESS="wait:4000,action:win.preferences,wait:1000,press:Edit this profile,wait:1200,shot:/tmp/ui-managed.png,quit" \
+  ./target/debug/mirai
+```
+
+```text
+harness: press "Edit this profile" -> ok
+harness: wrote /tmp/ui-managed.png
+```
+
+| Profile in `config.toml` | What the PNG must show |
+|---|---|
+| No `config` key (mirai generates the analysis config) | The KataGo group has exactly two rows, binary and model. Configuration shows `Managed by mirai` and no file row. Search has two rows whose subtitles read `0 uses mirai's default (4)` and `0 uses mirai's default (16)`. Batching and memory is visible |
+| `config = "…"` (a custom file) | Same command, Custom mode: the file row is visible, the whole Batching and memory group is hidden, and the Search subtitles change to `0 keeps the value from your analysis config` |
+
+Use short paths — a symlink under `/tmp` for the KataGo binary and network — or the rows grow
+wide enough that the page no longer fits in the captured window.
+
 ### Drivable action names
 
 All installed in `window::install_actions`, all reachable as `action:<name>`; the keyboard
@@ -429,8 +460,9 @@ win.set-engine=<profile name>        (stateful, takes a string argument)
 window.close                         (GTK built-in; the only way to trigger teardown)
 ```
 
-`win.open`, `win.save-as` and `win.preferences` open dialogs the harness cannot fill in —
-pass the SGF on the command line instead of driving `win.open`.
+`win.open` and `win.save-as` open file choosers the harness cannot fill in — pass the SGF on
+the command line instead of driving `win.open`. `win.preferences` *is* drivable: its rows are
+ordinary buttons, so `press:` reaches them (recipe (g)).
 
 ## 6. Verifying the remote path
 
@@ -564,6 +596,7 @@ cargo doc --workspace --no-deps            # catches broken intra-doc links
 | Anything drawn | At least one harness recipe, and actually look at the PNG. Recipe (b) for anything touching `Point`, ownership or policy |
 | Signals, properties, `Rc` capture, teardown | Recipe (e): `exit=0`, both files written, no orphaned `katago` |
 | A new `GAction` or accelerator | Drive it once through `action:` and confirm `-> ok`, not `MISSING` |
+| Engine config generation (`tuning.rs`, `engines.rs`) or the local-engine page in `prefs.rs` | Recipe (g) in both modes, and look at both PNGs: managed hides the file row and shows Batching and memory, custom does the opposite |
 
 - [ ] Every new file carries the `SPDX-License-Identifier: GPL-3.0-or-later` header.
 - [ ] No `GDK_BACKEND` anywhere in the tree.

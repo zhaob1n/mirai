@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use mirai_core::RuleSet;
+use mirai_engine::EngineTuning;
 use serde::{Deserialize, Serialize};
 
 /// Bundled KataGo shipped with LizzieYzy. Only ever used to seed a first-run profile;
@@ -12,8 +13,6 @@ use serde::{Deserialize, Serialize};
 const SEED_KATAGO: &str =
     "/home/ykpcx/2026-04-26-linux64.with-katago/Lizzieyzy/engines/katago/linux-x64/katago";
 const SEED_MODEL: &str = "/home/ykpcx/2026-04-26-linux64.with-katago/Lizzieyzy/weights/default.bin.gz";
-const SEED_CONFIG: &str =
-    "/home/ykpcx/2026-04-26-linux64.with-katago/Lizzieyzy/engines/katago/configs/analysis.cfg";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -33,11 +32,24 @@ pub enum ProfileKind {
     Local {
         katago: PathBuf,
         model: PathBuf,
-        config: PathBuf,
+        /// A KataGo analysis config to use instead of the one mirai generates. `None` —
+        /// the default — means mirai writes the config itself from the tuning below.
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        config: Option<PathBuf>,
+        /// `numAnalysisThreads`. `None` means mirai's default with a generated config, or
+        /// whatever the file says with a custom one.
         #[serde(skip_serializing_if = "Option::is_none", default)]
         analysis_threads: Option<u16>,
+        /// `numSearchThreadsPerAnalysisThread`, same rule.
         #[serde(skip_serializing_if = "Option::is_none", default)]
         search_threads: Option<u16>,
+        /// `nnMaxBatchSize`, same rule. Ignored when `config` is set: a custom file has to
+        /// carry this key anyway, since KataGo will not start without it.
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        nn_max_batch_size: Option<u16>,
+        /// `nnCacheSizePowerOfTwo`, same rule.
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        nn_cache_size_power_of_two: Option<u8>,
     },
     Remote {
         url: String,
@@ -48,6 +60,34 @@ pub enum ProfileKind {
         #[serde(skip_serializing_if = "Option::is_none", default)]
         cert_sha256: Option<String>,
     },
+}
+
+impl ProfileKind {
+    /// The tuning a local profile runs with: mirai's defaults, with whatever the user
+    /// changed in Preferences applied over them.
+    ///
+    /// Meaningful only for a profile with no custom `config`; with one, KataGo reads the
+    /// user's file and only the two thread values are passed as overrides.
+    pub fn tuning(&self) -> EngineTuning {
+        let base = EngineTuning::default();
+        let ProfileKind::Local {
+            analysis_threads,
+            search_threads,
+            nn_max_batch_size,
+            nn_cache_size_power_of_two,
+            ..
+        } = self
+        else {
+            return base;
+        };
+        EngineTuning {
+            analysis_threads: analysis_threads.unwrap_or(base.analysis_threads),
+            search_threads: search_threads.unwrap_or(base.search_threads),
+            nn_max_batch_size: nn_max_batch_size.unwrap_or(base.nn_max_batch_size),
+            nn_cache_size_power_of_two: nn_cache_size_power_of_two
+                .unwrap_or(base.nn_cache_size_power_of_two),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -241,9 +281,12 @@ impl Config {
                 kind: ProfileKind::Local {
                     katago: SEED_KATAGO.into(),
                     model: SEED_MODEL.into(),
-                    config: SEED_CONFIG.into(),
-                    analysis_threads: Some(2),
-                    search_threads: Some(16),
+                    // No analysis config and no tuning: mirai generates both.
+                    config: None,
+                    analysis_threads: None,
+                    search_threads: None,
+                    nn_max_batch_size: None,
+                    nn_cache_size_power_of_two: None,
                 },
             });
             cfg.active_engine = Some("local-default".into());
@@ -382,9 +425,11 @@ mod tests {
                     kind: ProfileKind::Local {
                         katago: "/opt/katago".into(),
                         model: "/opt/model.bin.gz".into(),
-                        config: "/opt/analysis.cfg".into(),
+                        config: Some("/opt/analysis.cfg".into()),
                         analysis_threads: Some(2),
                         search_threads: Some(16),
+                        nn_max_batch_size: None,
+                        nn_cache_size_power_of_two: None,
                     },
                 },
                 EngineProfile {

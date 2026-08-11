@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, bail};
-use mirai_engine::LocalEngineConfig;
+use mirai_engine::{EngineTuning, LocalEngineConfig};
 use serde::Deserialize;
 
 pub const DEFAULT_LISTEN: &str = "0.0.0.0:9678";
@@ -26,7 +26,7 @@ key    = "key.pem"
 name   = "default"
 katago = "/path/to/katago"
 model  = "/path/to/model.bin.gz"
-config = "/path/to/analysis.cfg"
+# config = "/path/to/analysis.cfg"   # omit to let mirai generate one
 
 [[token]]
 value = "<64 hex chars from `mirai-server --generate-token`>"
@@ -57,13 +57,17 @@ pub struct EngineCfg {
     pub name: String,
     pub katago: PathBuf,
     pub model: PathBuf,
-    pub config: PathBuf,
+    /// A KataGo analysis config. Omit it and the server writes one into `log_dir` from
+    /// the tuning below, the same file the desktop application generates.
+    pub config: Option<PathBuf>,
     /// KataGo's `logDir`. Defaults to the temp directory.
     pub log_dir: Option<PathBuf>,
     /// `numAnalysisThreads` — how many positions this engine searches at once.
     pub analysis_threads: Option<u16>,
     /// `numSearchThreadsPerAnalysisThread`.
     pub search_threads: Option<u16>,
+    /// `nnMaxBatchSize`. Only used when `config` is omitted; a custom file must set it.
+    pub nn_max_batch_size: Option<u16>,
     /// `nnCacheSizePowerOfTwo`.
     pub nn_cache_size_power_of_two: Option<u8>,
     /// How long to wait for the version/model handshake. First-run OpenCL tuning is slow;
@@ -118,7 +122,9 @@ impl ServerConfig {
         for e in &mut self.engines {
             rebase(base, &mut e.katago);
             rebase(base, &mut e.model);
-            rebase(base, &mut e.config);
+            if let Some(config) = &mut e.config {
+                rebase(base, config);
+            }
             if let Some(dir) = &mut e.log_dir {
                 rebase(base, dir);
             }
@@ -150,23 +156,50 @@ impl ServerConfig {
 }
 
 impl EngineCfg {
-    pub fn to_local_config(&self) -> LocalEngineConfig {
+    pub fn to_local_config(&self) -> anyhow::Result<LocalEngineConfig> {
+        let log_dir = self
+            .log_dir
+            .clone()
+            .unwrap_or_else(|| std::env::temp_dir().join("mirai-katago-logs"));
+        // No config file given: write the one mirai would generate, with this block's
+        // tuning applied over the defaults.
+        let config = match &self.config {
+            Some(path) => path.clone(),
+            None => {
+                let base = EngineTuning::default();
+                EngineTuning {
+                    analysis_threads: self.analysis_threads.unwrap_or(base.analysis_threads),
+                    search_threads: self.search_threads.unwrap_or(base.search_threads),
+                    nn_max_batch_size: self.nn_max_batch_size.unwrap_or(base.nn_max_batch_size),
+                    nn_cache_size_power_of_two: self
+                        .nn_cache_size_power_of_two
+                        .unwrap_or(base.nn_cache_size_power_of_two),
+                }
+                .write_to(&log_dir)
+                .with_context(|| {
+                    format!("writing the analysis config into {}", log_dir.display())
+                })?
+            }
+        };
+
         let mut lc = LocalEngineConfig::new(
             self.name.clone(),
             self.katago.clone(),
             self.model.clone(),
-            self.config.clone(),
+            config,
         );
-        if let Some(dir) = &self.log_dir {
-            lc.log_dir = dir.clone();
+        lc.log_dir = log_dir;
+        // With a generated config these are already in the file; passing them again would
+        // give the same value two sources of truth.
+        if self.config.is_some() {
+            lc.analysis_threads = self.analysis_threads;
+            lc.search_threads = self.search_threads;
+            lc.nn_cache_size_power_of_two = self.nn_cache_size_power_of_two;
         }
-        lc.analysis_threads = self.analysis_threads;
-        lc.search_threads = self.search_threads;
-        lc.nn_cache_size_power_of_two = self.nn_cache_size_power_of_two;
         if let Some(s) = self.startup_timeout_s {
             lc.startup_timeout = Duration::from_secs(s);
         }
-        lc
+        Ok(lc)
     }
 }
 
@@ -209,7 +242,6 @@ mod tests {
         name = "human"
         katago = "/usr/bin/katago"
         model = "/models/human.bin.gz"
-        config = "/etc/katago/analysis.cfg"
 
         [[token]]
         value = "aa"
@@ -231,7 +263,10 @@ mod tests {
         // Absolute paths are left alone.
         assert_eq!(cfg.key, Path::new("/etc/mirai/key.pem"));
         assert_eq!(cfg.engines[0].katago, Path::new("/srv/mirai/bin/katago"));
-        assert_eq!(cfg.engines[0].config, Path::new("/srv/mirai/analysis.cfg"));
+        assert_eq!(
+            cfg.engines[0].config.as_deref(),
+            Some(Path::new("/srv/mirai/analysis.cfg"))
+        );
         assert_eq!(cfg.engines[1].katago, Path::new("/usr/bin/katago"));
     }
 
@@ -241,11 +276,35 @@ mod tests {
         assert_eq!(cfg.engines.len(), 2);
         // `Open { engine: None }` must pick the first block in file order.
         assert_eq!(cfg.engines[0].name, "default");
-        let lc = cfg.engines[0].to_local_config();
+        let lc = cfg.engines[0].to_local_config().unwrap();
         assert_eq!(lc.analysis_threads, Some(4));
         assert_eq!(lc.search_threads, Some(8));
-        let lc = cfg.engines[1].to_local_config();
-        assert_eq!(lc.analysis_threads, None);
+    }
+
+    /// An engine block with no `config` gets the file mirai generates, and the tuning
+    /// lands in that file rather than being passed twice.
+    #[test]
+    fn an_engine_without_a_config_file_gets_a_generated_one() {
+        let dir = std::env::temp_dir().join("mirai-server-generated-cfg-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        let text = format!(
+            "[[engine]]\nname = \"gen\"\nkatago = \"/usr/bin/katago\"\n\
+             model = \"/models/b18.bin.gz\"\nlog_dir = {:?}\nsearch_threads = 12\n",
+            dir.display().to_string()
+        );
+        let cfg = parse(&text).unwrap();
+        assert!(cfg.engines[0].config.is_none());
+
+        let lc = cfg.engines[0].to_local_config().unwrap();
+        let written = std::fs::read_to_string(&lc.config).expect("the config was written");
+        assert!(written.contains("numSearchThreadsPerAnalysisThread = 12"));
+        assert!(written.contains("nnMaxBatchSize"), "katago requires this key");
+        assert_eq!(
+            (lc.analysis_threads, lc.search_threads),
+            (None, None),
+            "a generated config is the only source of truth for its own keys"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

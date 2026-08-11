@@ -17,6 +17,7 @@ use mirai_core::RuleSet;
 
 use crate::app::{AppState, signal};
 use crate::config::{EngineProfile, ProfileKind, StrengthSetting};
+use mirai_engine::EngineTuning;
 
 /// Builds and presents the preferences dialog.
 pub fn present(parent: &impl IsA<gtk::Widget>, state: &AppState) {
@@ -96,14 +97,24 @@ fn engines_page(dialog: &adw::PreferencesDialog, state: &AppState) -> adw::Prefe
         .halign(gtk::Align::Center)
         .build();
 
+    // `gtk::Button` carries either a label or an icon, never both — setting `icon_name`
+    // drops the label, leaving two unexplained icons. `adw::ButtonContent` shows both.
     let add_local = gtk::Button::builder()
-        .label("Add local…")
-        .icon_name("list-add-symbolic")
+        .child(
+            &adw::ButtonContent::builder()
+                .icon_name("list-add-symbolic")
+                .label("Add local…")
+                .build(),
+        )
         .build();
     add_local.add_css_class("pill");
     let add_remote = gtk::Button::builder()
-        .label("Add remote…")
-        .icon_name("network-server-symbolic")
+        .child(
+            &adw::ButtonContent::builder()
+                .icon_name("network-server-symbolic")
+                .label("Add remote…")
+                .build(),
+        )
         .build();
     add_remote.add_css_class("pill");
     row.append(&add_local);
@@ -427,18 +438,36 @@ fn path_subtitle(path: &Path) -> String {
     }
 }
 
-/// `0` means "leave it to the analysis config file".
-fn thread_row(title: &str, value: Option<u16>, max: f64) -> adw::SpinRow {
+/// `0` means "use the default": mirai's own when it generates the analysis config, or
+/// whatever the file says when the user supplies one.
+fn tuned_row(title: &str, subtitle: &str, value: u32, max: f64) -> adw::SpinRow {
     let row = adw::SpinRow::with_range(0.0, max, 1.0);
     row.set_title(title);
-    row.set_subtitle("0 keeps the value from the analysis config");
-    row.set_value(value.unwrap_or(0) as f64);
+    row.set_subtitle(subtitle);
+    row.set_value(value as f64);
     row
 }
 
 fn spin_value_u16(row: &adw::SpinRow) -> Option<u16> {
     let v = row.value() as u16;
     (v > 0).then_some(v)
+}
+
+fn spin_value_u8(row: &adw::SpinRow) -> Option<u8> {
+    let v = row.value() as u8;
+    (v > 0).then_some(v)
+}
+
+/// KataGo's own estimate is about 3 KiB per cached evaluation once ownership is included,
+/// and mirai asks for ownership on nearly every query.
+fn cache_subtitle(power: u8) -> String {
+    if power == 0 {
+        return format!(
+            "0 uses mirai's default ({})",
+            EngineTuning::default().nn_cache_size_power_of_two
+        );
+    }
+    format!("2^{power} evaluations, roughly {} MiB once warm", (3u64 << power) / 1024)
 }
 
 fn local_editor(
@@ -448,16 +477,29 @@ fn local_editor(
     existing: Option<EngineProfile>,
 ) -> adw::NavigationPage {
     let editing = existing.as_ref().map(|p| p.name.clone());
-    let (katago, model, config, analysis_threads, search_threads) = match existing.map(|p| p.kind) {
-        Some(ProfileKind::Local {
-            katago,
-            model,
-            config,
-            analysis_threads,
-            search_threads,
-        }) => (katago, model, config, analysis_threads, search_threads),
-        _ => (PathBuf::new(), PathBuf::new(), PathBuf::new(), None, None),
-    };
+    let defaults = EngineTuning::default();
+    let (katago, model, config, analysis_threads, search_threads, batch, cache) =
+        match existing.map(|p| p.kind) {
+            Some(ProfileKind::Local {
+                katago,
+                model,
+                config,
+                analysis_threads,
+                search_threads,
+                nn_max_batch_size,
+                nn_cache_size_power_of_two,
+            }) => (
+                katago,
+                model,
+                config,
+                analysis_threads,
+                search_threads,
+                nn_max_batch_size,
+                nn_cache_size_power_of_two,
+            ),
+            _ => (PathBuf::new(), PathBuf::new(), None, None, None, None, None),
+        };
+    let custom = config.is_some();
 
     let editor = editor_shell(if editing.is_some() {
         "Edit local engine"
@@ -473,22 +515,109 @@ fn local_editor(
 
     let paths = adw::PreferencesGroup::builder()
         .title("KataGo")
-        .description("All three must exist before the profile can be saved.")
+        .description("Both must exist before the profile can be saved.")
         .build();
     let (katago_row, katago_path) = file_row("KataGo binary", katago, dialog);
     let (model_row, model_path) = file_row("Neural network model", model, dialog);
-    let (config_row, config_path) = file_row("Analysis config", config, dialog);
     paths.add(&katago_row);
     paths.add(&model_row);
-    paths.add(&config_row);
     editor.content.add(&paths);
 
-    let tuning = adw::PreferencesGroup::builder().title("Tuning").build();
-    let analysis_row = thread_row("Analysis threads", analysis_threads, 64.0);
-    let search_row = thread_row("Search threads", search_threads, 256.0);
-    tuning.add(&analysis_row);
-    tuning.add(&search_row);
-    editor.content.add(&tuning);
+    // KataGo will not start without a `-config`, but mirai can write that file itself —
+    // it needs three keys the user has no reason to care about. A custom file stays
+    // available for anyone who does.
+    let source = adw::PreferencesGroup::builder().title("Configuration").build();
+    let mode = adw::ComboRow::builder()
+        .title("Analysis config")
+        .model(&gtk::StringList::new(&[
+            "Managed by mirai",
+            "Custom file",
+        ]))
+        .selected(u32::from(custom))
+        .build();
+    let (config_row, config_path) =
+        file_row("Custom analysis config", config.unwrap_or_default(), dialog);
+    source.add(&mode);
+    source.add(&config_row);
+    editor.content.add(&source);
+
+    let threads = adw::PreferencesGroup::builder().title("Search").build();
+    let analysis_row = tuned_row(
+        "Positions in parallel",
+        "",
+        u32::from(analysis_threads.unwrap_or(0)),
+        f64::from(EngineTuning::MAX_ANALYSIS_THREADS),
+    );
+    let search_row = tuned_row(
+        "Threads per position",
+        "",
+        u32::from(search_threads.unwrap_or(0)),
+        f64::from(EngineTuning::MAX_SEARCH_THREADS),
+    );
+    threads.add(&analysis_row);
+    threads.add(&search_row);
+    editor.content.add(&threads);
+
+    // A custom file has to carry these two itself — KataGo will not start without
+    // `nnMaxBatchSize` — so there is nothing for mirai to override.
+    let memory = adw::PreferencesGroup::builder()
+        .title("Batching and memory")
+        .build();
+    let batch_row = tuned_row(
+        "GPU batch size",
+        &format!(
+            "nnMaxBatchSize — 0 uses mirai's default ({}). Wants to be at least positions × threads.",
+            defaults.nn_max_batch_size
+        ),
+        u32::from(batch.unwrap_or(0)),
+        f64::from(EngineTuning::MAX_BATCH_SIZE),
+    );
+    let cache_row = tuned_row(
+        "Neural-net cache",
+        &cache_subtitle(cache.unwrap_or(0)),
+        u32::from(cache.unwrap_or(0)),
+        f64::from(EngineTuning::MAX_CACHE_POWER),
+    );
+    cache_row.connect_value_notify(|row| {
+        row.set_subtitle(&cache_subtitle(row.value() as u8));
+    });
+    memory.add(&batch_row);
+    memory.add(&cache_row);
+    editor.content.add(&memory);
+
+    // What `0` falls back to depends on who owns the config file, so say which.
+    let apply_mode = {
+        let config_row = config_row.clone();
+        let memory = memory.clone();
+        let analysis_row = analysis_row.clone();
+        let search_row = search_row.clone();
+        move |custom: bool| {
+            config_row.set_visible(custom);
+            memory.set_visible(!custom);
+            let (analysis, search) = if custom {
+                (
+                    "numAnalysisThreads — 0 keeps the value from your analysis config".to_string(),
+                    "numSearchThreadsPerAnalysisThread — 0 keeps the value from your analysis config"
+                        .to_string(),
+                )
+            } else {
+                (
+                    format!(
+                        "numAnalysisThreads — 0 uses mirai's default ({})",
+                        defaults.analysis_threads
+                    ),
+                    format!(
+                        "numSearchThreadsPerAnalysisThread — 0 uses mirai's default ({})",
+                        defaults.search_threads
+                    ),
+                )
+            };
+            analysis_row.set_subtitle(&analysis);
+            search_row.set_subtitle(&search);
+        }
+    };
+    apply_mode(custom);
+    mode.connect_selected_notify(move |row| apply_mode(row.selected() == 1));
 
     let save_state = state.clone();
     let banner = editor.banner.clone();
@@ -501,17 +630,19 @@ fn local_editor(
             let name = name_row.text().trim().to_string();
             let katago = katago_path.borrow().clone();
             let model = model_path.borrow().clone();
-            let config = config_path.borrow().clone();
+            let custom = mode.selected() == 1;
+            let config = custom.then(|| config_path.borrow().clone());
 
             if let Err(message) = check_name(&save_state, &name, editing.as_deref()) {
                 complain(&banner, message);
                 return;
             }
-            for (label, path) in [
-                ("KataGo binary", &katago),
-                ("neural network model", &model),
-                ("analysis config", &config),
-            ] {
+            let required = [
+                ("KataGo binary", Some(&katago)),
+                ("neural network model", Some(&model)),
+                ("analysis config", config.as_ref()),
+            ];
+            for (label, path) in required.into_iter().filter_map(|(l, p)| p.map(|p| (l, p))) {
                 if path.as_os_str().is_empty() {
                     complain(&banner, format!("Choose the {label}."));
                     return;
@@ -530,6 +661,10 @@ fn local_editor(
                     config,
                     analysis_threads: spin_value_u16(&analysis_row),
                     search_threads: spin_value_u16(&search_row),
+                    nn_max_batch_size: (!custom).then(|| spin_value_u16(&batch_row)).flatten(),
+                    nn_cache_size_power_of_two: (!custom)
+                        .then(|| spin_value_u8(&cache_row))
+                        .flatten(),
                 },
             };
             commit_profile(&save_state, profile, editing.as_deref());
