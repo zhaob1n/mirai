@@ -13,10 +13,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use mirai_core::Size;
 use mirai_engine::{Engine, SubEvent, Subscription};
 use mirai_proto::frame::{self, FrameBuf, FrameError};
 use mirai_proto::msg::{ClientMsg, ErrCode, ServerMsg};
-use mirai_proto::types::{EngineDesc, PROTO_VERSION, Report};
+use mirai_proto::types::{AnalyzeReq, EngineDesc, PROTO_VERSION, Report};
 use quinn::{Connection, SendStream, VarInt};
 use serde::Serialize;
 use subtle::ConstantTimeEq;
@@ -78,6 +79,32 @@ impl Host {
     pub fn describe(&self) -> Vec<EngineDesc> {
         self.engines.iter().map(|e| e.engine.describe()).collect()
     }
+}
+
+fn request_geometry_error(req: &AnalyzeReq) -> Option<&'static str> {
+    if Size::new(req.size.w, req.size.h).is_none() {
+        return Some("board size is outside 2..=19");
+    }
+
+    if req
+        .moves
+        .iter()
+        .chain(&req.initial_stones)
+        .any(|&(_, point)| !point.is_pass() && !req.size.contains(point))
+    {
+        return Some("a move or initial stone is off the board");
+    }
+
+    if req
+        .avoid
+        .iter()
+        .flat_map(|spec| &spec.moves)
+        .any(|&point| !point.is_pass() && !req.size.contains(point))
+    {
+        return Some("an avoid move is off the board");
+    }
+
+    None
 }
 
 /// Borrowed mirror of [`mirai_proto::msg::SubMsg`].
@@ -247,6 +274,18 @@ async fn session_loop(host: &Host, conn: &Connection, session: u64) -> anyhow::R
                     continue;
                 };
 
+                if let Some(msg) = request_geometry_error(&req) {
+                    error_msg(
+                        &mut tx,
+                        &mut wbuf,
+                        Some(sub),
+                        ErrCode::BadRequest,
+                        msg,
+                    )
+                    .await?;
+                    continue;
+                }
+
                 req.priority = req.priority.clamp(*PRIORITY_RANGE.start(), *PRIORITY_RANGE.end());
                 info!(
                     session,
@@ -397,9 +436,9 @@ async fn stream_flush(tx: &mut SendStream) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mirai_core::{Color, Point};
+    use mirai_core::{Color, Point, RuleSet};
     use mirai_proto::msg::SubMsg;
-    use mirai_proto::types::MoveInfo;
+    use mirai_proto::types::{AvoidSpec, MoveInfo};
 
     fn host(tokens: &[(&str, u32)]) -> Host {
         Host {
@@ -504,6 +543,55 @@ mod tests {
         let mut rbuf = FrameBuf::new();
         let back: SubMsg = frame::decode(&mut rbuf, &bytes).unwrap();
         assert_eq!(back, SubMsg::Done(r));
+    }
+
+    #[test]
+    fn hostile_request_geometry_is_rejected_before_subscribing() {
+        let mut hostile = AnalyzeReq::new(Size::square(19), RuleSet::Chinese, 7.5);
+        hostile.size = Size { w: 0, h: 0 };
+        let mut wbuf = FrameBuf::new();
+        let bytes = frame::encode(
+            &mut wbuf,
+            &ClientMsg::Open {
+                sub: 7,
+                engine: None,
+                req: hostile,
+            },
+        )
+        .unwrap()
+        .to_vec();
+        let mut rbuf = FrameBuf::new();
+        let decoded: ClientMsg = frame::decode(&mut rbuf, &bytes).unwrap();
+        let ClientMsg::Open { req, .. } = decoded else {
+            panic!("decoded a different message");
+        };
+        assert_eq!(
+            request_geometry_error(&req),
+            Some("board size is outside 2..=19")
+        );
+
+        let mut req = AnalyzeReq::new(Size::square(9), RuleSet::Chinese, 7.5);
+        req.moves.push((Color::Black, Point(81)));
+        assert_eq!(
+            request_geometry_error(&req),
+            Some("a move or initial stone is off the board")
+        );
+
+        req.moves.clear();
+        req.avoid.push(AvoidSpec {
+            player: Color::White,
+            moves: vec![Point(81)],
+            until_depth: 1,
+            allow: false,
+        });
+        assert_eq!(
+            request_geometry_error(&req),
+            Some("an avoid move is off the board")
+        );
+
+        req.avoid[0].moves[0] = Point::PASS;
+        req.initial_stones.push((Color::Black, Point::PASS));
+        assert_eq!(request_geometry_error(&req), None);
     }
 
     #[test]

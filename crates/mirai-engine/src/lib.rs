@@ -102,8 +102,10 @@ impl Subscription {
 
     /// A subscription that has already failed — for errors detected before dispatch.
     pub fn failed(err: EngineError) -> Subscription {
-        let (tx, rx) = watch::channel(SubEvent::Failed(err));
-        // Keep the sender alive so `changed()` blocks instead of erroring.
+        let (tx, rx) = watch::channel(SubEvent::Pending);
+        // A seeded value is already seen by `rx`; send the failure so `next()` observes it.
+        tx.send_replace(SubEvent::Failed(err));
+        // Keep the sender alive so subsequent `changed()` calls block instead of erroring.
         Subscription {
             rx,
             _cancel: CancelGuard::new(move || drop(tx)),
@@ -159,5 +161,36 @@ impl<T: Engine + ?Sized> Engine for Arc<T> {
     }
     fn describe(&self) -> EngineDesc {
         (**self).describe()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn failed_subscription_is_immediately_observable() {
+        let mut sub = Subscription::failed(EngineError::Other("dispatch failed".into()));
+
+        assert!(matches!(
+            &sub.current(),
+            SubEvent::Failed(EngineError::Other(message)) if message == "dispatch failed"
+        ));
+
+        let event = tokio::time::timeout(Duration::from_secs(1), sub.next())
+            .await
+            .expect("failed event was not delivered")
+            .expect("failed subscription closed");
+        assert!(matches!(
+            event,
+            SubEvent::Failed(EngineError::Other(message)) if message == "dispatch failed"
+        ));
+
+        assert!(matches!(
+            sub.finish().await,
+            Err(EngineError::Other(message)) if message == "dispatch failed"
+        ));
     }
 }

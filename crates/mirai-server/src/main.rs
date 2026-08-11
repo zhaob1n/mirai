@@ -20,7 +20,11 @@ use clap::Parser;
 use mirai_core::SplitMix64;
 use mirai_engine::{Engine, LocalEngine};
 use mirai_proto::transport;
+use tokio::sync::Semaphore;
 use tracing::{error, info, warn};
+
+/// Caps pre-authentication frame buffers as well as authenticated sessions.
+const MAX_SESSIONS: usize = 32;
 
 use config::ServerConfig;
 use session::{Host, NamedEngine, Token};
@@ -161,9 +165,22 @@ async fn run(
     );
     info!(sha256 = %fingerprint, "certificate fingerprint (pin this in the client)");
 
+    let sessions = Arc::new(Semaphore::new(MAX_SESSIONS));
     while let Some(incoming) = endpoint.accept().await {
+        let peer = incoming.remote_address();
+        let Ok(permit) = Arc::clone(&sessions).try_acquire_owned() else {
+            warn!(
+                %peer,
+                max_sessions = MAX_SESSIONS,
+                "connection refused: session limit reached"
+            );
+            incoming.refuse();
+            continue;
+        };
         let host = Arc::clone(&host);
         tokio::spawn(async move {
+            // Keeping the owned permit in the task releases it on every return and unwind.
+            let _permit = permit;
             match incoming.await {
                 Ok(conn) => session::serve(host, conn).await,
                 Err(e) => warn!("handshake failed: {e}"),

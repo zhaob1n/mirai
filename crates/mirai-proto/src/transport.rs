@@ -81,6 +81,13 @@ pub fn load_or_generate_cert(
     key_path: &Path,
     hostnames: &[String],
 ) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>), TransportError> {
+    // `OpenOptionsExt::mode` only affects newly-created files; also repair an existing key
+    // before it is read or overwritten.
+    #[cfg(unix)]
+    if key_path.exists() {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(key_path, std::fs::Permissions::from_mode(0o600))?;
+    }
     if !cert_path.exists() || !key_path.exists() {
         let names: Vec<String> = if hostnames.is_empty() {
             vec!["localhost".to_string()]
@@ -96,12 +103,21 @@ pub fn load_or_generate_cert(
             std::fs::create_dir_all(dir)?;
         }
         std::fs::write(cert_path, ck.cert.pem())?;
-        std::fs::write(key_path, ck.signing_key.serialize_pem())?;
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(key_path, std::fs::Permissions::from_mode(0o600))?;
+            use std::io::Write as _;
+            use std::os::unix::fs::OpenOptionsExt;
+
+            let mut key = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(key_path)?;
+            key.write_all(ck.signing_key.serialize_pem().as_bytes())?;
         }
+        #[cfg(not(unix))]
+        std::fs::write(key_path, ck.signing_key.serialize_pem())?;
     }
 
     let certs = CertificateDer::pem_file_iter(cert_path)
@@ -358,7 +374,7 @@ mod tests {
     }
 
     #[test]
-    fn generated_cert_is_reused_and_fingerprint_is_stable() {
+    fn generated_cert_is_reused_and_private_key_is_restricted() {
         let dir = std::env::temp_dir().join(format!("mirai-tp-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let cert = dir.join("cert.pem");
@@ -371,6 +387,19 @@ mod tests {
 
         let (c2, _k2) = load_or_generate_cert(&cert, &key, &["mirai.test".into()]).expect("reload");
         assert_eq!(fingerprint_of(&c2), fp1, "existing cert must be reused");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o644)).unwrap();
+            let (_c3, _k3) =
+                load_or_generate_cert(&cert, &key, &["mirai.test".into()]).expect("tighten");
+            assert_eq!(
+                std::fs::metadata(&key).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
 
         let _ = std::fs::remove_dir_all(&dir);
     }

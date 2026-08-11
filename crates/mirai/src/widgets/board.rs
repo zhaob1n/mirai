@@ -435,7 +435,7 @@ mod imp {
             if state.policy_overlay()
                 && let Some(report) = report.as_ref()
                 && let Some(policy) = report.policy.as_ref()
-                && policy.len() >= size.points()
+                && policy.len() == size.points() + 1
             {
                 let accent = adw::StyleManager::default().accent_color_rgba();
                 let mut buf = vec![0u8; size.points() * 4];
@@ -497,12 +497,20 @@ mod imp {
                 let mut nums = vec![0u16; size.points()];
                 {
                     let tree = state.tree();
+                    let mut n = 0u16;
                     for id in tree.path_to(cursor) {
-                        if let Some((_, p)) = tree.node(id).mv
+                        let node = tree.node(id);
+                        if node.mv.is_some() {
+                            n = n.saturating_add(1);
+                        }
+                        if let Some(m) = node.move_number_override {
+                            n = m;
+                        }
+                        if let Some((_, p)) = node.mv
                             && !p.is_pass()
                             && size.contains(p)
                         {
-                            nums[p.index()] = tree.move_number(id);
+                            nums[p.index()] = n;
                         }
                     }
                 }
@@ -1207,20 +1215,23 @@ impl BoardView {
         }
         let size = self.imp().board_size();
         let max = state.config().analysis.max_suggestions as usize;
-        let board = state.position().board;
-        for (i, info) in report.moves.iter().enumerate().take(max) {
-            if info.mv.is_pass() || !size.contains(info.mv) || board.at(info.mv).is_some() {
-                continue;
+        let cursor = state.cursor();
+        state.with_tree_cached(|tree| {
+            let board = &tree.position(cursor).board;
+            for (i, info) in report.moves.iter().enumerate().take(max) {
+                if info.mv.is_pass() || !size.contains(info.mv) || board.at(info.mv).is_some() {
+                    continue;
+                }
+                let (bx, by) = size.xy(info.mv);
+                let (cx, cy) = l.xy(bx, by);
+                let dx = x as f32 - cx;
+                let dy = y as f32 - cy;
+                if dx * dx + dy * dy <= l.stone_r * l.stone_r {
+                    return Some(i);
+                }
             }
-            let (bx, by) = size.xy(info.mv);
-            let (cx, cy) = l.xy(bx, by);
-            let dx = x as f32 - cx;
-            let dy = y as f32 - cy;
-            if dx * dx + dy * dy <= l.stone_r * l.stone_r {
-                return Some(i);
-            }
-        }
-        None
+            None
+        })
     }
 }
 

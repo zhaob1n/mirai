@@ -307,6 +307,9 @@ impl AppState {
             let imp = self.imp();
             *imp.tree.borrow_mut() = tree;
             imp.cursor.set(cursor.unwrap_or(root));
+            // A report belongs to one exact position; after replacing the game it may not
+            // even have the same board size.
+            imp.report.replace(None);
         }
         self.set_modified(false);
         self.emit_by_name::<()>(signal::TREE_CHANGED, &[]);
@@ -336,7 +339,8 @@ impl AppState {
     }
 
     pub fn to_play(&self) -> Color {
-        self.position().to_play
+        let cursor = self.cursor();
+        self.with_tree_cached(|t| t.position(cursor).to_play)
     }
 
     /// Plays a move at the cursor and moves the cursor onto it.

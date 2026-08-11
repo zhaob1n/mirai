@@ -10,6 +10,8 @@
 //! `base64(zstd(0x01 ++ postcard(Vec<(u32, NodeAnalysis)>)))`, where the `u32` is the
 //! node's index in document order — which is exactly the [`NodeId`] a reload assigns.
 
+use std::io::{self, Write};
+
 use base64::prelude::{BASE64_STANDARD, Engine as _};
 
 use crate::point::{Color, Point, Size};
@@ -18,6 +20,15 @@ use crate::tree::{GameInfo, GameTree, MarkKind, NodeAnalysis, NodeId, Setup};
 
 /// Guards against stack exhaustion on pathologically nested (or hostile) files.
 const MAX_DEPTH: u32 = 256;
+
+/// Hard ceiling for the decompressed `MRAI` payload. A 300-node 19x19 game with the
+/// default 10 suggestions and 50-point PVs encodes to 465,239 bytes including the version;
+/// even 300-point PVs only take 1,968,239 bytes. 16 MiB leaves ample headroom.
+const MAX_ANALYSIS_BYTES: usize = 16 * 1024 * 1024;
+
+/// Caps the allocation performed by base64 decoding. This admits a 16 MiB incompressible
+/// zstd frame plus more than 12% overhead while rejecting oversized SGF properties early.
+const MAX_ANALYSIS_BLOB_BYTES: usize = 24 * 1024 * 1024;
 
 /// Version byte in front of the postcard payload of the `MRAI` property.
 const MRAI_VERSION: u8 = 0x01;
@@ -449,9 +460,33 @@ fn build(arena: &[RawNode]) -> Result<GameTree, SgfError> {
     Ok(tree)
 }
 
+struct BoundedAnalysis<'a>(&'a mut Vec<u8>);
+
+impl Write for BoundedAnalysis<'_> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.0.len() + buf.len() > MAX_ANALYSIS_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "decompressed analysis exceeds the analysis limit",
+            ));
+        }
+        self.0.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 fn decode_analysis(blob: &str) -> Option<Vec<(u32, NodeAnalysis)>> {
-    let raw = BASE64_STANDARD.decode(blob.trim().as_bytes()).ok()?;
-    let plain = zstd::stream::decode_all(&raw[..]).ok()?;
+    let blob = blob.trim();
+    if blob.len() > MAX_ANALYSIS_BLOB_BYTES {
+        return None;
+    }
+    let raw = BASE64_STANDARD.decode(blob.as_bytes()).ok()?;
+    let mut plain = Vec::new();
+    zstd::stream::copy_decode(&raw[..], BoundedAnalysis(&mut plain)).ok()?;
     let (&version, rest) = plain.split_first()?;
     if version != MRAI_VERSION {
         return None;
@@ -833,6 +868,20 @@ mod tests {
         // Garbage is equally harmless.
         let t = &parse_str("(;SZ[19]MRAI[not base64 at all!!];B[aa])").unwrap()[0];
         assert_eq!(t.len(), 2);
+    }
+
+    #[test]
+    fn oversized_analysis_blob_is_rejected() {
+        let analysis = NodeAnalysis {
+            visits: 1,
+            winrate: 0.5,
+            score_lead: 0.0,
+            score_stdev: 0.0,
+            candidates: Vec::new(),
+            ownership: Some(vec![0; MAX_ANALYSIS_BYTES].into_boxed_slice()),
+        };
+        let blob = encode_analysis(&[(0, analysis)]).expect("compress");
+        assert!(decode_analysis(&blob).is_none());
     }
 
     #[test]

@@ -105,6 +105,8 @@ pub struct BatchAnalysis {
     queue: RefCell<Vec<NodeId>>,
     total: Cell<u32>,
     done: Cell<u32>,
+    /// Results stored in still-live nodes; unlike `done`, this excludes skipped tombstones.
+    analysed: Cell<u32>,
     /// Workers that have not yet drained the queue.
     live_workers: Cell<usize>,
     /// Bumped by every start and every stop, so a worker can tell it has been superseded.
@@ -126,6 +128,7 @@ impl BatchAnalysis {
             queue: RefCell::new(Vec::new()),
             total: Cell::new(0),
             done: Cell::new(0),
+            analysed: Cell::new(0),
             live_workers: Cell::new(0),
             generation: Cell::new(0),
             on_finished: RefCell::new(Vec::new()),
@@ -176,6 +179,7 @@ impl BatchAnalysis {
         let generation = self.generation.get();
         self.running.set(true);
         self.done.set(0);
+        self.analysed.set(0);
         self.total.set(nodes.len() as u32);
         self.live_workers.set(workers);
         {
@@ -234,9 +238,13 @@ impl BatchAnalysis {
         ));
     }
 
-    /// Called by a worker after each stored result.
-    fn record_progress(&self) {
+    /// Accounts for a dequeued node. Tombstones still advance the banner to its terminal
+    /// total, but are not reported as analysed positions.
+    fn record_progress(&self, stored: bool) {
         self.done.set(self.done.get() + 1);
+        if stored {
+            self.analysed.set(self.analysed.get() + 1);
+        }
         self.update_banner();
         self.state
             .notify_batch_progress(self.done.get(), self.total.get());
@@ -249,7 +257,7 @@ impl BatchAnalysis {
         if left > 0 {
             return;
         }
-        let analysed = self.done.get();
+        let analysed = self.analysed.get();
         self.teardown();
 
         // One redraw for the whole sweep rather than one per node. Emitted directly so the
@@ -304,6 +312,10 @@ async fn run_worker(
             let Some(id) = batch.queue.borrow_mut().pop() else {
                 break;
             };
+            if !batch.state.tree().contains(id) {
+                batch.record_progress(false);
+                continue;
+            }
             let req = batch.request_for_node(id, visits);
             (batch, id, req)
         };
@@ -317,11 +329,14 @@ async fn run_worker(
         }
         match result {
             Ok(report) => {
-                let analysis = crate::util::analysis_of(&report, max_candidates);
-                batch
-                    .state
-                    .with_tree_cached(|tree| tree.set_analysis(id, Some(analysis)));
-                batch.record_progress();
+                let is_live = batch.state.tree().contains(id);
+                if is_live {
+                    let analysis = crate::util::analysis_of(&report, max_candidates);
+                    batch
+                        .state
+                        .with_tree_cached(|tree| tree.set_analysis(id, Some(analysis)));
+                }
+                batch.record_progress(is_live);
             }
             Err(e) => {
                 tracing::warn!(%e, "whole-game analysis query failed");

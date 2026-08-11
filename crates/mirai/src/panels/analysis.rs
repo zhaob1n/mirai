@@ -322,7 +322,11 @@ impl AnalysisPanel {
                 let nodes = panel.imp().blunder_nodes.borrow();
                 if let Some(&node) = nodes.get(row.index().max(0) as usize) {
                     drop(nodes);
-                    panel.state().set_cursor(node);
+                    let state = panel.state();
+                    let is_live = state.tree().contains(node);
+                    if is_live {
+                        state.set_cursor(node);
+                    }
                 }
             }
         ));
@@ -339,7 +343,7 @@ impl AnalysisPanel {
 
     fn connect_state(&self) {
         let state = self.state();
-        for name in [signal::REPORT, signal::CURSOR_CHANGED, signal::TREE_CHANGED] {
+        for name in [signal::REPORT, signal::CURSOR_CHANGED] {
             state.connect_closure(
                 name,
                 false,
@@ -350,6 +354,18 @@ impl AnalysisPanel {
                 ),
             );
         }
+        state.connect_closure(
+            signal::TREE_CHANGED,
+            false,
+            glib::closure_local!(
+                #[weak(rename_to = panel)]
+                self,
+                move |_: AppState| {
+                    panel.clear_blunders();
+                    panel.refresh();
+                }
+            ),
+        );
     }
 
     fn play(&self, p: Point) {

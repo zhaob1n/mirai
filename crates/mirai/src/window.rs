@@ -793,6 +793,8 @@ fn sgf_text(ui: &Rc<Ui>) -> String {
 /// Installs `tree` as the current game. `path` is remembered for plain Save.
 fn adopt(ui: &Rc<Ui>, tree: GameTree, path: Option<PathBuf>) {
     ui.play.stop();
+    // Batch workers hold node IDs from this tree; stop them before replacing its arena.
+    ui.batch.cancel();
     ui.comment_node.set(None);
     *ui.file.borrow_mut() = path.clone();
     ui.state.set_file_path(
@@ -1138,7 +1140,10 @@ fn do_score(ui: &Rc<Ui>) {
     if let Some(task) = ui.score_task.borrow_mut().take() {
         task.abort();
     }
-    let mut req = ui.state.request_for_cursor(Some(SCORE_VISITS), Want::OWNERSHIP);
+    let target = ui.state.cursor();
+    let mut req = ui
+        .state
+        .request_for_node(target, Some(SCORE_VISITS), Want::OWNERSHIP);
     req.report_every_ms = None;
     req.priority = 8;
     let mut sub = engine.subscribe(req);
@@ -1165,6 +1170,10 @@ fn do_score(ui: &Rc<Ui>) {
             }
         }
         ui2.state.set_status(String::new());
+        // The estimate is meaningful only for the exact node used to build its request.
+        if ui2.state.cursor() != target {
+            return;
+        }
         let Some(report) = last else {
             ui2.state.toast("The engine returned no estimate");
             return;
@@ -1425,7 +1434,12 @@ fn install_actions(ui: &Rc<Ui>) {
         "new-game",
         Box::new(|ui| {
             let play = ui.play.clone();
-            crate::dialogs::new_game(&ui.window, &ui.state, move |setup| play.start(setup));
+            let batch = ui.batch.clone();
+            crate::dialogs::new_game(&ui.window, &ui.state, move |setup| {
+                // A new arena can reuse an old NodeId for an unrelated position.
+                batch.cancel();
+                play.start(setup);
+            });
         }),
     );
     add(
