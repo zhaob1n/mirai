@@ -60,12 +60,13 @@ the rest defend the surrounding behaviour and are named so you can find them.
 | `config.rs` | A misspelled key is an error, never silently ignored; relative paths resolve against the config directory so a config plus its cert moves as a unit; `server.example.toml` stays parseable | **`typos_and_duplicates_are_rejected_rather_than_silently_ignored`**, `relative_paths_resolve_against_the_config_directory`, `the_documented_minimal_example_parses` |
 | `session.rs` | Exact-match auth, and no `[[token]]` means reject everyone rather than admit everyone; the zero-copy send path is byte-identical to what a client decodes; a client cannot escalate its own priority | **`authentication_accepts_only_an_exact_token`**, **`sub_msg_ref_is_byte_identical_to_sub_msg`**, `priority_is_clamped_into_the_served_band` |
 | **mirai (GUI)** — display-free logic only; everything visual is section 5 | | |
-| `config.rs` | A missing file is a first run, a corrupt one is an error; a TOFU pin can never land on a local profile | `missing_file_yields_a_seeded_config_not_an_error`, `pins_are_recorded_on_remote_profiles_only` |
+| `config.rs` | A missing file is a first run, a corrupt one is an error; a TOFU pin can never land on a local profile; a save keeps the keys another window changed meanwhile, but a profile this window deleted really goes | `missing_file_yields_a_seeded_config_not_an_error`, `pins_are_recorded_on_remote_profiles_only`, **`a_save_keeps_another_windows_edit`**, `a_removed_profile_is_removed_from_the_file` |
 | `window.rs` | `tree_has_content`: never autosave an empty board and never offer to restore one, with the boundaries that matter (a pass counts, marks alone do not, content deep in a variation is found); INV-8 | **`a_blank_record_is_not_worth_autosaving`** + five boundary cases, **`handlers_do_not_keep_the_window_alive`** |
 | `play.rs` | Deterministic at temperature 0 and genuinely spread above it; one bad report never resigns and a good one clears the streak; clock transitions | **`temperature_zero_always_plays_the_engines_choice`**, **`a_lone_bad_report_does_not_resign`**, `the_last_period_expiring_loses_on_time` |
 | `batch.rs` | INV-2 applied to blunder detection — the drop is measured from the mover's side; batch concurrency follows `numAnalysisThreads` and saturates | **`white_blunder_is_measured_from_whites_perspective`**, `in_flight_scales_with_threads_and_saturates_at_sixteen` |
 | `widgets/board.rs`, `widgets/tree.rs`, `widgets/winrate.rs` | Click→`Point` mapping, board geometry, tree lane assignment and graph axis inversion — pure functions deliberately lifted out of `snapshot()` so they are testable at all | `hit_test_snaps_to_the_nearest_intersection`, `lanes_keep_the_main_line_on_zero`, **`deep_lines_do_not_recurse`** (a long game must not blow the stack), `a_white_blunder_is_not_a_black_blunder` |
 | `app.rs` | The search-speed meter: a steady search reads its true rate, a real slowdown is followed, and the final report — echoed once as `Done` with the same visit count — never drags the reading to zero | **`a_repeated_final_report_does_not_zero_the_rate`**, `speed_meter_measures_visits_per_second`, `the_meter_tracks_a_slowdown` |
+| `engines.rs` | Engines are shared only between identical profiles, and a dropped engine is never handed out again — the pool holds weak references so the last window closing takes KataGo with it | `only_identical_profiles_share_an_engine`, `a_dropped_engine_is_no_longer_running` |
 | `util.rs`, `harness.rs` | Formatting helpers; the harness grammar, including that a malformed `wait:soon` is dropped rather than silently becoming zero | `script_parsing_covers_every_step_kind`, `unknown_and_empty_steps_are_dropped_not_fatal` |
 
 ## 3. Testing philosophy
@@ -272,6 +273,37 @@ export SGF=/home/ykpcx/2026-04-26-linux64.with-katago/save/autoGame1.sgf   # the
 export RUST_LOG=info,mirai=debug
 ```
 
+**Isolation — a harness run must not touch the developer's session.**
+
+A scripted run writes to three things the developer is also using, and each has bitten us:
+
+| Shared thing | What happens without isolation |
+|---|---|
+| The bus name | mirai is a unique `GApplication`. A second launch hands its SGF to the running instance — which opens it in a new window — and exits 0, so the script runs nowhere and someone else's session gets the file |
+| `~/.config/mirai/config.toml` | `connect_close` calls `save_config`, so a run that toggled a display option persists it into the developer's settings. The merge in `save_merged` keeps *other windows'* keys, not other people's |
+| `$XDG_DATA_HOME/mirai` | the autosaves and `katago-logs` live here; a harness run that crashes leaves the developer a restore prompt for a record they never opened |
+
+The first is handled in-tree: with `MIRAI_HARNESS` set, `harness::application_flags` adds
+`NON_UNIQUE` (debug builds only), so a harnessed run is always its own primary instance.
+The other two are yours to redirect — `directories::ProjectDirs` honours the XDG variables:
+
+```sh
+scratch=$(mktemp -d); mkdir -p "$scratch/config/mirai" "$scratch/data"
+cp ~/.config/mirai/config.toml "$scratch/config/mirai/"        # keep the engine profile
+XDG_CONFIG_HOME="$scratch/config" XDG_DATA_HOME="$scratch/data" \
+  MIRAI_HARNESS="…" ./target/debug/mirai "$SGF"
+rm -rf "$scratch"
+```
+
+**Never reach for `dbus-run-session` to get a second instance.** It works, and it costs the
+whole login session its accessibility bus: the GTK client activates `org.a11y.Bus` on the
+private bus, `at-spi-bus-launcher` unconditionally rewrites `$XDG_RUNTIME_DIR/at-spi/bus_0`,
+and when the private session exits the socket file outlives its listener. Every GTK
+application started afterwards logs `Unable to connect to the accessibility bus … Connection
+refused` until someone runs `systemctl --user restart at-spi-dbus-bus`. `GTK_A11Y=none` does
+not prevent it (measured: the socket's inode still changes). `NON_UNIQUE` removes the reason
+to want a private bus at all.
+
 **(a) Load an SGF, navigate, live analysis, screenshot.** `mirai` sets
 `ApplicationFlags::HANDLES_OPEN`, so a positional path is opened through `connect_open`.
 
@@ -350,28 +382,37 @@ still running in the PNG, raise the wait.
 connected to **`close-request`**, so drive GTK's built-in `window.close` action instead.
 
 ```sh
-rm -f ~/.local/share/mirai/clean-exit ~/.local/share/mirai/autosave.sgf
+rm -f "$XDG_DATA_HOME/mirai"/autosave-*.sgf     # scratch data dir; see Isolation above
 
 MIRAI_HARNESS="wait:2000,action:win.next10,action:win.toggle-analysis,wait:15000,shot:/tmp/mirai-before-close.png,action:window.close" \
-  cargo run -p mirai -- "$SGF"
+  ./target/debug/mirai "$SGF"
 echo "exit=$?"
 
-ls -l ~/.local/share/mirai/autosave.sgf ~/.local/share/mirai/clean-exit
-pgrep -a katago      # must show nothing left from this run
+ls "$XDG_DATA_HOME/mirai"       # no autosave-*.sgf: the window deleted its own
+pgrep -a katago                 # must show nothing left from this run
 ```
 
-`window::connect_close` runs, in order: flush the comment, write the autosave, write
-`clean-exit`, cancel the batch, stop play, abort the score task, switch live analysis off so
-the pump releases its `Subscription` (INV-3), save the config, drop the engine (terminating
-KataGo), and drop the last strong `Rc<Ui>` (INV-8). `exit=0`, both files present, no orphaned
-`katago`.
+`window::connect_close` runs, in order: flush the comment, delete this window's autosave,
+cancel the batch, stop play, abort the score task, switch live analysis off so the pump
+releases its `Subscription` (INV-3), save the config, drop the engine (terminating KataGo once
+no other window holds it), and drop the last strong `Rc<Ui>` (INV-8). `exit=0`, no autosave
+left, no orphaned `katago`.
 
-Related: `window::write_autosave` deletes the file rather than writing a contentless record,
-and the restore offer is armed only for an autosave with a move, setup stone or comment — so
-the same recipe on a blank instance must leave no `autosave.sgf`. Conversely, killing a run
-leaves `clean-exit` missing and arms the restore prompt on the next start; that asymmetry is
-the feature. [INFERENCE] a script ending in `quit` behaves like a kill here, since
-`app.quit()` destroys windows rather than emitting `close-request`.
+Conversely, `kill -9` on a run with a loaded record leaves its `autosave-<pid>-<start>-<n>.sgf`
+behind, and the next start offers it — one file per window, most recent first, deleted once the
+prompt is answered either way. That asymmetry is the feature; a script ending in `quit` behaves
+like a kill, because `app.quit()` destroys windows rather than emitting `close-request`.
+
+**(f) Two windows, one KataGo.** Sharing is the reason `EnginePool` exists, and the count is
+the proof:
+
+```sh
+./target/debug/mirai "$SGF" &                       # scratch XDG dirs, as above
+sleep 10; pgrep -f 'linux-x64/katago analysis' | wc -l   # 1
+./target/debug/mirai "$OTHER_SGF"; echo "exit=$?"   # 0: adopted by the running instance
+sleep 10; pgrep -f 'linux-x64/katago analysis' | wc -l   # still 1
+sleep 30; ls "$XDG_DATA_HOME/mirai"                 # two autosave-… files: two live windows
+```
 
 ### Drivable action names
 
@@ -479,7 +520,7 @@ row is a defect that happened or a guard that exists because one did.
 | The sidebar page switcher is missing and a stray `✕` sits in its place | `adw::HeaderBar::show_title(false)` hides the *title widget*, and the title widget **is** the `ViewSwitcher`; the `✕` is a second set of window controls | `window.rs` header construction — keep `show_title` on, disable the duplicate title buttons |
 | An engine connects then vanishes seconds later; the server logs a connection opening and closing with no subscription | Activation race: `activate_profile` is async and a local KataGo takes ~6 s, so an older activation can finish last and install itself over a newer one | The activation counter in `AppState::activate_profile`. `discarding a superseded engine activation` at debug level means the guard worked |
 | Live analysis restarts but reports keep arriving for the old position | The other counter: `generation`, bumped by `restart_analysis` and checked by the pump before applying a report | `app.rs` `restart_analysis` |
-| "mirai did not shut down cleanly" every start | `clean-exit` is only written by the `close-request` teardown; something is killing the app | `window::connect_close`, `window::autosave_paths` |
+| "mirai did not shut down cleanly" every start | An autosave is only deleted by the `close-request` teardown; something is killing the app, or a leftover from an earlier crash has not been answered yet | `window::connect_close`, `window::stale_autosaves` |
 | The restore prompt offers an empty board | `tree_has_content` regressed | `window.rs` and its six boundary tests |
 | Overlay shading in the wrong place | Someone remapped indices; INV-1 says ownership and policy index identically to the board | `decode.rs` `ownership_keeps_katago_row_major_top_left_order`, then recipe (b) |
 | Win rates inverted for one side | INV-2 violated: a conversion applied somewhere other than display | `MoveInfo::winrate_for` / `score_lead_for` are the only sanctioned sites |

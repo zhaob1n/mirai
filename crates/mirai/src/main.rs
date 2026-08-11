@@ -6,6 +6,7 @@ mod app;
 mod batch;
 mod config;
 mod dialogs;
+mod engines;
 #[cfg(debug_assertions)]
 mod harness;
 mod panels;
@@ -14,6 +15,8 @@ mod prefs;
 mod util;
 mod widgets;
 mod window;
+
+use std::rc::Rc;
 
 use gtk::gio;
 use gtk::glib;
@@ -42,9 +45,16 @@ fn main() -> glib::ExitCode {
     gio::resources_register_include!("mirai.gresource")
         .expect("the compiled resource bundle should be embedded");
 
+    // A harnessed run must never be adopted by an instance the developer is already using; see
+    // `harness::application_flags`.
+    #[cfg(debug_assertions)]
+    let flags = gio::ApplicationFlags::HANDLES_OPEN | harness::application_flags();
+    #[cfg(not(debug_assertions))]
+    let flags = gio::ApplicationFlags::HANDLES_OPEN;
+
     let application = adw::Application::builder()
         .application_id(APP_ID)
-        .flags(gio::ApplicationFlags::HANDLES_OPEN)
+        .flags(flags)
         .build();
 
     application.connect_startup(|_| {
@@ -59,10 +69,15 @@ fn main() -> glib::ExitCode {
         }
     });
 
+    // One set of engines for the whole application: windows share KataGo rather than each
+    // starting their own. Main-thread only, hence `Rc`.
+    let pool = Rc::new(engines::EnginePool::default());
+
     {
         let handle = handle.clone();
+        let pool = pool.clone();
         application.connect_activate(move |app| {
-            window::present(app, handle.clone(), None);
+            window::present(app, handle.clone(), pool.clone(), None);
             #[cfg(debug_assertions)]
             harness::install(app);
         });
@@ -70,8 +85,11 @@ fn main() -> glib::ExitCode {
     {
         let handle = handle.clone();
         application.connect_open(move |app, files, _hint| {
-            let first = files.first().and_then(|f| f.path());
-            window::present(app, handle.clone(), first);
+            // One window per file. Dropping all but the first used to lose the rest without
+            // a word when several records were opened at once.
+            for file in files {
+                window::present(app, handle.clone(), pool.clone(), file.path());
+            }
             #[cfg(debug_assertions)]
             harness::install(app);
         });

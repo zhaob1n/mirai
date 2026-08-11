@@ -18,6 +18,7 @@
 
 use std::time::Duration;
 
+use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 
@@ -59,8 +60,37 @@ fn parse(script: &str) -> Vec<Step> {
         .collect()
 }
 
+/// The application flags a harnessed run needs on top of the production ones.
+///
+/// A scripted run is `NON_UNIQUE`, because a unique `GApplication` hands its arguments to
+/// whichever instance already owns the bus name and exits: the script would run nowhere, and
+/// the developer's own window would be handed the script's SGF. Going non-unique also removes
+/// the only reason to wrap a run in `dbus-run-session` — that private bus activates
+/// `org.a11y.Bus`, whose launcher rewrites `$XDG_RUNTIME_DIR/at-spi/bus_0` and, when the
+/// session ends, leaves every other GTK client in the login session unable to reach the
+/// accessibility bus.
+///
+/// This still leaves the configuration, the autosave and the KataGo log directory shared with
+/// the developer's instance; point `XDG_CONFIG_HOME` and `XDG_DATA_HOME` at a scratch
+/// directory to isolate those. See `docs/dev/TESTING.md`.
+pub fn application_flags() -> gio::ApplicationFlags {
+    match std::env::var_os("MIRAI_HARNESS") {
+        Some(_) => gio::ApplicationFlags::NON_UNIQUE,
+        None => gio::ApplicationFlags::empty(),
+    }
+}
+
 /// Starts the script against `app`, if `MIRAI_HARNESS` is set.
+///
+/// Called from both `activate` and `open`, and `open` may fire again later, so the script
+/// runs exactly once: a second copy would drive the same actions against a second window.
 pub fn install(app: &adw::Application) {
+    thread_local! {
+        static STARTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    if STARTED.with(|started| started.replace(true)) {
+        return;
+    }
     let Ok(script) = std::env::var("MIRAI_HARNESS") else {
         return;
     };
