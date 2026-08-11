@@ -698,7 +698,8 @@ mod tests {
     use crate::board::Board;
     use crate::tree::Candidate;
 
-    const REAL_SGF: &str = "/home/ykpcx/2026-04-26-linux64.with-katago/save/autoGame1.sgf";
+    const REAL_SGF: &[u8] =
+        include_bytes!("../tests/data/lizzieyzy-autoGame1.sgf");
 
     /// Raw (still escaped) value of the first occurrence of a property.
     fn raw_value(text: &str, name: &str) -> String {
@@ -886,9 +887,9 @@ mod tests {
 
     #[test]
     fn lizzieyzy_file_parses_replays_and_preserves_unknown_properties() {
-        let bytes = std::fs::read(REAL_SGF).expect("fixture");
+        let bytes = REAL_SGF;
         assert_eq!(bytes.len(), 25765);
-        let games = parse(&bytes).expect("parse");
+        let games = parse(bytes).expect("parse");
         assert_eq!(games.len(), 1);
         let t = &games[0];
         assert_eq!(t.info.size, Size::square(19));
@@ -927,12 +928,12 @@ mod tests {
         assert_eq!(t.children(branch).len(), 3);
 
         // Unknown-property preservation, against real data.
-        let text = String::from_utf8(bytes.clone()).unwrap();
+        let text = std::str::from_utf8(bytes).unwrap();
         let written = write(t, false);
         for name in ["DZ", "LZOP"] {
             assert_eq!(
                 raw_value(&written, name),
-                raw_value(&text, name),
+                raw_value(text, name),
                 "{name} value changed"
             );
         }

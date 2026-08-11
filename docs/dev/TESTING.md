@@ -276,7 +276,7 @@ is why each first `wait:` is generous; toggling analysis before it is ready is s
 `AppState::set_engine` calls `restart_analysis` when the engine lands.
 
 ```sh
-export SGF=/home/ykpcx/2026-04-26-linux64.with-katago/save/autoGame1.sgf   # the 30-node fixture
+export SGF=$PWD/crates/mirai-core/tests/data/lizzieyzy-autoGame1.sgf   # the 30-node fixture
 export RUST_LOG=info,mirai=debug
 ```
 
@@ -566,7 +566,6 @@ row is a defect that happened or a guard that exists because one did.
 | `harness: screenshot failed: nothing was drawn` | The window never mapped, or a modal grabbed before `present()` | Lengthen the preceding `wait:` |
 | The harness does nothing at all | Release build (`#[cfg(debug_assertions)]`), `MIRAI_HARNESS` unset, or every step malformed | `harness::install` |
 | The app opens Preferences instead of the game window | No engine profile configured | `window::present` |
-| `cargo test` fails only in `sgf.rs` with `fixture` | The LizzieYzy fixture is not on this machine | section 9 |
 
 `RUST_LOG` (both binaries use `EnvFilter`, defaulting to `info`):
 
@@ -612,7 +611,6 @@ Reported, not fixed.
 
 | Gap | Detail |
 |---|---|
-| **The SGF fixture is not in the repo** | `sgf.rs`'s `REAL_SGF` const is an absolute path under `/home/ykpcx/…`; the LizzieYzy test panics with `fixture` on any other machine, so the suite is not reproducible off this box. Vendoring the 25 765-byte file under `crates/mirai-core/tests/data/` and using `include_bytes!` would fix it |
 | **First-run discovery is best-effort** | `discover_katago` searches `PATH` and a handful of conventional network directories, one level deep. A KataGo installed somewhere else — the usual case for a downloaded release tree — still lands the user in Preferences. Deliberate: the alternative is walking the home directory |
 | **No end-to-end client↔server test** | `remote.rs` covers the pin store, backoff, engine selection and two failure paths. Nothing spawns a server on loopback and runs a real `Open`/`Report`/`Cancel` exchange, so the handshake and INV-3's remote half are hand-verified only. This is the largest gap; a `#[tokio::test]` with an in-process server and a stub `Engine` would close it without needing KataGo |
 | **No test for a changed fingerprint** | Pins round-trip, but nothing asserts that a *different* fingerprint is refused |
