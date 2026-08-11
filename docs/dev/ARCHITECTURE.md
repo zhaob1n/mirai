@@ -3,7 +3,8 @@
 Contributor entry point is [`../../AGENTS.md`](../../AGENTS.md). The wire format is specified
 normatively in [`PROTOCOL.md`](PROTOCOL.md); how to prove a change works is
 [`TESTING.md`](TESTING.md); why the design is what it is, with the history, is
-[`RETROSPECTIVE.md`](RETROSPECTIVE.md); the user's view is [`../user/GUIDE.md`](../user/GUIDE.md).
+[`../archive/RETROSPECTIVE.md`](../archive/RETROSPECTIVE.md); the user's view is
+[`../user/GUIDE.md`](../user/GUIDE.md).
 
 Citations are file plus symbol. Signatures and field lists are deliberately not repeated here —
 run `cargo doc --workspace --open` for those. `[INFERENCE]` marks anything reasoned rather than

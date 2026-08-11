@@ -6,7 +6,8 @@ Copyright (C) 2026 Huang Zhaobin
 # Testing and verification
 
 How to prove a change to mirai works.
-[architecture](ARCHITECTURE.md) · [protocol](PROTOCOL.md) · [retrospective](RETROSPECTIVE.md) ·
+[architecture](ARCHITECTURE.md) · [protocol](PROTOCOL.md) ·
+[retrospective](../archive/RETROSPECTIVE.md) ·
 [user guide](../user/GUIDE.md) · [AGENTS.md](../../AGENTS.md).
 
 Section 5 is the reason this file exists: this is a GTK4 app on Wayland, where external

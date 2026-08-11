@@ -268,7 +268,8 @@ and `quit`.
 | [`docs/dev/ARCHITECTURE.md`](docs/dev/ARCHITECTURE.md) | module map, data model, concurrency, extension recipes |
 | [`docs/dev/PROTOCOL.md`](docs/dev/PROTOCOL.md) | the normative MRP/1 specification — enough to write an interoperable client in any language |
 | [`docs/dev/TESTING.md`](docs/dev/TESTING.md) | how to prove a change works, including driving the GUI |
-| [`docs/dev/RETROSPECTIVE.md`](docs/dev/RETROSPECTIVE.md) | how this was built: obstacles, how the GUI was debugged, defects found |
+| [`docs/archive/RETROSPECTIVE.md`](docs/archive/RETROSPECTIVE.md) | how this was built: obstacles, how the GUI was debugged, defects found |
+| [`docs/archive/PLAN.md`](docs/archive/PLAN.md) | the original build plan, kept as a historical record |
 
 ---
 

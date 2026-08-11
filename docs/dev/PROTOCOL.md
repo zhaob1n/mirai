@@ -8,7 +8,7 @@ reading the Rust. Reference implementations: `crates/mirai-server/src/session.rs
 `crates/mirai-engine/src/remote.rs` (client); wire types in `crates/mirai-proto`.
 
 Related: [architecture](ARCHITECTURE.md) · [testing](TESTING.md) ·
-[history and rationale](RETROSPECTIVE.md) · [user guide](../user/GUIDE.md) ·
+[history and rationale](../archive/RETROSPECTIVE.md) · [user guide](../user/GUIDE.md) ·
 [contributor entry point](../../AGENTS.md).
 
 RFC 2119 keywords (MUST, MUST NOT, SHOULD, MAY, …) are used with their RFC 2119 meanings.

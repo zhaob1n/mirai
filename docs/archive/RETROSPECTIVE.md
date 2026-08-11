@@ -1,3 +1,7 @@
+> **Archived.** A record of how mirai was built against
+> [`PLAN.md`](PLAN.md); not maintained. Lessons that stayed load-bearing are carried forward in
+> [`../../AGENTS.md`](../../AGENTS.md) and [`../dev/ARCHITECTURE.md`](../dev/ARCHITECTURE.md).
+
 # Building mirai: process, obstacles, and how the GUI was actually tested
 
 This is a retrospective of building `mirai` — a Rust/GTK4/libadwaita KataGo GUI plus a

@@ -19,7 +19,8 @@ not a draft to rewrite.
 | Where does X live? What may I depend on? | [`docs/dev/ARCHITECTURE.md`](docs/dev/ARCHITECTURE.md) — module map, data model, extension recipes |
 | Implement or change the network protocol | [`docs/dev/PROTOCOL.md`](docs/dev/PROTOCOL.md) — normative MRP/1 spec, implementable without reading Rust |
 | Prove a change works, especially in the GUI | [`docs/dev/TESTING.md`](docs/dev/TESTING.md) — test map, engine verification, GUI harness recipes, debugging playbook |
-| Why is it built this way? What already went wrong? | [`docs/dev/RETROSPECTIVE.md`](docs/dev/RETROSPECTIVE.md) — decisions, obstacles, defects found |
+| Why is it built this way? What already went wrong? | [`docs/archive/RETROSPECTIVE.md`](docs/archive/RETROSPECTIVE.md) — decisions, obstacles, defects found |
+| What was originally specified, before any code | [`docs/archive/PLAN.md`](docs/archive/PLAN.md) — historical; the code, not the plan, is authoritative |
 | What does the application do, from a user's seat | [`docs/user/GUIDE.md`](docs/user/GUIDE.md) |
 | Project front page, install, config | [`README.md`](README.md) |
 
