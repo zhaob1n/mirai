@@ -237,7 +237,10 @@ pub fn present(app: &adw::Application, runtime: tokio::runtime::Handle, path: Op
 
     // -- bottom navigation bar ----------------------------------------------------------
 
-    let readout = gtk::Label::builder().label("—").build();
+    let readout = gtk::Label::builder()
+        .label("—")
+        .tooltip_text("Side to move, win rate, score lead, visits, search speed")
+        .build();
     readout.add_css_class("mirai-readout");
     let move_scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 1.0);
     move_scale.set_hexpand(true);
@@ -664,8 +667,12 @@ fn update_readout(ui: &Rc<Ui>) {
     let text = match ui.state.last_report() {
         Some(report) => {
             let to_play = ui.state.to_play();
+            let speed = match ui.state.analysis_speed() {
+                Some(rate) => format!("  {}", util::visits_per_second(rate)),
+                None => String::new(),
+            };
             format!(
-                "{} {}%  {}  {}",
+                "{} {}%  {}  {}{speed}",
                 to_play.katago(),
                 util::pct1(report.root.winrate_for(to_play)),
                 util::signed1(report.root.score_lead_for(to_play)),

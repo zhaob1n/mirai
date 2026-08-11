@@ -9,6 +9,7 @@
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use gtk::glib;
 use gtk::prelude::*;
@@ -91,6 +92,8 @@ mod imp {
         pub activation: Cell<u64>,
         /// Bumped on every analysis restart so a stale pump can tell it has been superseded.
         pub generation: Cell<u64>,
+        /// Visits-per-second meter for the search that is running now; `None` when none is.
+        pub speed: Cell<Option<SpeedMeter>>,
     }
 
     impl Default for AppState {
@@ -119,6 +122,7 @@ mod imp {
                 pump: RefCell::new(None),
                 activation: Cell::new(0),
                 generation: Cell::new(0),
+                speed: Cell::new(None),
             }
         }
     }
@@ -494,6 +498,12 @@ impl AppState {
         self.imp().report.borrow().clone()
     }
 
+    /// How fast the running live analysis is searching, in visits per second. `None` when
+    /// no search is running, or before it has made measurable progress.
+    pub fn analysis_speed(&self) -> Option<f32> {
+        self.imp().speed.get().and_then(|m| m.rate())
+    }
+
     /// Builds a stateless analysis request for the position at `id`.
     ///
     /// This is the single place that turns a node into an `AnalyzeReq`; live analysis and
@@ -570,6 +580,7 @@ impl AppState {
             handle.abort();
         }
         imp.generation.set(imp.generation.get().wrapping_add(1));
+        imp.speed.set(None);
 
         if !self.live_analysis() {
             return;
@@ -595,6 +606,9 @@ impl AppState {
         req.report_every_ms = Some(report_every);
         req.priority = 4;
 
+        // The clock starts at dispatch, so the first sample charges the search for the
+        // engine's queueing and warm-up too; later samples are pure deltas.
+        imp.speed.set(Some(SpeedMeter::started(Instant::now())));
         let mut sub = engine.subscribe(req);
         let this = self.clone();
         let generation = imp.generation.get();
@@ -628,6 +642,10 @@ impl AppState {
         let cursor = self.cursor();
         let max = self.config().analysis.max_suggestions as usize;
         self.imp().report.replace(Some(report.clone()));
+        if let Some(mut meter) = self.imp().speed.get() {
+            meter.sample(report.root.visits, Instant::now());
+            self.imp().speed.set(Some(meter));
+        }
         {
             let mut tree = self.imp().tree.borrow_mut();
             tree.set_analysis(cursor, Some(crate::util::analysis_of(&report, max)));
@@ -653,6 +671,59 @@ impl AppState {
 
     pub fn notify_batch_progress(&self, done: u32, total: u32) {
         self.emit_by_name::<()>(signal::BATCH_PROGRESS, &[&done, &total]);
+    }
+}
+
+/// Measures how fast a search is running, in visits per second.
+///
+/// KataGo reports no timing of its own — a report carries a visit count and nothing else —
+/// so the rate is measured here from the visit delta between consecutive reports over the
+/// wall time between them. Reports arrive at ~10 Hz and a single interval is noisy, so the
+/// samples are exponentially smoothed; the readout would otherwise be unreadable.
+#[derive(Clone, Copy)]
+pub struct SpeedMeter {
+    mark: Instant,
+    visits: u32,
+    rate: f32,
+}
+
+/// Weight of the newest sample. At the default 100 ms report interval this settles within
+/// about a second and still tracks a real slowdown.
+const SPEED_SMOOTHING: f32 = 0.35;
+
+impl SpeedMeter {
+    /// A meter for a search dispatched at `now`, which has reported nothing yet.
+    pub fn started(now: Instant) -> SpeedMeter {
+        SpeedMeter {
+            mark: now,
+            visits: 0,
+            rate: 0.0,
+        }
+    }
+
+    /// The smoothed rate, or `None` before any report showed progress.
+    pub fn rate(&self) -> Option<f32> {
+        (self.rate > 0.0).then_some(self.rate)
+    }
+
+    /// Folds in a report of `visits` total visits observed at `now`.
+    ///
+    /// A report with no new visits is ignored rather than counted as a zero-rate sample:
+    /// the final report is echoed as `Done`, and a search that has hit its visit cap would
+    /// otherwise decay its own last reading towards zero.
+    pub fn sample(&mut self, visits: u32, now: Instant) {
+        let dt = now.saturating_duration_since(self.mark).as_secs_f32();
+        if visits <= self.visits || dt < 0.001 {
+            return;
+        }
+        let sample = (visits - self.visits) as f32 / dt;
+        self.rate = if self.rate > 0.0 {
+            self.rate + SPEED_SMOOTHING * (sample - self.rate)
+        } else {
+            sample
+        };
+        self.mark = now;
+        self.visits = visits;
     }
 }
 
@@ -689,5 +760,64 @@ async fn build_engine(
             let fingerprint = remote.fingerprint().to_string();
             Ok((Arc::new(remote) as Arc<dyn Engine>, Some(fingerprint)))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn speed_meter_measures_visits_per_second() {
+        let t0 = Instant::now();
+        let mut m = SpeedMeter::started(t0);
+        assert_eq!(m.rate(), None, "nothing has been reported yet");
+
+        // 600 visits in 0.5 s, counting from dispatch.
+        m.sample(600, t0 + Duration::from_millis(500));
+        assert!((m.rate().unwrap() - 1200.0).abs() < 1.0, "{:?}", m.rate());
+
+        // A steady 1200/s must stay at 1200/s however it is smoothed.
+        for i in 1..=10 {
+            m.sample(
+                600 + i * 120,
+                t0 + Duration::from_millis(500 + i as u64 * 100),
+            );
+        }
+        assert!((m.rate().unwrap() - 1200.0).abs() < 1.0, "{:?}", m.rate());
+    }
+
+    #[test]
+    fn a_repeated_final_report_does_not_zero_the_rate() {
+        let t0 = Instant::now();
+        let mut m = SpeedMeter::started(t0);
+        m.sample(1000, t0 + Duration::from_millis(500));
+        let running = m.rate().unwrap();
+
+        // The engine echoes its last report as `Done`: same visit count, later arrival.
+        m.sample(1000, t0 + Duration::from_millis(900));
+        assert_eq!(m.rate(), Some(running));
+    }
+
+    #[test]
+    fn the_meter_tracks_a_slowdown() {
+        let t0 = Instant::now();
+        let mut m = SpeedMeter::started(t0);
+        let mut visits = 0;
+        let mut at = t0;
+        for _ in 0..10 {
+            visits += 200;
+            at += Duration::from_millis(100);
+            m.sample(visits, at);
+        }
+        assert!((m.rate().unwrap() - 2000.0).abs() < 1.0, "{:?}", m.rate());
+
+        for _ in 0..20 {
+            visits += 20;
+            at += Duration::from_millis(100);
+            m.sample(visits, at);
+        }
+        assert!((m.rate().unwrap() - 200.0).abs() < 20.0, "{:?}", m.rate());
     }
 }

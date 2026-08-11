@@ -43,6 +43,12 @@ pub fn si_visits(v: u32) -> String {
     }
 }
 
+/// Search speed as `840/s`, `1.2k/s` — [`si_visits`] per second.
+pub fn visits_per_second(v: f32) -> String {
+    // A float-to-integer cast saturates, so a nonsense rate cannot wrap round.
+    format!("{}/s", si_visits(v.max(0.0).round() as u32))
+}
+
 /// `56.3` — a win rate as a one-decimal percentage.
 pub fn pct1(v: f32) -> String {
     format!("{:.1}", v * 100.0)
@@ -80,6 +86,14 @@ mod tests {
         assert_eq!(si_visits(1_100_000), "1.1m");
         assert_eq!(si_visits(999), "999");
         assert_eq!(si_visits(1000), "1.0k");
+    }
+
+    #[test]
+    fn visits_per_second_abbreviates_like_a_visit_count() {
+        assert_eq!(visits_per_second(0.0), "0/s");
+        assert_eq!(visits_per_second(839.6), "840/s");
+        assert_eq!(visits_per_second(1240.0), "1.2k/s");
+        assert_eq!(visits_per_second(-3.0), "0/s");
     }
 
     #[test]

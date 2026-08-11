@@ -20,7 +20,7 @@ use mirai_core::{Color, NodeId, Point};
 
 use crate::app::{AppState, signal};
 use crate::batch::Blunder;
-use crate::util::{gtp, pct1, si_visits, signed1};
+use crate::util::{gtp, pct1, si_visits, signed1, visits_per_second};
 
 // -- the row model ----------------------------------------------------------------------
 
@@ -377,6 +377,8 @@ impl AnalysisPanel {
                     winrate: report.root.winrate_for(mover),
                     score: report.root.score_lead_for(mover),
                     stdev: report.root.score_stdev_f32(),
+                    // Only a live search has a speed; the cached branch below never does.
+                    speed: state.analysis_speed(),
                 };
                 let rows = report
                     .moves
@@ -407,6 +409,7 @@ impl AnalysisPanel {
                             winrate: perspective(a.winrate, to_play),
                             score: a.score_lead * to_play.sign(),
                             stdev: a.score_stdev,
+                            speed: None,
                         };
                         let rows = a
                             .candidates
@@ -438,8 +441,12 @@ impl AnalysisPanel {
                     pct1(h.winrate),
                     signed1(h.score)
                 ));
+                let speed = match h.speed {
+                    Some(rate) => format!(" · {}", visits_per_second(rate)),
+                    None => String::new(),
+                };
                 inner.detail.set_label(&format!(
-                    "{} visits · ±{:.1} points · {} to play",
+                    "{} visits{speed} · ±{:.1} points · {} to play",
                     si_visits(h.visits),
                     h.stdev,
                     color_name(h.color)
@@ -535,6 +542,8 @@ struct Headline {
     winrate: f32,
     score: f32,
     stdev: f32,
+    /// Visits per second, when a live search is producing the numbers.
+    speed: Option<f32>,
 }
 
 fn perspective(black_value: f32, c: Color) -> f32 {

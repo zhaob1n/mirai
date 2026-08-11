@@ -211,9 +211,9 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 |---|---|---|
 | `build.rs` | compiles `resources/mirai.gresource.xml` into the binary | — |
 | `src/main.rs` | process entry: tracing, the single tokio runtime, resources, CSS, `activate`/`open` | `APP_ID`, `RESOURCE_PREFIX` |
-| `src/app.rs` | **INV-7.** `AppState`: the single source of truth — properties, signals, tree/cursor API, engine activation, the live-analysis pump | `AppState`, `mod signal`, `with_tree_mut`, `with_tree_cached`, `set_cursor`, `play_move`, the `go_*` navigators, `activate_profile`, `request_for_node`, `restart_analysis`, `set_report`, `build_engine` |
+| `src/app.rs` | **INV-7.** `AppState`: the single source of truth — properties, signals, tree/cursor API, engine activation, the live-analysis pump, the search-speed meter | `AppState`, `mod signal`, `with_tree_mut`, `with_tree_cached`, `set_cursor`, `play_move`, the `go_*` navigators, `activate_profile`, `request_for_node`, `restart_analysis`, `set_report`, `analysis_speed`, `SpeedMeter` (+`SPEED_SMOOTHING`), `build_engine` |
 | `src/config.rs` | `$XDG_CONFIG_HOME/mirai/config.toml`: engine profiles and preferences | `Config` (`load`, `save`, `seeded`, `profile`, `active_profile`, `set_pin`, `default_path`, `data_dir`), `EngineProfile`, `ProfileKind`, `AnalysisSettings`, `PlaySettings`, `StrengthSetting`, `UiSettings` |
-| `src/util.rs` | formatting helpers and the one `Report` → `NodeAnalysis` conversion | `analysis_of`, `si_visits`, `pct1`, `signed1`, `clock_text`, `gtp` |
+| `src/util.rs` | formatting helpers and the one `Report` → `NodeAnalysis` conversion | `analysis_of`, `si_visits`, `visits_per_second`, `pct1`, `signed1`, `clock_text`, `gtp` |
 | `src/window.rs` | **INV-8.** The window: layout, every `win.*` action and accelerator, SGF I/O, autosave, score estimate, shortcuts/about | `Ui`, `present`, `with_ui`, `connect_close`, `install_actions`, `primary_menu`, the `update_*` refreshers, `load_sgf`/`do_open`/`do_save`/`do_save_as`, `adopt`, `write_autosave`/`offer_restore`/`tree_has_content`, `do_score`/`show_estimate`, `delete_branch`, `AUTOSAVE_SECS`, `SCORE_VISITS`, `DEAD_THRESHOLD` |
 | `src/widgets/mod.rs` | widget root; states the no-cairo rule | re-exports `BoardView`, `MoveTreeView`, `WinrateGraph` |
 | `src/widgets/board.rs` | the goban: static-layer cache, stones, marks, move numbers, ownership/policy heat maps, candidate blobs, PV preview, click/hover/context menu | `BoardView` (`point_at`, `set_click_hook`, `set_score_overlay`, `set_pv_preview`), `Layout` (`compute`, `hit`), `Scene`, `StaticKey`, **`VISIT_RAMP`/`ramp_rgb`**, `draw_stones`/`draw_territory`/`draw_numbers`/`draw_marks`/`draw_candidates`, `blit`, `text_on` |
@@ -240,6 +240,7 @@ Non-Rust in `crates/mirai`: `resources/style.css` (`board-area`, `mirai-clock`, 
 | the ownership or policy heat map | `widgets/board.rs` — `BoardView`'s `snapshot`, then `blit` |
 | a keyboard shortcut, or what an action does | `window.rs` — `install_actions` (action bodies and the accel table), `show_shortcuts` for the help window |
 | live-analysis visit cap / report rate | `config.rs` — `AnalysisSettings`, consumed by `AppState::restart_analysis` |
+| the search-speed reading (visits per second) | `app.rs` — `SpeedMeter`, fed from `set_report` and reset by `restart_analysis`; formatted by `util::visits_per_second`, shown in `panels/analysis.rs` (`Headline::speed`) and `window.rs` (`update_readout`) |
 | the KataGo command line or its config overrides | `mirai-engine/src/local.rs` — `LocalEngine::spawn`, `override_config` |
 | a KataGo query field, or how a response is read | `mirai-engine/src/query.rs` — `build_query`; `mirai-engine/src/decode.rs` — `decode_report` |
 | a wire message or field | `mirai-proto/src/msg.rs`, `types.rs`, then [`PROTOCOL.md`](PROTOCOL.md) |

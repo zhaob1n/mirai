@@ -84,8 +84,8 @@ disk.
 │ ⓘ Analysing 42/128…                [Cancel]  │   Analysis │ Moves │ Comment       │ sidebar
 │──────────────────────────────────────────────│────────────────────────────────────│
 │                                              │ B 54.2%   B+1.8                    │
-│              ┌─────────────────┐             │ 12k visits · ±6.4 points ·         │
-│              │                 │             │ Black to play                      │
+│              ┌─────────────────┐             │ 12k visits · 1.4k/s · ±6.4 points  │
+│              │                 │             │ · Black to play                    │
 │              │   the  board    │             │────────────────────────────────────│
 │              │                 │             │ Move  Win  Score Visits Prior  PV  │
 │              │                 │             │ Q16  54.2   +1.8   8.1k   31%  Q16 │
@@ -97,7 +97,7 @@ disk.
 │  │  ▁▁▂▃▅▅▄▆▇▇   ← blunder strip below  │    │                                    │
 │  ╰──────────────────────────────────────╯    │                                    │
 ├──────────────────────────────────────────────┴────────────────────────────────────┤
-│ ⏮ ◀ ▶ ⏭  ▲▼  ├───────────────●─────────────────────────┤   B 54.2%  +1.8  12k     │ bottom bar
+│ ⏮ ◀ ▶ ⏭  ▲▼  ├───────────────●─────────────────────────┤ B 54.2%  +1.8  12k 1.4k/s│ bottom bar
 └───────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -107,7 +107,7 @@ disk.
 | **Board** | wood, grid, star points, optional coordinates, stones. A red dot marks the last move unless move numbers are on. SGF marks (triangle, square, circle, cross, text labels) are drawn |
 | **Win-rate graph** | solid curve = Black's win rate (left axis 0/50/100); dashed curve = score lead (right axis, never tighter than ±5); vertical line = where you are; coloured bars along the bottom = the blunder strip |
 | **Sidebar** | three pages — **Analysis** (readout, candidate list, blunder list), **Moves** (the branch graph), **Comment** (the current move's comment). Collapses to an overlay on a narrow window |
-| **Bottom bar** | first / previous / next / last, previous / next variation, a slider along the current line, and a readout of side to move, win rate, score lead and visits — or the status message when there is no analysis |
+| **Bottom bar** | first / previous / next / last, previous / next variation, a slider along the current line, and a readout of side to move, win rate, score lead, visits and — while a search is running — its speed in visits per second; or the status message when there is no analysis |
 
 The ☰ menu holds *New Game…*, *Open…*, *Save*, *Save As…*, *Copy SGF*, *Paste SGF*, *Analyse
 Game*, *Estimate Score*, *Coordinates*, *Move Numbers*, *Ownership Overlay*, *Policy Overlay*,
@@ -165,7 +165,10 @@ preference can disagree, and the white outline is the answer to *"what would Kat
 | **Prior** | what the raw network thought of it *before* searching |
 | **PV** | the sequence the engine expects |
 
-Above it: side to move, win rate, score lead, total visits, and `±` the score uncertainty.
+Above it: side to move, win rate, score lead, total visits, `±` the score uncertainty, and,
+while the engine is actually searching this position, **how fast it is searching** — `1.4k/s`
+is 1400 visits per second. It is measured from the reports themselves, so it reflects what
+your machine is really doing right now, and it disappears once the search stops.
 
 High prior with few visits = the network liked it on sight and the search talked itself out of
 it. Low prior with many visits = the search found something the network nearly missed.
