@@ -179,5 +179,15 @@ They are commented at the source, and `docs/dev/ARCHITECTURE.md` lists them toge
 ## 6. Scope
 
 Deliberately out of scope: online-server game fetching, screen-board OCR, joseki dictionaries,
-KataGo auto-download or benchmark wizards, theme skinning, dual-engine comparison. Proposals to
-add them should be weighed against the maintenance surface, not accepted by default.
+KataGo auto-download, theme skinning, dual-engine comparison. Proposals to add them should be
+weighed against the maintenance surface, not accepted by default.
+
+**In scope, decided:** mirai owns the KataGo analysis config. It writes the file itself from
+one set of static defaults (`mirai-engine/src/tuning.rs`), editable in Preferences; a
+user-supplied `analysis.cfg` stays available and then owns every setting but the two thread
+counts. A **measured** calibration — timing a few thread combinations against the real model
+and keeping the winner — is wanted as well, as an explicit opt-in per profile, never as
+something that runs on its own. It replaces the earlier blanket ban on benchmark wizards,
+which ruled out the only honest way to fit unknown hardware: GPU tier cannot be established
+from the outside, since only the CUDA and TensorRT backends report device memory and a
+model-name table would rot.

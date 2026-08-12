@@ -18,6 +18,7 @@
 
 use std::time::Duration;
 
+use adw::prelude::{ComboRowExt, PreferencesRowExt};
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
@@ -29,6 +30,8 @@ enum Step {
     /// Activate the first button whose label contains this text, anywhere in the window's
     /// widget tree — including inside a presented `adw::Dialog`.
     Press(String),
+    /// Set a ComboRow by title substring and raw model index.
+    Select(String, u32),
     Shot(String),
     Quit,
 }
@@ -47,6 +50,12 @@ fn parse(script: &str) -> Vec<Step> {
                 "shot" => Some(Step::Shot(rest.to_string())),
                 "quit" => Some(Step::Quit),
                 "press" => Some(Step::Press(rest.to_string())),
+                "select" => rest.rsplit_once('=').and_then(|(title, index)| {
+                    index
+                        .parse()
+                        .ok()
+                        .map(|index| Step::Select(title.to_string(), index))
+                }),
                 "action" => Some(match rest.split_once('=') {
                     Some((name, arg)) => Step::Action(name.to_string(), Some(arg.to_string())),
                     None => Step::Action(rest.to_string(), None),
@@ -123,6 +132,14 @@ pub fn install(app: &adw::Application) {
                     );
                     glib::timeout_future(Duration::from_millis(250)).await;
                 }
+                Step::Select(title, index) => {
+                    let done = select(&app, &title, index);
+                    eprintln!(
+                        "harness: select {title:?}={index} -> {}",
+                        if done { "ok" } else { "NOT FOUND" }
+                    );
+                    glib::timeout_future(Duration::from_millis(250)).await;
+                }
                 Step::Shot(path) => {
                     // `WidgetPaintable::snapshot` yields nothing if the window has not
                     // drawn since the last change, so nudge it and retry a few frames.
@@ -171,19 +188,25 @@ fn activate(app: &adw::Application, full: &str, arg: Option<&str>) -> bool {
     }
 }
 
-/// Activates the first `gtk::Button` whose label contains `needle`, searching the whole
+/// Activates the first `gtk::Button` whose text contains `needle`, searching the whole
 /// widget tree under the active window. A presented `adw::Dialog` is a descendant of the
-/// window, so this reaches dialog buttons too.
+/// window, so this reaches dialog buttons too. A matching `gtk::MenuButton` is popped up
+/// instead of clicked, which is how the discovered-file choosers are opened.
 fn press(app: &adw::Application, needle: &str) -> bool {
     fn walk(w: &gtk::Widget, needle: &str) -> bool {
-        if w.is_visible()
-            && let Some(button) = w.downcast_ref::<gtk::Button>()
-            && button
-                .label()
-                .is_some_and(|l| l.replace('_', "").contains(needle))
-        {
-            button.emit_clicked();
-            return true;
+        if w.is_visible() {
+            if let Some(menu) = w.downcast_ref::<gtk::MenuButton>()
+                && menu_text(menu).is_some_and(|l| l.replace('_', "").contains(needle))
+            {
+                menu.popup();
+                return true;
+            }
+            if let Some(button) = w.downcast_ref::<gtk::Button>()
+                && button_text(button).is_some_and(|l| l.replace('_', "").contains(needle))
+            {
+                button.emit_clicked();
+                return true;
+            }
         }
         let mut child = w.first_child();
         while let Some(c) = child {
@@ -198,6 +221,64 @@ fn press(app: &adw::Application, needle: &str) -> bool {
         Some(w) => walk(w.upcast_ref::<gtk::Widget>(), needle),
         None => false,
     }
+}
+
+/// Selects the first visible `adw::ComboRow` whose title contains `needle`.
+fn select(app: &adw::Application, needle: &str, index: u32) -> bool {
+    fn walk(w: &gtk::Widget, needle: &str, index: u32) -> bool {
+        if w.is_visible()
+            && let Some(row) = w.downcast_ref::<adw::ComboRow>()
+            && row.title().contains(needle)
+        {
+            row.set_selected(index);
+            return true;
+        }
+        let mut child = w.first_child();
+        while let Some(c) = child {
+            if walk(&c, needle, index) {
+                return true;
+            }
+            child = c.next_sibling();
+        }
+        false
+    }
+    match app.active_window() {
+        Some(w) => walk(w.upcast_ref::<gtk::Widget>(), needle, index),
+        None => false,
+    }
+}
+
+/// A button's user-visible text. `GtkButton:label` is empty whenever the button holds a
+/// child widget instead — an `adw::ButtonContent`, for one — so fall back to the first
+/// label in its subtree, and then to the tooltip, which is the only text an icon-only
+/// button ever shows.
+fn button_text(button: &gtk::Button) -> Option<String> {
+    fn first_label(w: &gtk::Widget) -> Option<String> {
+        if let Some(label) = w.downcast_ref::<gtk::Label>() {
+            return Some(label.text().to_string());
+        }
+        let mut child = w.first_child();
+        while let Some(c) = child {
+            if let Some(text) = first_label(&c) {
+                return Some(text);
+            }
+            child = c.next_sibling();
+        }
+        None
+    }
+    button
+        .label()
+        .map(|l| l.to_string())
+        .or_else(|| button.child().and_then(|c| first_label(&c)))
+        .or_else(|| button.tooltip_text().map(|t| t.to_string()))
+}
+
+/// A menu button's user-visible text: its label, else the tooltip an icon-only one carries.
+fn menu_text(button: &gtk::MenuButton) -> Option<String> {
+    button
+        .label()
+        .map(|l| l.to_string())
+        .or_else(|| button.tooltip_text().map(|t| t.to_string()))
 }
 
 /// Renders the active window through its live `gsk` renderer and writes a PNG.
@@ -228,9 +309,9 @@ mod tests {
     #[test]
     fn script_parsing_covers_every_step_kind() {
         let steps = parse(
-            "wait:250, action:win.toggle-analysis, action:win.set-engine=local, shot:/tmp/x.png, quit",
+            "wait:250, action:win.toggle-analysis, action:win.set-engine=local, select:Model=2, shot:/tmp/x.png, quit",
         );
-        assert_eq!(steps.len(), 5);
+        assert_eq!(steps.len(), 6);
         assert!(matches!(steps[0], Step::Wait(250)));
         match &steps[1] {
             Step::Action(n, None) => assert_eq!(n, "win.toggle-analysis"),
@@ -243,8 +324,9 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        assert!(matches!(&steps[3], Step::Shot(p) if p == "/tmp/x.png"));
-        assert!(matches!(steps[4], Step::Quit));
+        assert!(matches!(&steps[3], Step::Select(title, 2) if title == "Model"));
+        assert!(matches!(&steps[4], Step::Shot(p) if p == "/tmp/x.png"));
+        assert!(matches!(steps[5], Step::Quit));
     }
 
     #[test]
@@ -254,5 +336,6 @@ mod tests {
         assert_eq!(parse("frobnicate:3,wait:10").len(), 1);
         // A malformed wait is dropped rather than silently becoming zero.
         assert!(parse("wait:soon").is_empty());
+        assert!(parse("select:Model=not-an-index").is_empty());
     }
 }

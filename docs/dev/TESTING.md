@@ -55,19 +55,22 @@ the rest defend the surrounding behaviour and are named so you can find them.
 | `decode.rs` | INV-1 at the decode boundary; candidates in KataGo's `order` with Black-perspective values; policy has a pass slot and `POLICY_ILLEGAL` markers; malformed output errors instead of panicking | **`ownership_keeps_katago_row_major_top_left_order`** (the unit-test counterpart of recipe (b)), **`decodes_a_report_in_order_with_black_perspective_values`** |
 | `local.rs` | INV-2 at the source; unset tuning is omitted rather than overriding the user's `analysis.cfg`; a comma in a path is a startup error because KataGo splits `-override-config` on commas | **`overrides_always_pin_the_reporting_perspective_and_logging`**, `a_comma_in_a_path_is_reported_rather_than_silently_truncated` |
 | `remote.rs` | Pin storage, reconnect backoff cap, engine-name resolution, and that a dead address fails instead of hanging | `tofu_store_round_trips_pins`, `connect_to_a_dead_port_never_succeeds` |
+| `tuning.rs` | The generated analysis config: KataGo refuses to start unless `numAnalysisThreads`, `numSearchThreadsPerAnalysisThread` and `nnMaxBatchSize` are all present, so the rendered file must carry every one of them; the batch must cover the thread product; rewriting an unchanged file would churn a config two windows share | **`the_rendered_config_carries_every_key_katago_demands`**, **`writing_is_idempotent_so_shared_engines_do_not_churn`**, `the_defaults_are_internally_consistent`, `a_batch_smaller_than_the_thread_product_is_reported` |
+| `calibrate.rs` | Automatic tuning uses fixed visits and ownership on distinct positions, stops at the first search-thread doubling below 10%, picks aggregate analysis throughput, preserves the cache decision and grows the batch to cover the winner | **`benchmark_requests_are_fixed_visit_owned_and_position_distinct`**, `search_stops_before_low_gain`, `analysis_uses_maximum_throughput`, `final_tuning_preserves_cache_and_covers_threads` |
 | **mirai-server** | | |
 | `main.rs` | Token shape and entropy; the cert carries the names a client will dial; the CLI does not drift from the docs | `a_generated_token_is_64_lowercase_hex_characters`, `the_cli_matches_the_documented_flags` |
-| `config.rs` | A misspelled key is an error, never silently ignored; relative paths resolve against the config directory so a config plus its cert moves as a unit; `server.example.toml` stays parseable | **`typos_and_duplicates_are_rejected_rather_than_silently_ignored`**, `relative_paths_resolve_against_the_config_directory`, `the_documented_minimal_example_parses` |
+| `config.rs` | A misspelled key is an error, never silently ignored; relative paths resolve against the config directory so a config plus its cert moves as a unit; an engine with no `config` file gets a generated one; `server.example.toml` stays parseable | **`typos_and_duplicates_are_rejected_rather_than_silently_ignored`**, `relative_paths_resolve_against_the_config_directory`, `an_engine_without_a_config_file_gets_a_generated_one`, `the_documented_minimal_example_parses` |
 | `session.rs` | Exact-match auth, and no `[[token]]` means reject everyone rather than admit everyone; the zero-copy send path is byte-identical to what a client decodes; a client cannot escalate its own priority | **`authentication_accepts_only_an_exact_token`**, **`sub_msg_ref_is_byte_identical_to_sub_msg`**, `priority_is_clamped_into_the_served_band` |
 | **mirai (GUI)** — display-free logic only; everything visual is section 5 | | |
-| `config.rs` | A missing file is a first run, a corrupt one is an error; a TOFU pin can never land on a local profile; a save keeps the keys another window changed meanwhile, but a profile this window deleted really goes | `missing_file_yields_a_seeded_config_not_an_error`, `pins_are_recorded_on_remote_profiles_only`, **`a_save_keeps_another_windows_edit`**, `a_removed_profile_is_removed_from_the_file` |
+| `config.rs` | A missing file is a first run, a corrupt one is an error; model/config directories have a fixed XDG order, every valid file is merged without duplicates, and GTP config is excluded; a TOFU pin can never land on a local profile; concurrent-window saves merge correctly | `missing_file_yields_a_seeded_config_not_an_error`, `xdg_system_directories_keep_precedence_and_ignore_relative_entries`, `discovery_directories_follow_the_documented_order`, `network_discovery_merges_every_bin_gz_and_ignores_everything_else`, `analysis_config_discovery_returns_every_analysis_config_but_not_gtp`, `pins_are_recorded_on_remote_profiles_only`, **`a_save_keeps_another_windows_edit`**, `a_removed_profile_is_removed_from_the_file` |
 | `window.rs` | `tree_has_content`: never autosave an empty board and never offer to restore one, with the boundaries that matter (a pass counts, marks alone do not, content deep in a variation is found); INV-8 | **`a_blank_record_is_not_worth_autosaving`** + five boundary cases, **`handlers_do_not_keep_the_window_alive`** |
 | `play.rs` | Deterministic at temperature 0 and genuinely spread above it; one bad report never resigns and a good one clears the streak; clock transitions | **`temperature_zero_always_plays_the_engines_choice`**, **`a_lone_bad_report_does_not_resign`**, `the_last_period_expiring_loses_on_time` |
 | `batch.rs` | INV-2 applied to blunder detection — the drop is measured from the mover's side; batch concurrency follows `numAnalysisThreads` and saturates | **`white_blunder_is_measured_from_whites_perspective`**, `in_flight_scales_with_threads_and_saturates_at_sixteen` |
 | `widgets/board.rs`, `widgets/tree.rs`, `widgets/winrate.rs` | Click→`Point` mapping, board geometry, tree lane assignment and graph axis inversion — pure functions deliberately lifted out of `snapshot()` so they are testable at all | `hit_test_snaps_to_the_nearest_intersection`, `lanes_keep_the_main_line_on_zero`, **`deep_lines_do_not_recurse`** (a long game must not blow the stack), `a_white_blunder_is_not_a_black_blunder` |
 | `app.rs` | The search-speed meter: a steady search reads its true rate, a real slowdown is followed, and the final report — echoed once as `Done` with the same visit count — never drags the reading to zero | **`a_repeated_final_report_does_not_zero_the_rate`**, `speed_meter_measures_visits_per_second`, `the_meter_tracks_a_slowdown` |
 | `engines.rs` | Engines are shared only between identical profiles, and a dropped engine is never handed out again — the pool holds weak references so the last window closing takes KataGo with it | `only_identical_profiles_share_an_engine`, `a_dropped_engine_is_no_longer_running` |
-| `util.rs`, `harness.rs` | Formatting helpers; the harness grammar, including that a malformed `wait:soon` is dropped rather than silently becoming zero | `script_parsing_covers_every_step_kind`, `unknown_and_empty_steps_are_dropped_not_fatal` |
+| `prefs.rs` | A discovered-file chooser names candidates by file name, and only a name two directories share carries that directory | `only_candidates_sharing_a_name_carry_their_directory` |
+| `util.rs`, `harness.rs` | Formatting helpers; the harness grammar, including that malformed numeric steps are dropped rather than silently becoming zero | `script_parsing_covers_every_step_kind`, `unknown_and_empty_steps_are_dropped_not_fatal` |
 
 ## 3. Testing philosophy
 
@@ -166,8 +169,9 @@ printf '%s\n' '{"id":"gt","boardXSize":19,"boardYSize":19,"rules":"chinese","kom
 ## 5. Testing the GUI
 
 Everything below is derived from `crates/mirai/src/harness.rs`, `window.rs` and `main.rs`.
-**The recipes were not executed while writing this document**; treat the `wait:` values as
-starting points and read the harness's stderr trace to see what actually happened.
+**The recipes were not executed while writing this document** — except (g), whose command and
+output below are transcribed from a real run; treat the other `wait:` values as starting
+points and read the harness's stderr trace to see what actually happened.
 
 ### Why external capture does not work
 
@@ -212,13 +216,23 @@ the prefix through the widget's action muxer. `action:win.toggle-analysis` there
 feature code. Names beginning `app.` are routed to the `adw::Application` instead.
 
 Dialogs are not action-driven, so `harness::press` walks the widget tree from the window root
-and clicks the first **visible** `gtk::Button` whose label contains the needle; a presented
-`adw::Dialog` is a descendant of the window, so this reaches dialog buttons. Three traps:
+and clicks the first **visible** `gtk::Button` matching the needle. Three things are tried per
+button, in order: `GtkButton:label`; the first `gtk::Label` in its subtree, which is how an
+`adw::ButtonContent` child is matched; then `tooltip_text`, which is how an icon-only button
+with no label at all is reached — `press:Edit this profile` in Preferences works on the tooltip.
+A `gtk::MenuButton` matching by label or tooltip is popped up instead of clicked, which is how
+the discovered-file choosers in the local-engine editor are opened; its entries are then
+ordinary buttons labelled with the file name, so `press:kata1-b18…` picks one.
+A presented `adw::Dialog` is a descendant of the window, so this reaches dialog buttons too.
+Four traps:
 
 - Mnemonic underscores are stripped before matching (`press:Save` matches `_Save`).
 - Substring match, depth-first from the window root: the first hit wins. `press:New game`
   finds the *main header bar's* button, not a dialog. Pick a needle unique to the dialog —
   `press:Start` in `dialogs::new_game` is unambiguous.
+- A popover lives in its own surface, so its contents never appear in a `shot`. Verify a
+  chooser by what picking an entry *does* — the row subtitle, and the `katago …` start line
+  after **Save profile** — not by a screenshot of the open list.
 - `adw::AlertDialog` responses (`dialogs::show_score_with`, `dialogs::confirm_fingerprint`)
   are declared as response ids, not as buttons we construct. [INFERENCE] `press:Close` works
   only if libadwaita realises them as labelled buttons; unverified. End such recipes with
@@ -234,6 +248,7 @@ and clicks the first **visible** `gtk::Button` whose label contains the needle; 
 | `action:<prefix.name>` | Activate an action with no parameter | 120 ms |
 | `action:<prefix.name>=<string>` | Activate with a string parameter (`action:win.set-engine=workstation`) | 120 ms |
 | `press:<label substring>` | Click the first visible matching button | 250 ms |
+| `select:<row title substring>=<index>` | Set the first visible matching `adw::ComboRow`; index 0 is its prompt/default entry | 250 ms |
 | `shot:<path.png>` | Render the active window to PNG | see below |
 | `quit` | `app.quit()`, ending the script | — |
 
@@ -263,13 +278,14 @@ mapped — usually a too-short preceding `wait:`, or a modal that grabbed before
 Preconditions: a debug build, and an engine profile already in
 `~/.config/mirai/config.toml` — with none, `window::present` opens Preferences at startup and
 every action below lands on the wrong window. `Config::seeded` writes a working local profile
-on first run *if* the bundled KataGo and network exist at the paths its `SEED_*` constants
-name; otherwise configure one by hand once. A local KataGo takes ~6 s to load its net, which
-is why each first `wait:` is generous; toggling analysis before it is ready is safe, because
-`AppState::set_engine` calls `restart_analysis` when the engine lands.
+on first run if it finds both a `katago` on `PATH` and a `*.bin.gz` in the ordered model
+locations described in the user guide; otherwise configure one by hand. A local KataGo takes
+~6 s to load its net,
+which is why each first `wait:` is generous; toggling analysis before it is ready is safe,
+because `AppState::set_engine` calls `restart_analysis` when the engine lands.
 
 ```sh
-export SGF=/home/ykpcx/2026-04-26-linux64.with-katago/save/autoGame1.sgf   # the 30-node fixture
+export SGF=$PWD/crates/mirai-core/tests/data/lizzieyzy-autoGame1.sgf   # the 30-node fixture
 export RUST_LOG=info,mirai=debug
 ```
 
@@ -414,6 +430,31 @@ sleep 10; pgrep -f 'linux-x64/katago analysis' | wc -l   # still 1
 sleep 30; ls "$XDG_DATA_HOME/mirai"                 # two autosave-… files: two live windows
 ```
 
+**(g) The local-engine editor in Preferences — managed and custom analysis config.** *This
+recipe was executed; the trace below is its real output.* The icon button on a profile row is
+matched by its tooltip, so the editor page is drivable.
+
+```sh
+s=/tmp/mirai-ui; mkdir -p "$s/config/mirai"
+# one local profile in config.toml, carrying only the katago and model paths
+XDG_CONFIG_HOME="$s/config" XDG_DATA_HOME="$s/data" \
+  MIRAI_HARNESS="wait:4000,action:win.preferences,wait:1000,press:Edit this profile,wait:1200,shot:/tmp/ui-managed.png,quit" \
+  ./target/debug/mirai
+```
+
+```text
+harness: press "Edit this profile" -> ok
+harness: wrote /tmp/ui-managed.png
+```
+
+| Profile in `config.toml` | What the PNG must show |
+|---|---|
+| No `config` key (mirai generates the analysis config) | Configuration shows `Managed by mirai`; the custom-config row is hidden. Search subtitles read `0 uses mirai's default (4)` and `(16)`. Batching and memory is visible. With model candidates, the model row carries a list button beside its folder button |
+| `config = "…"` (a custom file) | Custom mode shows the config row, with a list button of its own when configs were discovered. Batching and memory is hidden; Search subtitles read `0 keeps the value from your analysis config` |
+
+Use short paths — a symlink under `/tmp` for the KataGo binary and network — or the rows grow
+wide enough that the page no longer fits in the captured window.
+
 ### Drivable action names
 
 All installed in `window::install_actions`, all reachable as `action:<name>`; the keyboard
@@ -429,8 +470,9 @@ win.set-engine=<profile name>        (stateful, takes a string argument)
 window.close                         (GTK built-in; the only way to trigger teardown)
 ```
 
-`win.open`, `win.save-as` and `win.preferences` open dialogs the harness cannot fill in —
-pass the SGF on the command line instead of driving `win.open`.
+`win.open` and `win.save-as` open file choosers the harness cannot fill in — pass the SGF on
+the command line instead of driving `win.open`. `win.preferences` *is* drivable: its rows are
+ordinary buttons, so `press:` reaches them (recipe (g)).
 
 ## 6. Verifying the remote path
 
@@ -533,7 +575,6 @@ row is a defect that happened or a guard that exists because one did.
 | `harness: screenshot failed: nothing was drawn` | The window never mapped, or a modal grabbed before `present()` | Lengthen the preceding `wait:` |
 | The harness does nothing at all | Release build (`#[cfg(debug_assertions)]`), `MIRAI_HARNESS` unset, or every step malformed | `harness::install` |
 | The app opens Preferences instead of the game window | No engine profile configured | `window::present` |
-| `cargo test` fails only in `sgf.rs` with `fixture` | The LizzieYzy fixture is not on this machine | section 9 |
 
 `RUST_LOG` (both binaries use `EnvFilter`, defaulting to `info`):
 
@@ -564,6 +605,7 @@ cargo doc --workspace --no-deps            # catches broken intra-doc links
 | Anything drawn | At least one harness recipe, and actually look at the PNG. Recipe (b) for anything touching `Point`, ownership or policy |
 | Signals, properties, `Rc` capture, teardown | Recipe (e): `exit=0`, both files written, no orphaned `katago` |
 | A new `GAction` or accelerator | Drive it once through `action:` and confirm `-> ok`, not `MISSING` |
+| Engine config generation (`tuning.rs`, `engines.rs`) or the local-engine page in `prefs.rs` | Recipe (g) in both modes, and look at both PNGs: managed hides the file row and shows Batching and memory, custom does the opposite |
 
 - [ ] Every new file carries the `SPDX-License-Identifier: GPL-3.0-or-later` header.
 - [ ] No `GDK_BACKEND` anywhere in the tree.
@@ -578,11 +620,10 @@ Reported, not fixed.
 
 | Gap | Detail |
 |---|---|
-| **The SGF fixture is not in the repo** | `sgf.rs`'s `REAL_SGF` const is an absolute path under `/home/ykpcx/…`; the LizzieYzy test panics with `fixture` on any other machine, so the suite is not reproducible off this box. Vendoring the 25 765-byte file under `crates/mirai-core/tests/data/` and using `include_bytes!` would fix it |
-| **First-run seed paths are machine-specific** | `config.rs`'s `SEED_*` constants point at the same tree. Harmless — the code checks `exists()` — but a fresh checkout elsewhere always lands in Preferences |
+| **First-run discovery is best-effort** | `discover_katago` searches `PATH` for the executable, then user XDG `katago/models` and `mirai/models`, `~/.katago/models`, and finally both namespaces under the system XDG data roots. A downloaded release tree not installed into those locations still lands the user in Preferences. Deliberate: discovery follows explicit application-data contracts instead of package-layout guesses; there is no `~/.mirai` fallback |
 | **No end-to-end client↔server test** | `remote.rs` covers the pin store, backoff, engine selection and two failure paths. Nothing spawns a server on loopback and runs a real `Open`/`Report`/`Cancel` exchange, so the handshake and INV-3's remote half are hand-verified only. This is the largest gap; a `#[tokio::test]` with an in-process server and a stub `Engine` would close it without needing KataGo |
 | **No test for a changed fingerprint** | Pins round-trip, but nothing asserts that a *different* fingerprint is refused |
 | **`app.rs` tests cover only `SpeedMeter`** | `AppState` is the single source of truth (INV-7) and its property/signal wiring — precisely what the `explicit_notify` defect broke — is still uncovered. A display-free test could assert that every generated setter still emits `notify::` |
-| **`panels/analysis.rs`, `prefs.rs`, `dialogs.rs` have no tests** | All display-bound. `panels/analysis.rs` has the most extractable pure logic (candidate row formatting, blunder rows) |
+| **`panels/analysis.rs` and `dialogs.rs` have no tests; `prefs.rs` has one** | All display-bound. `prefs.rs` covers only the chooser's naming rule (`only_candidates_sharing_a_name_carry_their_directory`); `panels/analysis.rs` has the most extractable pure logic (candidate row formatting, blunder rows) |
 | **The harness is only parser-tested** | `activate`, `press` and `shot` need a display and are exercised only by the recipes above |
 | **No golden-image comparison** | Screenshots are read by a human; nothing detects a slow visual regression between runs |

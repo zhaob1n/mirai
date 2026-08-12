@@ -203,7 +203,14 @@ async fn start_engines(cfg: &ServerConfig) -> Vec<NamedEngine> {
             model = %e.model.display(),
             "starting engine"
         );
-        match LocalEngine::spawn(e.to_local_config()).await {
+        let local = match e.to_local_config() {
+            Ok(local) => local,
+            Err(err) => {
+                error!(engine = %e.name, "engine is not usable, continuing without it: {err:#}");
+                continue;
+            }
+        };
+        match LocalEngine::spawn(local).await {
             Ok(engine) => {
                 let desc = engine.describe();
                 info!(

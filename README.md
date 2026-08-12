@@ -47,8 +47,9 @@ cargo run -p mirai
 
 - Rust 1.92 or newer (edition 2024).
 - GTK 4.22+ and libadwaita 1.9+ with their development packages.
-- A KataGo binary, a model, and an analysis config. Any recent KataGo works; mirai uses the
-  JSON analysis engine (`katago analysis`), never GTP.
+- A KataGo binary and a network model. Any recent KataGo works; mirai uses the JSON analysis
+  engine (`katago analysis`), never GTP, and writes the analysis config itself unless you
+  supply one.
 
 On Arch: `pacman -S gtk4 libadwaita`. On Debian/Ubuntu:
 `apt install libgtk-4-dev libadwaita-1-dev`.
@@ -61,9 +62,12 @@ cargo build --release --workspace
 
 ## Getting started
 
-On first run mirai looks for a KataGo installation and, if it finds one, writes a working
-`local-default` engine profile. Otherwise it opens Preferences with a prompt to add one:
-you need three paths — the `katago` binary, a model (`.bin.gz`), and an analysis config.
+On first run mirai looks for `katago` on `PATH` and merges every network found in the ordered
+XDG `katago/models` and `mirai/models` directories, with `~/.katago/models` between user and
+system data. The first candidate seeds `local-default`; the rest stay one click away in each
+profile editor, listed by file name. If none is found, Preferences prompts for the binary and
+model paths. mirai generates the analysis config unless you pick a discovered one or a file of
+your own.
 
 Everything else is discoverable from the interface. The parts that are not:
 
@@ -103,9 +107,11 @@ name   = "local-default"
 kind   = "local"
 katago = "/path/to/katago"
 model  = "/path/to/model.bin.gz"
-config = "/path/to/analysis.cfg"
-analysis_threads = 2          # numAnalysisThreads
-search_threads   = 16         # numSearchThreadsPerAnalysisThread
+# config = "/path/to/analysis.cfg"  # optional; omitted, mirai writes its own
+analysis_threads           = 4    # numAnalysisThreads
+search_threads             = 16   # numSearchThreadsPerAnalysisThread
+nn_max_batch_size          = 64   # nnMaxBatchSize
+nn_cache_size_power_of_two = 20   # nnCacheSizePowerOfTwo — 2^20 evaluations, about 3 GiB
 
 [[engine_profile]]
 name        = "workstation"
@@ -139,7 +145,7 @@ policy_overlay      = false
 save_analysis_in_sgf = false  # store cached analysis in an MRAI property
 ```
 
-Autosave and KataGo's logs live under `$XDG_DATA_HOME/mirai/`.
+Autosave, KataGo's logs and the generated analysis config live under `$XDG_DATA_HOME/mirai/`.
 
 ---
 
@@ -163,9 +169,10 @@ key    = "key.pem"
 name   = "default"
 katago = "/path/to/katago"
 model  = "/path/to/model.bin.gz"
-config = "/path/to/analysis.cfg"
-analysis_threads = 4
-search_threads   = 8
+# config = "/path/to/analysis.cfg"    # optional here too
+analysis_threads  = 4
+search_threads    = 16
+nn_max_batch_size = 64
 
 [[token]]
 value    = "…64 hex chars…"
@@ -276,7 +283,7 @@ and `quit`.
 ## Scope
 
 Deliberately not included: online-server game fetching, screen-board OCR, joseki dictionaries,
-KataGo auto-download or benchmark wizards, theme skinning, and dual-engine comparison.
+KataGo auto-download, theme skinning, and dual-engine comparison.
 
 Board sizes are 2×2 to 19×19, matching stock KataGo builds. Rulesets are Tromp-Taylor, Chinese,
 Chinese (OGS), Japanese, Korean, stone scoring, AGA, AGA (button) and New Zealand, transcribed

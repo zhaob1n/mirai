@@ -19,14 +19,21 @@ key  = "key.pem"
 # when no engine at all came up. `Open { engine: None }` resolves to the first block.
 [[engine]]
 name   = "default"
-katago = "/home/ykpcx/2026-04-26-linux64.with-katago/Lizzieyzy/engines/katago/linux-x64/katago"
-model  = "/home/ykpcx/2026-04-26-linux64.with-katago/Lizzieyzy/weights/default.bin.gz"
-config = "/home/ykpcx/2026-04-26-linux64.with-katago/Lizzieyzy/engines/katago/configs/analysis.cfg"
+katago = "/opt/katago/katago"
+model  = "/opt/katago/model.bin.gz"
 
-# Optional KataGo overrides. Omit one to keep whatever the analysis.cfg above sets.
-analysis_threads = 2               # numAnalysisThreads: positions searched concurrently
-search_threads   = 8               # numSearchThreadsPerAnalysisThread
-# nn_cache_size_power_of_two = 20  # nnCacheSizePowerOfTwo
+# A KataGo analysis config. Leave it out and the server writes one into log_dir from the
+# settings below — the same file the desktop application generates. Point it at your own
+# file to take full control instead, in which case that file owns every KataGo setting
+# except the two thread counts.
+# config = "/opt/katago/analysis.cfg"
+
+# Tuning. With a generated config these are written into it; with a custom one, only the
+# two thread values are applied as overrides on top of the file.
+analysis_threads = 4               # numAnalysisThreads: positions searched concurrently
+search_threads   = 16              # numSearchThreadsPerAnalysisThread
+# nn_max_batch_size = 64           # nnMaxBatchSize; wants to be at least the product above
+# nn_cache_size_power_of_two = 20  # nnCacheSizePowerOfTwo: 2^N evaluations, ~3 KiB each
 # log_dir = "katago-logs"          # KataGo's logDir; defaults to the temp directory
 # startup_timeout_s = 180          # raise this if first-run OpenCL tuning times out
 

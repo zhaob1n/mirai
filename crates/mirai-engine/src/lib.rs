@@ -6,18 +6,24 @@
 //! `mirai-server` over MRP/1. Both produce bit-identical [`Report`]s, so the GUI has a
 //! single code path.
 
+pub mod calibrate;
 pub mod decode;
 pub mod local;
 pub mod query;
 pub mod remote;
+pub mod tuning;
 
 use std::sync::Arc;
 
 use tokio::sync::watch;
 
+pub use calibrate::{
+    CalibrationConfig, CalibrationProgress, CalibrationResult, CalibrationSample, calibrate,
+};
 pub use mirai_proto::types::{AnalyzeReq, AvoidSpec, EngineDesc, MoveInfo, Report, RootInfo, Want};
-pub use local::{LocalEngine, LocalEngineConfig};
+pub use local::{LOCAL_ENGINE_SHUTDOWN_GRACE, LocalEngine, LocalEngineConfig};
 pub use remote::{RemoteEngine, TofuStore};
+pub use tuning::EngineTuning;
 
 /// Why an analysis stopped, or why an engine could not be used at all.
 #[derive(Clone, Debug, thiserror::Error)]
