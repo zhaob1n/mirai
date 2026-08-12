@@ -113,9 +113,12 @@ Full detail, including how to drive the GUI headlessly and verify against a real
   (`default-features = false`) because a second crypto provider makes
   `ClientConfig::builder()` panic at runtime; SHA-256 is implemented in-tree
   (`mirai-proto/src/sha256.rs`) rather than pulled in for 60 lines.
-- **Keep the tree rustfmt-clean.** It was formatted once with stock `rustfmt` defaults, so
-  `cargo fmt --all --check` is quiet; run `cargo fmt` on what you touched and never hand-format
-  around it. `clippy --fix` across the tree is still banned: it rewrites files you did not read.
+- **Keep the tree rustfmt- and clippy-clean.** Both are clean across the workspace today
+  (`cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings` exit
+  0), so day to day you only need them on what you touched: `cargo fmt`, `cargo clippy -p
+  <crate>`. Never hand-format around rustfmt. `clippy --fix` across the tree stays banned: it
+  rewrites files you did not read. A new toolchain can add lints to untouched code; fix those
+  in their own commit rather than inside a feature change.
 - **Every new `.rs` file starts with the SPDX header:**
   ```rust
   // SPDX-License-Identifier: GPL-3.0-or-later

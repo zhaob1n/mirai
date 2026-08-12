@@ -22,12 +22,14 @@ cargo build --release --workspace
 cargo test -p mirai-proto --test wire_size -- --nocapture   # prints the measured byte budget
 ```
 
+`cargo fmt --all --check` and the clippy line above are both quiet: the tree is formatted with
+stock `rustfmt` defaults and lint-free under the pinned nightly. Keep it that way. Between full
+runs, `cargo fmt` and `cargo clippy -p <crate>` on what you touched is enough; a toolchain
+bump that lights up untouched code is its own commit, not part of a feature.
+
 | Never run casually | Why |
 |---|---|
 | `cargo clippy --fix` | Rewrites files you did not read and may be held by another agent. Fix lints individually. |
-
-`cargo fmt --all --check` is quiet: the tree is formatted with stock `rustfmt` defaults. Keep
-it that way — format what you touched, and do not hand-place anything rustfmt would undo.
 
 There are no doc-tests: the `//!` examples in `harness.rs` and `probe.rs` are plain `text`
 fences and are never compiled. They can rot; treat them as prose.
@@ -612,7 +614,7 @@ cargo doc --workspace --no-deps            # catches broken intra-doc links
 - [ ] Every new file carries the `SPDX-License-Identifier: GPL-3.0-or-later` header.
 - [ ] No `GDK_BACKEND` anywhere in the tree.
 - [ ] No test-only branch inside feature code.
-- [ ] `cargo fmt --all --check` is clean.
+- [ ] `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings` are clean.
 - [ ] Invariants you touched still read true in [ARCHITECTURE.md](ARCHITECTURE.md) and
       [PROTOCOL.md](PROTOCOL.md).
 
