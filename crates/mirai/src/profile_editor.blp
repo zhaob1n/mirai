@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Huang Zhaobin
+
+using Gtk 4.0;
+using Adw 1;
+
+template $MiraiProfileEditorPage : Adw.NavigationPage {
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      [end]
+      Gtk.Button save_button {
+        label: _("Save Profile");
+        styles ["suggested-action"]
+      }
+    }
+
+    [top]
+    Adw.Banner banner {
+      title: _("The profile could not be saved");
+    }
+
+    content: Adw.PreferencesPage content {
+      title: _("Engine Profile");
+    };
+  };
+}

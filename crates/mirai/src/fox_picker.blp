@@ -1,0 +1,113 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Huang Zhaobin
+
+using Gtk 4.0;
+using Adw 1;
+
+template $MiraiFoxPickerDialog : Adw.Dialog {
+  title: _("Download from Fox");
+  content-width: 720;
+  content-height: 680;
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      show-start-title-buttons: false;
+      show-end-title-buttons: false;
+
+      [start]
+      Gtk.Button cancel_button {
+        label: _("Cancel");
+      }
+
+      [end]
+      Gtk.Button open_button {
+        label: _("Open Game");
+        sensitive: false;
+        styles ["suggested-action"]
+      }
+    }
+
+    content: Gtk.Box {
+      orientation: vertical;
+
+      Gtk.Box {
+        orientation: horizontal;
+        spacing: 8;
+        margin-start: 18;
+        margin-end: 18;
+        margin-top: 18;
+
+        Gtk.SearchEntry entry {
+          placeholder-text: _("Exact Fox nickname or numeric UID");
+          hexpand: true;
+        }
+
+        Gtk.Button search_button {
+          label: _("Search");
+          sensitive: false;
+        }
+      }
+
+      Gtk.Label {
+        label: _("Public records only · Fox exposes at most the latest 200 games");
+        xalign: 0;
+        wrap: true;
+        margin-start: 18;
+        margin-end: 18;
+        margin-top: 6;
+        margin-bottom: 12;
+        styles ["dim-label", "caption"]
+      }
+
+      Adw.Banner banner {
+        title: _("Fox request failed");
+        revealed: false;
+      }
+
+      Gtk.Stack stack {
+        transition-type: crossfade;
+        vexpand: true;
+
+        Adw.StatusPage status_page {
+          icon-name: "system-search-symbolic";
+          title: _("Find a Fox Player");
+          description: _("Enter an exact nickname or UID to browse their recent public games.");
+        }
+
+        Adw.StatusPage loading_page {
+          title: _("Searching Fox");
+          description: _("This may take a few seconds.");
+
+          child: Gtk.Spinner {
+            spinning: true;
+          };
+        }
+
+        Gtk.Box results_page {
+          orientation: vertical;
+          margin-start: 18;
+          margin-end: 18;
+          margin-bottom: 18;
+
+          Gtk.Label result_label {
+            label: _("Recent Games");
+            xalign: 0;
+            margin-bottom: 8;
+            styles ["heading"]
+          }
+
+          Gtk.ScrolledWindow {
+            hscrollbar-policy: never;
+            vexpand: true;
+
+            child: Gtk.ListBox result_list {
+              selection-mode: single;
+              styles ["boxed-list"]
+            };
+          }
+        }
+      }
+    };
+  };
+}

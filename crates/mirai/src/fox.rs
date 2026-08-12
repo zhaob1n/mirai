@@ -2,8 +2,6 @@
 // Copyright (C) 2026 Huang Zhaobin
 //! Public Fox Go game lookup, SGF normalisation and the game picker dialog.
 
-use std::cell::{Cell, RefCell};
-use std::rc::Rc;
 use std::time::Duration;
 
 use adw::prelude::*;
@@ -11,6 +9,8 @@ use gtk::{gio, glib};
 use mirai_core::{Color, GameTree, Node, NodeId, Point, sgf};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
+
+use crate::fox_picker::FoxPickerDialog;
 
 const USER_URL: &str = "https://newframe.foxwq.com/cgi/QueryUserInfoPanel";
 const GAMES_URL: &str = "https://h5.foxwq.com/yehuDiamond/chessbook_local/YHWQFetchChessList";
@@ -52,7 +52,7 @@ struct GamesResponse {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-struct FoxGame {
+pub(crate) struct FoxGame {
     #[serde(default)]
     chessid: String,
     #[serde(default)]
@@ -512,336 +512,204 @@ fn normalize_handicap(mut tree: GameTree) -> GameTree {
     rebuilt
 }
 
-struct Picker {
-    dialog: adw::Dialog,
-    entry: gtk::SearchEntry,
-    search: gtk::Button,
-    open: gtk::Button,
-    stack: gtk::Stack,
-    status: adw::StatusPage,
-    loading: adw::StatusPage,
-    result_label: gtk::Label,
-    list: gtk::ListBox,
-    banner: adw::Banner,
-    games: RefCell<Vec<FoxGame>>,
-    busy: Cell<bool>,
-    task: RefCell<Option<glib::JoinHandle<()>>>,
-    on_open: Box<dyn Fn(DownloadedGame)>,
-}
+impl FoxPickerDialog {
+    fn with_handler(on_open: impl Fn(DownloadedGame) + 'static) -> Self {
+        let dialog = FoxPickerDialog::new();
+        dialog.install_handler(on_open);
+        let widgets = dialog.widgets();
+        widgets.stack.set_visible_child(&widgets.status_page);
 
-impl Picker {
-    fn new(on_open: impl Fn(DownloadedGame) + 'static) -> Rc<Self> {
-        let dialog = adw::Dialog::builder()
-            .title("Download from Fox")
-            .content_width(720)
-            .content_height(680)
-            .build();
-        let toolbar = adw::ToolbarView::new();
-        let header = adw::HeaderBar::builder()
-            .show_start_title_buttons(false)
-            .show_end_title_buttons(false)
-            .build();
-        let cancel = gtk::Button::with_label("Cancel");
-        let open = gtk::Button::with_label("Open Game");
-        open.add_css_class("suggested-action");
-        open.set_sensitive(false);
-        header.pack_start(&cancel);
-        header.pack_end(&open);
-        toolbar.add_top_bar(&header);
-
-        let entry = gtk::SearchEntry::builder()
-            .placeholder_text("Exact Fox nickname or numeric UID")
-            .hexpand(true)
-            .build();
-        let search = gtk::Button::with_label("Search");
-        search.set_sensitive(false);
-        let search_box = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .spacing(8)
-            .margin_start(18)
-            .margin_end(18)
-            .margin_top(18)
-            .build();
-        search_box.append(&entry);
-        search_box.append(&search);
-
-        let hint = gtk::Label::builder()
-            .label("Public records only · Fox exposes at most the latest 200 games")
-            .xalign(0.0)
-            .wrap(true)
-            .margin_start(18)
-            .margin_end(18)
-            .margin_top(6)
-            .margin_bottom(12)
-            .build();
-        hint.add_css_class("dim-label");
-        hint.add_css_class("caption");
-
-        let banner = adw::Banner::new("");
-        banner.set_revealed(false);
-
-        let status = adw::StatusPage::builder()
-            .icon_name("system-search-symbolic")
-            .title("Find a Fox player")
-            .description("Enter an exact nickname or UID to browse their recent public games.")
-            .build();
-        let loading = adw::StatusPage::builder()
-            .title("Searching Fox")
-            .description("This may take a few seconds.")
-            .build();
-        let spinner = gtk::Spinner::new();
-        spinner.set_spinning(true);
-        loading.set_child(Some(&spinner));
-
-        let result_label = gtk::Label::builder()
-            .xalign(0.0)
-            .margin_start(18)
-            .margin_end(18)
-            .margin_bottom(8)
-            .build();
-        result_label.add_css_class("heading");
-        let list = gtk::ListBox::new();
-        list.set_selection_mode(gtk::SelectionMode::Single);
-        list.add_css_class("boxed-list");
-        let scroller = gtk::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .vexpand(true)
-            .child(&list)
-            .build();
-        let results = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .margin_start(18)
-            .margin_end(18)
-            .margin_bottom(18)
-            .build();
-        results.append(&result_label);
-        results.append(&scroller);
-
-        let stack = gtk::Stack::builder()
-            .transition_type(gtk::StackTransitionType::Crossfade)
-            .vexpand(true)
-            .build();
-        stack.add_named(&status, Some("status"));
-        stack.add_named(&loading, Some("loading"));
-        stack.add_named(&results, Some("results"));
-        stack.set_visible_child_name("status");
-
-        let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        body.append(&search_box);
-        body.append(&hint);
-        body.append(&banner);
-        body.append(&stack);
-        toolbar.set_content(Some(&body));
-        dialog.set_child(Some(&toolbar));
-
-        let picker = Rc::new(Self {
+        widgets.cancel_button.connect_clicked(glib::clone!(
+            #[weak]
             dialog,
-            entry,
-            search,
-            open,
-            stack,
-            status,
-            loading,
-            result_label,
-            list,
-            banner,
-            games: RefCell::new(Vec::new()),
-            busy: Cell::new(false),
-            task: RefCell::new(None),
-            on_open: Box::new(on_open),
-        });
-
-        let weak = Rc::downgrade(&picker);
-        picker.entry.connect_search_changed(move |_| {
-            if let Some(picker) = weak.upgrade() {
-                picker.refresh_actions();
-            }
-        });
-        let weak = Rc::downgrade(&picker);
-        picker.entry.connect_activate(move |_| {
-            if let Some(picker) = weak.upgrade() {
-                picker.start_search();
-            }
-        });
-        let weak = Rc::downgrade(&picker);
-        picker.search.connect_clicked(move |_| {
-            if let Some(picker) = weak.upgrade() {
-                picker.start_search();
-            }
-        });
-        let weak = Rc::downgrade(&picker);
-        picker.open.connect_clicked(move |_| {
-            if let Some(picker) = weak.upgrade() {
-                picker.start_download();
-            }
-        });
-        let weak = Rc::downgrade(&picker);
-        picker.list.connect_row_selected(move |_, _| {
-            if let Some(picker) = weak.upgrade() {
-                picker.refresh_actions();
-            }
-        });
-        let weak = Rc::downgrade(&picker);
-        picker.list.connect_row_activated(move |_, row| {
-            if let Some(picker) = weak.upgrade() {
-                picker.list.select_row(Some(row));
-                picker.start_download();
-            }
-        });
-        {
-            let dialog = picker.dialog.clone();
-            cancel.connect_clicked(move |_| {
+            move |_| {
                 dialog.close();
-            });
-        }
-
-        picker
+            }
+        ));
+        widgets.entry.connect_search_changed(glib::clone!(
+            #[weak]
+            dialog,
+            move |_| dialog.refresh_actions()
+        ));
+        widgets.entry.connect_activate(glib::clone!(
+            #[weak]
+            dialog,
+            move |_| dialog.start_search()
+        ));
+        widgets.search_button.connect_clicked(glib::clone!(
+            #[weak]
+            dialog,
+            move |_| dialog.start_search()
+        ));
+        widgets.open_button.connect_clicked(glib::clone!(
+            #[weak]
+            dialog,
+            move |_| dialog.start_download()
+        ));
+        widgets.result_list.connect_row_selected(glib::clone!(
+            #[weak]
+            dialog,
+            move |_, _| dialog.refresh_actions()
+        ));
+        widgets.result_list.connect_row_activated(glib::clone!(
+            #[weak]
+            dialog,
+            move |list, row| {
+                list.select_row(Some(row));
+                dialog.start_download();
+            }
+        ));
+        dialog
     }
 
     fn refresh_actions(&self) {
-        let idle = !self.busy.get();
-        self.entry.set_sensitive(idle);
-        self.search
-            .set_sensitive(idle && !self.entry.text().trim().is_empty());
-        self.list.set_sensitive(idle);
-        self.open
-            .set_sensitive(idle && self.list.selected_row().is_some());
+        let widgets = self.widgets();
+        let idle = !self.is_busy();
+        widgets.entry.set_sensitive(idle);
+        widgets
+            .search_button
+            .set_sensitive(idle && !widgets.entry.text().trim().is_empty());
+        widgets.result_list.set_sensitive(idle);
+        widgets
+            .open_button
+            .set_sensitive(idle && widgets.result_list.selected_row().is_some());
     }
 
     fn set_busy(&self, busy: bool) {
-        self.busy.set(busy);
+        self.set_busy_flag(busy);
         self.refresh_actions();
     }
 
-    fn start_search(self: &Rc<Self>) {
-        if self.busy.get() {
+    fn start_search(&self) {
+        if self.is_busy() {
             return;
         }
-        let query = self.entry.text().trim().to_string();
+        let widgets = self.widgets();
+        let query = widgets.entry.text().trim().to_string();
         if query.is_empty() {
             return;
         }
-        self.banner.set_revealed(false);
-        self.loading.set_title("Searching Fox");
-        self.loading
+        widgets.banner.set_revealed(false);
+        widgets.loading_page.set_title("Searching Fox");
+        widgets
+            .loading_page
             .set_description(Some("Looking up the player and their recent games."));
-        self.stack.set_visible_child_name("loading");
+        widgets.stack.set_visible_child(&widgets.loading_page);
         self.set_busy(true);
 
-        if let Some(task) = self.task.borrow_mut().take() {
-            task.abort();
-        }
-        let weak = Rc::downgrade(self);
+        let weak = self.downgrade();
         let task = glib::spawn_future_local(async move {
             let result = search_games(&query).await;
-            if let Some(picker) = weak.upgrade() {
-                picker.finish_search(result);
+            if let Some(dialog) = weak.upgrade() {
+                dialog.finish_search(result);
             }
         });
-        self.task.replace(Some(task));
+        self.replace_task(task);
     }
 
     fn finish_search(&self, result: Result<Games, FoxError>) {
         self.set_busy(false);
+        let widgets = self.widgets();
         match result {
             Ok(found) if found.rows.is_empty() => {
-                self.games.borrow_mut().clear();
-                self.status.set_icon_name(Some("edit-find-symbolic"));
-                self.status.set_title("No public games");
-                self.status.set_description(Some(
+                self.clear_games();
+                widgets
+                    .status_page
+                    .set_icon_name(Some("edit-find-symbolic"));
+                widgets.status_page.set_title("No public games");
+                widgets.status_page.set_description(Some(
                     "This account has no visible games in Fox's recent-history window.",
                 ));
-                self.stack.set_visible_child_name("status");
+                widgets.stack.set_visible_child(&widgets.status_page);
             }
             Ok(found) => {
-                while let Some(child) = self.list.first_child() {
-                    self.list.remove(&child);
+                while let Some(child) = widgets.result_list.first_child() {
+                    widgets.result_list.remove(&child);
                 }
                 let count = found.rows.len();
-                self.result_label.set_label(&format!(
+                widgets.result_label.set_label(&format!(
                     "{} · {count} recent games",
                     display_text(&found.account)
                 ));
                 for game in &found.rows {
-                    self.list.append(&game.row());
+                    widgets.result_list.append(&game.row());
                 }
-                *self.games.borrow_mut() = found.rows;
-                if let Some(first) = self.list.row_at_index(0) {
-                    self.list.select_row(Some(&first));
+                self.replace_games(found.rows);
+                if let Some(first) = widgets.result_list.row_at_index(0) {
+                    widgets.result_list.select_row(Some(&first));
                 }
-                self.stack.set_visible_child_name("results");
+                widgets.stack.set_visible_child(&widgets.results_page);
                 self.refresh_actions();
             }
             Err(error) => {
-                self.games.borrow_mut().clear();
-                self.status.set_icon_name(Some("dialog-warning-symbolic"));
-                self.status.set_title("Couldn’t load games");
-                self.status.set_description(Some(&error.to_string()));
-                self.stack.set_visible_child_name("status");
+                self.clear_games();
+                widgets
+                    .status_page
+                    .set_icon_name(Some("dialog-warning-symbolic"));
+                widgets.status_page.set_title("Couldn’t load games");
+                widgets
+                    .status_page
+                    .set_description(Some(&error.to_string()));
+                widgets.stack.set_visible_child(&widgets.status_page);
             }
         }
     }
 
-    fn start_download(self: &Rc<Self>) {
-        if self.busy.get() {
+    fn start_download(&self) {
+        if self.is_busy() {
             return;
         }
-        let Some(index) = self.list.selected_row().map(|row| row.index() as usize) else {
+        let widgets = self.widgets();
+        let Some(index) = widgets
+            .result_list
+            .selected_row()
+            .map(|row| row.index() as usize)
+        else {
             return;
         };
-        let Some(game) = self.games.borrow().get(index).cloned() else {
+        let Some(game) = self.game(index) else {
             return;
         };
 
-        self.banner.set_revealed(false);
-        self.loading.set_title("Downloading game");
-        self.loading.set_description(Some(&game.matchup()));
-        self.stack.set_visible_child_name("loading");
+        widgets.banner.set_revealed(false);
+        widgets.loading_page.set_title("Downloading game");
+        widgets.loading_page.set_description(Some(&game.matchup()));
+        widgets.stack.set_visible_child(&widgets.loading_page);
         self.set_busy(true);
 
-        if let Some(task) = self.task.borrow_mut().take() {
-            task.abort();
-        }
-        let weak = Rc::downgrade(self);
+        let weak = self.downgrade();
         let task = glib::spawn_future_local(async move {
             let result = fetch_game(&game).await;
-            if let Some(picker) = weak.upgrade() {
-                picker.finish_download(result);
+            if let Some(dialog) = weak.upgrade() {
+                dialog.finish_download(result);
             }
         });
-        self.task.replace(Some(task));
+        self.replace_task(task);
     }
 
     fn finish_download(&self, result: Result<DownloadedGame, FoxError>) {
         match result {
             Ok(game) => {
-                (self.on_open)(game);
-                self.dialog.close();
+                self.open_game(game);
+                self.close();
             }
             Err(error) => {
                 self.set_busy(false);
-                self.stack.set_visible_child_name("results");
-                self.banner
+                let widgets = self.widgets();
+                widgets.stack.set_visible_child(&widgets.results_page);
+                widgets
+                    .banner
                     .set_title(&format!("Could not download the game: {error}"));
-                self.banner.set_revealed(true);
+                widgets.banner.set_revealed(true);
             }
         }
     }
 }
 
 pub(crate) fn present(parent: &impl IsA<gtk::Widget>, on_open: impl Fn(DownloadedGame) + 'static) {
-    let picker = Picker::new(on_open);
-    // One strong owner, released by `closed`. Every ordinary handler holds only `Weak<Picker>`.
-    let owner = Cell::new(Some(picker.clone()));
-    picker.dialog.connect_closed(move |_| {
-        if let Some(picker) = owner.take()
-            && let Some(task) = picker.task.borrow_mut().take()
-        {
-            task.abort();
-        }
-    });
-    picker.dialog.present(Some(parent));
-    picker.entry.grab_focus();
+    let dialog = FoxPickerDialog::with_handler(on_open);
+    dialog.present(Some(parent));
+    dialog.widgets().entry.grab_focus();
 }
 
 #[cfg(test)]

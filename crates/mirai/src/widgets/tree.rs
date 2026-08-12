@@ -19,7 +19,7 @@ use gtk::subclass::prelude::*;
 
 use mirai_core::{Color, GameTree, NodeId};
 
-use crate::app::{AppState, signal};
+use crate::app::AppState;
 
 /// Grid geometry. Cells are square-ish so long games stay scannable.
 const CELL_W: f32 = 20.0;
@@ -37,6 +37,7 @@ pub(crate) struct Placed {
     pub lane: u32,
     /// Index into [`TreeLayout::nodes`] of this node's parent.
     pub parent: Option<usize>,
+    pub mv: Option<(Color, mirai_core::Point)>,
 }
 
 /// The whole tree, placed.
@@ -77,6 +78,7 @@ pub(crate) fn lay_out(tree: &GameTree) -> TreeLayout {
             col,
             lane,
             parent,
+            mv: tree.node(id).mv,
         });
         layout.index.insert(id, slot);
         layout.cols = layout.cols.max(col);
@@ -108,7 +110,7 @@ mod imp {
 
     #[derive(Default)]
     pub struct MoveTreeView {
-        pub state: RefCell<Option<AppState>>,
+        pub window: glib::WeakRef<crate::window_shell::MiraiWindow>,
         pub(super) layout: RefCell<TreeLayout>,
         /// Tree revision the cached layout was built from; `None` means "never built".
         pub revision: Cell<Option<u64>>,
@@ -137,32 +139,12 @@ glib::wrapper! {
 }
 
 impl MoveTreeView {
-    pub fn new(state: &AppState) -> MoveTreeView {
+    pub fn new(window: &crate::window_shell::MiraiWindow) -> MoveTreeView {
         let this: MoveTreeView = glib::Object::new();
-        *this.imp().state.borrow_mut() = Some(state.clone());
+        this.imp().window.set(Some(window));
         this.add_css_class("mirai-movetree");
         this.set_halign(gtk::Align::Start);
         this.set_valign(gtk::Align::Start);
-
-        {
-            let weak = this.downgrade();
-            state.connect_local(signal::TREE_CHANGED, false, move |_| {
-                if let Some(this) = weak.upgrade() {
-                    this.refresh();
-                }
-                None
-            });
-        }
-        {
-            let weak = this.downgrade();
-            state.connect_local(signal::CURSOR_CHANGED, false, move |_| {
-                if let Some(this) = weak.upgrade() {
-                    this.queue_draw();
-                    this.scroll_to_cursor();
-                }
-                None
-            });
-        }
 
         let click = gtk::GestureClick::new();
         click.set_button(gdk::BUTTON_PRIMARY);
@@ -176,16 +158,15 @@ impl MoveTreeView {
         }
         this.add_controller(click);
 
-        this.refresh();
         this
     }
 
     pub fn state(&self) -> AppState {
         self.imp()
-            .state
-            .borrow()
-            .clone()
-            .expect("MoveTreeView was built without an AppState")
+            .window
+            .upgrade()
+            .and_then(|window| window.with_ui(|ui| ui.state.clone()))
+            .expect("MoveTreeView has no live window state")
     }
 
     /// Wraps the view in the `gtk::ScrolledWindow` the window packs.
@@ -198,13 +179,12 @@ impl MoveTreeView {
     }
 
     /// Rebuilds the cached layout if the tree changed, then redraws.
-    fn refresh(&self) {
+    pub(crate) fn refresh(&self) {
         self.ensure_layout();
         self.queue_draw();
         self.scroll_to_cursor();
     }
 
-    /// Recomputes the layout only when the tree's revision counter has moved.
     fn ensure_layout(&self) {
         let state = self.state();
         let revision = state.tree().revision();
@@ -276,13 +256,11 @@ impl MoveTreeView {
 
     fn draw(&self, snapshot: &gtk::Snapshot) {
         self.ensure_layout();
-        let state = self.state();
         let layout = self.imp().layout.borrow();
         if layout.nodes.is_empty() {
             return;
         }
-        let cursor = state.cursor();
-        let tree = state.tree();
+        let cursor = self.state().cursor();
 
         let fg = self.color();
         let accent = adw::StyleManager::default()
@@ -320,7 +298,7 @@ impl MoveTreeView {
             disc.add_circle(&centre, RADIUS);
             let disc = disc.to_path();
 
-            match tree.node(node.id).mv {
+            match node.mv {
                 Some((color, mv)) => {
                     let fill = match color {
                         Color::Black => black,

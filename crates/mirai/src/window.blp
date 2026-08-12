@@ -1,0 +1,301 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Huang Zhaobin
+
+using Gtk 4.0;
+using Adw 1;
+
+template $MiraiWindow : Adw.ApplicationWindow {
+  title: _("mirai");
+  default-width: 1280;
+  default-height: 860;
+
+  content: Adw.ToastOverlay toasts {
+    child: Adw.ToolbarView toolbar {
+      [top]
+      Adw.HeaderBar {
+        title-widget: Adw.WindowTitle title {
+          title: _("Untitled");
+        };
+
+        [start]
+        Gtk.Button {
+          icon-name: "document-open-symbolic";
+          tooltip-text: _("Open an SGF Game Record (Ctrl+O)");
+          action-name: "win.open";
+          accessibility {
+            label: _("Open Game Record");
+          }
+        }
+
+        [start]
+        Gtk.Button {
+          icon-name: "folder-download-symbolic";
+          tooltip-text: _("Download a Public Game Record from Fox");
+          action-name: "win.download-fox";
+          accessibility {
+            label: _("Download from Fox");
+          }
+        }
+
+        [start]
+        Gtk.ToggleButton live_toggle {
+          icon-name: "media-playback-start-symbolic";
+          tooltip-text: _("Start Live Analysis (Space)");
+          accessibility {
+            label: _("Live Analysis");
+          }
+        }
+
+        [start]
+        Gtk.MenuButton engine_menu {
+          tooltip-text: _("Analysis Engine");
+          child: Adw.ButtonContent engine_content {
+            icon-name: "applications-engineering-symbolic";
+            label: _("No Engine");
+          };
+          accessibility {
+            label: _("Analysis Engine");
+          }
+        }
+
+        [end]
+        Gtk.MenuButton {
+          icon-name: "open-menu-symbolic";
+          tooltip-text: _("Main Menu");
+          menu-model: primary_menu;
+          accessibility {
+            label: _("Main Menu");
+          }
+        }
+
+        [end]
+        Gtk.MenuButton {
+          icon-name: "view-more-symbolic";
+          tooltip-text: _("View Options");
+          menu-model: view_menu;
+          accessibility {
+            label: _("View Options");
+          }
+        }
+
+        [end]
+        Gtk.ToggleButton sidebar_toggle {
+          visible: false;
+          icon-name: "sidebar-show-right-symbolic";
+          tooltip-text: _("Show Sidebar");
+          accessibility {
+            label: _("Show Sidebar");
+          }
+        }
+
+        [end]
+        Gtk.Button {
+          tooltip-text: _("Set Up a Game Against the Engine (Ctrl+N)");
+          action-name: "win.new-game";
+          child: Adw.ButtonContent {
+            icon-name: "document-new-symbolic";
+            label: _("New Game…");
+          };
+          accessibility {
+            label: _("New Game…");
+          }
+        }
+
+        [end]
+        Gtk.Box clock_box {
+          visible: false;
+          spacing: 4;
+
+          Gtk.Label clock_black {
+            label: _("–:––");
+            styles ["mirai-clock"]
+          }
+
+          Gtk.Label clock_white {
+            label: _("–:––");
+            styles ["mirai-clock"]
+          }
+        }
+      }
+
+      content: Adw.OverlaySplitView split {
+        sidebar-position: end;
+        show-sidebar: true;
+        min-sidebar-width: 320;
+        max-sidebar-width: 520;
+
+        content: Gtk.Box content_box {
+          orientation: vertical;
+          hexpand: true;
+          vexpand: true;
+          Gtk.Box banner_slot {
+            orientation: vertical;
+          }
+
+
+          Gtk.Paned content {
+            orientation: vertical;
+            resize-start-child: true;
+            resize-end-child: false;
+            shrink-start-child: false;
+            shrink-end-child: false;
+            hexpand: true;
+            vexpand: true;
+          }
+        };
+
+        sidebar: Adw.ToolbarView sidebar_view {
+          width-request: 340;
+
+          [top]
+          Adw.HeaderBar {
+            show-start-title-buttons: false;
+            show-end-title-buttons: false;
+            title-widget: Adw.ViewSwitcher {
+              stack: sidebar_stack;
+              policy: wide;
+            };
+          }
+
+          content: Adw.ViewStack sidebar_stack {};
+        };
+      };
+
+      [bottom]
+      Gtk.Box nav {
+        orientation: horizontal;
+        spacing: 6;
+        margin-start: 8;
+        margin-end: 8;
+        margin-top: 4;
+        margin-bottom: 4;
+
+        Gtk.Button {
+          icon-name: "go-first-symbolic";
+          action-name: "win.first";
+          tooltip-text: _("First Move (Home)");
+          accessibility { label: _("First Move"); }
+        }
+
+        Gtk.Button {
+          icon-name: "go-previous-symbolic";
+          action-name: "win.prev";
+          tooltip-text: _("Previous Move (Left)");
+          accessibility { label: _("Previous Move"); }
+        }
+
+        Gtk.Button {
+          icon-name: "go-next-symbolic";
+          action-name: "win.next";
+          tooltip-text: _("Next Move (Right)");
+          accessibility { label: _("Next Move"); }
+        }
+
+        Gtk.Button {
+          icon-name: "go-last-symbolic";
+          action-name: "win.last";
+          tooltip-text: _("Last Move (End)");
+          accessibility { label: _("Last Move"); }
+        }
+
+        Gtk.Box {
+          spacing: 0;
+          styles ["linked"]
+
+          Gtk.Button {
+            icon-name: "go-up-symbolic";
+            action-name: "win.branch-prev";
+            tooltip-text: _("Previous Variation (Up)");
+            accessibility { label: _("Previous Variation"); }
+          }
+
+          Gtk.Button {
+            icon-name: "go-down-symbolic";
+            action-name: "win.branch-next";
+            tooltip-text: _("Next Variation (Down)");
+            accessibility { label: _("Next Variation"); }
+          }
+        }
+
+        Gtk.Box play_controls {
+          visible: false;
+          homogeneous: true;
+          spacing: 6;
+
+          Gtk.Button undo_button {
+            label: _("Undo");
+            action-name: "win.undo";
+            tooltip-text: _("Undo the Last Turn (Ctrl+Z)");
+          }
+
+          Gtk.Button pass_button {
+            label: _("Pass");
+            action-name: "win.pass";
+            tooltip-text: _("Pass This Turn (P)");
+          }
+
+          Gtk.Button resign_button {
+            label: _("Resign");
+            action-name: "win.resign";
+            tooltip-text: _("Resign the Current Game");
+            styles ["destructive-action"]
+          }
+        }
+
+        Gtk.Scale move_scale {
+          orientation: horizontal;
+          hexpand: true;
+          draw-value: false;
+          round-digits: 0;
+          digits: 0;
+          adjustment: Gtk.Adjustment {
+            lower: 0;
+            upper: 1;
+            value: 0;
+          };
+          accessibility {
+            label: _("Move Number");
+          }
+        }
+
+        Gtk.Label readout {
+          label: _("—");
+          tooltip-text: _("Side to Move, Win Rate, Score Lead, Visits, and Search Speed");
+          styles ["mirai-readout"]
+        }
+      }
+    };
+  };
+}
+
+menu primary_menu {
+  section {
+    item ("_Save", "win.save")
+    item ("Save _As…", "win.save-as")
+  }
+
+  section {
+    item ("_Copy SGF", "win.copy-sgf")
+    item ("_Paste SGF", "win.paste-sgf")
+  }
+
+  section {
+    item ("Analyse _Game", "win.analyse-game")
+    item ("_Estimate Score", "win.score")
+  }
+
+  section {
+    item ("_Preferences", "win.preferences")
+    item ("_Keyboard Shortcuts", "win.shortcuts")
+    item ("_About mirai", "win.about")
+  }
+}
+
+menu view_menu {
+  section {
+    item ("_Coordinates", "win.toggle-coords")
+    item ("_Move Numbers", "win.toggle-move-numbers")
+    item ("_Ownership Overlay", "win.toggle-ownership")
+    item ("_Policy Overlay", "win.toggle-policy")
+  }
+}

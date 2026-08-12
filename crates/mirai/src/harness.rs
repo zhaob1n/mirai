@@ -13,8 +13,9 @@
 //! MIRAI_HARNESS="wait:1500,action:win.toggle-analysis,wait:6000,shot:/tmp/a.png,quit"
 //! ```
 //!
-//! Steps run in order: `wait:<ms>`, `action:<prefix.name>`, `action:<prefix.name>=<string arg>`,
-//! `press:<button text>`, `fill:<entry placeholder>=<text>`, `shot:<path.png>`, `quit`.
+//! Steps run in order: `wait:<ms>`, `wait-status:<text>`, `action:<prefix.name>`,
+//! `action:<prefix.name>=<string arg>`, `press:<button text>`, `fill:<entry placeholder>=<text>`,
+//! `shot:<path.png>`, `close-window`, `quit`.
 
 use std::time::Duration;
 
@@ -26,6 +27,7 @@ use gtk::prelude::*;
 #[derive(Debug)]
 enum Step {
     Wait(u64),
+    WaitStatus(String),
     Action(String, Option<String>),
     /// Activate the first button whose label contains this text, anywhere in the window's
     /// widget tree — including inside a presented `adw::Dialog`.
@@ -35,6 +37,7 @@ enum Step {
     /// Fill the first visible SearchEntry whose placeholder contains this text.
     Fill(String, String),
     Shot(String),
+    CloseWindow,
     Quit,
 }
 
@@ -49,7 +52,9 @@ fn parse(script: &str) -> Vec<Step> {
             let (kind, rest) = step.split_once(':').unwrap_or((step, ""));
             match kind {
                 "wait" => rest.parse().ok().map(Step::Wait),
+                "wait-status" => Some(Step::WaitStatus(rest.to_string())),
                 "shot" => Some(Step::Shot(rest.to_string())),
+                "close-window" => Some(Step::CloseWindow),
                 "quit" => Some(Step::Quit),
                 "press" => Some(Step::Press(rest.to_string())),
                 "select" => rest.rsplit_once('=').and_then(|(title, index)| {
@@ -120,6 +125,13 @@ pub fn install(app: &adw::Application) {
                 Step::Wait(ms) => {
                     glib::timeout_future(Duration::from_millis(ms)).await;
                 }
+                Step::WaitStatus(text) => {
+                    let found = wait_status(&app, &text).await;
+                    eprintln!(
+                        "harness: wait-status {text:?} -> {}",
+                        if found { "ok" } else { "TIMEOUT" }
+                    );
+                }
                 Step::Action(name, arg) => {
                     let done = activate(&app, &name, arg.as_deref());
                     eprintln!(
@@ -172,6 +184,17 @@ pub fn install(app: &adw::Application) {
                         Err(e) => eprintln!("harness: screenshot failed: {e}"),
                     }
                 }
+                Step::CloseWindow => {
+                    let done = app.active_window().is_some_and(|window| {
+                        window.close();
+                        true
+                    });
+                    eprintln!(
+                        "harness: close-window -> {}",
+                        if done { "ok" } else { "NO WINDOW" }
+                    );
+                    glib::timeout_future(Duration::from_millis(250)).await;
+                }
                 Step::Quit => {
                     eprintln!("harness: quitting");
                     app.quit();
@@ -180,6 +203,36 @@ pub fn install(app: &adw::Application) {
             }
         }
     });
+}
+
+async fn wait_status(app: &adw::Application, needle: &str) -> bool {
+    for _ in 0..100 {
+        let found = app
+            .active_window()
+            .is_some_and(|window| find_label(window.upcast_ref(), needle));
+        if found {
+            return true;
+        }
+        glib::timeout_future(Duration::from_millis(100)).await;
+    }
+    false
+}
+
+fn find_label(widget: &gtk::Widget, needle: &str) -> bool {
+    if widget.is_visible()
+        && let Some(label) = widget.downcast_ref::<gtk::Label>()
+        && label.text().contains(needle)
+    {
+        return true;
+    }
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        if find_label(&current, needle) {
+            return true;
+        }
+        child = current.next_sibling();
+    }
+    false
 }
 
 /// Activates `prefix.name` on the active window (or on the application for `app.*`).
@@ -351,27 +404,29 @@ mod tests {
     #[test]
     fn script_parsing_covers_every_step_kind() {
         let steps = parse(
-            "wait:250, action:win.toggle-analysis, action:win.set-engine=local, select:Model=2, fill:Exact nickname=柯洁, shot:/tmp/x.png, quit",
+            "wait:250, wait-status:Ready, action:win.toggle-analysis, action:win.set-engine=local, select:Model=2, fill:Exact nickname=柯洁, shot:/tmp/x.png, close-window, quit",
         );
-        assert_eq!(steps.len(), 7);
+        assert_eq!(steps.len(), 9);
         assert!(matches!(steps[0], Step::Wait(250)));
-        match &steps[1] {
+        assert!(matches!(&steps[1], Step::WaitStatus(text) if text == "Ready"));
+        match &steps[2] {
             Step::Action(n, None) => assert_eq!(n, "win.toggle-analysis"),
             other => panic!("{other:?}"),
         }
-        match &steps[2] {
+        match &steps[3] {
             Step::Action(n, Some(a)) => {
                 assert_eq!(n, "win.set-engine");
                 assert_eq!(a, "local");
             }
             other => panic!("{other:?}"),
         }
-        assert!(matches!(&steps[3], Step::Select(title, 2) if title == "Model"));
+        assert!(matches!(&steps[4], Step::Select(title, 2) if title == "Model"));
         assert!(
-            matches!(&steps[4], Step::Fill(field, text) if field == "Exact nickname" && text == "柯洁")
+            matches!(&steps[5], Step::Fill(field, text) if field == "Exact nickname" && text == "柯洁")
         );
-        assert!(matches!(&steps[5], Step::Shot(p) if p == "/tmp/x.png"));
-        assert!(matches!(steps[6], Step::Quit));
+        assert!(matches!(&steps[6], Step::Shot(p) if p == "/tmp/x.png"));
+        assert!(matches!(steps[7], Step::CloseWindow));
+        assert!(matches!(steps[8], Step::Quit));
     }
 
     #[test]

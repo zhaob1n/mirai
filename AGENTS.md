@@ -66,26 +66,26 @@ score lead ≤ 0.02 points, ownership ≤ 0.005. Changing a scale means updating
 `tests/wire_size.rs` and bumping the protocol version.
 
 **INV-7 — one source of truth, per window.** `AppState` (`crates/mirai/src/app.rs`) owns
-application state. Widgets never talk to each other; they read `AppState` and listen to its
-signals. A widget holding a pointer to another widget is a bug. There is one `AppState` per
-window and **several windows are normal** — `open` builds one per file. Exactly three things
-are process-wide, and anything else you make process-wide is a bug: the `EnginePool`
-(`engines.rs`, one KataGo per profile, held weakly), the config file (written through
-`Config::save_merged`, never a whole-file overwrite), and the per-window autosave files.
+application state. One `Change` dispatcher in `window.rs` pushes projections to widgets; widgets
+never talk to siblings or install competing AppState dispatchers. There is one `AppState` per
+window and **several windows are normal**. `MiraiApplication` owns only the process-wide Tokio
+runtime and shared `EnginePool` (whose engine entries are weak). Config writes use
+`Config::save_merged`; autosaves remain per-window.
 
-**INV-8 — `Rc<Ui>` discipline.** Long-lived GTK handlers capture `Weak<Ui>` through the
-`with_ui` helper. Exactly **one** strong `Rc<Ui>` exists, parked in a `Cell<Option<Rc<Ui>>>`
-and taken by the `close-request` handler; that is the single release point. Transient captures
-(file-dialog futures, dialog responses, clipboard paste, the score pump) are deliberately
-strong and commented as such. Adding a strong capture to a long-lived handler reintroduces the
-leak that review already caught once.
+**INV-8 — window ownership.** `MiraiWindow` owns exactly one plain `Ui` value in its GObject
+state. Long-lived handlers capture `glib::WeakRef<MiraiWindow>` and enter through
+`MiraiWindow::with_ui`; stateful controllers do the same. `close-request` and `dispose` converge
+on idempotent `MiraiWindow::shutdown`, whose `take_ui` is the single release point. Finite async
+captures must be explicitly transient and own one teardown path.
 
 **INV-9 — rendering.** Board, win-rate graph and move tree are custom `gtk::Widget` subclasses
-drawn with `gsk` in `snapshot()`. No `GtkDrawingArea`, no cairo.
+drawn with `gsk` in `snapshot()`. No `GtkDrawingArea`, no cairo. Tree-derived projections,
+heat-map textures and reusable render nodes are built outside `snapshot()`.
 
-**INV-10 — borrow before emit.** Release every `RefCell` borrow of the game tree *before*
-emitting a signal. Handlers reachable from `tree-changed` / `cursor-changed` / `report` will
-borrow it again, and a held borrow turns into a panic in the user's hands.
+**INV-10 — borrow and identity discipline.** Release every `RefCell` tree borrow before calling
+`changed`, `set_cursor`, `set_report` or `toast`; dispatcher code borrows the tree again.
+`NodeId` is arena-local, so anything retained across a tree replacement carries
+`NodeRef { epoch, id }` and is validated with `resolve_node`.
 
 ---
 
@@ -129,12 +129,16 @@ Full detail, including how to drive the GUI headlessly and verify against a real
   `libadwaita`. `gtk` re-exports `gdk`, `gio`, `glib`, `graphene`, `gsk`, `pango`.
 - **mirai runs on Wayland by default.** Never set `GDK_BACKEND` to make something work; a fix
   that only holds under XWayland is not a fix.
+- **Follow the [GNOME Human Interface Guidelines](https://developer.gnome.org/hig/)** for every
+  user-facing UI change; prefer standard GTK/libadwaita patterns and components.
+- **Use [Blueprint](https://jwestman.pages.gitlab.gnome.org/blueprint-compiler/)** for static UI
+  hierarchy and layout; keep state, business logic and genuinely dynamic UI in Rust.
 
 ### Toolchain
 
-Rust nightly 1.96 (edition 2024, `rust-version = "1.92"`). Let-chains
-(`if let Some(x) = a && cond`) are used throughout and are expected. GTK 4.22+ and
-libadwaita 1.9+ development packages are required to build `crates/mirai`.
+Current Rust nightly 1.99 (edition 2024, `rust-version = "1.99"`), selected by
+`rust-toolchain.toml`. Let-chains (`if let Some(x) = a && cond`) are used throughout and are
+expected. GTK 4.22+, libadwaita 1.9+ and Blueprint Compiler 0.22+ are required to build `mirai`.
 
 ### Testing expectations
 

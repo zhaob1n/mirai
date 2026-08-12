@@ -7,17 +7,17 @@
 //! once into a throwaway `gtk::Snapshot`, turned into a `gsk::RenderNode` and replayed with a
 //! single `append_node` every frame.
 
-use std::cell::{Cell, RefCell};
-use std::rc::Rc;
-
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use gtk::{gdk, gio, glib, graphene, gsk, pango};
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+use std::sync::Arc;
 
-use mirai_core::{Board, COLUMNS, Color, DeadSet, MarkKind, Point, Size};
+use mirai_core::{Board, COLUMNS, Color, DeadSet, MarkKind, Marks, Point, Position, Rules, Size};
 use mirai_proto::types::dq_policy;
 
-use crate::app::{AppState, signal};
+use crate::app::AppState;
 
 /// Wood beyond the outermost grid line, in cells.
 const EDGE_PAD: f32 = 0.6;
@@ -189,6 +189,21 @@ pub struct Scene<'a> {
     /// contrasting colours from it.
     pub dark: bool,
 }
+struct BoardProjection {
+    size: Size,
+    rules: Rules,
+    position: Position,
+    marks: Marks,
+    last: Option<(Color, Point)>,
+    move_numbers: Option<Box<[u16]>>,
+    report: Option<Arc<mirai_engine::Report>>,
+    max_suggestions: usize,
+    show_coordinates: bool,
+    ownership_overlay: bool,
+    policy_overlay: bool,
+    ownership_texture: Option<gdk::Texture>,
+    policy_texture: Option<gdk::Texture>,
+}
 
 mod imp {
     use super::*;
@@ -206,7 +221,7 @@ mod imp {
 
     #[derive(Default)]
     pub struct BoardView {
-        pub state: RefCell<Option<AppState>>,
+        pub window: glib::WeakRef<crate::window_shell::MiraiWindow>,
         pub layout: Cell<Layout>,
         /// Candidate index under the pointer.
         pub hover: Cell<Option<usize>>,
@@ -218,6 +233,7 @@ mod imp {
         pub click_hook: RefCell<Option<ClickHook>>,
         pub dead: RefCell<Option<DeadSet>>,
         pub territory: RefCell<Option<Box<[Option<Color>]>>>,
+        pub(super) projection: RefCell<Option<BoardProjection>>,
     }
 
     #[glib::object_subclass]
@@ -242,17 +258,17 @@ mod imp {
 
     impl BoardView {
         pub(super) fn board_size(&self) -> Size {
-            match self.state.borrow().as_ref() {
-                Some(state) => state.tree().info.size,
-                None => Size::square(19),
-            }
+            self.projection
+                .borrow()
+                .as_ref()
+                .map_or(Size::square(19), |p| p.size)
         }
 
         fn show_coords(&self) -> bool {
-            self.state
+            self.projection
                 .borrow()
                 .as_ref()
-                .is_some_and(|s| s.show_coordinates())
+                .is_some_and(|projection| projection.show_coordinates)
         }
 
         /// Builds the wood, grid, star points and coordinate labels once.
@@ -395,26 +411,20 @@ mod imp {
         }
 
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
-            let Some(state) = self.state.borrow().clone() else {
+            let projection = self.projection.borrow();
+            let Some(projection) = projection.as_ref() else {
                 return;
             };
             let l = self.layout.get();
             if l.cell < 3.0 {
                 return;
             }
-            let (size, rules) = {
-                let tree = state.tree();
-                (tree.info.size, tree.info.rules.rules())
-            };
+            let size = projection.size;
             let dark = is_dark();
 
-            if let Some(node) = self.static_node(l, size, state.show_coordinates(), dark) {
+            if let Some(node) = self.static_node(l, size, projection.show_coordinates, dark) {
                 snapshot.append_node(&node);
             }
-
-            let report = state.last_report();
-            let position = state.position();
-            let cursor = state.cursor();
 
             // Heat maps cover the intersections, half a cell beyond the outer lines.
             let heat = graphene::Rect::new(
@@ -423,55 +433,25 @@ mod imp {
                 size.w as f32 * l.cell,
                 size.h as f32 * l.cell,
             );
-
-            if state.ownership_overlay()
-                && let Some(report) = report.as_ref()
-                && let Some(own) = report.ownership.as_ref()
-                && own.len() == size.points()
+            if projection.ownership_overlay
+                && let Some(texture) = projection.ownership_texture.as_ref()
             {
-                let mut buf = vec![0u8; size.points() * 4];
-                for (i, &v) in own.iter().enumerate() {
-                    let a = (v.unsigned_abs() as f32 / 127.0) * 0.45;
-                    // Black is positive; premultiplied, so white is `255 * a`.
-                    let c = if v >= 0 { 0.0 } else { 255.0 * a };
-                    let px = &mut buf[i * 4..i * 4 + 4];
-                    px[0] = c as u8;
-                    px[1] = c as u8;
-                    px[2] = c as u8;
-                    px[3] = (a * 255.0) as u8;
-                }
-                blit(snapshot, buf, size, &heat);
+                snapshot.append_scaled_texture(texture, gsk::ScalingFilter::Nearest, &heat);
             }
 
-            if state.policy_overlay()
-                && let Some(report) = report.as_ref()
-                && let Some(policy) = report.policy.as_ref()
-                && policy.len() == size.points() + 1
+            if projection.policy_overlay
+                && let Some(texture) = projection.policy_texture.as_ref()
             {
-                let accent = adw::StyleManager::default().accent_color_rgba();
-                let mut buf = vec![0u8; size.points() * 4];
-                for i in 0..size.points() {
-                    let Some(p) = dq_policy(policy[i]) else {
-                        continue;
-                    };
-                    let a = p.max(0.0).sqrt() * 0.6;
-                    let px = &mut buf[i * 4..i * 4 + 4];
-                    px[0] = (accent.red() * a * 255.0) as u8;
-                    px[1] = (accent.green() * a * 255.0) as u8;
-                    px[2] = (accent.blue() * a * 255.0) as u8;
-                    px[3] = (a * 255.0) as u8;
-                }
-                blit(snapshot, buf, size, &heat);
+                snapshot.append_scaled_texture(texture, gsk::ScalingFilter::Nearest, &heat);
             }
 
-            // Layers 4-7, or the hovered PV preview in their place.
             let preview = self.obj().active_preview();
             if let Some(idx) = preview
-                && let Some(report) = report.as_ref()
+                && let Some(report) = projection.report.as_ref()
                 && let Some(info) = report.moves.get(idx)
             {
-                let mut board = position.board.clone();
-                let mut color = position.to_play;
+                let mut board = projection.position.board.clone();
+                let mut color = projection.position.to_play;
                 let mut seq = vec![0u16; size.points()];
                 let mut n = 0u16;
                 for &p in &info.pv {
@@ -480,7 +460,7 @@ mod imp {
                         color = color.other();
                         continue;
                     }
-                    if !size.contains(p) || board.play(color, p, &rules).is_err() {
+                    if !size.contains(p) || board.play(color, p, &projection.rules).is_err() {
                         break;
                     }
                     seq[p.index()] = n;
@@ -500,7 +480,7 @@ mod imp {
             let scene = Scene {
                 l,
                 size,
-                board: &position.board,
+                board: &projection.position.board,
                 dark,
             };
             let dead = self.dead.borrow();
@@ -510,34 +490,9 @@ mod imp {
             }
             drop(dead);
 
-            // The stone just played, when it survived the capture resolution.
-            let last = { state.tree().node(cursor).mv }
-                .filter(|&(color, p)| !p.is_pass() && position.board.at(p) == Some(color));
-
-            if state.show_move_numbers() {
-                let mut nums = vec![0u16; size.points()];
-                {
-                    let tree = state.tree();
-                    let mut n = 0u16;
-                    for id in tree.path_to(cursor) {
-                        let node = tree.node(id);
-                        if node.mv.is_some() {
-                            n = n.saturating_add(1);
-                        }
-                        if let Some(m) = node.move_number_override {
-                            n = m;
-                        }
-                        if let Some((_, p)) = node.mv
-                            && !p.is_pass()
-                            && size.contains(p)
-                        {
-                            nums[p.index()] = n;
-                        }
-                    }
-                }
-                // The number itself carries the highlight; a mark would only hide it.
-                self.draw_numbers(snapshot, scene, &nums, last.map(|(_, p)| p));
-            } else if let Some((color, p)) = last {
+            if let Some(nums) = projection.move_numbers.as_ref() {
+                self.draw_numbers(snapshot, scene, nums, projection.last.map(|(_, p)| p));
+            } else if let Some((color, p)) = projection.last {
                 let (x, y) = size.xy(p);
                 let (cx, cy) = l.xy(x, y);
                 snapshot.append_fill(
@@ -547,10 +502,15 @@ mod imp {
                 );
             }
 
-            self.draw_marks(snapshot, scene, cursor, &state);
-
-            if let Some(report) = report.as_ref() {
-                self.draw_candidates(snapshot, scene, position.to_play, report, &state);
+            self.draw_marks(snapshot, scene, &projection.marks);
+            if let Some(report) = projection.report.as_ref() {
+                self.draw_candidates(
+                    snapshot,
+                    scene,
+                    projection.position.to_play,
+                    report,
+                    projection.max_suggestions,
+                );
             }
         }
     }
@@ -679,27 +639,16 @@ mod imp {
             }
         }
 
-        fn draw_marks(
-            &self,
-            snapshot: &gtk::Snapshot,
-            scene: Scene,
-            cursor: mirai_core::NodeId,
-            state: &AppState,
-        ) {
+        fn draw_marks(&self, snapshot: &gtk::Snapshot, scene: Scene, marks: &Marks) {
+            if marks.is_empty() {
+                return;
+            }
             let Scene {
                 l,
                 size,
                 board,
                 dark,
             } = scene;
-            let marks = {
-                let tree = state.tree();
-                let node = tree.node(cursor);
-                if node.marks.is_empty() {
-                    return;
-                }
-                node.marks.clone()
-            };
             let obj = self.obj();
             let r = l.stone_r;
             let stroke = gsk::Stroke::new((l.cell * 0.07).max(1.4));
@@ -781,10 +730,9 @@ mod imp {
             scene: Scene,
             to_play: Color,
             report: &mirai_engine::Report,
-            state: &AppState,
+            max: usize,
         ) {
             let Scene { l, size, board, .. } = scene;
-            let max = state.config().analysis.max_suggestions as usize;
             let best = report.best_visits().max(1) as f32;
             let obj = self.obj();
             let mut fd = obj.pango_context().font_description().unwrap_or_default();
@@ -837,16 +785,55 @@ mod imp {
 }
 
 /// Uploads an RGBA8-premultiplied `w * h` buffer and stretches it over `rect`.
-fn blit(snapshot: &gtk::Snapshot, buf: Vec<u8>, size: Size, rect: &graphene::Rect) {
+fn texture(buf: Vec<u8>, size: Size) -> gdk::Texture {
     let bytes = glib::Bytes::from_owned(buf);
-    let texture = gdk::MemoryTextureBuilder::new()
+    gdk::MemoryTextureBuilder::new()
         .set_bytes(Some(&bytes))
         .set_width(size.w as i32)
         .set_height(size.h as i32)
         .set_stride(size.w as usize * 4)
         .set_format(gdk::MemoryFormat::R8g8b8a8Premultiplied)
-        .build();
-    snapshot.append_scaled_texture(&texture, gsk::ScalingFilter::Nearest, rect);
+        .build()
+        .upcast()
+}
+
+fn ownership_texture(report: &mirai_engine::Report, size: Size) -> Option<gdk::Texture> {
+    let ownership = report.ownership.as_ref()?;
+    if ownership.len() != size.points() {
+        return None;
+    }
+    let mut buf = vec![0u8; size.points() * 4];
+    for (i, &value) in ownership.iter().enumerate() {
+        let alpha = (value.unsigned_abs() as f32 / 127.0) * 0.45;
+        let channel = if value >= 0 { 0.0 } else { 255.0 * alpha };
+        let pixel = &mut buf[i * 4..i * 4 + 4];
+        pixel[0] = channel as u8;
+        pixel[1] = channel as u8;
+        pixel[2] = channel as u8;
+        pixel[3] = (alpha * 255.0) as u8;
+    }
+    Some(texture(buf, size))
+}
+
+fn policy_texture(report: &mirai_engine::Report, size: Size) -> Option<gdk::Texture> {
+    let policy = report.policy.as_ref()?;
+    if policy.len() != size.points() + 1 {
+        return None;
+    }
+    let accent = adw::StyleManager::default().accent_color_rgba();
+    let mut buf = vec![0u8; size.points() * 4];
+    for i in 0..size.points() {
+        let Some(probability) = dq_policy(policy[i]) else {
+            continue;
+        };
+        let alpha = probability.max(0.0).sqrt() * 0.6;
+        let pixel = &mut buf[i * 4..i * 4 + 4];
+        pixel[0] = (accent.red() * alpha * 255.0) as u8;
+        pixel[1] = (accent.green() * alpha * 255.0) as u8;
+        pixel[2] = (accent.blue() * alpha * 255.0) as u8;
+        pixel[3] = (alpha * 255.0) as u8;
+    }
+    Some(texture(buf, size))
 }
 
 fn draw_text(
@@ -917,21 +904,22 @@ glib::wrapper! {
 }
 
 impl BoardView {
-    pub fn new(state: &AppState) -> BoardView {
+    pub fn new(window: &crate::window_shell::MiraiWindow, state: &AppState) -> BoardView {
         let this: BoardView = glib::Object::new();
-        *this.imp().state.borrow_mut() = Some(state.clone());
+        this.imp().window.set(Some(window));
         this.build_menu();
         this.install_controllers();
         this.observe(state);
+        this.rebuild_projection(state);
         this
     }
 
     pub fn state(&self) -> AppState {
         self.imp()
-            .state
-            .borrow()
-            .clone()
-            .expect("BoardView was built without an AppState")
+            .window
+            .upgrade()
+            .and_then(|window| window.with_ui(|ui| ui.state.clone()))
+            .expect("BoardView has no live window state")
     }
 
     /// The intersection under widget coordinates `(x, y)`, if any.
@@ -988,62 +976,110 @@ impl BoardView {
                     self,
                     move |_, _| {
                         view.imp().static_layer.borrow_mut().take();
+                        let state = view.state();
+                        view.rebuild_projection(&state);
                         view.queue_resize();
                         view.queue_draw();
                     }
                 ),
             );
         }
+    }
 
-        state.connect_local(
-            signal::TREE_CHANGED,
-            false,
-            glib::clone!(
-                #[weak(rename_to = view)]
-                self,
-                #[upgrade_or]
-                None,
-                move |_| {
-                    // A different board size changes the geometry.
-                    view.queue_resize();
-                    view.queue_draw();
-                    None
-                }
-            ),
-        );
+    pub(crate) fn refresh_tree(&self) {
+        let state = self.state();
+        self.rebuild_projection(&state);
+        self.queue_resize();
+        self.queue_draw();
+    }
 
-        state.connect_local(
-            signal::CURSOR_CHANGED,
-            false,
-            glib::clone!(
-                #[weak(rename_to = view)]
-                self,
-                #[upgrade_or]
-                None,
-                move |_| {
-                    // Candidate indices belong to the old position.
-                    view.imp().hover.set(None);
-                    view.imp().pinned.set(None);
-                    view.queue_draw();
-                    None
-                }
-            ),
-        );
+    pub(crate) fn refresh_cursor(&self) {
+        self.imp().hover.set(None);
+        self.imp().pinned.set(None);
+        let state = self.state();
+        self.rebuild_projection(&state);
+        self.queue_draw();
+    }
 
-        state.connect_local(
-            signal::REPORT,
-            false,
-            glib::clone!(
-                #[weak(rename_to = view)]
-                self,
-                #[upgrade_or]
-                None,
-                move |_| {
-                    view.queue_draw();
-                    None
+    pub(crate) fn refresh_report(&self) {
+        let state = self.state();
+        if let Some(projection) = self.imp().projection.borrow_mut().as_mut() {
+            projection.report = state.last_report();
+            projection.max_suggestions = state.config().analysis.max_suggestions as usize;
+        } else {
+            self.rebuild_projection(&state);
+            self.queue_draw();
+            return;
+        }
+        self.rebuild_overlay_textures();
+        self.queue_draw();
+    }
+
+    fn rebuild_projection(&self, state: &AppState) {
+        let cursor = state.cursor();
+        let position = state.position();
+        let (size, rules, marks, last, move_numbers) = {
+            let tree = state.tree();
+            let size = tree.info.size;
+            let rules = tree.info.rules.rules();
+            let node = tree.node(cursor);
+            let marks = node.marks.clone();
+            let last = node
+                .mv
+                .filter(|&(color, p)| !p.is_pass() && position.board.at(p) == Some(color));
+            let move_numbers = state.show_move_numbers().then(|| {
+                let mut numbers = vec![0u16; size.points()];
+                let mut n = 0u16;
+                for id in tree.path_to(cursor) {
+                    let node = tree.node(id);
+                    if node.mv.is_some() {
+                        n = n.saturating_add(1);
+                    }
+                    if let Some(m) = node.move_number_override {
+                        n = m;
+                    }
+                    if let Some((_, p)) = node.mv
+                        && !p.is_pass()
+                        && size.contains(p)
+                    {
+                        numbers[p.index()] = n;
+                    }
                 }
-            ),
-        );
+                numbers.into_boxed_slice()
+            });
+            (size, rules, marks, last, move_numbers)
+        };
+        self.imp().projection.replace(Some(BoardProjection {
+            size,
+            rules,
+            position,
+            marks,
+            last,
+            move_numbers,
+            report: state.last_report(),
+            max_suggestions: state.config().analysis.max_suggestions as usize,
+            show_coordinates: state.show_coordinates(),
+            ownership_overlay: state.ownership_overlay(),
+            policy_overlay: state.policy_overlay(),
+            ownership_texture: None,
+            policy_texture: None,
+        }));
+        self.rebuild_overlay_textures();
+    }
+
+    fn rebuild_overlay_textures(&self) {
+        let mut projection = self.imp().projection.borrow_mut();
+        let Some(projection) = projection.as_mut() else {
+            return;
+        };
+        projection.ownership_texture = projection
+            .report
+            .as_deref()
+            .and_then(|report| ownership_texture(report, projection.size));
+        projection.policy_texture = projection
+            .report
+            .as_deref()
+            .and_then(|report| policy_texture(report, projection.size));
     }
 
     fn install_controllers(&self) {
@@ -1162,9 +1198,9 @@ impl BoardView {
         self.insert_action_group("board", Some(&group));
 
         let menu = gio::Menu::new();
-        menu.append(Some("Play here"), Some("board.play-here"));
-        menu.append(Some("Set as main line"), Some("board.main-line"));
-        menu.append(Some("Delete branch"), Some("board.delete-branch"));
+        menu.append(Some("Play Here"), Some("board.play-here"));
+        menu.append(Some("Set as Main Line"), Some("board.main-line"));
+        menu.append(Some("Delete Branch"), Some("board.delete-branch"));
         menu.append(Some("Copy SGF"), Some("board.copy-sgf"));
 
         let popover = gtk::PopoverMenu::from_model(Some(&menu));
@@ -1195,8 +1231,8 @@ impl BoardView {
         }
         let state = self.state();
         let color = state.to_play();
-        if let Err(e) = state.play_move(color, p) {
-            state.toast(e.to_string());
+        if let Err(error) = state.play_move(color, p) {
+            state.toast_illegal_move(error);
         }
     }
 
@@ -1235,31 +1271,34 @@ impl BoardView {
 
     /// The index into `Report::moves` of the candidate blob under `(x, y)`.
     fn candidate_at(&self, x: f64, y: f64) -> Option<usize> {
-        let state = self.imp().state.borrow().clone()?;
-        let report = state.last_report()?;
+        let projection = self.imp().projection.borrow();
+        let projection = projection.as_ref()?;
+        let report = projection.report.as_ref()?;
         let l = self.imp().layout.get();
         if l.cell <= 0.0 {
             return None;
         }
-        let size = self.imp().board_size();
-        let max = state.config().analysis.max_suggestions as usize;
-        let cursor = state.cursor();
-        state.with_tree_cached(|tree| {
-            let board = &tree.position(cursor).board;
-            for (i, info) in report.moves.iter().enumerate().take(max) {
-                if info.mv.is_pass() || !size.contains(info.mv) || board.at(info.mv).is_some() {
-                    continue;
-                }
-                let (bx, by) = size.xy(info.mv);
-                let (cx, cy) = l.xy(bx, by);
-                let dx = x as f32 - cx;
-                let dy = y as f32 - cy;
-                if dx * dx + dy * dy <= l.stone_r * l.stone_r {
-                    return Some(i);
-                }
+        for (i, info) in report
+            .moves
+            .iter()
+            .enumerate()
+            .take(projection.max_suggestions)
+        {
+            if info.mv.is_pass()
+                || !projection.size.contains(info.mv)
+                || projection.position.board.at(info.mv).is_some()
+            {
+                continue;
             }
-            None
-        })
+            let (bx, by) = projection.size.xy(info.mv);
+            let (cx, cy) = l.xy(bx, by);
+            let dx = x as f32 - cx;
+            let dy = y as f32 - cy;
+            if dx * dx + dy * dy <= l.stone_r * l.stone_r {
+                return Some(i);
+            }
+        }
+        None
     }
 }
 

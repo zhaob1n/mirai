@@ -22,10 +22,12 @@ cargo build --release --workspace
 cargo test -p mirai-proto --test wire_size -- --nocapture   # prints the measured byte budget
 ```
 
-`cargo fmt --all --check` and the clippy line above are both quiet: the tree is formatted with
-stock `rustfmt` defaults and lint-free under the pinned nightly. Keep it that way. Between full
-runs, `cargo fmt` and `cargo clippy -p <crate>` on what you touched is enough; a toolchain
-bump that lights up untouched code is its own commit, not part of a feature.
+`cargo fmt --all --check`, `blueprint-compiler lint crates/mirai/src/window.blp
+crates/mirai/src/new_game.blp crates/mirai/src/preferences.blp
+crates/mirai/src/profile_editor.blp crates/mirai/src/fox_picker.blp
+crates/mirai/src/panels/analysis.blp`, and the clippy line above are quiet under the current
+nightly. Between full runs, `cargo fmt` and `cargo clippy -p <crate>` on what you touched are
+enough. A toolchain bump that lights up untouched code is its own change.
 
 | Never run casually | Why |
 |---|---|
@@ -173,10 +175,10 @@ printf '%s\n' '{"id":"gt","boardXSize":19,"boardYSize":19,"rules":"chinese","kom
 
 ## 5. Testing the GUI
 
-Everything below is derived from `crates/mirai/src/harness.rs`, `window.rs` and `main.rs`.
-**The recipes were not executed while writing this document** — except (g), whose command and
-output below are transcribed from a real run; treat the other `wait:` values as starting
-points and read the harness's stderr trace to see what actually happened.
+Everything below is derived from `crates/mirai/src/harness.rs`, `window.rs`,
+`window_shell.rs` and `main.rs`. The lifecycle and rendering recipes are intended to be run
+against a debug build; tune the `wait:` values for the local engine and use the stderr trace as
+the authoritative record of which steps completed.
 
 ### Why external capture does not work
 
@@ -235,12 +237,11 @@ path.
 Four traps:
 
 - Mnemonic underscores are stripped before matching (`press:Save` matches `_Save`).
-- Substring match, depth-first from the window root: the first hit wins. `press:New game`
-  finds the *main header bar's* button, not a dialog. Pick a needle unique to the dialog —
-  `press:Start` in `dialogs::new_game` is unambiguous.
+- Substring match, depth-first from the window root: choose a needle unique to the intended
+  control. `press:Start Game` reaches the New Game dialog rather than the live-analysis toggle.
 - A popover lives in its own surface, so its contents never appear in a `shot`. Verify a
   chooser by what picking an entry *does* — the row subtitle, and the `katago …` start line
-  after **Save profile** — not by a screenshot of the open list.
+  after **Save Profile** — not by a screenshot of the open list.
 - `adw::AlertDialog` responses (`dialogs::show_score_with`, `dialogs::confirm_fingerprint`)
   are declared as response ids, not as buttons we construct. [INFERENCE] `press:Close` works
   only if libadwaita realises them as labelled buttons; unverified. End such recipes with
@@ -253,12 +254,14 @@ Four traps:
 | Step | Meaning | Delay after |
 |---|---|---|
 | `wait:<ms>` | Sleep. Non-numeric is **dropped**, not treated as zero | — |
+| `wait-status:<substring>` | Wait up to 10 s for the active window's visible labels to contain text | — |
 | `action:<prefix.name>` | Activate an action with no parameter | 120 ms |
 | `action:<prefix.name>=<string>` | Activate with a string parameter (`action:win.set-engine=workstation`) | 120 ms |
 | `press:<label substring>` | Click the first visible matching button | 250 ms |
 | `select:<row title substring>=<index>` | Set the first visible matching `adw::ComboRow`; index 0 is its prompt/default entry | 250 ms |
 | `fill:<entry placeholder substring>=<text>` | Fill the first visible `gtk::SearchEntry` whose placeholder matches | 120 ms |
 | `shot:<path.png>` | Render the active window to PNG | see below |
+| `close-window` | Close only the active window through its normal shutdown path | 250 ms |
 | `quit` | `app.quit()`, ending the script | — |
 
 Unknown kinds are logged and skipped; whitespace around steps is trimmed, so a script may be
@@ -270,8 +273,9 @@ Every step logs to stderr; this trace is your evidence:
 
 ```text
 harness: 6 steps
-harness: action win.next10 -> ok            # MISSING = no such action on the window
-harness: press "Start" -> ok                # NOT FOUND = no visible button matched
+harness: wait-status "Ready" -> ok          # TIMEOUT = state never became visible
+harness: action win.next10 -> ok            # MISSING = no such window action
+harness: close-window -> ok                 # NO WINDOW = none remained
 harness: wrote /tmp/mirai-a.png             # or: harness: screenshot failed: <reason>
 harness: quitting
 ```
@@ -373,20 +377,20 @@ the stones it belongs to.
 **(c) New game, engine reply, undo, score estimate.**
 
 ```sh
-MIRAI_HARNESS="wait:8000,action:win.new-game,wait:800,press:Start,wait:1200,action:win.pass,wait:12000,shot:/tmp/mirai-play1.png,action:win.undo,wait:1200,shot:/tmp/mirai-play2.png,action:win.score,wait:20000,shot:/tmp/mirai-score.png,quit" \
+MIRAI_HARNESS="wait:8000,action:win.new-game,wait:800,press:Start Game,wait:1200,action:win.pass,wait:12000,shot:/tmp/mirai-play1.png,action:win.undo,wait:1200,shot:/tmp/mirai-play2.png,action:win.score,wait:20000,shot:/tmp/mirai-score.png,quit" \
   cargo run -p mirai
 ```
 
 | Step | Why it works |
 |---|---|
-| `wait:8000` | `dialogs::new_game` reads `engine_desc()` to decide whether the human-like strength mode is offered, so the engine should be up first |
-| `press:Start` | Dialog defaults: 19×19, Chinese, komi 7.5, no handicap, **you play Black**, no time control, 800 visits per engine move |
+| `wait:8000` | `new_game::present` reads `engine_desc()` to decide whether the human-like strength mode is offered, so the engine should be up first |
+| `press:Start Game` | Dialog defaults: 19×19, Chinese, komi 7.5, no handicap, **you play Black**, no time control, 800 visits per engine move |
 | `action:win.pass` | With a session active this routes to `PlayController::pass`, accepted only on `PlayState::HumanTurn`. Black passes, so it becomes the engine's turn — this is how the harness triggers an engine move without clicking the board |
 | `shot:…play1.png` | One White stone, move list `pass` then White's reply |
 | `action:win.undo` | Routes to `PlayController::undo`, which removes up to two nodes so the human is on move again |
 | `action:win.score` | `window::do_score` subscribes at high priority with `Want::OWNERSHIP` and shows the `Result` dialog with `size × size · rules · komi` |
 
-`press:Start` logging `NOT FOUND` means the dialog was not presented yet — raise the
+`press:Start Game` logging `NOT FOUND` means the dialog was not presented yet — raise the
 preceding `wait:`. A `No engine to estimate the score with` toast means the engine never came
 up; check the KataGo log directory (section 7).
 
@@ -403,13 +407,14 @@ Expect the win-rate graph filled end to end rather than a single point, blunder 
 the worst moves, and the Analysis sidebar listing blunder rows. If the progress indicator is
 still running in the PNG, raise the wait.
 
-**(e) Clean shutdown, proving teardown ran.** `quit` calls `app.quit()`; the teardown is
-connected to **`close-request`**, so drive GTK's built-in `window.close` action instead.
+**(e) Clean shutdown, proving teardown ran.** Use the harness's `close-window` step, which calls
+`gtk::Window::close` on the active window and exercises the same path as the title-bar close
+button. `dispose` invokes the same idempotent shutdown as a backstop.
 
 ```sh
 rm -f "$XDG_DATA_HOME/mirai"/autosave-*.sgf     # scratch data dir; see Isolation above
 
-MIRAI_HARNESS="wait:2000,action:win.next10,action:win.toggle-analysis,wait:15000,shot:/tmp/mirai-before-close.png,action:window.close" \
+MIRAI_HARNESS="wait:2000,action:win.next10,action:win.toggle-analysis,wait:15000,shot:/tmp/mirai-before-close.png,close-window" \
   ./target/debug/mirai "$SGF"
 echo "exit=$?"
 
@@ -417,16 +422,13 @@ ls "$XDG_DATA_HOME/mirai"       # no autosave-*.sgf: the window deleted its own
 pgrep -a katago                 # must show nothing left from this run
 ```
 
-`window::connect_close` runs, in order: flush the comment, delete this window's autosave,
-cancel the batch, stop play, abort the score task, switch live analysis off so the pump
-releases its `Subscription` (INV-3), save the config, drop the engine (terminating KataGo once
-no other window holds it), and drop the last strong `Rc<Ui>` (INV-8). `exit=0`, no autosave
-left, no orphaned `katago`.
+`MiraiWindow::shutdown` runs once: flush comment, remove autosave and timers, abort score/play/
+batch work, cancel AppState startup and analysis tasks (dropping their subscriptions), save the
+config, clear the engine, and take the window's sole `Ui`. `exit=0`, no autosave, no orphaned
+KataGo.
 
-Conversely, `kill -9` on a run with a loaded record leaves its `autosave-<pid>-<start>-<n>.sgf`
-behind, and the next start offers it — one file per window, most recent first, deleted once the
-prompt is answered either way. That asymmetry is the feature; a script ending in `quit` behaves
-like a kill, because `app.quit()` destroys windows rather than emitting `close-request`.
+Conversely, `kill -9` bypasses both close and dispose. A loaded record leaves its per-window
+autosave, and the next start offers it; this is the intended crash-recovery asymmetry.
 
 **(f) Two windows, one KataGo.** Sharing is the reason `EnginePool` exists, and the count is
 the proof:
@@ -579,7 +581,7 @@ row is a defect that happened or a guard that exists because one did.
 | Engine will not start, no useful message in the GUI | KataGo's own log | `$XDG_DATA_HOME/mirai/katago-logs` (GUI, `Config::data_dir`), `$TMPDIR/mirai-katago-logs` (`LocalEngineConfig` default), or `log_dir` in `server.toml` |
 | `Startup(...)` error mentioning `logDir` or a config key | A comma in a path; KataGo splits `-override-config` on commas | `local.rs` `override_config` |
 | Client cannot connect though the server is up | Fingerprint mismatch after a regenerated cert, wrong token, or wrong `[[engine]]` name | `--print-fingerprint` vs `cert_sha256`; the server logs the token name that authenticated |
-| Engine and runtime survive window close | INV-8: a long-lived handler captured a strong `Rc<Ui>` instead of going through `with_ui` | `window::connect_close`, `handlers_do_not_keep_the_window_alive` |
+| Engine and runtime survive window close | INV-8: a long-lived callback owns the window, or shutdown failed to take its unique `Ui` | `MiraiWindow::shutdown`, `Ui::shutdown`, weak-window callbacks in `window.rs`, `play.rs`, `batch.rs` |
 | `harness: action … -> MISSING` | No such action on the active window, or a typo. `app.*` goes to the application, everything else to the window | `harness::activate`, `window::install_actions` |
 | `harness: screenshot failed: nothing was drawn` | The window never mapped, or a modal grabbed before `present()` | Lengthen the preceding `wait:` |
 | The harness does nothing at all | Release build (`#[cfg(debug_assertions)]`), `MIRAI_HARNESS` unset, or every step malformed | `harness::install` |

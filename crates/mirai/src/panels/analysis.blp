@@ -1,0 +1,62 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Huang Zhaobin
+
+using Gtk 4.0;
+
+template $MiraiAnalysisPanel : Gtk.Box {
+  orientation: vertical;
+
+  Gtk.Box {
+    orientation: vertical;
+    spacing: 2;
+    margin-start: 12;
+    margin-end: 12;
+    margin-top: 8;
+    margin-bottom: 8;
+
+    Gtk.Label readout {
+      label: _("No Analysis");
+      xalign: 0;
+      ellipsize: end;
+      styles ["mirai-readout", "heading"]
+    }
+
+    Gtk.Label detail {
+      xalign: 0;
+      ellipsize: end;
+      styles ["mirai-status-dim"]
+    }
+  }
+
+  Gtk.ScrolledWindow {
+    hscrollbar-policy: automatic;
+    vexpand: true;
+
+    child: Gtk.ColumnView columns {
+      show-column-separators: false;
+      show-row-separators: false;
+      single-click-activate: false;
+      vexpand: true;
+    };
+  }
+
+  Gtk.Expander blunder_expander {
+    label: _("Blunders");
+    expanded: true;
+    visible: false;
+    margin-start: 12;
+    margin-end: 12;
+    margin-top: 6;
+    margin-bottom: 12;
+
+    child: Gtk.ScrolledWindow {
+      propagate-natural-height: true;
+      max-content-height: 240;
+
+      child: Gtk.ListBox blunder_list {
+        selection-mode: none;
+        styles ["boxed-list"]
+      };
+    };
+  }
+}

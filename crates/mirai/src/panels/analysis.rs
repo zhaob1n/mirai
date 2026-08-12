@@ -11,14 +11,13 @@
 use std::cell::{Cell, OnceCell, RefCell};
 
 use adw::prelude::*;
-use gtk::glib;
 use gtk::pango;
 use gtk::subclass::prelude::*;
-use gtk::{gio, glib::clone};
+use gtk::{CompositeTemplate, gio, glib, glib::clone};
 
-use mirai_core::{Color, NodeId, Point};
+use mirai_core::{Color, Point};
 
-use crate::app::{AppState, signal};
+use crate::app::{AppState, EngineState, NodeRef};
 use crate::batch::Blunder;
 use crate::util::{gtp, pct1, si_visits, signed1, visits_per_second};
 
@@ -136,13 +135,24 @@ pub(crate) type PvHook = Box<dyn Fn(Option<usize>)>;
 mod imp {
     use super::*;
 
-    #[derive(Default)]
+    #[derive(Default, CompositeTemplate)]
+    #[template(file = "src/panels/analysis.blp")]
     pub struct AnalysisPanel {
-        pub state: RefCell<Option<AppState>>,
+        #[template_child]
+        pub readout: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub detail: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub columns: TemplateChild<gtk::ColumnView>,
+        #[template_child]
+        pub blunder_expander: TemplateChild<gtk::Expander>,
+        #[template_child]
+        pub blunder_list: TemplateChild<gtk::ListBox>,
+        pub window: glib::WeakRef<crate::window_shell::MiraiWindow>,
         pub inner: OnceCell<super::Inner>,
         pub pv_hooks: RefCell<Vec<PvHook>>,
         /// The nodes the blunder rows jump to, parallel to the list box's children.
-        pub blunder_nodes: RefCell<Vec<NodeId>>,
+        pub blunder_nodes: RefCell<Vec<NodeRef>>,
         /// The selection index last reported to the PV hooks.
         pub last_pv: Cell<u32>,
         /// Set while the model is being spliced, so the selection churn a splice causes
@@ -155,6 +165,14 @@ mod imp {
         const NAME: &'static str = "MiraiAnalysisPanel";
         type Type = super::AnalysisPanel;
         type ParentType = gtk::Box;
+
+        fn class_init(klass: &mut Self::Class) {
+            klass.bind_template();
+        }
+
+        fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
+            obj.init_template();
+        }
     }
 
     impl ObjectImpl for AnalysisPanel {}
@@ -169,24 +187,20 @@ glib::wrapper! {
 }
 
 impl AnalysisPanel {
-    pub fn new(state: &AppState) -> AnalysisPanel {
-        let this: AnalysisPanel = glib::Object::builder()
-            .property("orientation", gtk::Orientation::Vertical)
-            .build();
-        *this.imp().state.borrow_mut() = Some(state.clone());
+    pub fn new(window: &crate::window_shell::MiraiWindow) -> AnalysisPanel {
+        let this: AnalysisPanel = glib::Object::new();
+        this.imp().window.set(Some(window));
         this.imp().last_pv.set(gtk::INVALID_LIST_POSITION);
         this.build();
-        this.connect_state();
-        this.refresh();
         this
     }
 
     pub fn state(&self) -> AppState {
         self.imp()
-            .state
-            .borrow()
-            .clone()
-            .expect("AnalysisPanel was built without an AppState")
+            .window
+            .upgrade()
+            .and_then(|window| window.with_ui(|ui| ui.state.clone()))
+            .expect("AnalysisPanel has no live window state")
     }
 
     fn inner(&self) -> &Inner {
@@ -202,31 +216,12 @@ impl AnalysisPanel {
     // -- construction -------------------------------------------------------------------
 
     fn build(&self) {
-        let readout = gtk::Label::builder()
-            .xalign(0.0)
-            .label("No analysis")
-            .ellipsize(pango::EllipsizeMode::End)
-            .build();
-        readout.add_css_class("mirai-readout");
-        readout.add_css_class("heading");
-        let detail = gtk::Label::builder()
-            .xalign(0.0)
-            .label("")
-            .ellipsize(pango::EllipsizeMode::End)
-            .build();
-        detail.add_css_class("mirai-status-dim");
-
-        let header = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .spacing(2)
-            .margin_start(12)
-            .margin_end(12)
-            .margin_top(8)
-            .margin_bottom(8)
-            .build();
-        header.append(&readout);
-        header.append(&detail);
-        self.append(&header);
+        let imp = self.imp();
+        let readout = imp.readout.get();
+        let detail = imp.detail.get();
+        let columns = imp.columns.get();
+        let blunder_expander = imp.blunder_expander.get();
+        let blunder_list = imp.blunder_list.get();
 
         let store = gio::ListStore::new::<CandidateObject>();
         let selection = gtk::SingleSelection::builder()
@@ -235,59 +230,29 @@ impl AnalysisPanel {
             .can_unselect(true)
             .build();
         selection.set_selected(gtk::INVALID_LIST_POSITION);
-
-        let columns = gtk::ColumnView::builder()
-            .model(&selection)
-            .show_column_separators(false)
-            .show_row_separators(false)
-            .single_click_activate(false)
-            .vexpand(true)
-            .build();
-        columns.append_column(&text_column("Move", 0.0, false, None, |c| c.mv()));
-        columns.append_column(&text_column("Win", 1.0, false, None, |c| {
-            format!("{}%", pct1(c.winrate() as f32))
+        columns.set_model(Some(&selection));
+        columns.append_column(&text_column("Move", 0.0, false, None, |candidate| {
+            candidate.mv()
         }));
-        columns.append_column(&text_column("Score", 1.0, false, None, |c| {
-            signed1(c.score() as f32)
+        columns.append_column(&text_column("Win", 1.0, false, None, |candidate| {
+            format!("{}%", pct1(candidate.winrate() as f32))
         }));
-        columns.append_column(&text_column("Visits", 1.0, false, None, |c| {
-            si_visits(c.visits())
+        columns.append_column(&text_column("Score", 1.0, false, None, |candidate| {
+            signed1(candidate.score() as f32)
         }));
-        columns.append_column(&text_column("Prior", 1.0, false, None, |c| {
-            format!("{}%", pct1(c.prior() as f32))
+        columns.append_column(&text_column("Visits", 1.0, false, None, |candidate| {
+            si_visits(candidate.visits())
         }));
-        columns.append_column(&text_column("PV", 0.0, true, Some("mirai-pv-label"), |c| {
-            c.pv()
+        columns.append_column(&text_column("Prior", 1.0, false, None, |candidate| {
+            format!("{}%", pct1(candidate.prior() as f32))
         }));
-
-        let scroller = gtk::ScrolledWindow::builder()
-            .child(&columns)
-            .hscrollbar_policy(gtk::PolicyType::Automatic)
-            .vexpand(true)
-            .build();
-        self.append(&scroller);
-
-        // The blunder list, filled by a whole-game analysis and hidden until there is one.
-        let blunder_list = gtk::ListBox::builder()
-            .selection_mode(gtk::SelectionMode::None)
-            .build();
-        blunder_list.add_css_class("boxed-list");
-        let blunder_scroller = gtk::ScrolledWindow::builder()
-            .child(&blunder_list)
-            .propagate_natural_height(true)
-            .max_content_height(240)
-            .build();
-        let blunder_expander = gtk::Expander::builder()
-            .label("Blunders")
-            .expanded(true)
-            .visible(false)
-            .margin_start(12)
-            .margin_end(12)
-            .margin_top(6)
-            .margin_bottom(12)
-            .child(&blunder_scroller)
-            .build();
-        self.append(&blunder_expander);
+        columns.append_column(&text_column(
+            "PV",
+            0.0,
+            true,
+            Some("mirai-pv-label"),
+            |candidate| candidate.pv(),
+        ));
 
         // Selecting a row pins the PV preview; activating it plays the move.
         selection.connect_selected_notify(clone!(
@@ -319,9 +284,8 @@ impl AnalysisPanel {
                 if let Some(&node) = nodes.get(row.index().max(0) as usize) {
                     drop(nodes);
                     let state = panel.state();
-                    let is_live = state.tree().contains(node);
-                    if is_live {
-                        state.set_cursor(node);
+                    if let Some(id) = state.resolve_node(node) {
+                        state.set_cursor(id);
                     }
                 }
             }
@@ -337,44 +301,17 @@ impl AnalysisPanel {
         });
     }
 
-    fn connect_state(&self) {
-        let state = self.state();
-        for name in [signal::REPORT, signal::CURSOR_CHANGED] {
-            state.connect_closure(
-                name,
-                false,
-                glib::closure_local!(
-                    #[weak(rename_to = panel)]
-                    self,
-                    move |_: AppState| panel.refresh()
-                ),
-            );
-        }
-        state.connect_closure(
-            signal::TREE_CHANGED,
-            false,
-            glib::closure_local!(
-                #[weak(rename_to = panel)]
-                self,
-                move |_: AppState| {
-                    panel.clear_blunders();
-                    panel.refresh();
-                }
-            ),
-        );
-    }
-
     fn play(&self, p: Point) {
         let state = self.state();
         let color = state.to_play();
-        if let Err(e) = state.play_move(color, p) {
-            state.toast(e.to_string());
+        if let Err(error) = state.play_move(color, p) {
+            state.toast_illegal_move(error);
         }
     }
 
     // -- refreshing ---------------------------------------------------------------------
 
-    fn refresh(&self) {
+    pub(crate) fn refresh(&self) {
         let state = self.state();
         let size = state.tree().info.size;
         let to_play = state.to_play();
@@ -466,11 +403,15 @@ impl AnalysisPanel {
             }
             None => {
                 inner.readout.set_label("No analysis");
-                inner.detail.set_label(if self.state().engine().is_some() {
-                    "Turn on live analysis, or analyse the whole game"
-                } else {
-                    "No engine"
-                });
+                let detail = match self.state().engine_state() {
+                    EngineState::Starting { profile } => format!("Starting {profile}…"),
+                    EngineState::Failed { message, .. } => message,
+                    EngineState::Ready { .. } => {
+                        "Turn on live analysis, or analyse the whole game".to_string()
+                    }
+                    EngineState::None => "No engine".to_string(),
+                };
+                inner.detail.set_label(&detail);
             }
         }
 

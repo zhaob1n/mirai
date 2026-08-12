@@ -3,21 +3,25 @@
 //! mirai — a KataGo analysis and playing GUI.
 
 mod app;
+mod application_shell;
 mod batch;
 mod config;
 mod dialogs;
 mod engines;
 mod fox;
+mod fox_picker;
 #[cfg(debug_assertions)]
 mod harness;
+mod new_game;
 mod panels;
 mod play;
+mod preferences_shell;
 mod prefs;
+mod profile_editor;
 mod util;
 mod widgets;
 mod window;
-
-use std::rc::Rc;
+mod window_shell;
 
 use gtk::gio;
 use gtk::glib;
@@ -34,15 +38,6 @@ fn main() -> glib::ExitCode {
         )
         .init();
 
-    // One shared multi-thread runtime for every engine driver. The GTK main loop never
-    // blocks on it; results come back through `glib::spawn_future_local`.
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_name("mirai-rt")
-        .build()
-        .expect("could not start the tokio runtime");
-    let handle = runtime.handle().clone();
-
     gio::resources_register_include!("mirai.gresource")
         .expect("the compiled resource bundle should be embedded");
 
@@ -53,10 +48,7 @@ fn main() -> glib::ExitCode {
     #[cfg(not(debug_assertions))]
     let flags = gio::ApplicationFlags::HANDLES_OPEN;
 
-    let application = adw::Application::builder()
-        .application_id(APP_ID)
-        .flags(flags)
-        .build();
+    let application = application_shell::MiraiApplication::new(APP_ID, flags);
 
     application.connect_startup(|_| {
         let provider = gtk::CssProvider::new();
@@ -70,34 +62,32 @@ fn main() -> glib::ExitCode {
         }
     });
 
-    // One set of engines for the whole application: windows share KataGo rather than each
-    // starting their own. Main-thread only, hence `Rc`.
-    let pool = Rc::new(engines::EnginePool::default());
-
-    {
-        let handle = handle.clone();
-        let pool = pool.clone();
-        application.connect_activate(move |app| {
-            window::present(app, handle.clone(), pool.clone(), None);
-            #[cfg(debug_assertions)]
-            harness::install(app);
-        });
-    }
-    {
-        let handle = handle.clone();
-        application.connect_open(move |app, files, _hint| {
-            // One window per file. Dropping all but the first used to lose the rest without
-            // a word when several records were opened at once.
-            for file in files {
-                window::present(app, handle.clone(), pool.clone(), file.path());
-            }
-            #[cfg(debug_assertions)]
-            harness::install(app);
-        });
-    }
+    application.connect_activate(|app| {
+        window::present(
+            app.upcast_ref(),
+            app.runtime_handle(),
+            app.engine_pool(),
+            None,
+        );
+        #[cfg(debug_assertions)]
+        harness::install(app.upcast_ref());
+    });
+    application.connect_open(|app, files, _hint| {
+        // One window per file. Dropping all but the first used to lose the rest without
+        // a word when several records were opened at once.
+        for file in files {
+            window::present(
+                app.upcast_ref(),
+                app.runtime_handle(),
+                app.engine_pool(),
+                file.path(),
+            );
+        }
+        #[cfg(debug_assertions)]
+        harness::install(app.upcast_ref());
+    });
 
     let code = application.run();
-    // Engines are dropped with the windows; give their processes a moment to exit.
-    runtime.shutdown_timeout(std::time::Duration::from_millis(500));
+    application.shutdown_runtime();
     code
 }

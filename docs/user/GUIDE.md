@@ -17,7 +17,8 @@ computer. The engine can run on the same machine or on another one on your netwo
 |---|---|---|
 | GTK | 4.22+ with dev package | `gtk4` / `libgtk-4-dev` |
 | libadwaita | 1.9+ with dev package | `libadwaita` / `libadwaita-1-dev` |
-| Rust | 1.92+ | only to build, not to run |
+| Rust | nightly 1.99+ | only to build, not to run |
+| Blueprint Compiler | 0.22+ | only to build the GTK templates |
 
 ```
 cargo build --release --workspace     # builds mirai and mirai-server
@@ -70,20 +71,20 @@ configured"*.
 
 ### Adding a local engine
 
-1. **Preferences → Engines → Add local…**
+1. **Preferences → Engines → Add Local…**
 2. **Name** — anything unique; it labels the engine in the header-bar menu.
 3. **KataGo binary** and **Neural network model** — the list button on the model row offers
    every discovered network by file name, with its directory underneath whenever two share a
    name and the whole path in the tooltip; the folder button beside it takes any other file.
-   Both paths must exist or **Save profile** is refused, with the reason in a banner at the top
+   Both paths must exist or **Save Profile** is refused, with the reason in a banner at the top
    of the page.
 4. **Analysis config** — leave it at **Managed by mirai**. Choosing *Custom file* reveals the
    config row, which carries the same pair of buttons. Its list merges every Analysis `*.cfg`
    in `katago/cfg/analysis` and `mirai/cfg/analysis` under `$XDG_CONFIG_HOME`, then under each
    `$XDG_CONFIG_DIRS` entry; `analysis.cfg` comes first within its directory.
-5. **Search** and **Batching and memory** — leave every number at **0**, which means *use
+5. **Search** and **Batching and Memory** — leave every number at **0**, which means *use
    mirai's default*; the [settings reference](#engines) lists them.
-6. **Save profile.**
+6. **Save Profile.**
 
 The first profile added becomes the active one and starts immediately. Later profiles do not
 steal the selection; switch with the engine button in the header bar. The pencil button edits
@@ -96,8 +97,8 @@ disk.
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────────────┐
-│ [open][save][▶]  [engine ▾]        Untitled •           [clocks] [New game] [ ☰ ] │ header bar
-│                                    local-default                                  │
+│ [open][Fox↓][▶] [engine ▾]      Untitled •       [clocks] [New Game…] [⋮] [☰] │ header bar
+│                                  local-default                                  │
 ├──────────────────────────────────────────────┬────────────────────────────────────┤
 │ ⓘ Analysing 42/128…                [Cancel]  │   Analysis │ Moves │ Comment       │ sidebar
 │──────────────────────────────────────────────│────────────────────────────────────│
@@ -115,21 +116,21 @@ disk.
 │  │  ▁▁▂▃▅▅▄▆▇▇   ← blunder strip below  │    │                                    │
 │  ╰──────────────────────────────────────╯    │                                    │
 ├──────────────────────────────────────────────┴────────────────────────────────────┤
-│ ⏮ ◀ ▶ ⏭  ▲▼  ├───────────────●─────────────────────────┤ B 54.2%  +1.8  12k 1.4k/s│ bottom bar
+│ ⏮ ◀ ▶ ⏭  ▲▼ [Undo][Pass][Resign] ├──────────●──────────┤ B 54.2% +1.8 12k 1.4k/s│ bottom bar
 └───────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 | Region | What it shows |
 |---|---|
-| **Header bar** | Open, Save, the ▶ live-analysis toggle, the engine button (name + KataGo version; click for your profiles and *Preferences…*), the file name with `•` while unsaved, the engine or current status beneath it, the clocks during a timed game, **New game**, and ☰ |
+| **Header bar** | Open, Download from Fox, the ▶/■ live-analysis toggle, the engine button (name + KataGo version; click for profiles and *Preferences*), the file name with `•` while unsaved, the engine or current status beneath it, clocks during a timed game, **New Game…**, View Options (⋮), and Main Menu (☰) |
 | **Board** | wood, grid, star points, optional coordinates, stones. The last move is marked with a red dot, or — when move numbers are on — by its number in red. SGF marks (triangle, square, circle, cross, text labels) are drawn |
 | **Win-rate graph** | solid curve = Black's win rate (left axis 0/50/100); dashed curve = score lead (right axis, never tighter than ±5); vertical line = where you are; coloured bars along the bottom = the blunder strip |
-| **Sidebar** | three pages — **Analysis** (readout, candidate list, blunder list), **Moves** (the branch graph), **Comment** (the current move's comment). Collapses to an overlay on a narrow window |
-| **Bottom bar** | first / previous / next / last, previous / next variation, a slider along the current line, and a readout of side to move, win rate, score lead, visits and — while a search is running — its speed in visits per second; or the status message when there is no analysis |
+| **Sidebar** | Three pages — **Analysis** (readout, candidate list, blunder list), **Moves** (the branch graph), **Comment** (the current move's comment). At narrow widths it closes into an overlay and a sidebar button appears in the header bar |
+| **Bottom bar** | First / previous / next / last, previous / next variation, contextual **Undo**, **Pass**, and **Resign** controls during play, a slider along the current line, and a readout of side to move, win rate, score lead, visits and — while a search is running — its speed in visits per second |
 
-The ☰ menu holds *New Game…*, *Open…*, *Download from Fox…*, *Save*, *Save As…*, *Copy SGF*,
-*Paste SGF*, *Analyse Game*, *Estimate Score*, *Coordinates*, *Move Numbers*, *Ownership
-Overlay*, *Policy Overlay*, *Preferences*, *Keyboard Shortcuts*, *About mirai*.
+The ☰ menu holds *Save*, *Save As…*, *Copy SGF*, *Paste SGF*, *Analyse Game*,
+*Estimate Score*, *Preferences*, *Keyboard Shortcuts*, and *About mirai*. The adjacent ⋮ menu
+holds *Coordinates*, *Move Numbers*, *Ownership Overlay*, and *Policy Overlay*.
 
 ### Mouse on the board
 
@@ -296,7 +297,7 @@ read from the SGF, drawn, and written back, but mirai has no tool for adding new
 
 ## 6. Playing
 
-<kbd>Ctrl</kbd>+<kbd>N</kbd> or the **New game** button.
+<kbd>Ctrl</kbd>+<kbd>N</kbd> or the **New Game…** button.
 
 ### The New Game dialog
 
@@ -439,7 +440,7 @@ One server serves several clients from the one KataGo; it does not start a copy 
 
 ### On the laptop
 
-**Preferences → Engines → Add remote…**, then:
+**Preferences → Engines → Add Remote…**, then:
 
 | Field | Value |
 |---|---|
@@ -464,7 +465,7 @@ mirai will refuse to connect if it ever changes.
 something between the two machines is answering in the desktop's place.
 
 Trusting *pins* that fingerprint: from then on mirai talks only to a server presenting exactly
-that certificate. **Save profile**, then select the profile from the header-bar engine button.
+that certificate. **Save Profile**, then select the profile from the header-bar engine button.
 Everything behaves as it does locally. Changing the Server URL later discards the pin, because
 a pin belongs to the address it came from, and you are asked to confirm the new one.
 
@@ -475,7 +476,7 @@ click through.
 
 | Cause | What to do |
 |---|---|
-| The server's `cert.pem`/`key.pem` were deleted or regenerated, or the server was reinstalled | expected. Get the new value with `mirai-server --print-fingerprint`, then on the laptop edit the remote profile → **Test connection** → check → **Trust** → **Save profile** |
+| The server's `cert.pem`/`key.pem` were deleted or regenerated, or the server was reinstalled | expected. Get the new value with `mirai-server --print-fingerprint`, then on the laptop edit the remote profile → **Test Connection** → check → **Trust** → **Save Profile** |
 | Nothing changed on the server | do not click through. Something is intercepting the connection; check the network and the address |
 
 ---
@@ -495,9 +496,9 @@ Four pages. Every change is written to disk immediately; there is no Apply butto
 | *local* Threads per position | 0, meaning 16 | `numSearchThreadsPerAnalysisThread`: how hard one position is searched. Raise on a many-core CPU, but the returns fall off past 16 |
 | *local* GPU batch size | 0, meaning 64 | `nnMaxBatchSize`. Wants to be at least positions × threads. Hidden while a custom config is selected |
 | *local* Neural-net cache | 0, meaning 20 | `nnCacheSizePowerOfTwo`: 2^20 cached evaluations, roughly 3 GiB once warm. Hidden while a custom config is selected |
-| *local* Automatic tuning | off | **Tune…** measures the selected binary and model, updates the three performance rows, and waits for **Save profile** before applying them. Managed configs only |
+| *local* Automatic tuning | off | **Tune…** measures the selected binary and model, updates the three performance rows, and waits for **Save Profile** before applying them. Managed configs only |
 | *remote* Server URL / Token / Engine name | — / — / blank | blank engine name means the server's first engine |
-| *remote* Pinned fingerprint | not pinned | read-only; set by **Test connection** and your confirmation |
+| *remote* Pinned fingerprint | not pinned | read-only; set by **Test Connection** and your confirmation |
 
 With **Managed by mirai**, `0` in any of those four rows means mirai's own default; with
 *Custom file* it means *keep what the file says*, and the row subtitles change to say so. The
@@ -514,8 +515,8 @@ analysis first. Close other mirai windows; opening one while tuning stops the ru
 temporarily stops this window's normal engine so another search or a second copy of the model
 cannot skew the result or exhaust GPU memory. It starts KataGo once per candidate, so first-run
 OpenCL kernel tuning can make the run take longer than the usual one or two minutes. **Stop
-tuning** cancels the current query and leaves the saved profile unchanged. On success, review the
-measured positions, threads and batch values, then press **Save profile** to persist and activate
+Tuning** cancels the current query and leaves the saved profile unchanged. On success, review the
+measured positions, threads and batch values, then press **Save Profile** to persist and activate
 them. The neural-net cache is not changed.
 
 ### Analysis

@@ -9,7 +9,7 @@
 //! inside the engine. That is the only cancellation mechanism there is.
 
 use std::cell::{Cell, RefCell};
-use std::rc::{Rc, Weak};
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use adw::prelude::*;
@@ -18,12 +18,13 @@ use gtk::glib;
 use mirai_core::{Color, GameTree, NodeId, Point};
 use mirai_engine::{AnalyzeReq, Engine, Want};
 
-use crate::app::{AppState, signal};
+use crate::app::{AppState, Change, NodeRef, TreeEpoch};
+use crate::window_shell::MiraiWindow;
 
 /// A move that cost its own player win rate, as measured by the sweep.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Blunder {
-    pub node: NodeId,
+    pub node: NodeRef,
     pub move_number: u16,
     pub player: Color,
     /// Win-rate loss for `player`, in `0.0..=1.0`.
@@ -57,7 +58,7 @@ fn winrate_for(black_winrate: f32, c: Color) -> f32 {
 /// position had for them before the move, minus the win rate it has for them after. Nodes
 /// whose own or whose parent's analysis is missing are skipped — an unanalysed gap is not
 /// evidence of a mistake.
-pub fn blunders(tree: &GameTree) -> Vec<Blunder> {
+pub fn blunders(tree: &GameTree, epoch: TreeEpoch) -> Vec<Blunder> {
     let mut out = Vec::new();
     for id in tree.main_line() {
         let node = tree.node(id);
@@ -77,7 +78,7 @@ pub fn blunders(tree: &GameTree) -> Vec<Blunder> {
             continue;
         }
         out.push(Blunder {
-            node: id,
+            node: NodeRef { epoch, id },
             move_number: tree.move_number(id),
             player,
             drop,
@@ -92,52 +93,52 @@ pub fn blunders(tree: &GameTree) -> Vec<Blunder> {
     out
 }
 
-/// A callback run once, with the whole blunder list, when a sweep finishes.
-type BlunderHook = Box<dyn Fn(Vec<Blunder>)>;
+enum BatchMessage {
+    Item(NodeRef, Result<Arc<mirai_engine::Report>, String>),
+    Finished,
+}
 
-/// Drives the sweep and fills each main-line node's `NodeAnalysis`. The banner is owned
-/// here but mounted by the window.
+struct RuntimeTask(tokio::task::JoinHandle<()>);
+
+impl Drop for RuntimeTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Drives one bounded-concurrency sweep. The window owns this value uniquely; one coordinator
+/// task owns the queue and all in-flight subscriptions.
 pub struct BatchAnalysis {
     state: AppState,
+    window: glib::WeakRef<MiraiWindow>,
     banner: adw::Banner,
     running: Cell<bool>,
-    tasks: RefCell<Vec<glib::JoinHandle<()>>>,
-    /// Nodes still to analyse, in reverse order so workers can `pop`.
-    queue: RefCell<Vec<NodeId>>,
+    task: RefCell<Option<glib::JoinHandle<()>>>,
     total: Cell<u32>,
     done: Cell<u32>,
-    /// Results stored in still-live nodes; unlike `done`, this excludes skipped tombstones.
     analysed: Cell<u32>,
-    /// Workers that have not yet drained the queue.
-    live_workers: Cell<usize>,
-    /// Bumped by every start and every stop, so a worker can tell it has been superseded.
-    generation: Cell<u64>,
-    on_finished: RefCell<Vec<BlunderHook>>,
 }
 
 impl BatchAnalysis {
-    pub fn new(state: &AppState) -> Rc<BatchAnalysis> {
+    pub fn new(state: &AppState, window: &MiraiWindow) -> BatchAnalysis {
         let banner = adw::Banner::builder()
             .revealed(false)
             .button_label("Cancel")
             .build();
-        let this = Rc::new(BatchAnalysis {
+        let this = BatchAnalysis {
             state: state.clone(),
+            window: window.downgrade(),
             banner,
             running: Cell::new(false),
-            tasks: RefCell::new(Vec::new()),
-            queue: RefCell::new(Vec::new()),
+            task: RefCell::new(None),
             total: Cell::new(0),
             done: Cell::new(0),
             analysed: Cell::new(0),
-            live_workers: Cell::new(0),
-            generation: Cell::new(0),
-            on_finished: RefCell::new(Vec::new()),
-        });
-        let weak = Rc::downgrade(&this);
+        };
+        let weak = this.window.clone();
         this.banner.connect_button_clicked(move |_| {
-            if let Some(b) = weak.upgrade() {
-                b.cancel();
+            if let Some(window) = weak.upgrade() {
+                window.with_ui(|ui| ui.batch.cancel());
             }
         });
         this
@@ -147,12 +148,7 @@ impl BatchAnalysis {
         &self.banner
     }
 
-    /// Registers a callback for the blunder list produced by a completed sweep.
-    pub fn connect_finished(&self, f: impl Fn(Vec<Blunder>) + 'static) {
-        self.on_finished.borrow_mut().push(Box::new(f));
-    }
-
-    pub fn start(self: &Rc<Self>) {
+    pub fn start(&self) {
         if self.running.get() {
             self.state.toast("Whole-game analysis is already running");
             return;
@@ -162,7 +158,13 @@ impl BatchAnalysis {
                 .toast("No engine — start one in Preferences first");
             return;
         };
-        let nodes = self.state.tree().main_line();
+        let nodes: Vec<_> = self
+            .state
+            .tree()
+            .main_line()
+            .into_iter()
+            .map(|id| self.state.node_ref(id))
+            .collect();
         if nodes.len() < 2 {
             self.state.toast("Nothing to analyse yet");
             return;
@@ -176,63 +178,98 @@ impl BatchAnalysis {
             )
         };
         let workers = in_flight(engine.describe().analysis_threads).min(nodes.len());
+        let requests: VecDeque<_> = nodes
+            .into_iter()
+            .filter_map(|node| {
+                let id = self.state.resolve_node(node)?;
+                let mut req = self
+                    .state
+                    .request_for_node(id, Some(visits), Want::OWNERSHIP);
+                req.report_every_ms = None;
+                req.priority = 0;
+                Some((node, req))
+            })
+            .collect();
 
-        self.generation.set(self.generation.get().wrapping_add(1));
-        let generation = self.generation.get();
         self.running.set(true);
         self.done.set(0);
         self.analysed.set(0);
-        self.total.set(nodes.len() as u32);
-        self.live_workers.set(workers);
-        {
-            let mut queue = self.queue.borrow_mut();
-            *queue = nodes;
-            queue.reverse();
-        }
+        self.total.set(requests.len() as u32);
         self.update_banner();
         self.banner.set_revealed(true);
         self.state.set_busy(true);
         self.state.notify_batch_progress(0, self.total.get());
 
-        let handles: Vec<_> = (0..workers)
-            .map(|_| {
-                let weak = Rc::downgrade(self);
-                let engine = Arc::clone(&engine);
-                glib::spawn_future_local(async move {
-                    run_worker(weak, engine, generation, visits, max_candidates).await;
-                })
-            })
-            .collect();
-        *self.tasks.borrow_mut() = handles;
+        if let Some(old) = self.task.borrow_mut().take() {
+            old.abort();
+        }
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let runtime_task = self
+            .state
+            .runtime()
+            .spawn(run_batch(engine, requests, workers, tx));
+        let runtime_task = RuntimeTask(runtime_task);
+        let weak = self.window.clone();
+        let handle = glib::spawn_future_local(async move {
+            let _runtime_task = runtime_task;
+            while let Some(message) = rx.recv().await {
+                let Some(window) = weak.upgrade() else {
+                    return;
+                };
+                let keep_going = window
+                    .with_ui(|ui| ui.batch.handle_message(message, max_candidates))
+                    .unwrap_or(false);
+                if !keep_going {
+                    return;
+                }
+            }
+        });
+        *self.task.borrow_mut() = Some(handle);
     }
 
-    /// User-requested stop: kills every in-flight query and hides the banner. Whatever was
-    /// analysed before the cancel stays in the tree.
     pub fn cancel(&self) {
-        if !self.running.get() {
+        if !self.running.replace(false) {
             return;
         }
-        self.teardown();
+        if let Some(task) = self.task.borrow_mut().take() {
+            task.abort();
+        }
+        self.banner.set_revealed(false);
+        self.state.set_busy(false);
         self.state
             .notify_batch_progress(self.done.get(), self.total.get());
-        self.state.emit_by_name::<()>(signal::TREE_CHANGED, &[]);
+        self.state.changed(Change::Tree);
         self.state.toast(format!(
             "Analysis cancelled after {} positions",
             self.done.get()
         ));
     }
 
-    /// Stops the workers and puts the UI back to rest, without reporting anything.
-    fn teardown(&self) {
-        self.generation.set(self.generation.get().wrapping_add(1));
-        self.running.set(false);
-        self.live_workers.set(0);
-        self.queue.borrow_mut().clear();
-        for task in self.tasks.borrow_mut().drain(..) {
-            task.abort();
+    fn handle_message(&self, message: BatchMessage, max_candidates: usize) -> bool {
+        if !self.running.get() {
+            return false;
         }
-        self.banner.set_revealed(false);
-        self.state.set_busy(false);
+        match message {
+            BatchMessage::Item(node, Ok(report)) => {
+                let id = self.state.resolve_node(node);
+                if let Some(id) = id {
+                    let analysis = crate::util::analysis_of(&report, max_candidates);
+                    self.state
+                        .with_tree_cached(|tree| tree.set_analysis(id, Some(analysis)));
+                }
+                self.record_progress(id.is_some());
+                true
+            }
+            BatchMessage::Item(_, Err(message)) => {
+                tracing::warn!(%message, "whole-game analysis query failed");
+                self.fail(message);
+                false
+            }
+            BatchMessage::Finished => {
+                self.finish();
+                false
+            }
+        }
     }
 
     fn update_banner(&self) {
@@ -243,8 +280,6 @@ impl BatchAnalysis {
         ));
     }
 
-    /// Accounts for a dequeued node. Tombstones still advance the banner to its terminal
-    /// total, but are not reported as analysed positions.
     fn record_progress(&self, stored: bool) {
         self.done.set(self.done.get() + 1);
         if stored {
@@ -255,108 +290,96 @@ impl BatchAnalysis {
             .notify_batch_progress(self.done.get(), self.total.get());
     }
 
-    /// A worker drained the queue; the last one out finishes the sweep.
-    fn worker_finished(&self) {
-        let left = self.live_workers.get().saturating_sub(1);
-        self.live_workers.set(left);
-        if left > 0 {
-            return;
-        }
+    fn finish(&self) {
         let analysed = self.analysed.get();
-        self.teardown();
+        self.running.set(false);
+        self.banner.set_revealed(false);
+        self.state.set_busy(false);
+        self.state.changed(Change::Tree);
 
-        // One redraw for the whole sweep rather than one per node. Emitted directly so the
-        // document is not flagged as modified: nothing the user typed has changed.
-        self.state.emit_by_name::<()>(signal::TREE_CHANGED, &[]);
-
-        let rows = blunders(&self.state.tree());
+        let rows = blunders(&self.state.tree(), self.state.tree_epoch());
         self.state.toast(match rows.len() {
             0 => format!("Analysed {analysed} positions — no blunders"),
             1 => format!("Analysed {analysed} positions — 1 blunder"),
             n => format!("Analysed {analysed} positions — {n} blunders"),
         });
-        for hook in self.on_finished.borrow().iter() {
-            hook(rows.clone());
+        if let Some(window) = self.window.upgrade() {
+            window.with_ui(|ui| ui.analysis.set_blunders(rows));
         }
     }
 
-    /// Aborts the sweep because the engine failed; reports it once.
     fn fail(&self, message: String) {
-        self.teardown();
+        self.running.set(false);
+        self.banner.set_revealed(false);
+        self.state.set_busy(false);
         self.state
             .notify_batch_progress(self.done.get(), self.total.get());
-        self.state.emit_by_name::<()>(signal::TREE_CHANGED, &[]);
+        self.state.changed(Change::Tree);
         self.state.toast(format!("Analysis stopped: {message}"));
-    }
-
-    /// Whole-game analysis differs from live analysis only in its knobs; the position walk
-    /// itself lives in `AppState` so the two can never disagree.
-    fn request_for_node(&self, id: NodeId, max_visits: u32) -> AnalyzeReq {
-        let mut req = self
-            .state
-            .request_for_node(id, Some(max_visits), Want::OWNERSHIP);
-        req.report_every_ms = None;
-        req.priority = 0;
-        req
     }
 }
 
-/// One worker: take the next position, analyse it to completion, store it, repeat.
-async fn run_worker(
-    weak: Weak<BatchAnalysis>,
+impl Drop for BatchAnalysis {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.get_mut().take() {
+            task.abort();
+        }
+    }
+}
+
+async fn run_batch(
     engine: Arc<dyn Engine>,
-    generation: u64,
-    visits: u32,
-    max_candidates: usize,
+    mut queue: VecDeque<(NodeRef, AnalyzeReq)>,
+    workers: usize,
+    tx: tokio::sync::mpsc::UnboundedSender<BatchMessage>,
 ) {
-    loop {
-        let (batch, id, req) = {
-            let Some(batch) = weak.upgrade() else { return };
-            if batch.generation.get() != generation {
+    let mut in_flight = tokio::task::JoinSet::new();
+    for _ in 0..workers {
+        let Some((node, req)) = queue.pop_front() else {
+            break;
+        };
+        let engine = Arc::clone(&engine);
+        in_flight.spawn(async move {
+            let result = engine
+                .subscribe(req)
+                .finish()
+                .await
+                .map_err(|e| e.to_string());
+            (node, result)
+        });
+    }
+
+    while let Some(joined) = in_flight.join_next().await {
+        let (node, result) = match joined {
+            Ok(result) => result,
+            Err(e) => {
+                let _ = tx.send(BatchMessage::Item(
+                    NodeRef {
+                        epoch: TreeEpoch(u64::MAX),
+                        id: NodeId(0),
+                    },
+                    Err(e.to_string()),
+                ));
                 return;
             }
-            let Some(id) = batch.queue.borrow_mut().pop() else {
-                break;
-            };
-            if !batch.state.tree().contains(id) {
-                batch.record_progress(false);
-                continue;
-            }
-            let req = batch.request_for_node(id, visits);
-            (batch, id, req)
         };
-        drop(batch);
-
-        let result = engine.subscribe(req).finish().await;
-
-        let Some(batch) = weak.upgrade() else { return };
-        if batch.generation.get() != generation {
+        let failed = result.is_err();
+        if tx.send(BatchMessage::Item(node, result)).is_err() || failed {
             return;
         }
-        match result {
-            Ok(report) => {
-                let is_live = batch.state.tree().contains(id);
-                if is_live {
-                    let analysis = crate::util::analysis_of(&report, max_candidates);
-                    batch
-                        .state
-                        .with_tree_cached(|tree| tree.set_analysis(id, Some(analysis)));
-                }
-                batch.record_progress(is_live);
-            }
-            Err(e) => {
-                tracing::warn!(%e, "whole-game analysis query failed");
-                batch.fail(e.to_string());
-                return;
-            }
+        if let Some((node, req)) = queue.pop_front() {
+            let engine = Arc::clone(&engine);
+            in_flight.spawn(async move {
+                let result = engine
+                    .subscribe(req)
+                    .finish()
+                    .await
+                    .map_err(|e| e.to_string());
+                (node, result)
+            });
         }
     }
-
-    if let Some(batch) = weak.upgrade()
-        && batch.generation.get() == generation
-    {
-        batch.worker_finished();
-    }
+    let _ = tx.send(BatchMessage::Finished);
 }
 
 #[cfg(test)]
@@ -410,10 +433,16 @@ mod tests {
         tree.set_analysis(ids[1], Some(analysis(0.50, Some(best))));
         tree.set_analysis(ids[2], Some(analysis(0.90, None)));
 
-        let found = blunders(&tree);
+        let found = blunders(&tree, TreeEpoch(7));
         assert_eq!(found.len(), 1, "{found:?}");
         let b = found[0];
-        assert_eq!(b.node, ids[2]);
+        assert_eq!(
+            b.node,
+            NodeRef {
+                epoch: TreeEpoch(7),
+                id: ids[2]
+            }
+        );
         assert_eq!(b.player, Color::White);
         assert_eq!(b.move_number, 2);
         assert_eq!(b.played, size.from_gtp("Q16").unwrap());
@@ -427,10 +456,10 @@ mod tests {
         // Black 50 % before White's move, Black 20 % after: White improved.
         tree.set_analysis(ids[1], Some(analysis(0.50, None)));
         tree.set_analysis(ids[2], Some(analysis(0.20, None)));
-        assert!(blunders(&tree).is_empty());
+        assert!(blunders(&tree, TreeEpoch(0)).is_empty());
         // And a drop below the noise floor is not a blunder either.
         tree.set_analysis(ids[2], Some(analysis(0.51, None)));
-        assert!(blunders(&tree).is_empty());
+        assert!(blunders(&tree, TreeEpoch(0)).is_empty());
     }
 
     #[test]
@@ -441,12 +470,18 @@ mod tests {
         // move 2 is filled in only White's mistake shows up.
         tree.set_analysis(ids[1], Some(analysis(0.50, None)));
         tree.set_analysis(ids[3], Some(analysis(0.95, None)));
-        assert!(blunders(&tree).is_empty());
+        assert!(blunders(&tree, TreeEpoch(0)).is_empty());
 
         tree.set_analysis(ids[2], Some(analysis(0.90, None)));
-        let found = blunders(&tree);
+        let found = blunders(&tree, TreeEpoch(7));
         assert_eq!(found.len(), 1, "{found:?}");
-        assert_eq!(found[0].node, ids[2]);
+        assert_eq!(
+            found[0].node,
+            NodeRef {
+                epoch: TreeEpoch(7),
+                id: ids[2]
+            }
+        );
     }
 
     #[test]
@@ -455,7 +490,7 @@ mod tests {
         let played = size.from_gtp("Q16").unwrap();
         tree.set_analysis(ids[1], Some(analysis(0.50, Some(played))));
         tree.set_analysis(ids[2], Some(analysis(0.95, None)));
-        let found = blunders(&tree);
+        let found = blunders(&tree, TreeEpoch(0));
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].best, None);
     }

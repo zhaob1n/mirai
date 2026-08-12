@@ -8,7 +8,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
@@ -20,13 +20,14 @@ use gtk::glib;
 use mirai_core::{DeadSet, GameTree, NodeId, Point, sgf};
 use mirai_engine::{Report, SubEvent, Want};
 
-use crate::app::{AppState, signal};
+use crate::app::{AppState, Change, NodeRef};
 use crate::batch::BatchAnalysis;
 use crate::config::Config;
 use crate::panels::AnalysisPanel;
-use crate::play::PlayController;
+use crate::play::{PlayController, PlayState};
 use crate::util;
 use crate::widgets::{BoardView, MoveTreeView, WinrateGraph};
+use crate::window_shell::MiraiWindow;
 
 /// Autosave cadence, in seconds.
 const AUTOSAVE_SECS: u32 = 30;
@@ -34,36 +35,132 @@ const AUTOSAVE_SECS: u32 = 30;
 const SCORE_VISITS: u32 = 400;
 /// Ownership magnitude above which a stone counts as dead, matching KataGo's own default.
 const DEAD_THRESHOLD: f32 = 0.4;
+#[derive(Default)]
+struct TaskSlot(RefCell<Option<glib::JoinHandle<()>>>);
 
-/// Everything the window owns, kept together so callbacks can clone one `Rc`.
+impl TaskSlot {
+    fn replace(&self, task: glib::JoinHandle<()>) {
+        self.abort();
+        *self.0.borrow_mut() = Some(task);
+    }
+
+    fn abort(&self) {
+        if let Some(task) = self.0.borrow_mut().take() {
+            task.abort();
+        }
+    }
+}
+
+impl Drop for TaskSlot {
+    fn drop(&mut self) {
+        if let Some(task) = self.0.get_mut().take() {
+            task.abort();
+        }
+    }
+}
+
+#[derive(Default)]
+struct SourceSlot(Cell<Option<glib::SourceId>>);
+
+impl SourceSlot {
+    fn replace(&self, source: glib::SourceId) {
+        self.remove();
+        self.0.set(Some(source));
+    }
+
+    fn remove(&self) {
+        if let Some(source) = self.0.take() {
+            source.remove();
+        }
+    }
+}
+
+impl Drop for SourceSlot {
+    fn drop(&mut self) {
+        if let Some(source) = self.0.take() {
+            source.remove();
+        }
+    }
+}
+
+#[derive(Default)]
+struct WindowTasks {
+    score: TaskSlot,
+    autosave: SourceSlot,
+}
+
+impl WindowTasks {
+    fn abort_all(&self) {
+        self.score.abort();
+        self.autosave.remove();
+    }
+}
+
+/// Per-window Rust state. The corresponding [`MiraiWindow`] owns exactly one value.
 pub struct Ui {
-    pub window: adw::ApplicationWindow,
+    window: glib::WeakRef<MiraiWindow>,
     pub state: AppState,
     pub toasts: adw::ToastOverlay,
     pub comment: gtk::TextView,
-    pub play: Rc<PlayController>,
-    pub batch: Rc<BatchAnalysis>,
+    pub play: PlayController,
+    pub batch: BatchAnalysis,
     pub readout: gtk::Label,
     pub move_scale: gtk::Scale,
     pub engine_menu: gtk::MenuButton,
+    pub analysis: AnalysisPanel,
+    board: glib::WeakRef<BoardView>,
+    winrate: glib::WeakRef<WinrateGraph>,
+    move_tree: glib::WeakRef<MoveTreeView>,
     pub file: RefCell<Option<PathBuf>>,
-
-    /// Header title widget, so the file name and status can be refreshed in place.
     title: adw::WindowTitle,
-    /// Holds the two clock labels; hidden entirely when the game is untimed.
     clock_box: gtk::Box,
     clock_black: gtk::Label,
     clock_white: gtk::Label,
-    /// Switches the sidebar's Analysis page between the panel and the no-engine page.
+    play_controls: gtk::Box,
+    pass_button: gtk::Button,
+    undo_button: gtk::Button,
+    resign_button: gtk::Button,
     analysis_stack: gtk::Stack,
-    /// The node the comment buffer is currently editing, so it can be flushed on the way out.
-    comment_node: Cell<Option<NodeId>>,
-    /// Set while the move scale is being driven programmatically.
+    comment_node: Cell<Option<NodeRef>>,
     scale_guard: Cell<bool>,
-    /// The one-off score-estimate pump, aborted if a second estimate is asked for.
-    score_task: RefCell<Option<glib::JoinHandle<()>>>,
-    /// This window's autosave file; `None` only when there is no data directory to write to.
+    tasks: WindowTasks,
     autosave: Option<PathBuf>,
+}
+
+impl Ui {
+    fn window(&self) -> MiraiWindow {
+        self.window
+            .upgrade()
+            .expect("window state outlived its GObject owner")
+    }
+
+    fn weak_window(&self) -> glib::WeakRef<MiraiWindow> {
+        self.window.clone()
+    }
+}
+
+impl MiraiWindow {
+    /// Releases every per-window task and model exactly once.
+    pub(crate) fn shutdown(&self) {
+        if !self.begin_shutdown() {
+            return;
+        }
+        let Some(ui) = self.take_ui() else {
+            return;
+        };
+
+        flush_comment(&ui);
+        ui.tasks.abort_all();
+        if let Some(autosave) = ui.autosave.as_ref() {
+            let _ = std::fs::remove_file(autosave);
+        }
+        ui.batch.cancel();
+        ui.play.stop();
+        ui.state.cancel_tasks();
+        ui.state.set_live_analysis(false);
+        ui.state.save_config();
+        ui.state.set_engine(None);
+    }
 }
 
 /// Builds and presents a window for `app`, optionally opening `path`.
@@ -85,19 +182,12 @@ pub fn present(
         }
     };
     let state = AppState::new(config, config_path, runtime, pool);
-
-    let window = adw::ApplicationWindow::builder()
-        .application(app)
-        .title("mirai")
-        .default_width(1280)
-        .default_height(860)
-        .build();
-
-    let toasts = adw::ToastOverlay::new();
-    let board = BoardView::new(&state);
-    let winrate = WinrateGraph::new(&state);
-    let move_tree = MoveTreeView::new(&state);
-    let analysis = AnalysisPanel::new(&state);
+    let window = MiraiWindow::new(app);
+    let toasts = window.toasts();
+    let board = BoardView::new(&window, &state);
+    let winrate = WinrateGraph::new(&window);
+    let move_tree = MoveTreeView::new(&window);
+    let analysis = AnalysisPanel::new(&window);
     let comment = gtk::TextView::builder()
         .wrap_mode(gtk::WrapMode::WordChar)
         .left_margin(8)
@@ -105,41 +195,27 @@ pub fn present(
         .top_margin(8)
         .bottom_margin(8)
         .build();
-    let play = PlayController::new(&state);
-    let batch = BatchAnalysis::new(&state);
+    let play = PlayController::new(&state, &window);
+    let batch = BatchAnalysis::new(&state, &window);
 
-    // Content: board on top, winrate graph as a strip under it. The graph keeps its
-    // requested height when the window grows — all extra space belongs to the board —
-    // but the Paned still lets the user drag it taller.
+    // The custom GPU-rendered views are stateful Rust widgets. Blueprint owns their static
+    // containers; Rust only inserts the dynamic instances.
     board.set_hexpand(true);
     board.set_vexpand(true);
     winrate.set_hexpand(true);
     winrate.set_size_request(-1, 170);
-    let content = gtk::Paned::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .resize_start_child(true)
-        .resize_end_child(false)
-        .shrink_start_child(false)
-        .shrink_end_child(false)
-        .start_child(&board)
-        .end_child(&winrate)
-        .build();
+    let content = window.content_paned();
+    content.set_start_child(Some(&board));
+    content.set_end_child(Some(&winrate));
+    window.banner_slot().append(batch.banner());
 
-    let content_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    content_box.append(batch.banner());
-    content_box.append(&content);
-    content_box.set_hexpand(true);
-    content_box.set_vexpand(true);
-
-    // Sidebar: Analysis / Moves / Comment. The Analysis page swaps to an empty state when
-    // no engine profile is configured at all.
     let analysis_stack = gtk::Stack::new();
     analysis_stack.add_named(&analysis, Some("panel"));
     analysis_stack.add_named(&crate::prefs::no_engine_status_page(), Some("empty"));
     analysis_stack.set_vexpand(true);
 
-    let stack = adw::ViewStack::new();
-    stack.add_titled_with_icon(
+    let sidebar_stack = window.sidebar_stack();
+    sidebar_stack.add_titled_with_icon(
         &analysis_stack,
         Some("analysis"),
         "Analysis",
@@ -148,190 +224,85 @@ pub fn present(
     let tree_scroller = move_tree.in_scroller();
     tree_scroller.set_hexpand(true);
     tree_scroller.set_vexpand(true);
-    stack.add_titled_with_icon(&tree_scroller, Some("moves"), "Moves", "view-grid-symbolic");
+    sidebar_stack.add_titled_with_icon(
+        &tree_scroller,
+        Some("moves"),
+        "Moves",
+        "view-grid-symbolic",
+    );
     let comment_scroll = gtk::ScrolledWindow::builder().child(&comment).build();
     comment_scroll.set_vexpand(true);
-    stack.add_titled_with_icon(
+    sidebar_stack.add_titled_with_icon(
         &comment_scroll,
         Some("comment"),
         "Comment",
         "text-editor-symbolic",
     );
-    let switcher = adw::ViewSwitcher::builder()
-        .stack(&stack)
-        .policy(adw::ViewSwitcherPolicy::Wide)
-        .build();
-    let sidebar_view = adw::ToolbarView::new();
-    // `show_title` false would hide the title widget too, and the title widget IS the
-    // Analysis/Moves/Comment switcher — without it those pages are unreachable.
-    let sidebar_bar = adw::HeaderBar::builder()
-        .show_start_title_buttons(false)
-        .show_end_title_buttons(false)
-        .build();
-    sidebar_bar.set_title_widget(Some(&switcher));
-    sidebar_view.add_top_bar(&sidebar_bar);
-    sidebar_view.set_content(Some(&stack));
-    sidebar_view.set_size_request(340, -1);
 
-    let split = adw::OverlaySplitView::builder()
-        .sidebar_position(gtk::PackType::End)
-        .sidebar(&sidebar_view)
-        .content(&content_box)
-        .show_sidebar(true)
-        .min_sidebar_width(320.0)
-        .max_sidebar_width(520.0)
-        .build();
-
-    // -- header bar ---------------------------------------------------------------------
-
-    let header = adw::HeaderBar::new();
-    let title = adw::WindowTitle::new("Untitled", "");
-    header.set_title_widget(Some(&title));
-
-    let open_button = gtk::Button::builder()
-        .icon_name("document-open-symbolic")
-        .tooltip_text("Open an SGF game record (Ctrl+O)")
-        .action_name("win.open")
-        .build();
-    let save_button = gtk::Button::builder()
-        .icon_name("document-save-symbolic")
-        .tooltip_text("Save the game record (Ctrl+S)")
-        .action_name("win.save")
-        .build();
-    header.pack_start(&open_button);
-    header.pack_start(&save_button);
-
-    let live_toggle = gtk::ToggleButton::builder()
-        .icon_name("media-playback-start-symbolic")
-        .tooltip_text("Live analysis (Space)")
-        .build();
+    let live_toggle = window.live_toggle();
     state
         .bind_property("live-analysis", &live_toggle, "active")
         .bidirectional()
         .sync_create()
         .build();
-    header.pack_start(&live_toggle);
+    live_toggle.connect_active_notify(|button| {
+        if button.is_active() {
+            button.set_icon_name("media-playback-stop-symbolic");
+            button.set_tooltip_text(Some("Stop Live Analysis (Space)"));
+        } else {
+            button.set_icon_name("media-playback-start-symbolic");
+            button.set_tooltip_text(Some("Start Live Analysis (Space)"));
+        }
+    });
 
-    let engine_menu = gtk::MenuButton::builder()
-        .label("No engine")
-        .tooltip_text("Analysis engine")
-        .build();
+    let engine_menu = window.engine_menu();
+    let engine_content = window.engine_content();
     state
-        .bind_property("engine-label", &engine_menu, "label")
+        .bind_property("engine-label", &engine_content, "label")
         .sync_create()
         .build();
-    header.pack_start(&engine_menu);
 
-    let primary = gtk::MenuButton::builder()
-        .icon_name("open-menu-symbolic")
-        .tooltip_text("Main menu")
-        .menu_model(&primary_menu())
+    let split = window.split();
+    let sidebar_toggle = window.sidebar_toggle();
+    split
+        .bind_property("show-sidebar", &sidebar_toggle, "active")
+        .bidirectional()
+        .sync_create()
         .build();
-    header.pack_end(&primary);
-
-    let new_game_button = gtk::Button::builder()
-        .label("New game")
-        .tooltip_text("Start a game against the engine (Ctrl+N)")
-        .action_name("win.new-game")
-        .build();
-    header.pack_end(&new_game_button);
-
-    let clock_black = gtk::Label::new(Some("0:00"));
-    let clock_white = gtk::Label::new(Some("0:00"));
-    clock_black.add_css_class("mirai-clock");
-    clock_white.add_css_class("mirai-clock");
-    let clock_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    clock_box.append(&clock_black);
-    clock_box.append(&clock_white);
-    clock_box.set_visible(false);
-    header.pack_end(&clock_box);
-
-    // -- bottom navigation bar ----------------------------------------------------------
-
-    let readout = gtk::Label::builder()
-        .label("—")
-        .tooltip_text("Side to move, win rate, score lead, visits, search speed")
-        .build();
-    readout.add_css_class("mirai-readout");
-    let move_scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 1.0);
-    move_scale.set_hexpand(true);
-    move_scale.set_draw_value(false);
-    move_scale.set_round_digits(0);
-    move_scale.set_increments(1.0, 10.0);
-
-    let nav = gtk::Box::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .spacing(6)
-        .margin_start(8)
-        .margin_end(8)
-        .margin_top(4)
-        .margin_bottom(4)
-        .build();
-    for (icon, action, tip) in [
-        ("go-first-symbolic", "win.first", "First move (Home)"),
-        ("go-previous-symbolic", "win.prev", "Previous move (Left)"),
-        ("go-next-symbolic", "win.next", "Next move (Right)"),
-        ("go-last-symbolic", "win.last", "Last move (End)"),
-    ] {
-        nav.append(
-            &gtk::Button::builder()
-                .icon_name(icon)
-                .action_name(action)
-                .tooltip_text(tip)
-                .build(),
-        );
-    }
-    let branches = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    branches.add_css_class("linked");
-    for (icon, action, tip) in [
-        (
-            "go-up-symbolic",
-            "win.branch-prev",
-            "Previous variation (Up)",
-        ),
-        (
-            "go-down-symbolic",
-            "win.branch-next",
-            "Next variation (Down)",
-        ),
-    ] {
-        branches.append(
-            &gtk::Button::builder()
-                .icon_name(icon)
-                .action_name(action)
-                .tooltip_text(tip)
-                .build(),
-        );
-    }
-    nav.append(&branches);
-    nav.append(&move_scale);
-    nav.append(&readout);
-
-    let toolbar = adw::ToolbarView::new();
-    toolbar.add_top_bar(&header);
-    toolbar.add_bottom_bar(&nav);
-    toolbar.set_content(Some(&split));
-
-    toasts.set_child(Some(&toolbar));
-    window.set_content(Some(&toasts));
-
-    // Collapse the sidebar on narrow windows.
     let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
         adw::BreakpointConditionLengthType::MaxWidth,
         900.0,
         adw::LengthUnit::Sp,
     ));
     breakpoint.add_setter(&split, "collapsed", Some(&true.to_value()));
+    breakpoint.add_setter(&split, "show-sidebar", Some(&false.to_value()));
+    breakpoint.add_setter(&sidebar_toggle, "visible", Some(&true.to_value()));
     window.add_breakpoint(breakpoint);
 
-    let ui = Rc::new(Ui {
-        window: window.clone(),
+    let title = window.title_widget();
+    let clock_box = window.clock_box();
+    let clock_black = window.clock_black();
+    let clock_white = window.clock_white();
+    let play_controls = window.play_controls();
+    let pass_button = window.pass_button();
+    let undo_button = window.undo_button();
+    let resign_button = window.resign_button();
+    let move_scale = window.move_scale();
+    let readout = window.readout();
+    move_scale.set_increments(1.0, 10.0);
+
+    window.install_ui(Ui {
+        window: window.downgrade(),
         state: state.clone(),
         toasts: toasts.clone(),
         comment,
-        play: play.clone(),
-        batch: batch.clone(),
+        play,
+        batch,
+        analysis: analysis.clone(),
         readout,
+        board: board.downgrade(),
+        winrate: winrate.downgrade(),
+        move_tree: move_tree.downgrade(),
         move_scale,
         engine_menu,
         file: RefCell::new(None),
@@ -339,41 +310,58 @@ pub fn present(
         clock_box,
         clock_black,
         clock_white,
+        play_controls,
+        pass_button,
+        undo_button,
+        resign_button,
         analysis_stack,
         comment_node: Cell::new(None),
         scale_guard: Cell::new(false),
-        score_task: RefCell::new(None),
+        tasks: WindowTasks::default(),
         autosave: next_autosave_path(),
     });
-
-    connect_toasts(&ui);
-    install_actions(&ui);
-    connect_state(&ui);
-    connect_comment(&ui);
-    connect_scale(&ui);
+    window.with_ui(|ui| {
+        install_actions(ui);
+        connect_state(ui);
+        connect_comment(ui);
+        connect_scale(ui);
+    });
+    {
+        let weak = window.downgrade();
+        state.set_change_hook(move |change| {
+            with_window_ui(&weak, |ui| handle_change(ui, change));
+        });
+    }
 
     // Cross-widget wiring the two panels cannot do for themselves.
-    play.attach_board(&board);
+    window.with_ui(|ui| ui.play.attach_board(&board));
     {
         let board = board.clone();
         analysis.connect_pv_preview(move |index| board.set_pv_preview(index));
     }
-    {
-        let analysis = analysis.clone();
-        batch.connect_finished(move |rows| analysis.set_blunders(rows));
-    }
-    {
-        let batch = batch.clone();
-        play.set_analyse_hook(move || batch.start());
-    }
-
-    refresh_engine_menu(&ui);
-    update_analysis_page(&ui);
-    update_scale(&ui);
-    update_readout(&ui);
-    update_title(&ui);
-    update_subtitle(&ui);
-    load_comment(&ui);
+    window.with_ui(|ui| {
+        let weak = ui.weak_window();
+        ui.play.set_analyse_hook(move || {
+            with_window_ui(&weak, |ui| ui.batch.start());
+        });
+    });
+    window.with_ui(|ui| {
+        refresh_engine_menu(ui);
+        update_analysis_page(ui);
+        update_play_controls(ui);
+        update_scale(ui);
+        update_readout(ui);
+        update_title(ui);
+        update_subtitle(ui);
+        load_comment(ui);
+        ui.analysis.refresh();
+        if let Some(tree) = ui.move_tree.upgrade() {
+            tree.refresh();
+        }
+        if let Some(graph) = ui.winrate.upgrade() {
+            graph.refresh();
+        }
+    });
 
     // Whatever an earlier run left behind, one record per window, most recent first. A
     // window that closed cleanly deleted its file, so anything here really is a leftover.
@@ -382,8 +370,10 @@ pub fn present(
         .ok()
         .and_then(|mut stale| stale.pop());
 
-    install_autosave(&ui);
-    connect_close(&ui);
+    window.with_ui(|ui| {
+        install_autosave(ui);
+        connect_close(ui);
+    });
 
     // Start the configured engine, if any.
     let active = state.config().active_profile().map(|p| p.name.clone());
@@ -393,180 +383,113 @@ pub fn present(
 
     window.present();
 
-    if let Some(path) = path {
-        load_sgf(&ui, &path, true);
-    } else if let Some(autosave) = stale_autosave {
-        offer_restore(&ui, autosave);
-    }
+    window.with_ui(|ui| {
+        if let Some(path) = path {
+            load_sgf(ui, &path, true);
+        } else if let Some(autosave) = stale_autosave {
+            offer_restore(ui, autosave);
+        }
+    });
 
     if state.config().engine_profiles.is_empty() {
-        crate::prefs::present(&ui.window, &state);
+        crate::prefs::present(&window, &state);
     }
 }
 
-// -- menus ------------------------------------------------------------------------------
-
-fn primary_menu() -> gio::Menu {
-    let menu = gio::Menu::new();
-
-    let file = gio::Menu::new();
-    file.append(Some("_New Game…"), Some("win.new-game"));
-    // Passing and undo have accelerators; resigning deliberately does not, but it still
-    // needs a way in — otherwise only the engine can ever concede a game.
-    file.append(Some("_Resign"), Some("win.resign"));
-    file.append(Some("_Open…"), Some("win.open"));
-    file.append(Some("Download from _Fox…"), Some("win.download-fox"));
-    file.append(Some("_Save"), Some("win.save"));
-    file.append(Some("Save _As…"), Some("win.save-as"));
-    menu.append_section(None, &file);
-
-    let clip = gio::Menu::new();
-    clip.append(Some("_Copy SGF"), Some("win.copy-sgf"));
-    clip.append(Some("_Paste SGF"), Some("win.paste-sgf"));
-    menu.append_section(None, &clip);
-
-    let analyse = gio::Menu::new();
-    analyse.append(Some("Analyse _Game"), Some("win.analyse-game"));
-    analyse.append(Some("_Estimate Score"), Some("win.score"));
-    menu.append_section(None, &analyse);
-
-    let view = gio::Menu::new();
-    view.append(Some("Coordinates"), Some("win.toggle-coords"));
-    view.append(Some("Move Numbers"), Some("win.toggle-move-numbers"));
-    view.append(Some("Ownership Overlay"), Some("win.toggle-ownership"));
-    view.append(Some("Policy Overlay"), Some("win.toggle-policy"));
-    menu.append_section(None, &view);
-
-    let app = gio::Menu::new();
-    app.append(Some("_Preferences"), Some("win.preferences"));
-    app.append(Some("_Keyboard Shortcuts"), Some("win.shortcuts"));
-    app.append(Some("_About mirai"), Some("win.about"));
-    menu.append_section(None, &app);
-
-    menu
-}
-
-fn refresh_engine_menu(ui: &Rc<Ui>) {
+fn refresh_engine_menu(ui: &Ui) {
     let model = crate::prefs::engine_menu_model(&ui.state);
     ui.engine_menu.set_menu_model(Some(&model));
 }
 
 // -- signal wiring ----------------------------------------------------------------------
 
-/// Runs `f` with the live `Ui`, or does nothing once the window is gone.
-///
-/// Signal handlers outlive what they act on: they hang off widgets, and off the
-/// [`AppState`], that the `Ui` itself owns. A strong `Rc<Ui>` inside one is therefore a
-/// cycle nothing ever breaks — `Ui -> AppState -> handler -> Ui` — and it would keep the
-/// window, its engine, the KataGo process behind that engine and the runtime handle alive
-/// for the rest of the session. Handlers capture a `Weak<Ui>` and come through here
-/// instead. The one deliberate owning capture is in [`connect_close`], which drops the
-/// `Ui` as the window closes.
-///
-/// Generic over the pointee only so the discipline is testable without a display.
-fn with_ui<T>(weak: &Weak<T>, f: impl FnOnce(&Rc<T>)) {
-    if let Some(ui) = weak.upgrade() {
-        f(&ui);
+/// Runs `f` with the state of a live window. Handlers never own that state.
+fn with_window_ui(weak: &glib::WeakRef<MiraiWindow>, f: impl FnOnce(&Ui)) {
+    if let Some(window) = weak.upgrade() {
+        window.with_ui(f);
     }
 }
-
-fn connect_toasts(ui: &Rc<Ui>) {
-    let toasts = ui.toasts.clone();
-    ui.state.connect_closure(
-        signal::TOAST,
-        false,
-        glib::closure_local!(move |_: AppState, text: String| {
-            toasts.add_toast(adw::Toast::new(&text));
-        }),
-    );
-}
-
-fn connect_state(ui: &Rc<Ui>) {
-    let weak = Rc::downgrade(ui);
-    {
-        let weak = weak.clone();
-        ui.state.connect_closure(
-            signal::CURSOR_CHANGED,
-            false,
-            glib::closure_local!(move |_: AppState| {
-                with_ui(&weak, |ui| {
-                    flush_comment(ui);
-                    load_comment(ui);
-                    update_scale(ui);
-                    update_readout(ui);
-                    update_clocks(ui);
-                });
-            }),
-        );
-    }
-    {
-        let weak = weak.clone();
-        ui.state.connect_closure(
-            signal::TREE_CHANGED,
-            false,
-            glib::closure_local!(move |_: AppState| {
-                with_ui(&weak, |ui| {
-                    update_scale(ui);
-                    update_title(ui);
-                });
-            }),
-        );
-    }
-    {
-        let weak = weak.clone();
-        ui.state.connect_closure(
-            signal::REPORT,
-            false,
-            glib::closure_local!(move |_: AppState| {
-                with_ui(&weak, update_readout);
-            }),
-        );
-    }
-    {
-        let weak = weak.clone();
-        ui.state.connect_closure(
-            signal::ENGINE_CHANGED,
-            false,
-            glib::closure_local!(move |_: AppState| {
-                with_ui(&weak, |ui| {
-                    refresh_engine_menu(ui);
-                    update_analysis_page(ui);
-                    update_subtitle(ui);
-                });
-            }),
-        );
-    }
-    {
-        let weak = weak.clone();
-        ui.state.connect_closure(
-            signal::PLAY_CHANGED,
-            false,
-            glib::closure_local!(move |_: AppState| {
-                with_ui(&weak, update_clocks);
-            }),
-        );
-    }
+fn connect_state(ui: &Ui) {
+    let weak = ui.weak_window();
     let state = ui.state.clone();
     {
         let weak = weak.clone();
-        state.connect_modified_notify(move |_| with_ui(&weak, update_title));
+        state.connect_modified_notify(move |_| with_window_ui(&weak, update_title));
     }
     {
         let weak = weak.clone();
         state.connect_status_notify(move |_| {
-            with_ui(&weak, |ui| {
+            with_window_ui(&weak, |ui| {
                 update_subtitle(ui);
                 update_readout(ui);
             });
         });
     }
-    state.connect_engine_label_notify(move |_| with_ui(&weak, update_subtitle));
+    state.connect_engine_label_notify(move |_| with_window_ui(&weak, update_subtitle));
 }
 
-fn connect_scale(ui: &Rc<Ui>) {
-    let weak = Rc::downgrade(ui);
+fn handle_change(ui: &Ui, change: Change) {
+    match change {
+        Change::Tree => {
+            update_scale(ui);
+            update_title(ui);
+            if let Some(board) = ui.board.upgrade() {
+                board.refresh_tree();
+            }
+            if let Some(tree) = ui.move_tree.upgrade() {
+                tree.refresh();
+            }
+            if let Some(graph) = ui.winrate.upgrade() {
+                graph.refresh();
+            }
+            ui.analysis.clear_blunders();
+            ui.analysis.refresh();
+        }
+        Change::Cursor => {
+            flush_comment(ui);
+            load_comment(ui);
+            update_scale(ui);
+            update_readout(ui);
+            update_clocks(ui);
+            if let Some(board) = ui.board.upgrade() {
+                board.refresh_cursor();
+            }
+            if let Some(tree) = ui.move_tree.upgrade() {
+                tree.refresh();
+            }
+            if let Some(graph) = ui.winrate.upgrade() {
+                graph.refresh_cursor();
+            }
+            ui.analysis.refresh();
+        }
+        Change::Report => {
+            update_readout(ui);
+            if let Some(board) = ui.board.upgrade() {
+                board.refresh_report();
+            }
+            if let Some(graph) = ui.winrate.upgrade() {
+                graph.refresh();
+            }
+            ui.analysis.refresh();
+        }
+        Change::Engine => {
+            refresh_engine_menu(ui);
+            update_analysis_page(ui);
+            update_subtitle(ui);
+        }
+        Change::Toast(text) => ui.toasts.add_toast(adw::Toast::new(&text)),
+        Change::Play => {
+            update_clocks(ui);
+            update_play_controls(ui);
+        }
+        Change::BatchProgress(_, _) => {}
+    }
+}
+
+fn connect_scale(ui: &Ui) {
+    let weak = ui.weak_window();
     ui.move_scale.connect_value_changed(move |scale| {
-        with_ui(&weak, |ui| {
+        with_window_ui(&weak, |ui| {
             if ui.scale_guard.get() {
                 return;
             }
@@ -582,60 +505,34 @@ fn connect_scale(ui: &Rc<Ui>) {
     });
 }
 
-fn connect_comment(ui: &Rc<Ui>) {
+fn connect_comment(ui: &Ui) {
     let focus = gtk::EventControllerFocus::new();
-    let weak = Rc::downgrade(ui);
-    focus.connect_leave(move |_| with_ui(&weak, flush_comment));
+    let weak = ui.weak_window();
+    focus.connect_leave(move |_| with_window_ui(&weak, flush_comment));
     ui.comment.add_controller(focus);
 }
 
-/// Connects the window's teardown handler, which is also the sole owner of the [`Ui`].
-///
-/// Every other handler holds a `Weak<Ui>` (see [`with_ui`]), so this closure's strong
-/// reference is the only thing keeping the window's state alive while it is open. That is
-/// a cycle — `Ui -> window -> this handler -> Ui` — but a cycle with exactly one owner and
-/// one release point: the `Ui` is *taken* out of the cell here rather than borrowed, so it
-/// is dropped as the window closes, and with it the `AppState`, the engine (terminating
-/// KataGo) and the runtime handle. The `Ui` is unquestionably alive when `close-request`
-/// fires, so the final autosave and the clean-exit flag are written as before.
-fn connect_close(ui: &Rc<Ui>) {
-    let owner = Cell::new(Some(ui.clone()));
-    ui.window.connect_close_request(move |_| {
-        // A second close-request finds the cell empty; there is nothing left to tear down.
-        let Some(ui) = owner.take() else {
-            return glib::Propagation::Proceed;
-        };
-        flush_comment(&ui);
-        // A window that closed cleanly leaves nothing behind to restore; anything still on
-        // disk after the process ends is a crash leftover.
-        if let Some(autosave) = ui.autosave.as_ref() {
-            let _ = std::fs::remove_file(autosave);
+fn connect_close(ui: &Ui) {
+    let window = ui.window();
+    let weak = window.downgrade();
+    window.connect_close_request(move |_| {
+        if let Some(window) = weak.upgrade() {
+            window.shutdown();
         }
-        ui.batch.cancel();
-        ui.play.stop();
-        if let Some(task) = ui.score_task.borrow_mut().take() {
-            task.abort();
-        }
-        // Dropping the engine terminates KataGo once the last window using it has let go;
-        // live analysis has to stop first so the pump releases its subscription.
-        ui.state.set_live_analysis(false);
-        ui.state.save_config();
-        ui.state.set_engine(None);
-        // Last strong reference: the window's state is released here, not at process exit.
-        drop(ui);
         glib::Propagation::Proceed
     });
 }
 
-fn install_autosave(ui: &Rc<Ui>) {
-    let weak = Rc::downgrade(ui);
-    glib::timeout_add_seconds_local(AUTOSAVE_SECS, move || match weak.upgrade() {
-        Some(ui) => {
-            write_autosave(&ui);
-            glib::ControlFlow::Continue
+fn install_autosave(ui: &Ui) {
+    let weak = ui.weak_window();
+    let id = glib::timeout_add_seconds_local(AUTOSAVE_SECS, move || {
+        if weak.upgrade().is_none() {
+            return glib::ControlFlow::Break;
         }
-        None => glib::ControlFlow::Break,
+        with_window_ui(&weak, write_autosave);
+        glib::ControlFlow::Continue
     });
+    ui.tasks.autosave.replace(id);
 }
 
 // -- refreshers -------------------------------------------------------------------------
@@ -651,7 +548,7 @@ fn current_line(tree: &GameTree, cursor: NodeId) -> Vec<NodeId> {
     line
 }
 
-fn update_scale(ui: &Rc<Ui>) {
+fn update_scale(ui: &Ui) {
     let cursor = ui.state.cursor();
     let (upper, index) = ui.state.with_tree_cached(|t| {
         let line = current_line(t, cursor);
@@ -666,7 +563,7 @@ fn update_scale(ui: &Rc<Ui>) {
         .set_tooltip_text(Some(&format!("Move {index} of {upper}")));
 }
 
-fn update_readout(ui: &Rc<Ui>) {
+fn update_readout(ui: &Ui) {
     let text = match ui.state.last_report() {
         Some(report) => {
             let to_play = ui.state.to_play();
@@ -694,7 +591,7 @@ fn update_readout(ui: &Rc<Ui>) {
     ui.readout.set_label(&text);
 }
 
-fn update_clocks(ui: &Rc<Ui>) {
+fn update_clocks(ui: &Ui) {
     let Some((black, white)) = ui.play.clocks() else {
         ui.clock_box.set_visible(false);
         return;
@@ -716,7 +613,18 @@ fn update_clocks(ui: &Rc<Ui>) {
     }
 }
 
-fn update_title(ui: &Rc<Ui>) {
+fn update_play_controls(ui: &Ui) {
+    let state = ui.play.play_state();
+    let in_progress = matches!(state, PlayState::HumanTurn | PlayState::AiThinking);
+    ui.play_controls.set_visible(in_progress);
+    ui.pass_button
+        .set_sensitive(matches!(state, PlayState::HumanTurn));
+    ui.undo_button.set_sensitive(ui.play.is_active());
+    ui.resign_button
+        .set_visible(in_progress && ui.play.is_human_vs_engine());
+}
+
+fn update_title(ui: &Ui) {
     let name = ui
         .file
         .borrow()
@@ -729,10 +637,10 @@ fn update_title(ui: &Rc<Ui>) {
         name
     };
     ui.title.set_title(&shown);
-    ui.window.set_title(Some(&format!("{shown} — mirai")));
+    ui.window().set_title(Some(&format!("{shown} — mirai")));
 }
 
-fn update_subtitle(ui: &Rc<Ui>) {
+fn update_subtitle(ui: &Ui) {
     let status = ui.state.status();
     let subtitle = if status.is_empty() {
         ui.state.engine_label()
@@ -742,7 +650,7 @@ fn update_subtitle(ui: &Rc<Ui>) {
     ui.title.set_subtitle(&subtitle);
 }
 
-fn update_analysis_page(ui: &Rc<Ui>) {
+fn update_analysis_page(ui: &Ui) {
     let empty = ui.state.config().engine_profiles.is_empty();
     ui.analysis_stack
         .set_visible_child_name(if empty { "empty" } else { "panel" });
@@ -750,8 +658,12 @@ fn update_analysis_page(ui: &Rc<Ui>) {
 
 // -- comment pane -----------------------------------------------------------------------
 
-fn flush_comment(ui: &Rc<Ui>) {
-    let Some(id) = ui.comment_node.get() else {
+fn flush_comment(ui: &Ui) {
+    let Some(node) = ui.comment_node.get() else {
+        return;
+    };
+    let Some(id) = ui.state.resolve_node(node) else {
+        ui.comment_node.set(None);
         return;
     };
     let buffer = ui.comment.buffer();
@@ -767,18 +679,18 @@ fn flush_comment(ui: &Rc<Ui>) {
     }
     ui.comment_node.set(None);
     ui.state.with_tree_mut(|t| t.set_comment(id, text));
-    ui.comment_node.set(Some(id));
+    ui.comment_node.set(Some(node));
 }
 
-fn load_comment(ui: &Rc<Ui>) {
-    let id = ui.state.cursor();
+fn load_comment(ui: &Ui) {
+    let node = ui.state.cursor_ref();
     let text = {
         let tree = ui.state.tree();
-        tree.node(id).comment.clone()
+        tree.node(node.id).comment.clone()
     };
     ui.comment_node.set(None);
     ui.comment.buffer().set_text(&text);
-    ui.comment_node.set(Some(id));
+    ui.comment_node.set(Some(node));
 }
 
 // -- SGF I/O ----------------------------------------------------------------------------
@@ -793,14 +705,14 @@ fn sgf_filters() -> (gio::ListStore, gtk::FileFilter) {
     (store, filter)
 }
 
-fn sgf_text(ui: &Rc<Ui>) -> String {
+fn sgf_text(ui: &Ui) -> String {
     let include = ui.state.config().ui.save_analysis_in_sgf;
     let tree = ui.state.tree();
     sgf::write(&tree, include)
 }
 
 /// Installs `tree` as the current game. `path` is remembered for plain Save.
-fn adopt(ui: &Rc<Ui>, tree: GameTree, path: Option<PathBuf>) {
+fn adopt(ui: &Ui, tree: GameTree, path: Option<PathBuf>) {
     ui.play.stop();
     // Batch workers hold node IDs from this tree; stop them before replacing its arena.
     ui.batch.cancel();
@@ -819,7 +731,7 @@ fn adopt(ui: &Rc<Ui>, tree: GameTree, path: Option<PathBuf>) {
     update_clocks(ui);
 }
 
-fn load_sgf(ui: &Rc<Ui>, path: &Path, remember: bool) {
+fn load_sgf(ui: &Ui, path: &Path, remember: bool) {
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
         Err(e) => {
@@ -885,7 +797,7 @@ fn game_row(tree: &GameTree) -> adw::ActionRow {
         .build()
 }
 
-fn choose_game(ui: &Rc<Ui>, trees: Vec<GameTree>, path: Option<PathBuf>, label: String) {
+fn choose_game(ui: &Ui, trees: Vec<GameTree>, path: Option<PathBuf>, label: String) {
     let list = gtk::ListBox::new();
     list.set_selection_mode(gtk::SelectionMode::Single);
     list.add_css_class("boxed-list");
@@ -913,57 +825,56 @@ fn choose_game(ui: &Rc<Ui>, trees: Vec<GameTree>, path: Option<PathBuf>, label: 
     dialog.set_default_response(Some("open"));
     dialog.set_close_response("cancel");
 
-    let pool = Rc::new(RefCell::new(trees));
-    // Strong on purpose: the response arrives after this call returns, and the dialog —
-    // which owns the handler — is dismissed either way, releasing the clone with it.
-    let ui2 = ui.clone();
+    let trees = RefCell::new(trees);
+    let weak = ui.weak_window();
     dialog.connect_response(None, move |_, response| {
         if response != "open" {
             return;
         }
         let index = list.selected_row().map(|r| r.index() as usize).unwrap_or(0);
-        let mut pool = pool.borrow_mut();
-        if index < pool.len() {
-            let tree = pool.remove(index);
-            drop(pool);
-            adopt(&ui2, tree, path.clone());
+        let mut trees = trees.borrow_mut();
+        if index < trees.len() {
+            let tree = trees.remove(index);
+            drop(trees);
+            with_window_ui(&weak, |ui| adopt(ui, tree, path.clone()));
         }
     });
-    dialog.present(Some(&ui.window));
+    dialog.present(Some(&ui.window()));
 }
 
-fn do_open(ui: &Rc<Ui>) {
+fn do_open(ui: &Ui) {
     let dialog = gtk::FileDialog::new();
     dialog.set_title("Open SGF");
     let (filters, default) = sgf_filters();
     dialog.set_filters(Some(&filters));
     dialog.set_default_filter(Some(&default));
-    // Strong on purpose: this future must hold the window open until the user answers the
-    // file dialog. It completes and drops the clone; a failed upgrade would eat the Open.
-    let ui = ui.clone();
+    let future = dialog.open_future(Some(&ui.window()));
+    let weak = ui.weak_window();
     glib::spawn_future_local(async move {
-        match dialog.open_future(Some(&ui.window)).await {
+        match future.await {
             Ok(file) => match file.path() {
-                Some(path) => load_sgf(&ui, &path, true),
-                None => ui.state.toast("That location is not a local file"),
+                Some(path) => with_window_ui(&weak, |ui| load_sgf(ui, &path, true)),
+                None => with_window_ui(&weak, |ui| {
+                    ui.state.toast("That location is not a local file");
+                }),
             },
             Err(e) => {
                 if !e.matches(gtk::DialogError::Dismissed) {
-                    ui.state.toast(format!("Could not open: {e}"));
+                    with_window_ui(&weak, |ui| {
+                        ui.state.toast(format!("Could not open: {e}"));
+                    });
                 }
             }
         }
     });
 }
 
-fn do_download_fox(ui: &Rc<Ui>) {
-    let weak = Rc::downgrade(ui);
-    crate::fox::present(&ui.window, move |download| {
-        with_ui(&weak, |ui| {
+fn do_download_fox(ui: &Ui) {
+    let weak = ui.weak_window();
+    crate::fox::present(&ui.window(), move |download| {
+        with_window_ui(&weak, |ui| {
             let moves = download.tree.main_line().len().saturating_sub(1);
             adopt(ui, download.tree, None);
-            // A downloaded record has no backing file. Mark it dirty so the title makes
-            // that explicit and Save opens the file chooser instead of implying persistence.
             ui.state.set_modified(true);
             update_title(ui);
             ui.state
@@ -972,7 +883,7 @@ fn do_download_fox(ui: &Rc<Ui>) {
     });
 }
 
-fn write_to(ui: &Rc<Ui>, path: &Path) {
+fn write_to(ui: &Ui, path: &Path) {
     let text = sgf_text(ui);
     match std::fs::write(path, text) {
         Ok(()) => {
@@ -986,7 +897,7 @@ fn write_to(ui: &Rc<Ui>, path: &Path) {
     }
 }
 
-fn do_save(ui: &Rc<Ui>) {
+fn do_save(ui: &Ui) {
     flush_comment(ui);
     let existing = ui.file.borrow().clone();
     match existing {
@@ -995,7 +906,7 @@ fn do_save(ui: &Rc<Ui>) {
     }
 }
 
-fn do_save_as(ui: &Rc<Ui>) {
+fn do_save_as(ui: &Ui) {
     flush_comment(ui);
     let dialog = gtk::FileDialog::new();
     dialog.set_title("Save SGF");
@@ -1009,18 +920,21 @@ fn do_save_as(ui: &Rc<Ui>) {
         .map(|p| file_label(p))
         .unwrap_or_else(|| "game.sgf".to_string());
     dialog.set_initial_name(Some(&suggested));
-    // Strong on purpose: a weak handle that failed to upgrade here would silently drop the
-    // user's Save. The future finishes with the dialog and releases the clone.
-    let ui = ui.clone();
+    let future = dialog.save_future(Some(&ui.window()));
+    let weak = ui.weak_window();
     glib::spawn_future_local(async move {
-        match dialog.save_future(Some(&ui.window)).await {
+        match future.await {
             Ok(file) => match file.path() {
-                Some(path) => write_to(&ui, &path),
-                None => ui.state.toast("That location is not a local file"),
+                Some(path) => with_window_ui(&weak, |ui| write_to(ui, &path)),
+                None => with_window_ui(&weak, |ui| {
+                    ui.state.toast("That location is not a local file");
+                }),
             },
             Err(e) => {
                 if !e.matches(gtk::DialogError::Dismissed) {
-                    ui.state.toast(format!("Could not save: {e}"));
+                    with_window_ui(&weak, |ui| {
+                        ui.state.toast(format!("Could not save: {e}"));
+                    });
                 }
             }
         }
@@ -1118,7 +1032,7 @@ fn tree_has_content(tree: &mirai_core::GameTree) -> bool {
     false
 }
 
-fn write_autosave(ui: &Rc<Ui>) {
+fn write_autosave(ui: &Ui) {
     let Some(autosave) = ui.autosave.as_ref() else {
         return;
     };
@@ -1139,9 +1053,9 @@ fn write_autosave(ui: &Rc<Ui>) {
     }
 }
 
-fn offer_restore(ui: &Rc<Ui>, autosave: PathBuf) {
+fn offer_restore(ui: &Ui, autosave: PathBuf) {
     let dialog = adw::AlertDialog::new(
-        Some("Restore the last game?"),
+        Some("Restore the Last Game?"),
         Some(
             "mirai did not shut down cleanly. An autosaved copy of the game record you were \
              looking at is available.",
@@ -1151,43 +1065,34 @@ fn offer_restore(ui: &Rc<Ui>, autosave: PathBuf) {
     dialog.set_response_appearance("restore", adw::ResponseAppearance::Suggested);
     dialog.set_default_response(Some("restore"));
     dialog.set_close_response("discard");
-    // Strong on purpose: the dialog owns this handler and outlives the call; it is dropped
-    // once the user answers, and the restore must not be skipped while it is up.
-    let ui2 = ui.clone();
+    let weak = ui.weak_window();
     dialog.connect_response(None, move |_, response| {
         if response == "restore" {
-            // Deliberately not remembered as the save target: it is not the user's file.
-            load_sgf(&ui2, &autosave, false);
+            with_window_ui(&weak, |ui| load_sgf(ui, &autosave, false));
         }
-        // Answered either way, the crash leftover has served its purpose. The window's own
-        // autosave now holds the record.
         let _ = std::fs::remove_file(&autosave);
     });
-    dialog.present(Some(&ui.window));
+    dialog.present(Some(&ui.window()));
 }
 
 // -- score estimate ---------------------------------------------------------------------
 
-fn do_score(ui: &Rc<Ui>) {
+fn do_score(ui: &Ui) {
     let Some(engine) = ui.state.engine() else {
         ui.state.toast("No engine to estimate the score with");
         return;
     };
-    if let Some(task) = ui.score_task.borrow_mut().take() {
-        task.abort();
-    }
-    let target = ui.state.cursor();
+    ui.tasks.score.abort();
+    let target = ui.state.cursor_ref();
     let mut req = ui
         .state
-        .request_for_node(target, Some(SCORE_VISITS), Want::OWNERSHIP);
+        .request_for_node(target.id, Some(SCORE_VISITS), Want::OWNERSHIP);
     req.report_every_ms = None;
     req.priority = 8;
     let mut sub = engine.subscribe(req);
 
     ui.state.set_status("Estimating the score…".to_string());
-    // Strong on purpose: the pump must outlive this call to deliver the estimate. It ends
-    // at Done/Failed, and `connect_close` aborts it, so the clone is always released.
-    let ui2 = ui.clone();
+    let weak = ui.weak_window();
     let handle = glib::spawn_future_local(async move {
         let mut last: Option<Arc<Report>> = None;
         while let Some(event) = sub.next().await {
@@ -1199,27 +1104,29 @@ fn do_score(ui: &Rc<Ui>) {
                     break;
                 }
                 SubEvent::Failed(e) => {
-                    ui2.state.set_status(String::new());
-                    ui2.state.on_engine_error(e);
+                    with_window_ui(&weak, |ui| {
+                        ui.state.set_status(String::new());
+                        ui.state.on_engine_error(e);
+                    });
                     return;
                 }
             }
         }
-        ui2.state.set_status(String::new());
-        // The estimate is meaningful only for the exact node used to build its request.
-        if ui2.state.cursor() != target {
-            return;
-        }
-        let Some(report) = last else {
-            ui2.state.toast("The engine returned no estimate");
-            return;
-        };
-        show_estimate(&ui2, &report);
+        with_window_ui(&weak, |ui| {
+            ui.state.set_status(String::new());
+            if ui.state.resolve_node(target) != Some(ui.state.cursor()) {
+                return;
+            }
+            match last {
+                Some(report) => show_estimate(ui, &report),
+                None => ui.state.toast("The engine returned no estimate"),
+            }
+        });
     });
-    *ui.score_task.borrow_mut() = Some(handle);
+    ui.tasks.score.replace(handle);
 }
 
-fn show_estimate(ui: &Rc<Ui>, report: &Report) {
+fn show_estimate(ui: &Ui, report: &Report) {
     let position = ui.state.position();
     let board = &position.board;
     let dead = match report.ownership.as_ref() {
@@ -1252,46 +1159,46 @@ fn show_estimate(ui: &Rc<Ui>, report: &Report) {
     dialog.add_responses(&[("close", "Close")]);
     dialog.set_default_response(Some("close"));
     dialog.set_close_response("close");
-    dialog.present(Some(&ui.window));
+    dialog.present(Some(&ui.window()));
 }
 
 // -- dialogs ----------------------------------------------------------------------------
 
-fn show_shortcuts(ui: &Rc<Ui>) {
+fn show_shortcuts(ui: &Ui) {
     let dialog = adw::ShortcutsDialog::new();
     for (title, items) in [
         (
             "Navigation",
             &[
-                ("First move", "win.first"),
-                ("Last move", "win.last"),
-                ("Previous move", "win.prev"),
-                ("Next move", "win.next"),
-                ("Back ten moves", "win.prev10"),
-                ("Forward ten moves", "win.next10"),
-                ("Previous variation", "win.branch-prev"),
-                ("Next variation", "win.branch-next"),
+                ("First Move", "win.first"),
+                ("Last Move", "win.last"),
+                ("Previous Move", "win.prev"),
+                ("Next Move", "win.next"),
+                ("Back Ten Moves", "win.prev10"),
+                ("Forward Ten Moves", "win.next10"),
+                ("Previous Variation", "win.branch-prev"),
+                ("Next Variation", "win.branch-next"),
             ][..],
         ),
         (
             "Analysis",
             &[
-                ("Live analysis", "win.toggle-analysis"),
-                ("Analyse whole game", "win.analyse-game"),
-                ("Estimate score", "win.score"),
-                ("Ownership overlay", "win.toggle-ownership"),
-                ("Policy overlay", "win.toggle-policy"),
+                ("Live Analysis", "win.toggle-analysis"),
+                ("Analyse Whole Game", "win.analyse-game"),
+                ("Estimate Score", "win.score"),
+                ("Ownership Overlay", "win.toggle-ownership"),
+                ("Policy Overlay", "win.toggle-policy"),
                 ("Coordinates", "win.toggle-coords"),
-                ("Move numbers", "win.toggle-move-numbers"),
+                ("Move Numbers", "win.toggle-move-numbers"),
             ][..],
         ),
         (
             "Game",
             &[
-                ("New game", "win.new-game"),
+                ("New Game", "win.new-game"),
                 ("Pass", "win.pass"),
                 ("Undo", "win.undo"),
-                ("Delete branch", "win.delete-branch"),
+                ("Delete Branch", "win.delete-branch"),
             ][..],
         ),
         (
@@ -1299,7 +1206,7 @@ fn show_shortcuts(ui: &Rc<Ui>) {
             &[
                 ("Open", "win.open"),
                 ("Save", "win.save"),
-                ("Save as", "win.save-as"),
+                ("Save As", "win.save-as"),
                 ("Copy SGF", "win.copy-sgf"),
                 ("Paste SGF", "win.paste-sgf"),
             ][..],
@@ -1311,24 +1218,24 @@ fn show_shortcuts(ui: &Rc<Ui>) {
         }
         dialog.add(section);
     }
-    dialog.present(Some(&ui.window));
+    dialog.present(Some(&ui.window()));
 }
 
-fn show_about(ui: &Rc<Ui>) {
+fn show_about(ui: &Ui) {
     let about = adw::AboutDialog::builder()
         .application_name("mirai")
         .application_icon("io.github.mirai.Mirai")
         .version(env!("CARGO_PKG_VERSION"))
-        .developer_name("mirai")
+        .developer_name("Huang Zhaobin")
         .comments("A KataGo analysis and playing board for GNOME.")
         .build();
-    about.present(Some(&ui.window));
+    about.present(Some(&ui.window()));
 }
 
 // -- actions ----------------------------------------------------------------------------
 
 /// Deletes the branch starting at the cursor and steps back to its parent.
-fn delete_branch(ui: &Rc<Ui>) {
+fn delete_branch(ui: &Ui) {
     let id = ui.state.cursor();
     let parent = ui.state.tree().parent(id);
     let Some(parent) = parent else {
@@ -1343,18 +1250,16 @@ fn delete_branch(ui: &Rc<Ui>) {
     update_scale(ui);
 }
 
-/// The body of a window action: a boxed closure over the built UI.
-type UiAction = Box<dyn Fn(&Rc<Ui>)>;
+/// The body of a window action.
+type UiAction = Box<dyn Fn(&Ui)>;
 
-fn install_actions(ui: &Rc<Ui>) {
+fn install_actions(ui: &Ui) {
     let group = gio::SimpleActionGroup::new();
-    // The group is inserted on the window, so every action outlives the `Ui` unless it
-    // holds only a weak handle. Downgrading once here fixes all of them.
-    let weak = Rc::downgrade(ui);
+    let weak = ui.weak_window();
     let add = |name: &str, f: UiAction| {
         let action = gio::SimpleAction::new(name, None);
         let weak = weak.clone();
-        action.connect_activate(move |_, _| with_ui(&weak, |ui| f(ui)));
+        action.connect_activate(move |_, _| with_window_ui(&weak, |ui| f(ui)));
         group.add_action(&action);
     };
 
@@ -1402,8 +1307,8 @@ fn install_actions(ui: &Rc<Ui>) {
                 return;
             }
             let to_play = ui.state.to_play();
-            if let Err(e) = ui.state.play_move(to_play, Point::PASS) {
-                ui.state.toast(e.to_string());
+            if let Err(error) = ui.state.play_move(to_play, Point::PASS) {
+                ui.state.toast_illegal_move(error);
             }
         }),
     );
@@ -1446,31 +1351,34 @@ fn install_actions(ui: &Rc<Ui>) {
                 return;
             };
             let clipboard = display.clipboard();
-            // Strong on purpose: the clipboard read resolves after this action returns,
-            // and the future drops the clone as soon as the paste is done.
-            let ui = ui.clone();
+            let weak = ui.weak_window();
             glib::spawn_future_local(async move {
                 let text = match clipboard.read_text_future().await {
                     Ok(Some(t)) => t,
                     Ok(None) => {
-                        ui.state.toast("The clipboard holds no text");
+                        with_window_ui(&weak, |ui| {
+                            ui.state.toast("The clipboard holds no text");
+                        });
                         return;
                     }
                     Err(e) => {
-                        ui.state.toast(format!("Clipboard: {e}"));
+                        with_window_ui(&weak, |ui| {
+                            ui.state.toast(format!("Clipboard: {e}"));
+                        });
                         return;
                     }
                 };
-                match sgf::parse_str(&text) {
+                let parsed = sgf::parse_str(&text);
+                with_window_ui(&weak, |ui| match parsed {
                     Ok(mut trees) if !trees.is_empty() => {
                         let tree = trees.remove(0);
                         let moves = tree.main_line().len().saturating_sub(1);
-                        adopt(&ui, tree, None);
+                        adopt(ui, tree, None);
                         ui.state.toast(format!("Pasted a game of {moves} moves"));
                     }
                     Ok(_) => ui.state.toast("The clipboard holds no game record"),
                     Err(e) => ui.state.toast(format!("Clipboard: {e}")),
-                }
+                });
             });
         }),
     );
@@ -1480,18 +1388,21 @@ fn install_actions(ui: &Rc<Ui>) {
     add(
         "new-game",
         Box::new(|ui| {
-            let play = ui.play.clone();
-            let batch = ui.batch.clone();
-            crate::dialogs::new_game(&ui.window, &ui.state, move |setup| {
-                // A new arena can reuse an old NodeId for an unrelated position.
-                batch.cancel();
-                play.start(setup);
+            let weak = ui.weak_window();
+            crate::new_game::present(&ui.window(), &ui.state, move |setup| {
+                with_window_ui(&weak, |ui| {
+                    ui.batch.cancel();
+                    ui.comment_node.set(None);
+                    *ui.file.borrow_mut() = None;
+                    ui.state.set_file_path(String::new());
+                    ui.play.start(setup);
+                });
             });
         }),
     );
     add(
         "preferences",
-        Box::new(|ui| crate::prefs::present(&ui.window, &ui.state)),
+        Box::new(|ui| crate::prefs::present(&ui.window(), &ui.state)),
     );
     add("shortcuts", Box::new(show_shortcuts));
     add("about", Box::new(show_about));
@@ -1510,14 +1421,15 @@ fn install_actions(ui: &Rc<Ui>) {
                 return;
             };
             action.set_state(&name.to_variant());
-            with_ui(&weak, |ui| ui.state.activate_profile(name));
+            with_window_ui(&weak, |ui| ui.state.activate_profile(name));
         });
     }
     group.add_action(&set_engine);
 
-    ui.window.insert_action_group("win", Some(&group));
+    let window = ui.window();
+    window.insert_action_group("win", Some(&group));
 
-    if let Some(app) = ui.window.application() {
+    if let Some(app) = window.application() {
         for (action, accels) in [
             ("win.first", &["Home"][..]),
             ("win.last", &["End"]),
@@ -1551,10 +1463,8 @@ fn install_actions(ui: &Rc<Ui>) {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
-    use std::rc::Rc;
 
-    use super::{tree_has_content, with_ui};
+    use super::tree_has_content;
     use mirai_core::{Color, GameInfo, GameTree, MarkKind, Point, RuleSet, Size};
 
     fn empty_tree() -> GameTree {
@@ -1624,49 +1534,5 @@ mod tests {
         let root = tree.root();
         tree.toggle_mark(root, MarkKind::Triangle, Size::square(19).point(3, 3));
         assert!(!tree_has_content(&tree));
-    }
-
-    /// A stand-in for `Ui`: the real thing is full of GTK objects, which cannot be built
-    /// without `gtk::init` and a display. `with_ui` is generic exactly so the capture
-    /// discipline it enforces can be checked here.
-    struct Window {
-        torn_down: Cell<bool>,
-    }
-
-    #[test]
-    fn handlers_do_not_keep_the_window_alive() {
-        let window = Rc::new(Window {
-            torn_down: Cell::new(false),
-        });
-        // What every signal handler on the window now captures.
-        let handler = Rc::downgrade(&window);
-        assert_eq!(
-            Rc::strong_count(&window),
-            1,
-            "a handler's handle must not own the window"
-        );
-
-        let fired = Cell::new(0u32);
-        with_ui(&handler, |w| {
-            fired.set(fired.get() + 1);
-            w.torn_down.set(true);
-        });
-        assert_eq!(fired.get(), 1, "a live window runs the handler body once");
-        assert!(window.torn_down.get(), "the body saw the real window");
-
-        // Closing the window drops the sole owner (in the real thing, the cell inside
-        // `connect_close`). Nothing else may hold it back.
-        drop(window);
-        assert!(
-            handler.upgrade().is_none(),
-            "the window leaked: a handler is still holding it alive"
-        );
-
-        with_ui(&handler, |_| fired.set(fired.get() + 1));
-        assert_eq!(
-            fired.get(),
-            1,
-            "a handler firing after the window is gone must do nothing"
-        );
     }
 }

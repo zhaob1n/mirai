@@ -47,14 +47,18 @@ cargo run -p mirai
 
 ## Requirements
 
-- Rust 1.92 or newer (edition 2024).
-- GTK 4.22+ and libadwaita 1.9+ with their development packages.
+- Current Rust nightly 1.99 or newer (edition 2024), selected by `rust-toolchain.toml`.
+- GTK 4.22+, libadwaita 1.9+, and Blueprint Compiler 0.22+ with their development packages.
 - A KataGo binary and a network model. Any recent KataGo works; mirai uses the JSON analysis
   engine (`katago analysis`), never GTP, and writes the analysis config itself unless you
   supply one.
 
-On Arch: `pacman -S gtk4 libadwaita`. On Debian/Ubuntu:
-`apt install libgtk-4-dev libadwaita-1-dev`.
+On Arch: `pacman -S gtk4 libadwaita blueprint-compiler`. On Debian/Ubuntu, install
+`libgtk-4-dev`, `libadwaita-1-dev`, and `blueprint-compiler`.
+
+The interface follows the [GNOME Human Interface Guidelines](https://developer.gnome.org/hig/).
+Static UI is written in [Blueprint](https://jwestman.pages.gitlab.gnome.org/blueprint-compiler/)
+and integrated with gtk-rs composite templates.
 
 ```
 cargo build --release --workspace

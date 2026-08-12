@@ -34,15 +34,15 @@
 }
 
 .mirai-blunder-major {
-  color: #e85038;
+  color: @error_color;
 }
 
 .mirai-blunder-medium {
-  color: #e8802c;
+  color: @warning_color;
 }
 
 .mirai-blunder-minor {
-  color: #e8c838;
+  color: @accent_color;
 }
 
 .mirai-pv-label {

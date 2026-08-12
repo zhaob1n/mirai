@@ -16,9 +16,9 @@ use gtk::pango;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 
-use mirai_core::Color;
+use mirai_core::{Color, NodeId};
 
-use crate::app::{AppState, signal};
+use crate::app::AppState;
 
 /// How badly a move hurt the player who played it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -87,6 +87,19 @@ struct Sample {
     lead: Option<f32>,
     /// Blunder severity of the move *leading into* this node.
     blunder: Severity,
+}
+#[derive(Default)]
+struct GraphProjection {
+    line: Vec<NodeId>,
+    samples: Vec<Sample>,
+    cursor_index: usize,
+}
+#[derive(Clone, Copy, PartialEq)]
+struct RenderKey {
+    width: i32,
+    height: i32,
+    foreground: gdk::RGBA,
+    accent: gdk::RGBA,
 }
 
 /// Geometry, in widget coordinates.
@@ -170,10 +183,11 @@ mod imp {
 
     #[derive(Default)]
     pub struct WinrateGraph {
-        pub state: RefCell<Option<AppState>>,
+        pub window: glib::WeakRef<crate::window_shell::MiraiWindow>,
         pub pressed: Cell<bool>,
+        pub(super) projection: RefCell<GraphProjection>,
+        pub(super) render_cache: RefCell<Option<(RenderKey, gsk::RenderNode)>>,
     }
-
     #[glib::object_subclass]
     impl ObjectSubclass for WinrateGraph {
         const NAME: &'static str = "MiraiWinrateGraph";
@@ -204,24 +218,14 @@ glib::wrapper! {
 }
 
 impl WinrateGraph {
-    pub fn new(state: &AppState) -> WinrateGraph {
+    pub fn new(window: &crate::window_shell::MiraiWindow) -> WinrateGraph {
         let this: WinrateGraph = glib::Object::new();
-        *this.imp().state.borrow_mut() = Some(state.clone());
+        this.imp().window.set(Some(window));
         this.add_css_class("mirai-winrate");
         this.set_hexpand(true);
         this.set_tooltip_text(Some(
             "Win rate (solid) and score lead (dashed) over the main line",
         ));
-
-        for name in [signal::TREE_CHANGED, signal::CURSOR_CHANGED, signal::REPORT] {
-            let weak = this.downgrade();
-            state.connect_local(name, false, move |_| {
-                if let Some(this) = weak.upgrade() {
-                    this.queue_draw();
-                }
-                None
-            });
-        }
 
         let click = gtk::GestureClick::new();
         click.set_button(gdk::BUTTON_PRIMARY);
@@ -278,30 +282,55 @@ impl WinrateGraph {
 
     pub fn state(&self) -> AppState {
         self.imp()
-            .state
-            .borrow()
-            .clone()
-            .expect("WinrateGraph was built without an AppState")
+            .window
+            .upgrade()
+            .and_then(|window| window.with_ui(|ui| ui.state.clone()))
+            .expect("WinrateGraph has no live window state")
+    }
+    pub(crate) fn refresh(&self) {
+        let state = self.state();
+        *self.imp().projection.borrow_mut() = self.samples(&state);
+        self.imp().render_cache.borrow_mut().take();
+        self.queue_draw();
+    }
+    pub(crate) fn refresh_cursor(&self) {
+        let state = self.state();
+        let tree = state.tree();
+        let path = tree.path_to(state.cursor());
+        let cursor_index = {
+            let projection = self.imp().projection.borrow();
+            projection
+                .line
+                .iter()
+                .zip(path.iter())
+                .take_while(|(a, b)| a == b)
+                .count()
+                .saturating_sub(1)
+        };
+        self.imp().projection.borrow_mut().cursor_index = cursor_index;
+        self.queue_draw();
     }
 
     /// Moves the cursor to the main-line node nearest to a widget x coordinate.
     fn jump_to(&self, x: f32) {
-        let state = self.state();
-        let line = state.tree().main_line();
-        if line.is_empty() {
+        let projection = self.imp().projection.borrow();
+        if projection.line.is_empty() {
             return;
         }
-        let geom = Geom::new(self.width() as f32, self.height() as f32, line.len());
-        let i = geom.index_at(x, line.len());
-        state.set_cursor(line[i]);
+        let geom = Geom::new(
+            self.width() as f32,
+            self.height() as f32,
+            projection.line.len(),
+        );
+        let i = geom.index_at(x, projection.line.len());
+        self.state().set_cursor(projection.line[i]);
     }
 
     /// Collects the main line into drawable samples.
-    fn samples(&self, state: &AppState) -> (Vec<Sample>, usize) {
+    fn samples(&self, state: &AppState) -> GraphProjection {
         let tree = state.tree();
         let line = tree.main_line();
         let cursor = state.cursor();
-        // The cursor may sit off the main line; highlight its deepest main-line ancestor.
         let path = tree.path_to(cursor);
         let cursor_index = line
             .iter()
@@ -310,7 +339,7 @@ impl WinrateGraph {
             .count()
             .saturating_sub(1);
 
-        let mut out = Vec::with_capacity(line.len());
+        let mut samples = Vec::with_capacity(line.len());
         let mut prev_winrate: Option<f32> = None;
         for &id in &line {
             let node = tree.node(id);
@@ -323,7 +352,7 @@ impl WinrateGraph {
                 }
                 _ => Severity::None,
             };
-            out.push(Sample {
+            samples.push(Sample {
                 winrate,
                 lead,
                 blunder,
@@ -332,17 +361,46 @@ impl WinrateGraph {
                 prev_winrate = winrate;
             }
         }
-        (out, cursor_index)
+        GraphProjection {
+            line,
+            samples,
+            cursor_index,
+        }
+    }
+    fn render_base(&self, width: i32, height: i32) -> Option<gsk::RenderNode> {
+        let style = adw::StyleManager::default();
+        let key = RenderKey {
+            width,
+            height,
+            foreground: self.color(),
+            accent: style.accent_color().to_standalone_rgba(style.is_dark()),
+        };
+        if let Some((cached_key, node)) = self.imp().render_cache.borrow().as_ref()
+            && *cached_key == key
+        {
+            return Some(node.clone());
+        }
+        let offscreen = gtk::Snapshot::new();
+        self.draw_base(&offscreen, width as f32, height as f32);
+        let node = offscreen.to_node()?;
+        self.imp().render_cache.replace(Some((key, node.clone())));
+        Some(node)
     }
 
     fn draw(&self, snapshot: &gtk::Snapshot) {
-        let width = self.width() as f32;
-        let height = self.height() as f32;
-        if width < 8.0 || height < 8.0 {
+        let (width, height) = (self.width(), self.height());
+        if width < 8 || height < 8 {
             return;
         }
-        let state = self.state();
-        let (samples, cursor_index) = self.samples(&state);
+        if let Some(node) = self.render_base(width, height) {
+            snapshot.append_node(&node);
+        }
+        self.draw_cursor(snapshot, width as f32, height as f32);
+    }
+
+    fn draw_base(&self, snapshot: &gtk::Snapshot, width: f32, height: f32) {
+        let projection = self.imp().projection.borrow();
+        let samples = &projection.samples;
         let geom = Geom::new(width, height, samples.len().max(1));
 
         let fg = self.color();
@@ -473,22 +531,34 @@ impl WinrateGraph {
             &axis,
             &graphene::Rect::new(geom.left, geom.strip_bottom, geom.right - geom.left, 1.0),
         );
+    }
 
-        // Cursor line, drawn last so it sits on top of everything.
-        if !samples.is_empty() {
-            let x = geom.x(cursor_index);
-            snapshot.append_color(
-                &with_alpha(accent, 0.85),
-                &graphene::Rect::new(x - 0.5, geom.top, 1.0, geom.strip_bottom - geom.top),
-            );
-            if let Some(w) = samples[cursor_index].winrate {
-                let dot = gsk::PathBuilder::new();
-                dot.add_circle(&graphene::Point::new(x, geom.y_winrate(w)), 3.0);
-                snapshot.append_fill(&dot.to_path(), gsk::FillRule::Winding, &accent);
-                let text = format!("{:.1}%", w * 100.0);
-                let tx = (x + 5.0).min(geom.right - 28.0);
-                self.label(snapshot, &font, &text, tx, geom.top + 1.0, &curve);
-            }
+    fn draw_cursor(&self, snapshot: &gtk::Snapshot, width: f32, height: f32) {
+        let projection = self.imp().projection.borrow();
+        let samples = &projection.samples;
+        if samples.is_empty() {
+            return;
+        }
+        let geom = Geom::new(width, height, samples.len());
+        let cursor_index = projection.cursor_index.min(samples.len() - 1);
+        let fg = self.color();
+        let curve = with_alpha(fg, 0.92);
+        let accent = adw::StyleManager::default()
+            .accent_color()
+            .to_standalone_rgba(adw::StyleManager::default().is_dark());
+        let x = geom.x(cursor_index);
+        snapshot.append_color(
+            &with_alpha(accent, 0.85),
+            &graphene::Rect::new(x - 0.5, geom.top, 1.0, geom.strip_bottom - geom.top),
+        );
+        if let Some(winrate) = samples[cursor_index].winrate {
+            let dot = gsk::PathBuilder::new();
+            dot.add_circle(&graphene::Point::new(x, geom.y_winrate(winrate)), 3.0);
+            snapshot.append_fill(&dot.to_path(), gsk::FillRule::Winding, &accent);
+            let font = pango::FontDescription::from_string("Sans 7");
+            let text = format!("{:.1}%", winrate * 100.0);
+            let tx = (x + 5.0).min(geom.right - 28.0);
+            self.label(snapshot, &font, &text, tx, geom.top + 1.0, &curve);
         }
     }
 

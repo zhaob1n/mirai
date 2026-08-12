@@ -1,0 +1,179 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Huang Zhaobin
+
+using Gtk 4.0;
+using Adw 1;
+
+template $MiraiPreferencesDialog : Adw.PreferencesDialog {
+  title: _("Preferences");
+  content-width: 760;
+  content-height: 720;
+
+  Adw.PreferencesPage {
+    title: _("Engines");
+    icon-name: "application-x-executable-symbolic";
+
+    Adw.PreferencesGroup profiles_group {
+      title: _("Engine Profiles");
+      description: _("The selected profile provides analysis and plays as the computer.");
+    }
+
+    Adw.PreferencesGroup {
+      title: _("Add Profile");
+
+      Gtk.Box {
+        spacing: 12;
+        halign: center;
+
+        Gtk.Button add_local_button {
+          styles ["pill"]
+          child: Adw.ButtonContent {
+            icon-name: "list-add-symbolic";
+            label: _("Add Local…");
+          };
+          accessibility {
+            label: _("Add Local Engine");
+          }
+        }
+
+        Gtk.Button add_remote_button {
+          styles ["pill"]
+          child: Adw.ButtonContent {
+            icon-name: "network-server-symbolic";
+            label: _("Add Remote…");
+          };
+          accessibility {
+            label: _("Add Remote Engine");
+          }
+        }
+      }
+    }
+  }
+
+  Adw.PreferencesPage {
+    title: _("Analysis");
+    icon-name: "system-search-symbolic";
+
+    Adw.PreferencesGroup {
+      title: _("Live Analysis");
+      description: _("Used while the board follows the cursor.");
+
+      Adw.SpinRow analysis_visits_row {
+        title: _("Maximum Visits");
+        subtitle: _("Where a live search stops thinking");
+      }
+
+      Adw.SpinRow analysis_interval_row {
+        title: _("Report Interval");
+        subtitle: _("Milliseconds between updates from the engine");
+      }
+
+      Adw.SpinRow analysis_suggestions_row {
+        title: _("Suggestions Shown");
+        subtitle: _("Candidate moves kept on the board and in the panel");
+      }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("Whole-Game Analysis");
+
+      Adw.SpinRow analysis_batch_visits_row {
+        title: _("Visits per Move");
+        subtitle: _("Budget for each position when analysing a whole game");
+      }
+    }
+  }
+
+  Adw.PreferencesPage {
+    title: _("Play");
+    icon-name: "media-playback-start-symbolic";
+
+    Adw.PreferencesGroup {
+      title: _("Computer Strength");
+      description: _("How much thinking the computer does for each of its moves.");
+
+      Adw.ComboRow play_strength_kind_row {
+        title: _("Mode");
+      }
+
+      Adw.SpinRow play_visits_row {
+        title: _("Visits per Move");
+      }
+
+      Adw.SpinRow play_seconds_row {
+        title: _("Seconds per Move");
+      }
+
+      Adw.EntryRow play_human_row {
+        title: _("Human Model Profile");
+      }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("Behaviour");
+
+      Adw.SpinRow play_temperature_row {
+        title: _("Temperature");
+        subtitle: _("0 always plays the best move; higher values add variety");
+      }
+
+      Adw.SpinRow play_threshold_row {
+        title: _("Resign Threshold");
+        subtitle: _("Winrate below which the computer considers resigning");
+      }
+
+      Adw.SpinRow play_streak_row {
+        title: _("Resign Streak");
+        subtitle: _("Consecutive hopeless moves before resigning");
+      }
+
+      Adw.ComboRow play_rules_row {
+        title: _("Default Ruleset");
+        subtitle: _("Used for new games");
+      }
+    }
+  }
+
+  Adw.PreferencesPage {
+    title: _("Appearance");
+    icon-name: "preferences-desktop-appearance-symbolic";
+
+    Adw.PreferencesGroup {
+      title: _("Board");
+
+      Adw.SwitchRow show_coordinates_row {
+        title: _("Coordinates");
+        subtitle: _("Letters and numbers around the board");
+      }
+
+      Adw.SwitchRow show_move_numbers_row {
+        title: _("Move Numbers");
+        subtitle: _("Number every stone; the last move’s number is red");
+      }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("Overlays");
+      description: _("Only one overlay is drawn at a time.");
+
+      Adw.SwitchRow ownership_overlay_row {
+        title: _("Ownership");
+        subtitle: _("Shade each point by who is predicted to own it");
+      }
+
+      Adw.SwitchRow policy_overlay_row {
+        title: _("Policy");
+        subtitle: _("Shade each point by the raw network policy");
+      }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("Files");
+
+      Adw.SwitchRow save_analysis_row {
+        title: _("Save Analysis in SGF");
+        subtitle: _("Write winrates and candidate moves alongside the moves");
+      }
+    }
+  }
+}

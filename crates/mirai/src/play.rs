@@ -10,11 +10,11 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use gtk::glib;
+use gtk::prelude::ObjectExt;
 use mirai_core::{
     Color, DeadSet, GameInfo, GameTree, NodeId, Point, SplitMix64, TimeControl, fixed_handicap,
     score, think_budget,
@@ -23,6 +23,15 @@ use mirai_engine::{MoveInfo, Report, SubEvent, Want};
 
 use crate::app::AppState;
 use crate::widgets::BoardView;
+use crate::window_shell::MiraiWindow;
+
+fn with_play<R>(
+    weak: &glib::WeakRef<MiraiWindow>,
+    f: impl FnOnce(&PlayController) -> R,
+) -> Option<R> {
+    let window = weak.upgrade()?;
+    window.with_ui(|ui| f(&ui.play))
+}
 
 /// Default KataGo human-SL profile offered in the UI.
 ///
@@ -127,6 +136,7 @@ impl PlaySession {
 /// Owns the play session and drives the AI's turns.
 pub struct PlayController {
     state: AppState,
+    window: glib::WeakRef<MiraiWindow>,
     session: RefCell<Option<PlaySession>>,
     thinking: RefCell<Option<glib::JoinHandle<()>>>,
     ticker: Cell<Option<glib::SourceId>>,
@@ -137,9 +147,10 @@ pub struct PlayController {
 }
 
 impl PlayController {
-    pub fn new(state: &AppState) -> Rc<PlayController> {
-        Rc::new(PlayController {
+    pub fn new(state: &AppState, window: &MiraiWindow) -> PlayController {
+        PlayController {
             state: state.clone(),
+            window: window.downgrade(),
             session: RefCell::new(None),
             thinking: RefCell::new(None),
             ticker: Cell::new(None),
@@ -147,11 +158,19 @@ impl PlayController {
             analyse_hook: RefCell::new(None),
             rng: RefCell::new(SplitMix64::new(seed_from_clock())),
             last_tick: Cell::new(Instant::now()),
-        })
+        }
     }
 
     pub fn is_active(&self) -> bool {
         self.session.borrow().is_some()
+    }
+
+    /// Whether the current session is a person playing against the engine.
+    pub fn is_human_vs_engine(&self) -> bool {
+        self.session
+            .borrow()
+            .as_ref()
+            .is_some_and(|session| session.human.is_some())
     }
 
     pub fn play_state(&self) -> PlayState {
@@ -164,11 +183,11 @@ impl PlayController {
 
     /// Gives the controller the board it scores on: it installs a click hook that toggles
     /// dead groups while the game is being counted, and draws the territory overlay.
-    pub fn attach_board(self: &Rc<Self>, board: &BoardView) {
+    pub fn attach_board(&self, board: &BoardView) {
         *self.board.borrow_mut() = Some(board.clone());
-        let weak = Rc::downgrade(self);
+        let weak = self.window.clone();
         board.set_click_hook(Some(Box::new(move |p: Point| {
-            weak.upgrade().is_some_and(|this| this.on_board_click(p))
+            with_play(&weak, |play| play.on_board_click(p)).unwrap_or(false)
         })));
     }
 
@@ -180,7 +199,7 @@ impl PlayController {
 
     // -- lifecycle ----------------------------------------------------------------------
 
-    pub fn start(self: &Rc<Self>, setup: GameSetup) {
+    pub fn start(&self, setup: GameSetup) {
         self.stop();
 
         let mut info = GameInfo::new(setup.size, setup.rules);
@@ -242,6 +261,7 @@ impl PlayController {
             summary: String::new(),
         };
         *self.session.borrow_mut() = Some(session);
+        self.state.notify_play_changed();
         *self.rng.borrow_mut() = SplitMix64::new(seed_from_clock());
         self.clear_overlay();
         self.snapshot_clock(self.state.cursor());
@@ -275,7 +295,7 @@ impl PlayController {
     }
 
     /// Hands the turn to whoever is next, starting the AI when it is its move.
-    fn advance(self: &Rc<Self>) {
+    fn advance(&self) {
         let Some(ai) = self.session.borrow().as_ref().and_then(PlaySession::ai) else {
             self.set_state(PlayState::HumanTurn);
             return;
@@ -306,7 +326,7 @@ impl PlayController {
     ///
     /// Tolerates both call styles: if the caller already pushed the move into the tree
     /// (the cursor sits on it) it is not played twice.
-    pub fn on_human_move(self: &Rc<Self>, mv: (Color, Point)) {
+    pub fn on_human_move(&self, mv: (Color, Point)) {
         if !matches!(self.play_state(), PlayState::HumanTurn) {
             return;
         }
@@ -316,15 +336,15 @@ impl PlayController {
             if self.state.to_play() != mv.0 {
                 return;
             }
-            if let Err(e) = self.state.play_move(mv.0, mv.1) {
-                self.state.toast(e.to_string());
+            if let Err(error) = self.state.play_move(mv.0, mv.1) {
+                self.state.toast_illegal_move(error);
                 return;
             }
         }
         self.after_move(mv.0);
     }
 
-    pub fn pass(self: &Rc<Self>) {
+    pub fn pass(&self) {
         if !matches!(self.play_state(), PlayState::HumanTurn) {
             return;
         }
@@ -332,7 +352,7 @@ impl PlayController {
         self.on_human_move((c, Point::PASS));
     }
 
-    pub fn resign(self: &Rc<Self>) {
+    pub fn resign(&self) {
         if !self.is_active() || matches!(self.play_state(), PlayState::Scoring) {
             return;
         }
@@ -350,7 +370,7 @@ impl PlayController {
 
     /// Retracts the AI's move and the human's, restores the clocks and cancels any
     /// in-flight search.
-    pub fn undo(self: &Rc<Self>) {
+    pub fn undo(&self) {
         if !self.is_active() {
             return;
         }
@@ -404,7 +424,7 @@ impl PlayController {
     }
 
     /// Clock bookkeeping and end-of-game detection after `color` completed a move.
-    fn after_move(self: &Rc<Self>, color: Color) {
+    fn after_move(&self, color: Color) {
         {
             let mut guard = self.session.borrow_mut();
             let Some(s) = guard.as_mut() else { return };
@@ -439,7 +459,7 @@ impl PlayController {
 
     // -- the AI's turn ------------------------------------------------------------------
 
-    fn ai_turn(self: &Rc<Self>, ai: Color) {
+    fn ai_turn(&self, ai: Color) {
         let Some(engine) = self.state.engine() else {
             self.state
                 .toast("No engine is running — start one in Preferences");
@@ -464,8 +484,6 @@ impl PlayController {
         req.max_time_ms = budget_ms;
         req.priority = 8;
         req.report_every_ms = Some(200);
-        // The shipped analysis.cfg sets wideRootNoise = 0.04, which deliberately weakens
-        // the root move choice. Fine for analysis, wrong for playing.
         req.overrides = vec![("wideRootNoise".to_string(), "0.0".to_string())];
         if let Strength::Human { profile } = &strength {
             req.overrides
@@ -473,41 +491,52 @@ impl PlayController {
         }
 
         let mut sub = engine.subscribe(req);
-        let this = self.clone();
+        let weak = self.window.clone();
         let handle = glib::spawn_future_local(async move {
             let mut done: Option<Arc<Report>> = None;
             while let Some(event) = sub.next().await {
                 match event {
                     SubEvent::Pending => {}
                     SubEvent::Report(r) => {
-                        this.state.set_status(format!(
-                            "Thinking… {} visits",
-                            crate::util::si_visits(r.root.visits)
-                        ));
+                        if with_play(&weak, |play| {
+                            play.state.set_status(format!(
+                                "Thinking… {} visits",
+                                crate::util::si_visits(r.root.visits)
+                            ));
+                        })
+                        .is_none()
+                        {
+                            return;
+                        }
                     }
                     SubEvent::Done(r) => {
                         done = Some(r);
                         break;
                     }
                     SubEvent::Failed(e) => {
-                        this.state.set_status(String::new());
-                        this.state.on_engine_error(e);
-                        this.set_state(PlayState::HumanTurn);
+                        with_play(&weak, |play| {
+                            play.state.set_status(String::new());
+                            play.state.on_engine_error(e);
+                            play.set_state(PlayState::HumanTurn);
+                        });
                         return;
                     }
                 }
             }
-            this.state.set_status(String::new());
-            match done {
-                Some(report) => this.apply_ai_move(ai, &report),
-                // The stream ended without a final report: the engine went away.
-                None => this.set_state(PlayState::HumanTurn),
-            }
+            with_play(&weak, |play| {
+                play.state.set_status(String::new());
+                match done {
+                    Some(report) => play.apply_ai_move(ai, &report),
+                    None => play.set_state(PlayState::HumanTurn),
+                }
+            });
         });
-        *self.thinking.borrow_mut() = Some(handle);
+        if let Some(old) = self.thinking.borrow_mut().replace(handle) {
+            old.abort();
+        }
     }
 
-    fn apply_ai_move(self: &Rc<Self>, ai: Color, report: &Report) {
+    fn apply_ai_move(&self, ai: Color, report: &Report) {
         if !matches!(self.play_state(), PlayState::AiThinking) {
             return;
         }
@@ -569,23 +598,22 @@ impl PlayController {
 
     // -- clocks -------------------------------------------------------------------------
 
-    fn start_ticker(self: &Rc<Self>) {
+    fn start_ticker(&self) {
         if let Some(id) = self.ticker.take() {
             id.remove();
         }
         self.last_tick.set(Instant::now());
-        let weak = Rc::downgrade(self);
+        let weak = self.window.clone();
         let id = glib::timeout_add_local(Duration::from_millis(100), move || {
-            let Some(this) = weak.upgrade() else {
+            if with_play(&weak, PlayController::tick).is_none() {
                 return glib::ControlFlow::Break;
-            };
-            this.tick();
+            }
             glib::ControlFlow::Continue
         });
         self.ticker.set(Some(id));
     }
 
-    fn tick(self: &Rc<Self>) {
+    fn tick(&self) {
         let now = Instant::now();
         let dt = now.duration_since(self.last_tick.get()).as_secs_f32();
         self.last_tick.set(now);
@@ -645,7 +673,7 @@ impl PlayController {
 
     /// Ends the game and counts it. `forced` is the result the rules cannot produce —
     /// a resignation or a lost flag; `None` means the count decides.
-    fn end_game(self: &Rc<Self>, forced: Option<String>, reason: String) {
+    fn end_game(&self, forced: Option<String>, reason: String) {
         self.abort_thinking();
         {
             let mut guard = self.session.borrow_mut();
@@ -671,7 +699,7 @@ impl PlayController {
         req.report_every_ms = None;
         req.priority = 8;
         let mut sub = engine.subscribe(req);
-        let this = self.clone();
+        let weak = self.window.clone();
         let handle = glib::spawn_future_local(async move {
             let mut ownership = None;
             while let Some(event) = sub.next().await {
@@ -687,12 +715,14 @@ impl PlayController {
                     _ => {}
                 }
             }
-            this.finish_scoring(ownership);
+            with_play(&weak, |play| play.finish_scoring(ownership));
         });
-        *self.thinking.borrow_mut() = Some(handle);
+        if let Some(old) = self.thinking.borrow_mut().replace(handle) {
+            old.abort();
+        }
     }
 
-    fn finish_scoring(self: &Rc<Self>, ownership: Option<Vec<i8>>) {
+    fn finish_scoring(&self, ownership: Option<Vec<i8>>) {
         let position = self.state.position();
         let dead = match &ownership {
             Some(raw) => {
@@ -725,9 +755,9 @@ impl PlayController {
             .unwrap_or_default();
         let board = self.board.borrow().clone();
         if let Some(board) = board {
-            let this = self.clone();
+            let weak = self.window.clone();
             crate::dialogs::show_score_with(&board, &self.state, &summary, move || {
-                this.run_analyse()
+                with_play(&weak, PlayController::run_analyse);
             });
         }
     }
@@ -793,7 +823,7 @@ impl PlayController {
     /// Every primary board click while a game is running comes through here, so the
     /// controller can keep the clocks and the turn order honest. Outside a game it
     /// returns `false` and the board plays the move itself, as in review mode.
-    fn on_board_click(self: &Rc<Self>, p: Point) -> bool {
+    fn on_board_click(&self, p: Point) -> bool {
         match self.play_state() {
             PlayState::Idle => false,
             PlayState::HumanTurn => {
@@ -837,11 +867,11 @@ impl PlayController {
 
 impl Drop for PlayController {
     fn drop(&mut self) {
-        if let Some(id) = self.ticker.take() {
-            id.remove();
+        if let Some(task) = self.thinking.get_mut().take() {
+            task.abort();
         }
-        if let Some(h) = self.thinking.borrow_mut().take() {
-            h.abort();
+        if let Some(source) = self.ticker.take() {
+            source.remove();
         }
     }
 }

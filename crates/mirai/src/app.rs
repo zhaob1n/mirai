@@ -22,28 +22,55 @@ use mirai_engine::{AnalyzeReq, Engine, EngineDesc, EngineError, Report, SubEvent
 use crate::config::Config;
 use crate::engines::EnginePool;
 
-/// Signal names, so typos are compile-time-ish rather than silent no-ops.
-pub mod signal {
-    /// The tree's shape or a node's content changed.
-    pub const TREE_CHANGED: &str = "tree-changed";
-    /// The cursor moved to a different node.
-    pub const CURSOR_CHANGED: &str = "cursor-changed";
-    /// A new live analysis report is available from [`super::AppState::last_report`].
-    pub const REPORT: &str = "report";
-    /// The active engine changed (or went away).
-    pub const ENGINE_CHANGED: &str = "engine-changed";
-    /// A user-visible message; the window turns it into an `adw::Toast`.
-    pub const TOAST: &str = "toast";
-    /// The play session changed state (turn, clock, game over).
-    pub const PLAY_CHANGED: &str = "play-changed";
-    /// Whole-game analysis progress changed; `(done, total)`.
-    pub const BATCH_PROGRESS: &str = "batch-progress";
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TreeEpoch(pub(crate) u64);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct NodeRef {
+    pub epoch: TreeEpoch,
+    pub id: NodeId,
 }
+
+pub enum Change {
+    Tree,
+    Cursor,
+    Report,
+    Engine,
+    Toast(String),
+    Play,
+    BatchProgress(u32, u32),
+}
+#[derive(Clone, Debug)]
+pub enum EngineState {
+    None,
+    Starting {
+        profile: String,
+    },
+    Ready {
+        profile: String,
+        description: String,
+    },
+    Failed {
+        profile: String,
+        message: String,
+    },
+}
+
+impl EngineState {
+    pub fn label(&self) -> String {
+        match self {
+            Self::None => "No engine".to_string(),
+            Self::Starting { profile } => format!("Starting {profile}…"),
+            Self::Ready { description, .. } => description.clone(),
+            Self::Failed { profile, .. } => format!("{profile} unavailable"),
+        }
+    }
+}
+
+type ChangeHook = Box<dyn Fn(Change)>;
 
 mod imp {
     use super::*;
-    use glib::subclass::Signal;
-    use std::sync::LazyLock;
 
     #[derive(glib::Properties)]
     #[properties(wrapper_type = super::AppState)]
@@ -81,6 +108,7 @@ mod imp {
 
         pub tree: RefCell<GameTree>,
         pub cursor: Cell<NodeId>,
+        pub tree_epoch: Cell<TreeEpoch>,
         pub config: RefCell<Config>,
         /// The configuration as this window loaded it, so a save can tell which keys this
         /// window actually changed and leave another window's edits alone.
@@ -89,6 +117,7 @@ mod imp {
         pub engine: RefCell<Option<Arc<dyn Engine>>>,
         /// The application-wide engines, shared with every other window.
         pub pool: RefCell<Rc<EnginePool>>,
+        pub engine_state: RefCell<EngineState>,
         pub runtime: RefCell<Option<tokio::runtime::Handle>>,
         pub report: RefCell<Option<Arc<Report>>>,
         /// The live-analysis pump. Aborting it drops the `Subscription`, which terminates
@@ -97,9 +126,12 @@ mod imp {
         /// Bumped on every `activate_profile` so a slow engine start can tell it has been
         /// superseded by a newer selection.
         pub activation: Cell<u64>,
+        /// The profile startup waiter. Replacing or closing the window aborts it.
+        pub activation_task: RefCell<Option<glib::JoinHandle<()>>>,
         /// Bumped on every analysis restart so a stale pump can tell it has been superseded.
         pub generation: Cell<u64>,
         /// Visits-per-second meter for the search that is running now; `None` when none is.
+        pub change_hook: RefCell<Option<ChangeHook>>,
         pub speed: Cell<Option<SpeedMeter>>,
     }
 
@@ -121,6 +153,8 @@ mod imp {
                 modified: Cell::new(false),
                 tree: RefCell::new(tree),
                 cursor: Cell::new(root),
+                tree_epoch: Cell::new(TreeEpoch(0)),
+                engine_state: RefCell::new(EngineState::None),
                 config: RefCell::new(Config::default()),
                 config_base: RefCell::new(Config::default()),
                 config_path: RefCell::new(PathBuf::new()),
@@ -130,7 +164,9 @@ mod imp {
                 report: RefCell::new(None),
                 pump: RefCell::new(None),
                 activation: Cell::new(0),
+                activation_task: RefCell::new(None),
                 generation: Cell::new(0),
+                change_hook: RefCell::new(None),
                 speed: Cell::new(None),
             }
         }
@@ -143,26 +179,7 @@ mod imp {
     }
 
     #[glib::derived_properties]
-    impl ObjectImpl for AppState {
-        fn signals() -> &'static [Signal] {
-            static SIGNALS: LazyLock<Vec<Signal>> = LazyLock::new(|| {
-                vec![
-                    Signal::builder(signal::TREE_CHANGED).build(),
-                    Signal::builder(signal::CURSOR_CHANGED).build(),
-                    Signal::builder(signal::REPORT).build(),
-                    Signal::builder(signal::ENGINE_CHANGED).build(),
-                    Signal::builder(signal::TOAST)
-                        .param_types([String::static_type()])
-                        .build(),
-                    Signal::builder(signal::PLAY_CHANGED).build(),
-                    Signal::builder(signal::BATCH_PROGRESS)
-                        .param_types([u32::static_type(), u32::static_type()])
-                        .build(),
-                ]
-            });
-            &SIGNALS
-        }
-    }
+    impl ObjectImpl for AppState {}
 
     impl AppState {
         fn set_live_analysis(&self, on: bool) {
@@ -226,6 +243,16 @@ impl AppState {
         *imp.runtime.borrow_mut() = Some(runtime);
         *imp.pool.borrow_mut() = pool;
         this
+    }
+    pub fn set_change_hook(&self, hook: impl Fn(Change) + 'static) {
+        let old = self.imp().change_hook.borrow_mut().replace(Box::new(hook));
+        assert!(old.is_none(), "AppState change dispatcher installed twice");
+    }
+
+    pub fn changed(&self, change: Change) {
+        if let Some(hook) = self.imp().change_hook.borrow().as_ref() {
+            hook(change);
+        }
     }
 
     pub fn pool(&self) -> Rc<EnginePool> {
@@ -292,7 +319,7 @@ impl AppState {
     pub fn with_tree_mut<R>(&self, f: impl FnOnce(&mut GameTree) -> R) -> R {
         let out = f(&mut self.imp().tree.borrow_mut());
         self.set_modified(true);
-        self.emit_by_name::<()>(signal::TREE_CHANGED, &[]);
+        self.changed(Change::Tree);
         out
     }
 
@@ -306,19 +333,45 @@ impl AppState {
         {
             let imp = self.imp();
             *imp.tree.borrow_mut() = tree;
+            imp.tree_epoch
+                .set(TreeEpoch(imp.tree_epoch.get().0.wrapping_add(1)));
             imp.cursor.set(cursor.unwrap_or(root));
             // A report belongs to one exact position; after replacing the game it may not
             // even have the same board size.
             imp.report.replace(None);
         }
         self.set_modified(false);
-        self.emit_by_name::<()>(signal::TREE_CHANGED, &[]);
-        self.emit_by_name::<()>(signal::CURSOR_CHANGED, &[]);
+        self.changed(Change::Tree);
+        self.changed(Change::Cursor);
         self.restart_analysis();
     }
 
     pub fn cursor(&self) -> NodeId {
         self.imp().cursor.get()
+    }
+
+    #[inline]
+    pub fn tree_epoch(&self) -> TreeEpoch {
+        self.imp().tree_epoch.get()
+    }
+
+    #[inline]
+    pub fn node_ref(&self, id: NodeId) -> NodeRef {
+        NodeRef {
+            epoch: self.imp().tree_epoch.get(),
+            id,
+        }
+    }
+
+    #[inline]
+    pub fn cursor_ref(&self) -> NodeRef {
+        self.node_ref(self.cursor())
+    }
+
+    #[inline]
+    pub fn resolve_node(&self, node: NodeRef) -> Option<NodeId> {
+        (node.epoch == self.imp().tree_epoch.get() && self.tree().contains(node.id))
+            .then_some(node.id)
     }
 
     pub fn set_cursor(&self, id: NodeId) {
@@ -327,8 +380,8 @@ impl AppState {
         }
         self.imp().cursor.set(id);
         self.imp().report.replace(None);
-        self.emit_by_name::<()>(signal::CURSOR_CHANGED, &[]);
-        self.emit_by_name::<()>(signal::REPORT, &[]);
+        self.changed(Change::Cursor);
+        self.changed(Change::Report);
         self.restart_analysis();
     }
 
@@ -349,8 +402,8 @@ impl AppState {
         let id = self.with_tree_mut(|t| t.play(cursor, color, p))?;
         self.imp().cursor.set(id);
         self.imp().report.replace(None);
-        self.emit_by_name::<()>(signal::CURSOR_CHANGED, &[]);
-        self.emit_by_name::<()>(signal::REPORT, &[]);
+        self.changed(Change::Cursor);
+        self.changed(Change::Report);
         self.restart_analysis();
         Ok(id)
     }
@@ -438,22 +491,34 @@ impl AppState {
     pub fn engine_desc(&self) -> Option<EngineDesc> {
         self.engine().map(|e| e.describe())
     }
+    pub fn engine_state(&self) -> EngineState {
+        self.imp().engine_state.borrow().clone()
+    }
+
+    fn set_engine_state(&self, state: EngineState) {
+        self.set_engine_label(state.label());
+        *self.imp().engine_state.borrow_mut() = state;
+        self.changed(Change::Engine);
+    }
 
     pub fn set_engine(&self, engine: Option<Arc<dyn Engine>>) {
-        let label = match &engine {
-            Some(e) => {
-                let d = e.describe();
-                if d.katago_version.is_empty() {
-                    d.name
+        let state = match &engine {
+            Some(engine) => {
+                let desc = engine.describe();
+                let description = if desc.katago_version.is_empty() {
+                    desc.name.clone()
                 } else {
-                    format!("{} ({})", d.name, d.katago_version)
+                    format!("{} ({})", desc.name, desc.katago_version)
+                };
+                EngineState::Ready {
+                    profile: desc.name,
+                    description,
                 }
             }
-            None => "No engine".to_string(),
+            None => EngineState::None,
         };
         *self.imp().engine.borrow_mut() = engine;
-        self.set_engine_label(label);
-        self.emit_by_name::<()>(signal::ENGINE_CHANGED, &[]);
+        self.set_engine_state(state);
         self.restart_analysis();
     }
 
@@ -466,14 +531,13 @@ impl AppState {
             self.toast(format!("No engine profile named “{name}”"));
             return;
         };
-        // Starting an engine is slow (a local KataGo takes seconds to load its net). If the
-        // user picks another engine meanwhile, the older start MUST NOT install itself over
-        // the newer one — that used to silently drop a freshly connected remote engine.
+        if let Some(task) = self.imp().activation_task.borrow_mut().take() {
+            task.abort();
+        }
+        // Starting an engine is slow. A later selection supersedes this one.
         let activation = self.imp().activation.get().wrapping_add(1);
         self.imp().activation.set(activation);
 
-        // Already running, here or in another window: adopt it without blanking the readout
-        // or restarting KataGo.
         if let Some(engine) = self.pool().running(&profile) {
             self.set_busy(false);
             self.set_status(String::new());
@@ -482,18 +546,20 @@ impl AppState {
             return;
         }
 
-        self.set_engine(None);
+        *self.imp().engine.borrow_mut() = None;
+        self.set_engine_state(EngineState::Starting {
+            profile: profile.name.clone(),
+        });
         self.set_busy(true);
-        self.set_status(format!("Starting {}…", profile.name));
+        self.set_status(String::new());
 
         let log_dir = crate::config::Config::data_dir()
             .unwrap_or_else(|_| std::env::temp_dir())
             .join("katago-logs");
         let acquire = self.pool().acquire(profile, log_dir, self.runtime());
-
         let this = self.clone();
         let profile_name = name.to_string();
-        glib::spawn_future_local(async move {
+        let handle = glib::spawn_future_local(async move {
             let result = acquire.await;
             if this.imp().activation.get() != activation {
                 tracing::debug!(
@@ -510,11 +576,18 @@ impl AppState {
                     this.set_engine(Some(engine));
                 }
                 Err(e) => {
-                    this.toast(format!("{profile_name}: {e}"));
-                    this.set_engine(None);
+                    let message = e.to_string();
+                    this.toast(format!("{profile_name}: {message}"));
+                    *this.imp().engine.borrow_mut() = None;
+                    this.set_engine_state(EngineState::Failed {
+                        profile: profile_name,
+                        message,
+                    });
+                    this.restart_analysis();
                 }
             }
         });
+        *self.imp().activation_task.borrow_mut() = Some(handle);
     }
 
     /// Records the profile now in use, and any certificate fingerprint worth pinning.
@@ -695,7 +768,19 @@ impl AppState {
             let mut tree = self.imp().tree.borrow_mut();
             tree.set_analysis(cursor, Some(crate::util::analysis_of(&report, max)));
         }
-        self.emit_by_name::<()>(signal::REPORT, &[]);
+        self.changed(Change::Report);
+    }
+
+    /// Cancels every future owned by this window state.
+    pub fn cancel_tasks(&self) {
+        let imp = self.imp();
+        if let Some(task) = imp.activation_task.borrow_mut().take() {
+            task.abort();
+        }
+        if let Some(task) = imp.pump.borrow_mut().take() {
+            task.abort();
+        }
+        imp.generation.set(imp.generation.get().wrapping_add(1));
     }
 
     pub fn on_engine_error(&self, e: EngineError) {
@@ -707,16 +792,27 @@ impl AppState {
     }
 
     pub fn toast(&self, msg: impl Into<String>) {
-        self.emit_by_name::<()>(signal::TOAST, &[&msg.into()]);
+        self.changed(Change::Toast(msg.into()));
+    }
+
+    /// Reports an illegal move only when the board itself does not already explain it.
+    pub fn toast_illegal_move(&self, error: IllegalMove) {
+        if should_toast_illegal_move(error) {
+            self.toast(error.to_string());
+        }
     }
 
     pub fn notify_play_changed(&self) {
-        self.emit_by_name::<()>(signal::PLAY_CHANGED, &[]);
+        self.changed(Change::Play);
     }
 
     pub fn notify_batch_progress(&self, done: u32, total: u32) {
-        self.emit_by_name::<()>(signal::BATCH_PROGRESS, &[&done, &total]);
+        self.changed(Change::BatchProgress(done, total));
     }
+}
+
+fn should_toast_illegal_move(error: IllegalMove) -> bool {
+    !matches!(error, IllegalMove::Occupied)
 }
 
 /// Measures how fast a search is running, in visits per second.
@@ -777,6 +873,13 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    #[test]
+    fn occupied_points_need_no_redundant_toast() {
+        assert!(!should_toast_illegal_move(IllegalMove::Occupied));
+        assert!(should_toast_illegal_move(IllegalMove::Suicide));
+        assert!(should_toast_illegal_move(IllegalMove::Ko));
+        assert!(should_toast_illegal_move(IllegalMove::OffBoard));
+    }
     #[test]
     fn speed_meter_measures_visits_per_second() {
         let t0 = Instant::now();

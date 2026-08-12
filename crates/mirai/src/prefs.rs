@@ -6,7 +6,7 @@
 //! Everything here writes straight through to [`crate::config::Config`] and calls
 //! [`AppState::save_config`], so the on-disk `config.toml` is always what the dialog shows.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -15,24 +15,65 @@ use gtk::{gio, glib};
 
 use mirai_core::RuleSet;
 
-use crate::app::{AppState, signal};
+use crate::app::{AppState, Change};
 use crate::config::{EngineProfile, ProfileKind, StrengthSetting};
+use crate::preferences_shell::{PreferencesDialog, PreferencesWidgets};
+use crate::profile_editor::ProfileEditorPage;
 use mirai_engine::{CalibrationConfig, CalibrationProgress, CalibrationResult, EngineTuning};
+type WindowWatch = (gtk::Application, glib::SignalHandlerId);
 
-/// Builds and presents the preferences dialog.
+struct CalibrationRun {
+    state: AppState,
+    previous: Option<String>,
+    save: gtk::Button,
+    tune: gtk::Button,
+    task: tokio::task::JoinHandle<()>,
+    window_watch: Option<WindowWatch>,
+}
+
+impl CalibrationRun {
+    fn disconnect_window_watch(&mut self) {
+        if let Some((app, id)) = self.window_watch.take() {
+            app.disconnect(id);
+        }
+    }
+
+    fn finish(&mut self) {
+        self.disconnect_window_watch();
+        self.save.set_sensitive(true);
+        self.tune.set_sensitive(true);
+        restore_engine(&self.state, self.previous.as_deref());
+    }
+
+    fn cancel(mut self) {
+        self.disconnect_window_watch();
+        self.task.abort();
+        let state = self.state.clone();
+        let previous = self.previous.clone();
+        let save = self.save.clone();
+        let tune = self.tune.clone();
+        // Strong transient capture: this ends after the shutdown grace.
+        glib::spawn_future_local(async move {
+            glib::timeout_future(
+                mirai_engine::LOCAL_ENGINE_SHUTDOWN_GRACE + std::time::Duration::from_millis(250),
+            )
+            .await;
+            restore_engine(&state, previous.as_deref());
+            save.set_sensitive(true);
+            tune.set_sensitive(true);
+        });
+    }
+}
+
+/// Builds, wires and presents the preferences dialog.
 pub fn present(parent: &impl IsA<gtk::Widget>, state: &AppState) {
-    let dialog = adw::PreferencesDialog::builder()
-        .title("Preferences")
-        // Wide enough for the four-page view switcher to spell "Appearance" out; below this
-        // libadwaita ellipsises the last title rather than falling back to its narrow layout.
-        .content_width(760)
-        .content_height(720)
-        .build();
+    let dialog = PreferencesDialog::new();
+    let widgets = dialog.widgets();
 
-    dialog.add(&engines_page(&dialog, state));
-    dialog.add(&analysis_page(state));
-    dialog.add(&play_page(state));
-    dialog.add(&appearance_page(state));
+    connect_engines(&dialog, &widgets, state);
+    connect_analysis(&widgets, state);
+    connect_play(&widgets, state);
+    connect_appearance(&widgets, state);
 
     dialog.present(Some(parent));
 }
@@ -41,7 +82,7 @@ pub fn present(parent: &impl IsA<gtk::Widget>, state: &AppState) {
 pub fn no_engine_status_page() -> adw::StatusPage {
     adw::StatusPage::builder()
         .icon_name("application-x-executable-symbolic")
-        .title("No engine configured")
+        .title("No Engine Configured")
         .description("Add a local KataGo or a remote mirai-server in Preferences.")
         .build()
 }
@@ -81,73 +122,30 @@ pub fn engine_menu_model(state: &AppState) -> gio::Menu {
 
 // -- Engines ----------------------------------------------------------------------------
 
-fn engines_page(dialog: &adw::PreferencesDialog, state: &AppState) -> adw::PreferencesPage {
-    let page = adw::PreferencesPage::builder()
-        .title("Engines")
-        .icon_name("application-x-executable-symbolic")
-        .build();
-
-    let group = adw::PreferencesGroup::builder()
-        .title("Engine profiles")
-        .description("The selected profile provides analysis and plays as the computer.")
-        .build();
-    page.add(&group);
-
-    let buttons = adw::PreferencesGroup::new();
-    let row = gtk::Box::builder()
-        .spacing(12)
-        .halign(gtk::Align::Center)
-        .build();
-
-    // `gtk::Button` carries either a label or an icon, never both — setting `icon_name`
-    // drops the label, leaving two unexplained icons. `adw::ButtonContent` shows both.
-    let add_local = gtk::Button::builder()
-        .child(
-            &adw::ButtonContent::builder()
-                .icon_name("list-add-symbolic")
-                .label("Add local…")
-                .build(),
-        )
-        .build();
-    add_local.add_css_class("pill");
-    let add_remote = gtk::Button::builder()
-        .child(
-            &adw::ButtonContent::builder()
-                .icon_name("network-server-symbolic")
-                .label("Add remote…")
-                .build(),
-        )
-        .build();
-    add_remote.add_css_class("pill");
-    row.append(&add_local);
-    row.append(&add_remote);
-    buttons.add(&row);
-    page.add(&buttons);
-
+fn connect_engines(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state: &AppState) {
     let local_state = state.clone();
-    add_local.connect_clicked(glib::clone!(
+    widgets.add_local_button.connect_clicked(glib::clone!(
         #[weak]
         dialog,
-        #[weak]
-        group,
+        #[weak(rename_to = group)]
+        widgets.profiles_group,
         move |_| {
-            open_editor(&dialog, &group, &local_state, None, false);
+            open_editor(dialog.upcast_ref(), &group, &local_state, None, false);
         }
     ));
 
     let remote_state = state.clone();
-    add_remote.connect_clicked(glib::clone!(
+    widgets.add_remote_button.connect_clicked(glib::clone!(
         #[weak]
         dialog,
-        #[weak]
-        group,
+        #[weak(rename_to = group)]
+        widgets.profiles_group,
         move |_| {
-            open_editor(&dialog, &group, &remote_state, None, true);
+            open_editor(dialog.upcast_ref(), &group, &remote_state, None, true);
         }
     ));
 
-    refresh_profiles(&group, dialog, state);
-    page
+    refresh_profiles(&widgets.profiles_group, dialog.upcast_ref(), state);
 }
 
 /// Rebuilds the profile list in place. Called after every mutation.
@@ -173,7 +171,7 @@ fn refresh_profiles(
 
     if profiles.is_empty() {
         let empty = adw::ActionRow::builder()
-            .title("No engine profiles yet")
+            .title("No Engine Profiles Yet")
             .subtitle("Add a local KataGo installation or a remote mirai-server.")
             .build();
         empty.set_activatable(false);
@@ -271,7 +269,7 @@ fn confirm_delete(
     name: String,
 ) {
     let alert = adw::AlertDialog::new(
-        Some("Delete this profile?"),
+        Some("Delete This Profile?"),
         Some(&format!(
             "“{name}” will be removed from the configuration. Nothing on disk is deleted."
         )),
@@ -307,7 +305,7 @@ fn confirm_delete(
                     // The engine it points at is gone; stop using it.
                     state.set_engine(None);
                 } else {
-                    state.emit_by_name::<()>(signal::ENGINE_CHANGED, &[]);
+                    state.changed(Change::Engine);
                 }
                 state.toast(format!("Deleted “{name}”"));
                 refresh_profiles(&group, &dialog, &state);
@@ -329,26 +327,12 @@ struct Editor {
 }
 
 fn editor_shell(title: &str) -> Editor {
-    let header = adw::HeaderBar::new();
-    let save = gtk::Button::with_label("Save profile");
-    save.add_css_class("suggested-action");
-    header.pack_end(&save);
-
-    let banner = adw::Banner::new("");
-
-    let content = adw::PreferencesPage::new();
-
-    let toolbar = adw::ToolbarView::new();
-    toolbar.add_top_bar(&header);
-    toolbar.add_top_bar(&banner);
-    toolbar.set_content(Some(&content));
-
-    let page = adw::NavigationPage::new(&toolbar, title);
+    let page = ProfileEditorPage::new(title);
     Editor {
-        page,
-        content,
-        save,
-        banner,
+        content: page.content(),
+        save: page.save_button(),
+        banner: page.banner(),
+        page: page.upcast(),
     }
 }
 
@@ -608,9 +592,9 @@ fn measured_subtitle(result: &CalibrationResult) -> String {
         .fold(0.0_f64, f64::max);
     let best = candidate_summary(tuning.analysis_threads, tuning.search_threads);
     if speed > 0.0 {
-        format!("Fastest here: {best} — about {speed:.0} visits/s. Press Save profile to apply.")
+        format!("Fastest here: {best} — about {speed:.0} visits/s. Press Save Profile to apply.")
     } else {
-        format!("Fastest here: {best}. Press Save profile to apply.")
+        format!("Fastest here: {best}. Press Save Profile to apply.")
     }
 }
 
@@ -639,7 +623,7 @@ fn tuning_progress() -> (adw::AlertDialog, gtk::ProgressBar, gtk::Label) {
         ),
     );
     dialog.set_extra_child(Some(&body));
-    dialog.add_response("cancel", "Stop tuning");
+    dialog.add_response("cancel", "Stop Tuning");
     dialog.set_close_response("cancel");
     dialog.set_default_response(Some("cancel"));
     (dialog, bar, caption)
@@ -715,9 +699,9 @@ fn local_editor(
         .unwrap_or_default();
 
     let editor = editor_shell(if editing.is_some() {
-        "Edit local engine"
+        "Edit Local Engine"
     } else {
-        "Add local engine"
+        "Add Local Engine"
     });
 
     let identity = adw::PreferencesGroup::new();
@@ -777,7 +761,7 @@ fn local_editor(
     // A custom file has to carry these two itself — KataGo will not start without
     // `nnMaxBatchSize` — so there is nothing for mirai to override.
     let memory = adw::PreferencesGroup::builder()
-        .title("Batching and memory")
+        .title("Batching and Memory")
         .build();
     let batch_row = tuned_row(
         "GPU batch size",
@@ -808,14 +792,14 @@ fn local_editor(
     // driver version. The run needs the machine to itself, hence the engine shutdown and
     // the refusal to start with a second window open.
     let auto = adw::PreferencesGroup::builder()
-        .title("Automatic tuning")
+        .title("Automatic Tuning")
         .description(
             "Times KataGo on this machine at a series of thread settings and fills in the \
              values above. It starts KataGo once per setting, so allow a few minutes.",
         )
         .build();
     let tune_row = adw::ActionRow::builder()
-        .title("Measure this machine")
+        .title("Measure This Machine")
         .subtitle(
             "Uses the binary and model chosen above, and stops the running engine while \
              it works.",
@@ -917,8 +901,8 @@ fn local_editor(
                         + std::time::Duration::from_millis(250),
                 )
                 .await;
-                let outcome = mirai_engine::calibrate(config, move |progress| {
-                    let _ = progress_tx.send(progress);
+                let outcome = mirai_engine::calibrate(config, move |step| {
+                    let _ = progress_tx.send(step);
                 })
                 .await;
                 let _ = done_tx.send(outcome);
@@ -929,8 +913,7 @@ fn local_editor(
 
             // Opening a game during the run creates another AppState and may start another
             // KataGo. Abort instead of presenting measurements taken against a contended GPU.
-            let window_watch = Rc::new(RefCell::new(None));
-            if let Some(app) = dialog
+            let window_watch = if let Some(app) = dialog
                 .root()
                 .and_downcast::<gtk::Window>()
                 .and_then(|window| window.application())
@@ -946,47 +929,28 @@ fn local_editor(
                         watch_progress.close();
                     }
                 });
-                window_watch.replace(Some((app, id)));
-            }
+                Some((app, id))
+            } else {
+                None
+            };
 
-            // Whichever comes first — the run finishing or the user cancelling — owns the
-            // teardown; the other side finds the flag set and leaves it alone.
-            let finished = Rc::new(Cell::new(false));
-
+            // Exactly one owner takes and tears down the run. Completion and cancellation
+            // therefore cannot both restore the engine or leave a signal handler connected.
+            let run = Rc::new(RefCell::new(Some(CalibrationRun {
+                state: tune_state.clone(),
+                previous,
+                save: tune_save.clone(),
+                tune: button.clone(),
+                task,
+                window_watch,
+            })));
             {
-                let finished = finished.clone();
-                let state = tune_state.clone();
-                let previous = previous.clone();
-                let save = tune_save.clone();
-                let button = button.clone();
-                let window_watch = window_watch.clone();
+                let run = run.clone();
                 progress.connect_response(None, move |_, _| {
-                    if finished.replace(true) {
+                    let Some(run) = run.borrow_mut().take() else {
                         return;
-                    }
-                    if let Some((app, id)) = window_watch.borrow_mut().take() {
-                        app.disconnect(id);
-                    }
-                    // Aborting drops the calibration's engine and its subscription inside
-                    // the runtime, which is the whole cancellation mechanism. Unlike the
-                    // normal completion path there is no shutdown acknowledgement to await,
-                    // so do not restore the saved engine inside LocalEngine's shutdown grace.
-                    task.abort();
-                    let state = state.clone();
-                    let previous = previous.clone();
-                    let save = save.clone();
-                    let button = button.clone();
-                    // Strong transient capture: this ends after the shutdown grace.
-                    glib::spawn_future_local(async move {
-                        glib::timeout_future(
-                            mirai_engine::LOCAL_ENGINE_SHUTDOWN_GRACE
-                                + std::time::Duration::from_millis(250),
-                        )
-                        .await;
-                        restore_engine(&state, previous.as_deref());
-                        save.set_sensitive(true);
-                        button.set_sensitive(true);
-                    });
+                    };
+                    run.cancel();
                 });
             }
 
@@ -1007,26 +971,18 @@ fn local_editor(
                 }
             });
 
-            let state = tune_state.clone();
             let banner = tune_banner.clone();
-            let save = tune_save.clone();
-            let button = button.clone();
             let analysis_row = tune_analysis.clone();
             let search_row = tune_search.clone();
             let batch_row = tune_batch.clone();
-            let window_watch = window_watch.clone();
             glib::spawn_future_local(async move {
                 let outcome = done_rx.await;
-                if finished.replace(true) {
-                    // Cancelled: the response handler has already put everything back.
+                let Some(mut run) = run.borrow_mut().take() else {
+                    // Cancelled: the response handler owns teardown.
                     return;
-                }
-                if let Some((app, id)) = window_watch.borrow_mut().take() {
-                    app.disconnect(id);
-                }
+                };
+                // Taking ownership first makes the response emitted by close a no-op.
                 progress.close();
-                save.set_sensitive(true);
-                button.set_sensitive(true);
                 match outcome {
                     Ok(Ok(result)) => {
                         // Only the three values the run measured. The cache is a memory
@@ -1040,7 +996,7 @@ fn local_editor(
                     // The result channel only goes away with the task behind it.
                     Err(_) => complain(&banner, "The tuning run stopped without a result."),
                 }
-                restore_engine(&state, previous.as_deref());
+                run.finish();
             });
         }
     ));
@@ -1162,9 +1118,9 @@ fn remote_editor(
         Rc::new(RefCell::new(cert.map(|c| (url.clone(), c))));
 
     let editor = editor_shell(if editing.is_some() {
-        "Edit remote engine"
+        "Edit Remote Engine"
     } else {
-        "Add remote engine"
+        "Add Remote Engine"
     });
 
     let identity = adw::PreferencesGroup::new();
@@ -1204,7 +1160,7 @@ fn remote_editor(
         .build();
     trust_row.set_use_markup(false);
     trust_row.set_subtitle_lines(3);
-    let test = gtk::Button::with_label("Test connection");
+    let test = gtk::Button::with_label("Test Connection");
     test.set_valign(gtk::Align::Center);
     trust_row.add_suffix(&test);
     trust.add(&trust_row);
@@ -1254,7 +1210,7 @@ fn remote_editor(
             glib::spawn_future_local(async move {
                 let outcome = rx.await;
                 button.set_sensitive(true);
-                button.set_label("Test connection");
+                button.set_label("Test Connection");
                 match outcome {
                     Ok(Ok(fingerprint)) => {
                         let pinned = (url.clone(), fingerprint.clone());
@@ -1388,121 +1344,94 @@ fn commit_profile(state: &AppState, profile: EngineProfile, editing: Option<&str
         // Re-reads the profile, so edited paths and thread counts take effect immediately.
         state.activate_profile(&name);
     } else {
-        state.emit_by_name::<()>(signal::ENGINE_CHANGED, &[]);
+        state.changed(Change::Engine);
     }
 }
 
 // -- Analysis ---------------------------------------------------------------------------
 
-fn analysis_page(state: &AppState) -> adw::PreferencesPage {
-    let page = adw::PreferencesPage::builder()
-        .title("Analysis")
-        .icon_name("system-search-symbolic")
-        .build();
-
-    let live = adw::PreferencesGroup::builder()
-        .title("Live analysis")
-        .description("Used while the board follows the cursor.")
-        .build();
-    page.add(&live);
-
-    let visits = adw::SpinRow::with_range(1000.0, 10_000_000.0, 1000.0);
-    visits.set_title("Maximum visits");
-    visits.set_subtitle("Where a live search stops thinking");
-    visits.set_value(state.config().analysis.live_max_visits as f64);
+fn connect_analysis(widgets: &PreferencesWidgets, state: &AppState) {
+    let visits = &widgets.analysis_visits_row;
+    configure_spin(
+        visits,
+        1000.0,
+        10_000_000.0,
+        1000.0,
+        0,
+        state.config().analysis.live_max_visits as f64,
+    );
     let visits_state = state.clone();
     visits.connect_value_notify(move |row| {
         visits_state.config_mut().analysis.live_max_visits = row.value() as u32;
         visits_state.save_config();
     });
-    live.add(&visits);
 
-    let interval = adw::SpinRow::with_range(20.0, 1000.0, 10.0);
-    interval.set_title("Report interval");
-    interval.set_subtitle("Milliseconds between updates from the engine");
-    interval.set_value(state.config().analysis.report_interval_ms as f64);
+    let interval = &widgets.analysis_interval_row;
+    configure_spin(
+        interval,
+        20.0,
+        1000.0,
+        10.0,
+        0,
+        state.config().analysis.report_interval_ms as f64,
+    );
     let interval_state = state.clone();
     interval.connect_value_notify(move |row| {
         interval_state.config_mut().analysis.report_interval_ms = row.value() as u16;
         interval_state.save_config();
     });
-    live.add(&interval);
 
-    let suggestions = adw::SpinRow::with_range(1.0, 50.0, 1.0);
-    suggestions.set_title("Suggestions shown");
-    suggestions.set_subtitle("Candidate moves kept on the board and in the panel");
-    suggestions.set_value(state.config().analysis.max_suggestions as f64);
+    let suggestions = &widgets.analysis_suggestions_row;
+    configure_spin(
+        suggestions,
+        1.0,
+        50.0,
+        1.0,
+        0,
+        state.config().analysis.max_suggestions as f64,
+    );
     let suggestions_state = state.clone();
     suggestions.connect_value_notify(move |row| {
         suggestions_state.config_mut().analysis.max_suggestions = row.value() as u8;
         suggestions_state.save_config();
     });
-    live.add(&suggestions);
 
-    let batch = adw::PreferencesGroup::builder()
-        .title("Whole-game analysis")
-        .build();
-    page.add(&batch);
-
-    let batch_visits = adw::SpinRow::with_range(100.0, 100_000.0, 100.0);
-    batch_visits.set_title("Visits per move");
-    batch_visits.set_subtitle("Budget for each position when analysing a whole game");
-    batch_visits.set_value(state.config().analysis.batch_visits as f64);
+    let batch_visits = &widgets.analysis_batch_visits_row;
+    configure_spin(
+        batch_visits,
+        100.0,
+        100_000.0,
+        100.0,
+        0,
+        state.config().analysis.batch_visits as f64,
+    );
     let batch_state = state.clone();
     batch_visits.connect_value_notify(move |row| {
         batch_state.config_mut().analysis.batch_visits = row.value() as u32;
         batch_state.save_config();
     });
-    batch.add(&batch_visits);
-
-    page
 }
 
 // -- Play -------------------------------------------------------------------------------
 
 const STRENGTH_KINDS: [&str; 3] = ["Fixed visits", "Fixed time", "Human-like"];
 
-fn play_page(state: &AppState) -> adw::PreferencesPage {
-    let page = adw::PreferencesPage::builder()
-        .title("Play")
-        .icon_name("media-playback-start-symbolic")
-        .build();
+fn connect_play(widgets: &PreferencesWidgets, state: &AppState) {
+    let kind = &widgets.play_strength_kind_row;
+    let visits = &widgets.play_visits_row;
+    let seconds = &widgets.play_seconds_row;
+    let human = &widgets.play_human_row;
 
-    let strength_group = adw::PreferencesGroup::builder()
-        .title("Computer strength")
-        .description("How much thinking the computer does for each of its moves.")
-        .build();
-    page.add(&strength_group);
+    kind.set_model(Some(&gtk::StringList::new(&STRENGTH_KINDS)));
+    configure_spin(visits, 1.0, 1_000_000.0, 100.0, 0, 800.0);
+    configure_spin(seconds, 0.1, 300.0, 0.5, 1, 5.0);
+    human.set_text(crate::play::DEFAULT_HUMAN_PROFILE);
 
-    let kind = adw::ComboRow::builder()
-        .title("Mode")
-        .model(&gtk::StringList::new(&STRENGTH_KINDS))
-        .build();
-    strength_group.add(&kind);
-
-    let visits = adw::SpinRow::with_range(1.0, 1_000_000.0, 100.0);
-    visits.set_title("Visits per move");
-    strength_group.add(&visits);
-
-    let seconds = adw::SpinRow::with_range(0.1, 300.0, 0.5);
-    seconds.set_digits(1);
-    seconds.set_title("Seconds per move");
-    strength_group.add(&seconds);
-
-    let human = adw::EntryRow::builder()
-        .title("Human model profile")
-        .build();
-    strength_group.add(&human);
-
-    // Seed the rows from the stored setting; the two unused ones keep sensible defaults.
-    let selected: u32 = {
-        let cfg = state.config();
-        visits.set_value(800.0);
-        seconds.set_value(5.0);
-        human.set_text(crate::play::DEFAULT_HUMAN_PROFILE);
-        match &cfg.play.strength {
-            StrengthSetting::Visits { visits: v } => {
-                visits.set_value(*v as f64);
+    let selected = {
+        let config = state.config();
+        match &config.play.strength {
+            StrengthSetting::Visits { visits: value } => {
+                visits.set_value(*value as f64);
                 0
             }
             StrengthSetting::Time { time_ms } => {
@@ -1531,7 +1460,7 @@ fn play_page(state: &AppState) -> adw::PreferencesPage {
             if !persist {
                 return;
             }
-            let strength = match selected {
+            state.config_mut().play.strength = match selected {
                 0 => StrengthSetting::Visits {
                     visits: visits.value() as u32,
                 },
@@ -1542,7 +1471,6 @@ fn play_page(state: &AppState) -> adw::PreferencesPage {
                     profile: human.text().trim().to_string(),
                 },
             };
-            state.config_mut().play.strength = strength;
             state.save_config();
         }
     };
@@ -1554,56 +1482,63 @@ fn play_page(state: &AppState) -> adw::PreferencesPage {
     visits.connect_value_notify(move |_| on_visits(true));
     let on_seconds = sync.clone();
     seconds.connect_value_notify(move |_| on_seconds(true));
-    let on_human = sync.clone();
-    human.connect_changed(move |_| on_human(true));
+    human.connect_changed(move |_| sync(true));
 
-    let behaviour = adw::PreferencesGroup::builder().title("Behaviour").build();
-    page.add(&behaviour);
-
-    let temperature = adw::SpinRow::with_range(0.0, 2.0, 0.05);
-    temperature.set_digits(2);
-    temperature.set_title("Temperature");
-    temperature.set_subtitle("0 always plays the best move; higher values add variety");
-    temperature.set_value(state.config().play.temperature as f64);
+    let temperature = &widgets.play_temperature_row;
+    configure_spin(
+        temperature,
+        0.0,
+        2.0,
+        0.05,
+        2,
+        state.config().play.temperature as f64,
+    );
     let temperature_state = state.clone();
     temperature.connect_value_notify(move |row| {
         temperature_state.config_mut().play.temperature = row.value() as f32;
         temperature_state.save_config();
     });
-    behaviour.add(&temperature);
 
-    let threshold = adw::SpinRow::with_range(0.0, 0.5, 0.01);
-    threshold.set_digits(2);
-    threshold.set_title("Resign threshold");
-    threshold.set_subtitle("Winrate below which the computer considers resigning");
-    threshold.set_value(state.config().play.resign_threshold as f64);
+    let threshold = &widgets.play_threshold_row;
+    configure_spin(
+        threshold,
+        0.0,
+        0.5,
+        0.01,
+        2,
+        state.config().play.resign_threshold as f64,
+    );
     let threshold_state = state.clone();
     threshold.connect_value_notify(move |row| {
         threshold_state.config_mut().play.resign_threshold = row.value() as f32;
         threshold_state.save_config();
     });
-    behaviour.add(&threshold);
 
-    let streak = adw::SpinRow::with_range(1.0, 10.0, 1.0);
-    streak.set_title("Resign streak");
-    streak.set_subtitle("Consecutive hopeless moves before resigning");
-    streak.set_value(state.config().play.resign_streak as f64);
+    let streak = &widgets.play_streak_row;
+    configure_spin(
+        streak,
+        1.0,
+        10.0,
+        1.0,
+        0,
+        state.config().play.resign_streak as f64,
+    );
     let streak_state = state.clone();
     streak.connect_value_notify(move |row| {
         streak_state.config_mut().play.resign_streak = row.value() as u8;
         streak_state.save_config();
     });
-    behaviour.add(&streak);
 
-    let labels: Vec<&str> = RuleSet::ALL.iter().map(|r| r.label()).collect();
-    let rules = adw::ComboRow::builder()
-        .title("Default ruleset")
-        .subtitle("Used for new games")
-        .model(&gtk::StringList::new(&labels))
-        .build();
+    let rules = &widgets.play_rules_row;
+    let labels: Vec<&str> = RuleSet::ALL.iter().map(|rules| rules.label()).collect();
+    rules.set_model(Some(&gtk::StringList::new(&labels)));
     let current = state.config().play.rules;
-    let index = RuleSet::ALL.iter().position(|r| *r == current).unwrap_or(0) as u32;
-    rules.set_selected(index);
+    rules.set_selected(
+        RuleSet::ALL
+            .iter()
+            .position(|rules| *rules == current)
+            .unwrap_or(0) as u32,
+    );
     let rules_state = state.clone();
     rules.connect_selected_notify(move |row| {
         let Some(&chosen) = RuleSet::ALL.get(row.selected() as usize) else {
@@ -1612,81 +1547,27 @@ fn play_page(state: &AppState) -> adw::PreferencesPage {
         rules_state.config_mut().play.rules = chosen;
         rules_state.save_config();
     });
-    behaviour.add(&rules);
-
-    page
 }
 
 // -- Appearance -------------------------------------------------------------------------
 
-fn appearance_page(state: &AppState) -> adw::PreferencesPage {
-    let page = adw::PreferencesPage::builder()
-        .title("Appearance")
-        .icon_name("preferences-desktop-appearance-symbolic")
-        .build();
+fn connect_appearance(widgets: &PreferencesWidgets, state: &AppState) {
+    bind_switch(&widgets.show_coordinates_row, state, "show-coordinates");
+    bind_switch(&widgets.show_move_numbers_row, state, "show-move-numbers");
+    bind_switch(&widgets.ownership_overlay_row, state, "ownership-overlay");
+    bind_switch(&widgets.policy_overlay_row, state, "policy-overlay");
 
-    let board = adw::PreferencesGroup::builder().title("Board").build();
-    page.add(&board);
-    board.add(&bound_switch(
-        state,
-        "Coordinates",
-        "Letters and numbers around the board",
-        "show-coordinates",
-    ));
-    board.add(&bound_switch(
-        state,
-        "Move numbers",
-        "Number every stone; the last move's number is red",
-        "show-move-numbers",
-    ));
-
-    let overlays = adw::PreferencesGroup::builder()
-        .title("Overlays")
-        .description("Only one overlay is drawn at a time.")
-        .build();
-    page.add(&overlays);
-    overlays.add(&bound_switch(
-        state,
-        "Ownership",
-        "Shade each point by who is predicted to own it",
-        "ownership-overlay",
-    ));
-    overlays.add(&bound_switch(
-        state,
-        "Policy",
-        "Shade each point by the raw network policy",
-        "policy-overlay",
-    ));
-
-    let files = adw::PreferencesGroup::builder().title("Files").build();
-    page.add(&files);
-
-    let sgf = adw::SwitchRow::builder()
-        .title("Save analysis in SGF")
-        .subtitle("Write winrates and candidate moves alongside the moves")
-        .active(state.config().ui.save_analysis_in_sgf)
-        .build();
+    widgets
+        .save_analysis_row
+        .set_active(state.config().ui.save_analysis_in_sgf);
     let sgf_state = state.clone();
-    sgf.connect_active_notify(move |row| {
+    widgets.save_analysis_row.connect_active_notify(move |row| {
         sgf_state.config_mut().ui.save_analysis_in_sgf = row.is_active();
         sgf_state.save_config();
     });
-    files.add(&sgf);
-
-    page
 }
 
-/// A switch row wired both ways to an `AppState` boolean property.
-fn bound_switch(
-    state: &AppState,
-    title: &str,
-    subtitle: &str,
-    property: &'static str,
-) -> adw::SwitchRow {
-    let row = adw::SwitchRow::builder()
-        .title(title)
-        .subtitle(subtitle)
-        .build();
+fn bind_switch(row: &adw::SwitchRow, state: &AppState, property: &'static str) {
     row.bind_property("active", state, property)
         .bidirectional()
         .sync_create()
@@ -1694,7 +1575,21 @@ fn bound_switch(
     // Connected after the binding so the property is already up to date when we persist.
     let state = state.clone();
     row.connect_active_notify(move |_| state.save_config());
-    row
+}
+
+fn configure_spin(row: &adw::SpinRow, min: f64, max: f64, step: f64, digits: u32, value: f64) {
+    row.configure(
+        Some(&gtk::Adjustment::new(
+            value,
+            min,
+            max,
+            step,
+            step * 10.0,
+            0.0,
+        )),
+        0.0,
+        digits,
+    );
 }
 
 #[cfg(test)]

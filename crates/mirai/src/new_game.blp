@@ -1,0 +1,113 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Huang Zhaobin
+
+using Gtk 4.0;
+using Adw 1;
+
+template $MiraiNewGameDialog : Adw.Dialog {
+  title: _("New Game");
+  content-width: 460;
+  content-height: 620;
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      show-start-title-buttons: false;
+      show-end-title-buttons: false;
+
+      [start]
+      Gtk.Button cancel_button {
+        label: _("Cancel");
+      }
+
+      [end]
+      Gtk.Button start_button {
+        label: _("Start Game");
+        styles ["suggested-action"]
+      }
+    }
+
+
+    content: Adw.PreferencesPage {
+      title: _("New Game");
+
+      Adw.PreferencesGroup {
+        title: _("Board");
+
+        Adw.ComboRow size_row {
+          title: _("Size");
+        }
+
+        Adw.SpinRow custom_size_row {
+          title: _("Custom Size");
+          visible: false;
+        }
+
+        Adw.ComboRow handicap_row {
+          title: _("Handicap");
+        }
+
+        Adw.SpinRow komi_row {
+          title: _("Komi");
+        }
+
+        Adw.ComboRow rules_row {
+          title: _("Rules");
+        }
+      }
+
+      Adw.PreferencesGroup {
+        title: _("Players");
+        description: _("The engine takes the other colour");
+
+        Adw.ComboRow colour_row {
+          title: _("You Play");
+        }
+      }
+
+      Adw.PreferencesGroup {
+        title: _("Time Control");
+
+        Adw.ComboRow time_row {
+          title: _("Type");
+        }
+
+        Adw.SpinRow main_time_row {
+          title: _("Main Time (Minutes)");
+        }
+
+        Adw.SpinRow periods_row {
+          title: _("Byo-yomi Periods");
+        }
+
+        Adw.SpinRow period_seconds_row {
+          title: _("Seconds per Period");
+        }
+
+        Adw.SpinRow increment_row {
+          title: _("Increment (Seconds)");
+        }
+      }
+
+      Adw.PreferencesGroup strength_group {
+        title: _("Engine Strength");
+
+        Adw.ComboRow strength_row {
+          title: _("Mode");
+        }
+
+        Adw.SpinRow visits_row {
+          title: _("Visits per Move");
+        }
+
+        Adw.SpinRow seconds_row {
+          title: _("Seconds per Move");
+        }
+
+        Adw.EntryRow profile_row {
+          title: _("Human-like Profile");
+        }
+      }
+    };
+  };
+}

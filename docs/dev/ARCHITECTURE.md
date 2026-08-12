@@ -193,13 +193,13 @@ Board, win-rate graph and move tree are `gtk::Widget` subclasses drawing in `sna
 - **Rationale.** `snapshot` builds a retained render-node tree for the GPU; `DrawingArea`
   rasterises through cairo on the CPU every frame. At 10 Hz with dozens of candidate blobs and
   three text lines each, that is structural rather than a micro-optimisation.
-- **Buys.** The static board (wood, grid, star points, coordinates) is built once into a
-  `gsk::RenderNode`, cached against `StaticKey`, and replayed with one `append_node` per frame.
-  Heat maps upload as a single `gdk::MemoryTexture`. Being real widgets, they take part in
-  layout, CSS and input controllers normally.
-- **Costs.** No cairo conveniences: circles are `gsk::PathBuilder` paths, text is a
-  `pango::Layout` per string. Static-layer invalidation is manual. And the only honest way to see
-  what was drawn is to render through the app's own renderer — that is what `harness.rs` is for.
+- **Buys.** The static board is cached as one `gsk::RenderNode`; ownership and policy buffers
+  are uploaded once per report as `gdk::MemoryTexture`s; the win-rate graph caches its base
+  render node and redraws only the cursor marker while navigating. Widgets consume pushed
+  projections, so `snapshot()` does not walk `AppState` or rebuild tree-derived data.
+- **Costs.** No cairo conveniences: circles are `gsk::PathBuilder` paths and text uses
+  `pango::Layout`. Projection and cache invalidation are explicit. The honest verification path
+  is the app's own renderer through `harness.rs`.
 
 ---
 
@@ -260,26 +260,32 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 | file | owns | key symbols |
 |---|---|---|
 | `build.rs` | compiles `resources/mirai.gresource.xml` into the binary | — |
-| `src/main.rs` | process entry: tracing, the single tokio runtime, resources, CSS, the shared `EnginePool`, `activate`/`open` (one window per file) | `APP_ID`, `RESOURCE_PREFIX` |
-| `src/app.rs` | **INV-7.** `AppState`: the single source of truth *for one window* — properties, signals, tree/cursor API, engine activation, the live-analysis pump, the search-speed meter | `AppState`, `mod signal`, `with_tree_mut`, `with_tree_cached`, `set_cursor`, `play_move`, the `go_*` navigators, `activate_profile`, `remember_active`, `request_for_node`, `restart_analysis`, `set_report`, `analysis_speed`, `SpeedMeter` (+`SPEED_SMOOTHING`) |
+| `src/main.rs`, `src/application_shell.rs` | process entry and application lifetime: tracing, resources, CSS, `activate`/`open`; `MiraiApplication` uniquely owns the Tokio runtime and shared `EnginePool` and shuts them down from GObject disposal | `APP_ID`, `RESOURCE_PREFIX`, `MiraiApplication` |
+| `src/app.rs` | **INV-7.** `AppState`: the source of truth *for one window* — properties, epoch-qualified node references, tree/cursor API, explicit `EngineState`, the single `Change` dispatcher, engine activation, live-analysis pump and search-speed meter | `AppState`, `TreeEpoch`, `NodeRef`, `Change`, `EngineState`, `with_tree_mut`, `set_tree`, `resolve_node`, `set_cursor`, `play_move`, `activate_profile`, `cancel_tasks`, `request_for_node`, `restart_analysis`, `set_report`, `SpeedMeter` |
 | `src/engines.rs` | the application-wide engines: one per profile, shared by every window, held weakly so the last window to let go takes KataGo with it; writes the generated analysis config when a local profile has no custom one | `EnginePool` (`running`, `acquire`), `Built`, private `key`, `start`, `build` |
 | `src/config.rs` | `$XDG_CONFIG_HOME/mirai/config.toml`: engine profiles and preferences; ordered XDG discovery merges all model and custom-analysis candidates | `Config` (`load`, `save`, `save_merged`, `seeded`, `profile`, `active_profile`, `set_pin`, `default_path`, `data_dir`), `discover_models`, `discover_analysis_configs`, private `model_dirs`, `analysis_config_dirs`, `merge_candidates`, `overlay`, `EngineProfile`, `ProfileKind` (`Local`'s optional config and tuning fields), `AnalysisSettings`, `PlaySettings`, `StrengthSetting`, `UiSettings` |
 | `src/util.rs` | formatting helpers and the one `Report` → `NodeAnalysis` conversion | `analysis_of`, `si_visits`, `visits_per_second`, `pct1`, `signed1`, `clock_text`, `gtp` |
-| `src/window.rs` | **INV-8.** The window: layout, every `win.*` action and accelerator, SGF I/O, autosave, score estimate, shortcuts/about | `Ui`, `present`, `with_ui`, `connect_close`, `install_actions`, `primary_menu`, the `update_*` refreshers, `load_sgf`/`do_open`/`do_save`/`do_save_as`, `adopt`, `write_autosave`/`next_autosave_path`/`stale_autosaves`/`offer_restore`/`tree_has_content`, `do_score`/`show_estimate`, `delete_branch`, `AUTOSAVE_SECS`, `AUTOSAVE_PREFIX`, `SCORE_VISITS`, `DEAD_THRESHOLD` |
-| `src/fox.rs` | anonymous Fox Go nickname/UID lookup, recent-public-game picker and download; normalises Fox's SGF dialect before handing a `GameTree` to the window | `present`, private `search_games`/`fetch_game`, `parse_fox_sgf`, `normalize_handicap` |
+| `src/window.rs` | window behaviour and unique per-window `Ui`: the `Change` dispatcher, deterministic task/source registry, every `win.*` action, SGF I/O, autosave, score estimate and shutdown ordering | `Ui`, `WindowTasks`, `TaskSlot`, `SourceSlot`, `present`, `handle_change`, `connect_close`, `install_actions`, `adopt`, `write_autosave`, `do_score` |
+| `src/window_shell.rs`, `src/window.blp` | `MiraiWindow` owns exactly one `Ui` in GObject state; `close-request` and `dispose` converge on idempotent `shutdown`. The template owns the static hierarchy; Rust inserts the stateful board, graph, tree and analysis panel | `MiraiWindow`, `install_ui`, `with_ui`, `shutdown` |
+| `src/fox.rs`, `src/fox_picker.rs`, `src/fox_picker.blp` | anonymous Fox Go nickname/UID lookup, recent-public-game picker and download; `MiraiFoxPickerDialog` owns the fixed dialog hierarchy; normalises Fox's SGF dialect before handing a `GameTree` to the window | `present`, `FoxPickerDialog`, private `search_games`/`fetch_game`, `parse_fox_sgf`, `normalize_handicap` |
 | `src/widgets/mod.rs` | widget root; states the no-cairo rule | re-exports `BoardView`, `MoveTreeView`, `WinrateGraph` |
-| `src/widgets/board.rs` | the goban: static-layer cache, stones, marks, move numbers, ownership/policy heat maps, candidate blobs, PV preview, click/hover/context menu | `BoardView` (`point_at`, `set_click_hook`, `set_score_overlay`, `set_pv_preview`), `Layout` (`compute`, `hit`), `Scene`, `StaticKey`, **`VISIT_RAMP`/`ramp_rgb`**, `draw_stones`/`draw_territory`/`draw_numbers`/`draw_marks`/`draw_candidates`, `blit`, `text_on` |
-| `src/widgets/winrate.rs` | win-rate curve, score-lead curve and blunder strip, drawn from cached `NodeAnalysis` on the main line | `WinrateGraph`, `Severity` (+`color`), `severity_of_drop`, `blunder_severity`, private `Sample`, `Geom` |
-| `src/widgets/tree.rs` | the branch graph; lane layout cached against `GameTree::revision()` | `MoveTreeView` (+`in_scroller`), `lay_out`, `TreeLayout`, `Placed`, `cell_xy` |
+| `src/widgets/board.rs` | goban rendering from a pushed `BoardProjection`: cached static layer and report-time heat-map textures, stones, marks, move numbers, candidates, PV preview and input | `BoardView` (`refresh_tree`, `refresh_cursor`, `refresh_report`, `point_at`, `set_click_hook`), `BoardProjection`, `StaticKey`, `Layout`, `VISIT_RAMP` |
+| `src/widgets/winrate.rs` | cached main-line `GraphProjection`; cached base render node for curves/guides/blunders, with cursor marker drawn separately | `WinrateGraph` (`refresh`, `refresh_cursor`), `GraphProjection`, `RenderKey`, `Severity`, `Sample`, `Geom` |
+| `src/widgets/tree.rs` | branch graph from a pushed `TreeLayout`, rebuilt on tree changes and reused for cursor-only redraws | `MoveTreeView` (`refresh`, `refresh_cursor`), `lay_out`, `TreeLayout`, `Placed`, `cell_xy` |
 | `src/panels/mod.rs` | sidebar panel root | re-exports `AnalysisPanel` |
-| `src/panels/analysis.rs` | the Analysis page: root readout, candidate `ColumnView` spliced in place at report rate, blunder list | `AnalysisPanel` (`connect_pv_preview`, `set_blunders`, `clear_blunders`), `CandidateObject`, `Row`, `Headline`, `severity_class`, `pv_text`, `text_column` |
-| `src/play.rs` | play mode: turn tracking, clocks, the AI's subscription, resignation, end-of-game scoring | `PlayController` (`start`, `stop`, `on_human_move`, `pass`, `resign`, `undo`, `clocks`, `attach_board`, `set_analyse_hook`), `PlaySession`, `PlayState`, `GameSetup`, `Strength`, `tick_clock`, `resign_check`, `select_move_index`, `result_phrase` |
-| `src/batch.rs` | whole-game analysis: bounded-concurrency sweep over the main line, blunder extraction | `BatchAnalysis` (`start`, `cancel`, `banner`, `connect_finished`), `blunders`, `Blunder`, `in_flight`, `BLUNDER_MIN_DROP`, private `run_worker` |
-| `src/dialogs.rs` | New Game, score summary, certificate confirmation | `new_game`, `show_score_with`, `confirm_fingerprint`, `grey_out_human` |
-| `src/prefs.rs` | preferences dialog, profile editors and header-bar engine menu; writes through to `Config`. Each path row carries a chooser over the merged discovered candidates plus a file button for anything else; managed configs expose tuning and memory, custom configs hide managed-only controls | `present`, `engine_menu_model`, `no_engine_status_page`, private `engines_page`, `refresh_profiles`, `editor_shell`, `open_editor`, `local_editor`, `file_row`, `discovered_button`, `candidate_labels`, `tuned_row`, `cache_subtitle` |
-| `src/harness.rs` | debug-only scripted-UI harness, inert unless `MIRAI_HARNESS` is set; renders through the app's own GSK renderer | `install`, `parse`, `activate`, `press` (matches a button's visible text: `GtkButton` label, then the first `gtk::Label` in its subtree so `adw::ButtonContent` works, then the tooltip; a matching `gtk::MenuButton` is popped up), `select` (sets a visible `adw::ComboRow` by title), `shot` |
+| `src/panels/analysis.rs`, `src/panels/analysis.blp` | the `MiraiAnalysisPanel` composite template, candidate `ColumnView` model spliced in place at report rate, and dynamic blunder rows | `AnalysisPanel` (`connect_pv_preview`, `set_blunders`, `clear_blunders`), `CandidateObject`, `Row`, `Headline`, `severity_class`, `pv_text`, `text_column` |
+| `src/play.rs` | window-owned play state machine: turn tracking, clocks, AI subscription, resignation and scoring; async callbacks carry only a weak `MiraiWindow` | `PlayController`, `PlaySession`, `PlayState`, `GameSetup`, `Strength`, `tick_clock`, `resign_check`, `select_move_index` |
+| `src/batch.rs` | window-owned whole-game coordinator: one runtime task owns the bounded queue and subscriptions; GTK receives typed completion messages | `BatchAnalysis`, `BatchMessage`, `RuntimeTask`, `blunders`, `Blunder`, `in_flight`, `BLUNDER_MIN_DROP` |
+| `src/new_game.rs`, `src/new_game.blp` | The `MiraiNewGameDialog` `CompositeTemplate` and its state-dependent setup wiring | `present`, `NewGameDialog` |
+| `src/dialogs.rs` | Dynamic result and certificate-confirmation alert dialogs | `show_score_with`, `confirm_fingerprint` |
+| `src/preferences_shell.rs`, `src/preferences.blp` | The `MiraiPreferencesDialog` `CompositeTemplate`: four fixed pages, groups, controls and accessible labels | `PreferencesDialog`, `PreferencesWidgets` |
+| `src/profile_editor.rs`, `src/profile_editor.blp` | Shared `MiraiProfileEditorPage` `CompositeTemplate`: navigation chrome, save action, error banner and content slot for both profile editors | `ProfileEditorPage` |
+| `src/prefs.rs` | preferences and profile editors; managed engine calibration is owned by one `CalibrationRun`, so completion and cancellation share one teardown path | `present`, `CalibrationRun`, `engine_menu_model`, `open_editor`, `local_editor`, `file_row`, `candidate_labels` |
+| `src/harness.rs` | debug-only scripted-UI harness; drives actions/dialog controls, waits on visible status, closes individual windows, and renders through the app's GSK renderer | `install`, `parse`, `activate`, `press`, `wait_status`, `shot` |
 
-Non-Rust in `crates/mirai`: `resources/style.css` (`board-area`, `mirai-clock`, `mirai-readout`,
+Non-Rust in `crates/mirai`: `src/window.blp`, `src/new_game.blp`, `src/preferences.blp`,
+`src/profile_editor.blp`, `src/fox_picker.blp` and `src/panels/analysis.blp` (Blueprint
+composite templates), `resources/style.css` (`board-area`, `mirai-clock`, `mirai-readout`,
 `mirai-winrate`, `mirai-movetree`) and `resources/mirai.gresource.xml`.
 
 ### Quick index
@@ -289,7 +295,7 @@ Non-Rust in `crates/mirai`: `resources/style.css` (`board-area`, `mirai-clock`, 
 | how candidate moves are coloured | `widgets/board.rs` — `VISIT_RAMP` (the blue→green→red visit ramp) and `ramp_rgb`; applied in `draw_candidates`, which also draws the white ring on `order == 0` and picks label colour with `text_on` |
 | which numbers appear in a candidate blob | `widgets/board.rs` — `draw_candidates` (win rate always; score lead and visits appear as the cell grows) |
 | how many candidates are drawn or listed | `config.rs` — `AnalysisSettings::max_suggestions` |
-| the ownership or policy heat map | `widgets/board.rs` — `BoardView`'s `snapshot`, then `blit` |
+| the ownership or policy heat map | `widgets/board.rs` — `ownership_texture` / `policy_texture`, appended by `BoardView::snapshot` |
 | a keyboard shortcut, or what an action does | `window.rs` — `install_actions` (action bodies and the accel table), `show_shortcuts` for the help window |
 | live-analysis visit cap / report rate | `config.rs` — `AnalysisSettings`, consumed by `AppState::restart_analysis` |
 | the search-speed reading (visits per second) | `app.rs` — `SpeedMeter`, fed from `set_report` and reset by `restart_analysis`; formatted by `util::visits_per_second`, shown in `panels/analysis.rs` (`Headline::speed`) and `window.rs` (`update_readout`) |
@@ -500,9 +506,9 @@ The same chain is what makes server-side cleanup free: `session.rs`'s `pump` ret
 `Subscription`, so a client that simply disappears stops KataGo. Measured: a client SIGINT makes
 the server drop the subscription in under a millisecond and KataGo falls to 0% CPU.
 
-Other participants in the same discipline: the score pump (`window.rs`), the batch workers
-(`batch.rs`) and the play-mode thinker (`play.rs`) are all `glib::JoinHandle`s that are aborted
-rather than signalled.
+Other participants follow the same ownership rule: score and play tasks, plus the batch
+coordinator's runtime task, are aborted by their owning window/controller. Dropping those tasks
+drops every in-flight `Subscription`; there is no parallel query-cancellation API.
 
 ### One live-analysis cycle: pressing Left
 
@@ -510,17 +516,16 @@ rather than signalled.
  user     GTK main context                                 tokio                    KataGo
   │
  Left ──> accel "win.prev" -> SimpleAction
-  │         with_ui(weak, …)                    window.rs   (Weak upgrade, INV-8)
+  │         with_window_ui(weak, …)             window.rs   (WeakRef upgrade, INV-8)
   │         AppState::go_prev -> go_back(1)
   │           borrow tree, walk parents, DROP the borrow    (INV-10)
   │         AppState::set_cursor
   │           cursor := id;  last_report := None
-  │           emit cursor-changed ─┬─ BoardView    : clear hover/pin, queue_draw
-  │           emit report ─────────┤  MoveTreeView : queue_draw + scroll to cursor
-  │                                │  WinrateGraph : queue_draw
-  │                                │  AnalysisPanel: rebuild (no report yet)
-  │                                └─ window       : flush+load comment, scale,
-  │                                                  readout, clocks
+  │           changed(Cursor) ─> window::handle_change
+  │             BoardView/MoveTreeView/WinrateGraph: refresh cursor projections
+  │             AnalysisPanel: refresh without a report
+  │             window: flush+load comment, scale, readout, clocks
+  │           changed(Report) ─> refresh report projections and readout
   │         restart_analysis
   │           abort old pump ──> Subscription dropped ──> terminate ──────────> search stops
   │           generation += 1
@@ -534,12 +539,12 @@ rather than signalled.
   │  pump wakes on sub.next()
   │    generation still matches?
   │    AppState::set_report: store report; borrow_mut tree, cache analysis_of(...),
-  │                          DROP the borrow, then emit report      (INV-10)
-  │           emit report ─┬─ BoardView / WinrateGraph : queue_draw
-  │                        ├─ AnalysisPanel            : splice rows in place
-  │                        └─ window                   : update_readout
-  │  GTK frame clock -> BoardView::snapshot
-  │    static node │ heat map │ stones+territory │ numbers/marks │ candidates
+  │                          DROP the borrow, then changed(Report)       (INV-10)
+  │           handle_change ─┬─ BoardView: upload heat-map textures
+  │                          ├─ WinrateGraph: rebuild cached base node
+  │                          ├─ AnalysisPanel: splice rows in place
+  │                          └─ window: update_readout
+  │  GTK frame clock -> BoardView::snapshot appends cached layers
   v  redrawn board          … repeats at ~10 Hz until Done, then the pump idles
 ```
 
@@ -679,33 +684,33 @@ that needs to *cause* something calls an `AppState` method or activates a `win.*
 `notify_*()` themselves. On a derive-generated setter it silently disables notification and breaks
 every `notify::` handler and `bind_property` target that depends on it.
 
-**Signals** (names live in `app::signal`, so a typo is a missing constant rather than a silent
-no-op):
+**Change dispatcher.** `AppState` has one `ChangeHook`, installed once by `window::present`.
+Mutations call `changed(Change::…)`; `window::handle_change` performs the complete ordered UI
+refresh. This avoids several independently ordered signal callbacks observing half-updated state.
 
-| signal | emitted by | consumed by |
+| change | emitted by | dispatcher work |
 |---|---|---|
-| `tree-changed` | `with_tree_mut`, `set_tree`, and `batch.rs` after a sweep | board (geometry may have changed), move tree (relayout), winrate graph, analysis panel, window (move scale, title) |
-| `cursor-changed` | `set_cursor`, `play_move`, `set_tree` | board (clears hover/pin), move tree (redraw + scroll), winrate graph, analysis panel, window (comment flush/load, scale, readout, clocks) |
-| `report` | `set_report`, and by `set_cursor`/`play_move` to announce the *cleared* report | board, winrate graph, analysis panel, window readout |
-| `engine-changed` | `set_engine`, and `prefs.rs` after editing profiles | window (engine menu, Analysis page, subtitle) |
-| `toast(String)` | `AppState::toast` from anywhere | window, which turns it into an `adw::Toast` |
-| `play-changed` | `PlayController` via `notify_play_changed` | window (clocks) |
-| `batch-progress(u32, u32)` | `BatchAnalysis` via `notify_batch_progress` | nothing in-tree today; the sweep updates its own banner. Treat it as the hook to use if progress needs to appear elsewhere |
+| `Tree` | `with_tree_mut`, `set_tree`, batch completion | rebuild board/tree/graph projections, refresh analysis and window chrome |
+| `Cursor` | `set_cursor`, `play_move`, `set_tree` | flush/load comment, update scale/readout/clocks, refresh cursor projections |
+| `Report` | `set_report` and report clearing | refresh board textures, graph data, analysis rows and readout |
+| `Engine` | engine-state transitions and profile edits | rebuild menu/page/subtitle from `EngineState` |
+| `Toast(String)` | `AppState::toast` | add one `adw::Toast` |
+| `Play`, `BatchProgress` | the window-owned controllers | refresh play controls/clocks or batch progress |
 
-Ordering rule: emit `cursor-changed` before `report` (as `set_cursor` does), because handlers of
-`report` assume the cursor is already current.
+Ordering remains explicit: cursor state is current before `Report`, and every tree borrow is
+released before `changed` enters window code.
 
 ### Widget tree
 
 ```
-adw::ApplicationWindow
+MiraiWindow (adw::ApplicationWindow, `window.blp`)
 └ adw::ToastOverlay                     ← every toast lands here
   └ adw::ToolbarView
-    ├ top:    adw::HeaderBar            open · save · live-analysis toggle · engine menu
-    │                                   · title · clocks · New game · primary menu
+    ├ top:    adw::HeaderBar            open · Fox download · live-analysis toggle · engine menu
+    │                                   · title · clocks · New Game · view/main menus · sidebar toggle
     ├ bottom: gtk::Box                  first/prev/next/last · branch up/down
-    │                                   · move scale · readout
-    └ content: adw::OverlaySplitView    sidebar collapses under a breakpoint
+    │                                   · contextual Undo/Pass/Resign · move scale · readout
+    └ content: adw::OverlaySplitView    sidebar closes under a breakpoint; toggle reopens it
       ├ content: gtk::Box
       │   ├ adw::Banner                 batch-analysis progress + Cancel
       │   └ gtk::Paned (vertical)
@@ -728,32 +733,21 @@ the buttons, the accelerators, the shortcuts window and the debug harness all dr
 Add an action there, with its accelerator in the same table; never wire a button's `clicked`
 directly to logic.
 
-### The `Rc<Ui>` rule (INV-8)
+### Window ownership rule (INV-8)
 
-`Ui` owns the window and everything hanging off it. Handlers hang off widgets and off the
-`AppState` that `Ui` itself owns, so a strong `Rc<Ui>` inside a long-lived handler is a cycle
-nothing breaks: it would keep the window, its engine, the KataGo process behind that engine and
-the runtime handle alive for the rest of the session.
+`MiraiWindow` is the sole owner of one plain `Ui` value in its GObject implementation. Every
+long-lived callback captures `glib::WeakRef<MiraiWindow>` and enters through
+`MiraiWindow::with_ui`; no callback owns the window state. Stateful controllers (`PlayController`
+and `BatchAnalysis`) are also unique fields of `Ui` and use the same weak-window route.
 
-The rule, as a contributor follows it:
+`close-request` calls `MiraiWindow::shutdown`, and `ObjectImpl::dispose` calls the same method as a
+backstop. `begin_shutdown` makes the operation idempotent; `take_ui` is the single release point.
+`Ui::shutdown` flushes the comment, removes autosave and timers, aborts the score task, stops play
+and batch work, cancels AppState startup/analysis tasks, saves config and clears the engine.
 
-1. In a long-lived handler — a GObject signal, a `notify::`, a `GAction`, a `glib::timeout` —
-   capture `Rc::downgrade(ui)` and enter through `with_ui`, which upgrades or does nothing.
-2. Exactly one strong `Rc<Ui>` exists, parked in a `Cell<Option<Rc<Ui>>>` inside the
-   `close-request` handler in `connect_close`. It **takes** the value out rather than borrowing,
-   so the `Ui` — and with it `AppState`, the engine and the runtime handle — is dropped as the
-   window closes. That is the single release point.
-3. A transient capture may be strong, and each one in the tree says why in a comment: file-dialog
-   futures, dialog responses, the clipboard paste future and the score pump all end on their own
-   and release the clone.
-4. A strong capture in a long-lived handler is a leak, not a style preference: review rejects it.
-   `with_ui` is generic over the pointee purely so the discipline is unit-testable without a
-   display.
-
-`connect_close` also defines the shutdown order: flush the comment, delete this window's autosave
-(a window that closed cleanly leaves nothing to restore), cancel the batch, stop play mode, abort
-the score pump, turn live analysis **off** (so the pump releases its subscription), save the
-config, clear the engine, then drop.
+Transient futures may retain GTK objects only when their finite lifetime is explicit. Calibration
+uses a single `CalibrationRun` owner taken by either completion or cancellation; its window-added
+signal handler, runtime task, controls and engine restoration are torn down together.
 
 ### More than one window
 
@@ -763,29 +757,24 @@ windows in one process is a normal state, not an edge case. Each owns a complete
 
 | Shared | Rule |
 |---|---|
-| Engines | `EnginePool` in `main`, keyed on the whole `EngineProfile`. A window adopts a running engine synchronously through `running`, or joins an in-flight start through `acquire`; entries are `Weak`, so KataGo exits with the last window using it. Sharing is only sound because of INV-4 — no engine-side session state — and because `LocalEngine` already multiplexes queries by id |
+| Engines | `EnginePool` in `MiraiApplication`, keyed on the whole `EngineProfile`. A window adopts a running engine synchronously through `running`, or joins an in-flight start through `acquire`; entries are `Weak`, so KataGo exits with the last window using it. The application owns the pool and runtime until GObject disposal |
 | `config.toml` | Each window holds the `Config` it loaded, so writing the whole thing back would revert another window's edits. `Config::save_merged` applies only this window's own diff onto the file as it stands |
 | Autosave | One file per window, `autosave-<pid>-<start>-<n>.sgf`. A clean close deletes it; anything found at startup is therefore a crash leftover, and each new window is offered one, most recent first. This replaced the single `autosave.sgf` plus `clean-exit` flag, which could not say which window had exited |
 
-### RefCell discipline (INV-10)
+### RefCell and identity discipline (INV-10)
 
-`AppState` keeps the tree in a `RefCell`. Handlers of `tree-changed`, `cursor-changed` and
-`report` all borrow it again — that is their job — so **a borrow must be released before a signal
-is emitted**, or a user action turns into a panic.
+`AppState` keeps the tree in a `RefCell`. A borrow must be released before `changed`, `set_cursor`,
+`set_report` or `toast` enters window code; the dispatcher immediately reads the tree again.
+`with_tree_mut`, `set_tree`, report caching and navigation helpers scope or explicitly drop their
+borrows before dispatch.
 
-Where it is enforced, and the patterns to copy:
+`NodeId` is stable only within one `GameTree` arena. Every node reference that can outlive a
+borrow is therefore a `NodeRef { epoch, id }`; `set_tree` increments `TreeEpoch`, and
+`resolve_node` rejects references from the previous tree. Comments, batch results, play snapshots
+and async score work must carry `NodeRef`, never a naked long-lived `NodeId`.
 
-- `with_tree_mut` scopes the mutable borrow to the closure and emits `tree-changed` only after it
-  returns. Route edits through it rather than reaching for `imp().tree`.
-- `set_report` scopes the `borrow_mut` that caches the analysis in a block, then emits.
-- `set_tree` scopes the swap in a block, then emits both signals.
-- Navigation helpers (`go_last`, `go_back`, `go_forward`, `go_sibling`) compute the target inside a
-  block or explicitly `drop(tree)` before calling `set_cursor`.
-- Widgets do the same on the read side: `BoardView::snapshot` pulls what it needs out of short
-  scoped borrows rather than holding one across a draw.
-
-Reviewer's heuristic: if a `Ref`/`RefMut` binding is alive on the same statement as an
-`emit_by_name`, a `set_cursor`, a `set_report` or a `toast`, it is a latent panic.
+Widgets receive projections when `Change` is dispatched. `snapshot()` borrows only widget-local
+projection/cache state; it does not borrow `AppState` or replay the game tree.
 
 ---
 
@@ -802,10 +791,10 @@ and how a violation shows up.
 | **INV-4** | Stateless queries: every request carries its whole position; there is no engine-side session state | `AnalyzeReq` in `mirai-proto/src/types.rs`; built in one place, `AppState::request_for_node`; `build_query` never emits `analyzeTurns` | An analysis that is correct only after visiting nodes in a particular order; a remote client that needs resynchronising after a reconnect |
 | **INV-5** | Komi crosses the wire as a doubled integer (`komi_x2`), because KataGo accepts only integer or half-integer komi | `AnalyzeReq` (`komi_x2`, `komi()`) in `mirai-proto/src/types.rs` | Komi silently rounded, or a rejected query from a fractional komi |
 | **INV-6** | Quantisation: wire floats are fixed-point; every scale lives in `mirai-proto/src/types.rs`. Round-trip error budget: winrate ≤ 1e-4, score lead ≤ 0.02 pt, ownership ≤ 0.005 | the `q*`/`dq*` helpers and `*_SCALE` constants; both engine paths use them, so reports are bit-identical | `mirai-proto/tests/wire_size.rs` fails on frame size or error budget. Changing a scale means bumping `PROTO_VERSION` and updating that test and [`PROTOCOL.md`](PROTOCOL.md) |
-| **INV-7** | One source of truth: `AppState` owns application state; widgets read it and listen to its signals, never to each other | `mirai/src/app.rs`; the cross-widget hooks installed once in `window::present` | A widget holding another widget; state that two widgets disagree about after an edit |
-| **INV-8** | `Rc<Ui>` discipline: long-lived handlers capture `Weak<Ui>` through `with_ui`; exactly one strong `Rc<Ui>`, parked in a `Cell` and taken by `close-request` | `with_ui` and `connect_close` in `mirai/src/window.rs` | Closing the window leaves KataGo running: the `Ui` was never dropped, so the engine was never dropped |
-| **INV-9** | Rendering: board, win-rate graph and move tree are `gtk::Widget` subclasses drawn with `gsk` in `snapshot()`. No `DrawingArea`, no cairo | `mirai/src/widgets/` | A cairo context or a `DrawingArea` appearing in a review diff |
-| **INV-10** | Release every `RefCell` borrow of the tree **before** emitting a signal | `with_tree_mut`, `set_tree`, `set_report` and the navigation helpers in `mirai/src/app.rs` | `already borrowed: BorrowMutError` in the user's hands, on a specific action — not in tests, which rarely have the full handler set attached |
+| **INV-7** | One source of truth: `AppState` owns application state; one window dispatcher pushes projections to widgets, which never hold siblings | `mirai/src/app.rs` (`Change`) and `window::handle_change` | Two dispatchers observe different intermediate states, or sibling widgets disagree after an edit |
+| **INV-8** | Window ownership: `MiraiWindow` owns exactly one `Ui`; long-lived callbacks hold only `WeakRef<MiraiWindow>`; close and dispose share idempotent shutdown | `window_shell.rs` (`with_ui`, `take_ui`, `shutdown`) and window-owned controllers | Closing a window leaves tasks, handlers or KataGo alive |
+| **INV-9** | Rendering: custom widgets draw with GSK; `snapshot()` consumes widget-local projections and cached textures/nodes. No `DrawingArea`, cairo or tree replay in a frame | `mirai/src/widgets/` | Frame-time allocation/state traversal, or a cairo context in the GUI |
+| **INV-10** | Release tree borrows before dispatch; retain epoch-qualified `NodeRef`, not arena-local `NodeId`, across tree replacement | `AppState::changed`, `set_tree`, `resolve_node`; async consumers in window/play/batch | `BorrowMutError`, `stale NodeId`, or an old async result applied to a new game |
 
 ---
 
@@ -833,9 +822,9 @@ and how a violation shows up.
 2. Re-export it from `panels/mod.rs`.
 3. Construct it in `window::present` with the `AppState`, and add it to the sidebar `ViewStack`
    with `add_titled_with_icon`.
-4. Subscribe to `AppState` signals inside the panel; do not accept references to other widgets
-   (INV-7). If the window must wire it to another widget, install a hook the way `present` does
-   for the PV preview.
+4. Add its refresh call to the appropriate arm of `window::handle_change`; do not install a
+   second AppState dispatcher or accept references to sibling widgets (INV-7). Widget-internal
+   selection hooks still route through the window.
 5. Store any user-visible option in `UiSettings` in `mirai/src/config.rs` and mirror it in
    `AppState::save_config`.
 
@@ -848,10 +837,10 @@ and how a violation shows up.
    copy `policy_overlay` exactly. Otherwise use the derive-generated setter and **do not** add the
    flag.
 3. Add the request bit in `AppState::restart_analysis`.
-4. Draw it in `BoardView`'s `snapshot`; for a per-point heat map build an RGBA8 premultiplied
-   buffer indexed by `Point` and hand it to `blit` — no remapping (INV-1).
-5. Add the property name to `BoardView::observe` so a toggle redraws, and clear the static layer
-   too if your overlay changes the board's geometry or padding.
+4. Build any per-point RGBA8 premultiplied texture when the report projection refreshes, indexed
+   directly by `Point` with no remapping (INV-1). `snapshot()` should only append the cached
+   texture.
+5. Add the property name to `BoardView::observe` so toggling rebuilds the projection.
 6. Add a `win.toggle-*` action and accelerator in `install_actions`, and a `UiSettings` field so it
    survives a restart.
 
