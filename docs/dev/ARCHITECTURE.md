@@ -710,7 +710,8 @@ MiraiWindow (adw::ApplicationWindow, `window.blp`)
     │                                   · title · clocks · New Game · view/main menus · sidebar toggle
     ├ bottom: gtk::Box                  first/prev/next/last · branch up/down
     │                                   · contextual Undo/Pass/Resign · move scale · readout
-    └ content: adw::OverlaySplitView    sidebar closes under a breakpoint; toggle reopens it
+    └ content: adw::OverlaySplitView    `win.toggle-sidebar` (F9) hides the sidebar at any width;
+                                        the breakpoint additionally collapses it to an overlay
       ├ content: gtk::Box
       │   ├ adw::Banner                 batch-analysis progress + Cancel
       │   └ gtk::Paned (vertical)

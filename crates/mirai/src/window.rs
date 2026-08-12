@@ -269,6 +269,15 @@ pub fn present(
         .bidirectional()
         .sync_create()
         .build();
+    // One button for both directions: the check state is the only affordance the icon set
+    // offers, so the tooltip carries the verb.
+    sidebar_toggle.connect_active_notify(|button| {
+        button.set_tooltip_text(Some(if button.is_active() {
+            "Hide Sidebar (F9)"
+        } else {
+            "Show Sidebar (F9)"
+        }));
+    });
     let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
         adw::BreakpointConditionLengthType::MaxWidth,
         900.0,
@@ -276,7 +285,6 @@ pub fn present(
     ));
     breakpoint.add_setter(&split, "collapsed", Some(&true.to_value()));
     breakpoint.add_setter(&split, "show-sidebar", Some(&false.to_value()));
-    breakpoint.add_setter(&sidebar_toggle, "visible", Some(&true.to_value()));
     window.add_breakpoint(breakpoint);
 
     let title = window.title_widget();
@@ -1190,6 +1198,7 @@ fn show_shortcuts(ui: &Ui) {
                 ("Policy Overlay", "win.toggle-policy"),
                 ("Coordinates", "win.toggle-coords"),
                 ("Move Numbers", "win.toggle-move-numbers"),
+                ("Sidebar", "win.toggle-sidebar"),
             ][..],
         ),
         (
@@ -1296,6 +1305,13 @@ fn install_actions(ui: &Ui) {
         Box::new(|ui| {
             ui.state
                 .set_show_move_numbers(!ui.state.show_move_numbers())
+        }),
+    );
+    add(
+        "toggle-sidebar",
+        Box::new(|ui| {
+            let split = ui.window().split();
+            split.set_show_sidebar(!split.shows_sidebar());
         }),
     );
 
@@ -1452,6 +1468,7 @@ fn install_actions(ui: &Ui) {
             ("win.toggle-policy", &["y"]),
             ("win.toggle-coords", &["c"]),
             ("win.toggle-move-numbers", &["n"]),
+            ("win.toggle-sidebar", &["F9"]),
             ("win.analyse-game", &["<Control>a"]),
             ("win.new-game", &["<Control>n"]),
             ("win.score", &["<Control>e"]),

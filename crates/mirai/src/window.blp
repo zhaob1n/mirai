@@ -80,11 +80,10 @@ template $MiraiWindow : Adw.ApplicationWindow {
 
         [end]
         Gtk.ToggleButton sidebar_toggle {
-          visible: false;
           icon-name: "sidebar-show-right-symbolic";
-          tooltip-text: _("Show Sidebar");
+          tooltip-text: _("Hide Sidebar (F9)");
           accessibility {
-            label: _("Show Sidebar");
+            label: _("Sidebar");
           }
         }
 
@@ -297,5 +296,9 @@ menu view_menu {
     item ("_Move Numbers", "win.toggle-move-numbers")
     item ("_Ownership Overlay", "win.toggle-ownership")
     item ("_Policy Overlay", "win.toggle-policy")
+  }
+
+  section {
+    item ("_Sidebar", "win.toggle-sidebar")
   }
 }
