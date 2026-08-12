@@ -19,6 +19,7 @@ not a draft to rewrite.
 | Where does X live? What may I depend on? | [`docs/dev/ARCHITECTURE.md`](docs/dev/ARCHITECTURE.md) — module map, data model, extension recipes |
 | Implement or change the network protocol | [`docs/dev/PROTOCOL.md`](docs/dev/PROTOCOL.md) — normative MRP/1 spec, implementable without reading Rust |
 | Prove a change works, especially in the GUI | [`docs/dev/TESTING.md`](docs/dev/TESTING.md) — test map, engine verification, GUI harness recipes, debugging playbook |
+| Draw in a widget, or chase a dropped frame | [`docs/dev/RENDERING.md`](docs/dev/RENDERING.md) — why the custom widgets draw with quads, and the measurements behind it |
 | Why is it built this way? What already went wrong? | [`docs/archive/RETROSPECTIVE.md`](docs/archive/RETROSPECTIVE.md) — decisions, obstacles, defects found |
 | What was originally specified, before any code | [`docs/archive/PLAN.md`](docs/archive/PLAN.md) — historical; the code, not the plan, is authoritative |
 | What does the application do, from a user's seat | [`docs/user/GUIDE.md`](docs/user/GUIDE.md) |
@@ -80,7 +81,11 @@ captures must be explicitly transient and own one teardown path.
 
 **INV-9 — rendering.** Board, win-rate graph and move tree are custom `gtk::Widget` subclasses
 drawn with `gsk` in `snapshot()`. No `GtkDrawingArea`, no cairo. Tree-derived projections,
-heat-map textures and reusable render nodes are built outside `snapshot()`.
+heat-map textures and reusable render nodes are built outside `snapshot()`. Draw with quads —
+colour nodes, border nodes, rounded clips, the helpers in `widgets/paint.rs` — and never hand
+GSK a `fill` or `stroke` node for a shape they can draw: GSK rasterises each new path node
+once, and rebuilding board-sized paths every frame cost 30–120 ms a frame
+([`docs/dev/RENDERING.md`](docs/dev/RENDERING.md)).
 
 **INV-10 — borrow and identity discipline.** Release every `RefCell` tree borrow before calling
 `changed`, `set_cursor`, `set_report` or `toast`; dispatcher code borrows the tree again.

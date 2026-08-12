@@ -4,6 +4,7 @@
 //! with `gsk` — no `gtk::DrawingArea`, no cairo.
 
 pub mod board;
+pub mod paint;
 pub mod tree;
 pub mod winrate;
 

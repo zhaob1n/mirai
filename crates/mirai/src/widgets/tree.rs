@@ -12,14 +12,13 @@ use std::collections::HashMap;
 
 use gtk::gdk;
 use gtk::glib;
-use gtk::graphene;
-use gtk::gsk;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 
 use mirai_core::{Color, GameTree, NodeId};
 
 use crate::app::AppState;
+use crate::widgets::paint::{fill_disc, hline, stroke_disc, vline};
 
 /// Grid geometry. Cells are square-ish so long games stay scannable.
 const CELL_W: f32 = 20.0;
@@ -271,32 +270,34 @@ impl MoveTreeView {
         let black = gdk::RGBA::new(0.09, 0.09, 0.11, 1.0);
         let white = gdk::RGBA::new(0.94, 0.94, 0.95, 1.0);
 
-        // Edges first: right-angle elbows, vertical at the parent then across.
-        let edges = gsk::PathBuilder::new();
+        // Edges first: right-angle elbows, vertical at the parent then across. Every segment
+        // is axis-aligned, so they are rectangles rather than a stroked path — and one
+        // vertical per parent rather than one per child, because the ink is translucent and
+        // overlapping rectangles would blend twice where two children share a trunk.
+        let mut trunk: Vec<Option<(f32, f32)>> = vec![None; layout.nodes.len()];
         for node in &layout.nodes {
             let Some(parent) = node.parent else { continue };
             let p = layout.nodes[parent];
             let (px, py) = cell_xy(p.col, p.lane);
             let (cx, cy) = cell_xy(node.col, node.lane);
-            edges.move_to(px, py);
-            if (py - cy).abs() > 0.01 {
-                edges.line_to(px, cy);
-            }
-            edges.line_to(cx, cy);
+            let span = trunk[parent].get_or_insert((py, py));
+            span.0 = span.0.min(cy);
+            span.1 = span.1.max(cy);
+            hline(snapshot, px, cx, cy, 1.5, &edge_color);
         }
-        let edge_stroke = gsk::Stroke::new(1.5);
-        edge_stroke.set_line_join(gsk::LineJoin::Round);
-        edge_stroke.set_line_cap(gsk::LineCap::Round);
-        snapshot.append_stroke(&edges.to_path(), &edge_stroke, &edge_color);
+        for (index, span) in trunk.iter().enumerate() {
+            let Some((top, bottom)) = *span else { continue };
+            if bottom - top < 0.01 {
+                continue;
+            }
+            let p = layout.nodes[index];
+            let (px, _) = cell_xy(p.col, p.lane);
+            vline(snapshot, px, top, bottom, 1.5, &edge_color);
+        }
 
         // Nodes.
-        let hollow_stroke = gsk::Stroke::new(1.5);
         for node in &layout.nodes {
             let (cx, cy) = cell_xy(node.col, node.lane);
-            let centre = graphene::Point::new(cx, cy);
-            let disc = gsk::PathBuilder::new();
-            disc.add_circle(&centre, RADIUS);
-            let disc = disc.to_path();
 
             match node.mv {
                 Some((color, mv)) => {
@@ -304,31 +305,33 @@ impl MoveTreeView {
                         Color::Black => black,
                         Color::White => white,
                     };
-                    snapshot.append_fill(&disc, gsk::FillRule::Winding, &fill);
-                    snapshot.append_stroke(&disc, &gsk::Stroke::new(1.0), &outline);
+                    fill_disc(snapshot, cx, cy, RADIUS, &fill);
+                    stroke_disc(snapshot, cx, cy, RADIUS, 1.0, &outline);
                     if mv.is_pass() {
                         // A pass reads as a bar through the stone.
-                        let bar = gsk::PathBuilder::new();
-                        bar.move_to(cx - RADIUS * 0.55, cy);
-                        bar.line_to(cx + RADIUS * 0.55, cy);
                         let ink = match color {
                             Color::Black => white,
                             Color::White => black,
                         };
-                        snapshot.append_stroke(&bar.to_path(), &gsk::Stroke::new(2.0), &ink);
+                        hline(
+                            snapshot,
+                            cx - RADIUS * 0.55,
+                            cx + RADIUS * 0.55,
+                            cy,
+                            2.0,
+                            &ink,
+                        );
                     }
                 }
                 // Root and pure setup nodes are hollow.
                 None => {
-                    snapshot.append_fill(&disc, gsk::FillRule::Winding, &with_alpha(fg, 0.08));
-                    snapshot.append_stroke(&disc, &hollow_stroke, &outline);
+                    fill_disc(snapshot, cx, cy, RADIUS, &with_alpha(fg, 0.08));
+                    stroke_disc(snapshot, cx, cy, RADIUS, 1.5, &outline);
                 }
             }
 
             if node.id == cursor {
-                let ring = gsk::PathBuilder::new();
-                ring.add_circle(&centre, RADIUS + 2.5);
-                snapshot.append_stroke(&ring.to_path(), &gsk::Stroke::new(2.0), &accent);
+                stroke_disc(snapshot, cx, cy, RADIUS + 2.5, 2.0, &accent);
             }
         }
     }

@@ -6,12 +6,16 @@ Copyright (C) 2026 Huang Zhaobin
 # Testing and verification
 
 How to prove a change to mirai works.
-[architecture](ARCHITECTURE.md) · [protocol](PROTOCOL.md) ·
+[architecture](ARCHITECTURE.md) · [protocol](PROTOCOL.md) · [rendering](RENDERING.md) ·
 [retrospective](../archive/RETROSPECTIVE.md) ·
 [user guide](../user/GUIDE.md) · [AGENTS.md](../../AGENTS.md).
 
 Section 5 is the reason this file exists: this is a GTK4 app on Wayland, where external
 screen capture returns black frames, so the application screenshots itself.
+
+Frame timings are a separate instrument: the `perf-probe` branch carries `render_probe.rs` and
+`tools/perf/`, and [`RENDERING.md`](RENDERING.md) is the report it produced. Reach for it when
+something stutters — the harness here proves *what* is drawn, not how fast.
 
 ## 1. Quick reference
 
