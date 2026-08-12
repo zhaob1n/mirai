@@ -85,22 +85,6 @@ template $MiraiWindow : Adw.ApplicationWindow {
             label: _("Sidebar");
           }
         }
-
-        [end]
-        Gtk.Box clock_box {
-          visible: false;
-          spacing: 4;
-
-          Gtk.Label clock_black {
-            label: _("–:––");
-            styles ["mirai-clock"]
-          }
-
-          Gtk.Label clock_white {
-            label: _("–:––");
-            styles ["mirai-clock"]
-          }
-        }
       }
 
       content: Adw.OverlaySplitView split {
@@ -199,6 +183,23 @@ template $MiraiWindow : Adw.ApplicationWindow {
             action-name: "win.branch-next";
             tooltip-text: _("Next Variation (Down)");
             accessibility { label: _("Next Variation"); }
+          }
+        }
+
+        // Clocks sit with the play controls: both exist only while a game is running, and a
+        // variable-width element in the header made the title jump mid-game.
+        Gtk.Box clock_box {
+          visible: false;
+          spacing: 4;
+
+          Gtk.Label clock_black {
+            label: _("–:––");
+            styles ["mirai-clock"]
+          }
+
+          Gtk.Label clock_white {
+            label: _("–:––");
+            styles ["mirai-clock"]
           }
         }
 

@@ -709,9 +709,9 @@ MiraiWindow (adw::ApplicationWindow, `window.blp`)
   └ adw::ToolbarView
     ├ top:    adw::HeaderBar            start: Open split button (Fox download, paste SGF)
     │                                   · New Game · engine menu · live-analysis toggle
-    │                                   centre: title · status · clocks
+    │                                   centre: title · status
     │                                   end: sidebar toggle · primary menu (holds the View submenu)
-    ├ bottom: gtk::Box                  first/prev/next/last · branch up/down
+    ├ bottom: gtk::Box                  first/prev/next/last · branch up/down · clocks
     │                                   · contextual Undo/Pass/Resign · move scale · readout
     └ content: adw::OverlaySplitView    `win.toggle-sidebar` (F9) hides the sidebar at any width;
                                         the breakpoint additionally collapses it to an overlay
