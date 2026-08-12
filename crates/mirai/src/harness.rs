@@ -299,7 +299,9 @@ fn shot(app: &adw::Application, path: &str) -> Result<(), String> {
         .and_then(|n| n.renderer())
         .ok_or("the window has no renderer")?;
     let texture = renderer.render_texture(&node, None);
-    texture.save_to_png(path).map_err(|e| format!("{path}: {e}"))
+    texture
+        .save_to_png(path)
+        .map_err(|e| format!("{path}: {e}"))
 }
 
 #[cfg(test)]

@@ -135,11 +135,9 @@ impl LocalEngine {
                 EngineError::Startup(format!("could not run {}: {e}", cfg.katago.display()))
             })?;
 
-        let (Some(stdin), Some(stdout), Some(stderr)) = (
-            child.stdin.take(),
-            child.stdout.take(),
-            child.stderr.take(),
-        ) else {
+        let (Some(stdin), Some(stdout), Some(stderr)) =
+            (child.stdin.take(), child.stdout.take(), child.stderr.take())
+        else {
             return Err(EngineError::Startup("katago pipes are missing".into()));
         };
 
@@ -317,7 +315,9 @@ impl Inner {
                 if let Ok(key) = id.parse::<u64>()
                     && let Some((_, entry)) = self.subs.remove(&key)
                 {
-                    entry.tx.send_replace(SubEvent::Failed(EngineError::Query(msg)));
+                    entry
+                        .tx
+                        .send_replace(SubEvent::Failed(EngineError::Query(msg)));
                 }
             }
             Ok(RawResponse::EngineFault { msg }) => {
@@ -614,7 +614,8 @@ mod tests {
     use super::*;
 
     fn cfg() -> LocalEngineConfig {
-        let mut cfg = LocalEngineConfig::new("local", "/bin/katago", "/nets/m.bin.gz", "/etc/a.cfg");
+        let mut cfg =
+            LocalEngineConfig::new("local", "/bin/katago", "/nets/m.bin.gz", "/etc/a.cfg");
         cfg.log_dir = PathBuf::from("/var/log/mirai");
         cfg
     }
@@ -661,7 +662,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config_u16(&path, "numAnalysisThreads"), Some(6));
-        assert_eq!(config_u16(&path, "numSearchThreadsPerAnalysisThread"), Some(16));
+        assert_eq!(
+            config_u16(&path, "numSearchThreadsPerAnalysisThread"),
+            Some(16)
+        );
         assert_eq!(config_u16(&path, "nnCacheSizePowerOfTwo"), None);
         std::fs::remove_file(&path).unwrap();
     }

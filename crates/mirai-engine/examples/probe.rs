@@ -31,7 +31,12 @@ use tracing_subscriber::EnvFilter;
 )]
 struct Args {
     /// Path to the `katago` binary (local engine).
-    #[arg(long, requires = "model", requires = "config", conflicts_with = "remote")]
+    #[arg(
+        long,
+        requires = "model",
+        requires = "config",
+        conflicts_with = "remote"
+    )]
     katago: Option<String>,
 
     /// Path to the KataGo model (`.bin.gz`).
@@ -164,7 +169,10 @@ async fn build_engine(args: &Args) -> Result<Arc<dyn Engine>> {
         (Some(katago), None) => {
             // clap's `requires` guarantees both are present.
             let model = args.model.as_deref().expect("--model required by --katago");
-            let config = args.config.as_deref().expect("--config required by --katago");
+            let config = args
+                .config
+                .as_deref()
+                .expect("--config required by --katago");
             let cfg = LocalEngineConfig::new("local", katago, model, config);
             let engine = LocalEngine::spawn(cfg)
                 .await
@@ -173,14 +181,10 @@ async fn build_engine(args: &Args) -> Result<Arc<dyn Engine>> {
         }
         (None, Some(url)) => {
             let token = args.token.as_deref().expect("--token required by --remote");
-            let engine = RemoteEngine::connect(
-                url,
-                token,
-                args.engine.clone(),
-                args.fingerprint.clone(),
-            )
-            .await
-            .with_context(|| format!("could not connect to {url}"))?;
+            let engine =
+                RemoteEngine::connect(url, token, args.engine.clone(), args.fingerprint.clone())
+                    .await
+                    .with_context(|| format!("could not connect to {url}"))?;
             tracing::info!(fingerprint = engine.fingerprint(), "server certificate");
             Ok(Arc::new(engine))
         }
@@ -192,11 +196,23 @@ async fn build_engine(args: &Args) -> Result<Arc<dyn Engine>> {
 /// `"D4,Q16"` → alternating moves starting with Black.
 fn parse_moves(size: Size, spec: &str) -> Result<Vec<(Color, Point)>> {
     let mut out = Vec::new();
-    for (i, tok) in spec.split(',').map(str::trim).filter(|s| !s.is_empty()).enumerate() {
-        let p = size
-            .from_gtp(tok)
-            .with_context(|| format!("{tok:?} is not a coordinate on a {}x{} board", size.w, size.h))?;
-        let color = if i % 2 == 0 { Color::Black } else { Color::White };
+    for (i, tok) in spec
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .enumerate()
+    {
+        let p = size.from_gtp(tok).with_context(|| {
+            format!(
+                "{tok:?} is not a coordinate on a {}x{} board",
+                size.w, size.h
+            )
+        })?;
+        let color = if i % 2 == 0 {
+            Color::Black
+        } else {
+            Color::White
+        };
         out.push((color, p));
     }
     Ok(out)
@@ -205,7 +221,10 @@ fn parse_moves(size: Size, spec: &str) -> Result<Vec<(Color, Point)>> {
 /// One report block: the root line, then the top five candidates in `order`.
 fn print_report(kind: &str, report: &Report, size: Size, to_play: Color) {
     let ownership = report.ownership.as_ref().map_or(0, Vec::len);
-    println!("[{kind}] visits={} ownership={ownership}", report.root.visits);
+    println!(
+        "[{kind}] visits={} ownership={ownership}",
+        report.root.visits
+    );
     for m in report.moves.iter().take(5) {
         println!(
             "  {} {:.2} {:+.2} {}",

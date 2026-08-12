@@ -110,10 +110,9 @@ impl ServerConfig {
     }
 
     pub fn load(path: &Path) -> anyhow::Result<ServerConfig> {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("reading {}", path.display()))?;
-        ServerConfig::parse(&text, path)
-            .with_context(|| format!("parsing {}", path.display()))
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        ServerConfig::parse(&text, path).with_context(|| format!("parsing {}", path.display()))
     }
 
     fn resolve(&mut self, base: &Path) {
@@ -298,7 +297,10 @@ mod tests {
         let lc = cfg.engines[0].to_local_config().unwrap();
         let written = std::fs::read_to_string(&lc.config).expect("the config was written");
         assert!(written.contains("numSearchThreadsPerAnalysisThread = 12"));
-        assert!(written.contains("nnMaxBatchSize"), "katago requires this key");
+        assert!(
+            written.contains("nnMaxBatchSize"),
+            "katago requires this key"
+        );
         assert_eq!(
             (lc.analysis_threads, lc.search_threads),
             (None, None),
@@ -338,8 +340,12 @@ mod tests {
 
     #[test]
     fn typos_and_duplicates_are_rejected_rather_than_silently_ignored() {
-        let typo = parse("[[engine]]\nname='a'\nkatago='k'\nmodel='m'\nconfig='c'\nanalysis_thread=4\n");
-        assert!(typo.is_err(), "a mistyped key must not be dropped on the floor");
+        let typo =
+            parse("[[engine]]\nname='a'\nkatago='k'\nmodel='m'\nconfig='c'\nanalysis_thread=4\n");
+        assert!(
+            typo.is_err(),
+            "a mistyped key must not be dropped on the floor"
+        );
 
         let dup = parse(
             "[[engine]]\nname='a'\nkatago='k'\nmodel='m'\nconfig='c'\n\

@@ -88,7 +88,10 @@ mod tests {
     fn counts_and_shapes() {
         let size = Size::square(19);
         assert_eq!(gtp(size, &fixed_handicap(size, 2)), ["D4", "Q16"]);
-        assert_eq!(gtp(size, &fixed_handicap(size, 5)), ["D4", "Q16", "D16", "Q4", "K10"]);
+        assert_eq!(
+            gtp(size, &fixed_handicap(size, 5)),
+            ["D4", "Q16", "D16", "Q4", "K10"]
+        );
         assert_eq!(
             gtp(size, &fixed_handicap(size, 6)),
             ["D4", "Q16", "D16", "Q4", "D10", "Q10"]
@@ -97,7 +100,10 @@ mod tests {
         assert_eq!(fixed_handicap(size, 8).len(), 8);
         // 9x9 uses the 3-3 offset...
         let small = Size::square(9);
-        assert_eq!(gtp(small, &fixed_handicap(small, 4)), ["C3", "G7", "C7", "G3"]);
+        assert_eq!(
+            gtp(small, &fixed_handicap(small, 4)),
+            ["C3", "G7", "C7", "G3"]
+        );
         assert_eq!(gtp(small, &fixed_handicap(small, 5))[4], "E5");
         assert_eq!(fixed_handicap(Size::square(13), 9).len(), 9);
         assert_eq!(fixed_handicap(Size::square(7), 9).len(), 9);

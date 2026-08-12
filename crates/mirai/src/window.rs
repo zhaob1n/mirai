@@ -284,8 +284,16 @@ pub fn present(
     let branches = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     branches.add_css_class("linked");
     for (icon, action, tip) in [
-        ("go-up-symbolic", "win.branch-prev", "Previous variation (Up)"),
-        ("go-down-symbolic", "win.branch-next", "Next variation (Down)"),
+        (
+            "go-up-symbolic",
+            "win.branch-prev",
+            "Previous variation (Up)",
+        ),
+        (
+            "go-down-symbolic",
+            "win.branch-next",
+            "Next variation (Down)",
+        ),
     ] {
         branches.append(
             &gtk::Button::builder()
@@ -856,7 +864,10 @@ fn game_row(tree: &GameTree) -> adw::ActionRow {
         }
     };
     let moves = tree.main_line().len().saturating_sub(1);
-    let mut bits = vec![format!("{}×{}", info.size.w, info.size.h), format!("{moves} moves")];
+    let mut bits = vec![
+        format!("{}×{}", info.size.w, info.size.h),
+        format!("{moves} moves"),
+    ];
     if !info.result.is_empty() {
         bits.push(info.result.clone());
     }
@@ -864,7 +875,11 @@ fn game_row(tree: &GameTree) -> adw::ActionRow {
         bits.push(info.date.clone());
     }
     adw::ActionRow::builder()
-        .title(format!("{} vs {}", who(&info.players[0]), who(&info.players[1])))
+        .title(format!(
+            "{} vs {}",
+            who(&info.players[0]),
+            who(&info.players[1])
+        ))
         .subtitle(bits.join(" · "))
         .build()
 }
@@ -1006,7 +1021,11 @@ fn do_save_as(ui: &Rc<Ui>) {
 fn next_autosave_path() -> Option<PathBuf> {
     static NEXT: AtomicU32 = AtomicU32::new(0);
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    Some(Config::data_dir().ok()?.join(format!("{}{n}.sgf", *AUTOSAVE_PREFIX)))
+    Some(
+        Config::data_dir()
+            .ok()?
+            .join(format!("{}{n}.sgf", *AUTOSAVE_PREFIX)),
+    )
 }
 
 /// Identifies this process's autosaves. The start time is in there because a pid alone is
@@ -1202,7 +1221,11 @@ fn show_estimate(ui: &Rc<Ui>, report: &Report) {
     let body = format!(
         "{}{}\n\nBlack {:.1} — White {:.1}\nKataGo lead after {} visits: {}",
         result.result_string(),
-        if result.approximate { " (estimated)" } else { "" },
+        if result.approximate {
+            " (estimated)"
+        } else {
+            ""
+        },
         result.black,
         result.white,
         util::si_visits(report.root.visits),
@@ -1333,7 +1356,10 @@ fn install_actions(ui: &Rc<Ui>) {
     );
     add(
         "toggle-ownership",
-        Box::new(|ui| ui.state.set_ownership_overlay(!ui.state.ownership_overlay())),
+        Box::new(|ui| {
+            ui.state
+                .set_ownership_overlay(!ui.state.ownership_overlay())
+        }),
     );
     add(
         "toggle-policy",
@@ -1345,7 +1371,10 @@ fn install_actions(ui: &Rc<Ui>) {
     );
     add(
         "toggle-move-numbers",
-        Box::new(|ui| ui.state.set_show_move_numbers(!ui.state.show_move_numbers())),
+        Box::new(|ui| {
+            ui.state
+                .set_show_move_numbers(!ui.state.show_move_numbers())
+        }),
     );
 
     add(
@@ -1450,12 +1479,7 @@ fn install_actions(ui: &Rc<Ui>) {
     add("about", Box::new(show_about));
 
     // Stateful so the engine menu can render a radio dot next to the live profile.
-    let initial = ui
-        .state
-        .config()
-        .active_engine
-        .clone()
-        .unwrap_or_default();
+    let initial = ui.state.config().active_engine.clone().unwrap_or_default();
     let set_engine = gio::SimpleAction::new_stateful(
         "set-engine",
         Some(glib::VariantTy::STRING),

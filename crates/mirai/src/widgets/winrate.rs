@@ -209,7 +209,9 @@ impl WinrateGraph {
         *this.imp().state.borrow_mut() = Some(state.clone());
         this.add_css_class("mirai-winrate");
         this.set_hexpand(true);
-        this.set_tooltip_text(Some("Win rate (solid) and score lead (dashed) over the main line"));
+        this.set_tooltip_text(Some(
+            "Win rate (solid) and score lead (dashed) over the main line",
+        ));
 
         for name in [signal::TREE_CHANGED, signal::CURSOR_CHANGED, signal::REPORT] {
             let weak = this.downgrade();
@@ -553,8 +555,14 @@ mod tests {
     fn a_white_blunder_is_not_a_black_blunder() {
         // Black's win rate jumps 20 points: catastrophic for White, free for Black.
         let (before, after) = (0.40f32, 0.60f32);
-        assert_eq!(blunder_severity(Color::White, before, after), Severity::Major);
-        assert_eq!(blunder_severity(Color::Black, before, after), Severity::None);
+        assert_eq!(
+            blunder_severity(Color::White, before, after),
+            Severity::Major
+        );
+        assert_eq!(
+            blunder_severity(Color::Black, before, after),
+            Severity::None
+        );
     }
 
     #[test]

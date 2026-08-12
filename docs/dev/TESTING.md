@@ -24,8 +24,10 @@ cargo test -p mirai-proto --test wire_size -- --nocapture   # prints the measure
 
 | Never run casually | Why |
 |---|---|
-| `cargo fmt` | Formatting here is hand-placed in the query and quantisation tables; a blanket reformat buries the real diff. Format only the lines you touched. |
 | `cargo clippy --fix` | Rewrites files you did not read and may be held by another agent. Fix lints individually. |
+
+`cargo fmt --all --check` is quiet: the tree is formatted with stock `rustfmt` defaults. Keep
+it that way — format what you touched, and do not hand-place anything rustfmt would undo.
 
 There are no doc-tests: the `//!` examples in `harness.rs` and `probe.rs` are plain `text`
 fences and are never compiled. They can rot; treat them as prose.
@@ -610,7 +612,7 @@ cargo doc --workspace --no-deps            # catches broken intra-doc links
 - [ ] Every new file carries the `SPDX-License-Identifier: GPL-3.0-or-later` header.
 - [ ] No `GDK_BACKEND` anywhere in the tree.
 - [ ] No test-only branch inside feature code.
-- [ ] `cargo fmt` was not run across the tree.
+- [ ] `cargo fmt --all --check` is clean.
 - [ ] Invariants you touched still read true in [ARCHITECTURE.md](ARCHITECTURE.md) and
       [PROTOCOL.md](PROTOCOL.md).
 

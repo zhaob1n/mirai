@@ -131,9 +131,25 @@ impl RuleSet {
                 r!(Simple, Territory, Tax::Seki, false, false, Whb::Zero, false)
             }
             RuleSet::StoneScoring => r!(Simple, Area, Tax::All, false, false, Whb::Zero, true),
-            RuleSet::Aga => r!(Situational, Area, Tax::None, false, false, Whb::NMinusOne, true),
+            RuleSet::Aga => r!(
+                Situational,
+                Area,
+                Tax::None,
+                false,
+                false,
+                Whb::NMinusOne,
+                true
+            ),
             RuleSet::AgaButton => {
-                r!(Situational, Area, Tax::None, false, true, Whb::NMinusOne, true)
+                r!(
+                    Situational,
+                    Area,
+                    Tax::None,
+                    false,
+                    true,
+                    Whb::NMinusOne,
+                    true
+                )
             }
             RuleSet::NewZealand => r!(Situational, Area, Tax::None, true, false, Whb::Zero, true),
         }

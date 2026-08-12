@@ -256,13 +256,9 @@ impl AnalysisPanel {
         columns.append_column(&text_column("Prior", 1.0, false, None, |c| {
             format!("{}%", pct1(c.prior() as f32))
         }));
-        columns.append_column(&text_column(
-            "PV",
-            0.0,
-            true,
-            Some("mirai-pv-label"),
-            |c| c.pv(),
-        ));
+        columns.append_column(&text_column("PV", 0.0, true, Some("mirai-pv-label"), |c| {
+            c.pv()
+        }));
 
         let scroller = gtk::ScrolledWindow::builder()
             .child(&columns)
@@ -481,9 +477,7 @@ impl AnalysisPanel {
         let objects: Vec<CandidateObject> = rows.into_iter().map(|r| r.into_object(size)).collect();
         let previous = inner.selection.selected();
         self.imp().splicing.set(true);
-        inner
-            .store
-            .splice(0, inner.store.n_items(), &objects);
+        inner.store.splice(0, inner.store.n_items(), &objects);
         // A splice clears the selection; put it back so a pinned PV survives the next
         // report. The candidate at that rank may have changed, which is the intent — the
         // preview follows the rank, not the move.

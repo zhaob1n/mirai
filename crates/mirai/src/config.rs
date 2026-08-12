@@ -703,7 +703,10 @@ mod tests {
         mine.save_merged(&base, &path).expect("this window saves");
 
         let merged = Config::load(&path).expect("reload");
-        assert_eq!(merged.analysis.live_max_visits, 4242, "the other edit was reverted");
+        assert_eq!(
+            merged.analysis.live_max_visits, 4242,
+            "the other edit was reverted"
+        );
         assert_eq!(merged.ui.show_coordinates, mine.ui.show_coordinates);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -733,7 +736,12 @@ mod tests {
         mine.engine_profiles.clear();
         mine.save_merged(&base, &path).expect("save");
 
-        assert!(Config::load(&path).expect("reload").engine_profiles.is_empty());
+        assert!(
+            Config::load(&path)
+                .expect("reload")
+                .engine_profiles
+                .is_empty()
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -780,7 +788,10 @@ mod tests {
 
         let text = toml::to_string_pretty(&cfg).expect("serialise");
         let back: Config = toml::from_str(&text).expect("parse back");
-        assert_eq!(back, cfg, "config did not survive a TOML round trip:\n{text}");
+        assert_eq!(
+            back, cfg,
+            "config did not survive a TOML round trip:\n{text}"
+        );
         assert!(back.active_profile().unwrap().name == "workstation");
     }
 

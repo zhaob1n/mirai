@@ -124,7 +124,9 @@ fn decode_payload<T: DeserializeOwned>(
     // Postcard is positional and the header has no other extension point, so an unknown
     // flag means the sender is speaking a dialect we would silently misparse. Reject it.
     if flags & !FLAG_KNOWN != 0 {
-        return Err(FrameError::Codec(format!("unknown frame flags {flags:#04x}")));
+        return Err(FrameError::Codec(format!(
+            "unknown frame flags {flags:#04x}"
+        )));
     }
     let bytes: &[u8] = if flags & FLAG_ZSTD != 0 {
         buf.plain.clear();

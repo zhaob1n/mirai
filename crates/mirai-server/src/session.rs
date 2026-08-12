@@ -275,18 +275,13 @@ async fn session_loop(host: &Host, conn: &Connection, session: u64) -> anyhow::R
                 };
 
                 if let Some(msg) = request_geometry_error(&req) {
-                    error_msg(
-                        &mut tx,
-                        &mut wbuf,
-                        Some(sub),
-                        ErrCode::BadRequest,
-                        msg,
-                    )
-                    .await?;
+                    error_msg(&mut tx, &mut wbuf, Some(sub), ErrCode::BadRequest, msg).await?;
                     continue;
                 }
 
-                req.priority = req.priority.clamp(*PRIORITY_RANGE.start(), *PRIORITY_RANGE.end());
+                req.priority = req
+                    .priority
+                    .clamp(*PRIORITY_RANGE.start(), *PRIORITY_RANGE.end());
                 info!(
                     session,
                     sub,
@@ -521,15 +516,21 @@ mod tests {
         let mut a = FrameBuf::new();
         let mut b = FrameBuf::new();
 
-        let borrowed = frame::encode(&mut a, &SubMsgRef::Report(&r)).unwrap().to_vec();
+        let borrowed = frame::encode(&mut a, &SubMsgRef::Report(&r))
+            .unwrap()
+            .to_vec();
         let owned = frame::encode(&mut b, &SubMsg::Report(r.clone())).unwrap();
         assert_eq!(borrowed, owned, "Report variant");
 
-        let borrowed = frame::encode(&mut a, &SubMsgRef::Done(&r)).unwrap().to_vec();
+        let borrowed = frame::encode(&mut a, &SubMsgRef::Done(&r))
+            .unwrap()
+            .to_vec();
         let owned = frame::encode(&mut b, &SubMsg::Done(r.clone())).unwrap();
         assert_eq!(borrowed, owned, "Done variant");
 
-        let borrowed = frame::encode(&mut a, &SubMsgRef::Failed("boom")).unwrap().to_vec();
+        let borrowed = frame::encode(&mut a, &SubMsgRef::Failed("boom"))
+            .unwrap()
+            .to_vec();
         let owned = frame::encode(&mut b, &SubMsg::Failed("boom".to_string())).unwrap();
         assert_eq!(borrowed, owned, "Failed variant");
     }
@@ -539,7 +540,9 @@ mod tests {
     fn a_borrowed_report_round_trips_through_the_frame_codec() {
         let r = sample_report();
         let mut buf = FrameBuf::new();
-        let bytes = frame::encode(&mut buf, &SubMsgRef::Done(&r)).unwrap().to_vec();
+        let bytes = frame::encode(&mut buf, &SubMsgRef::Done(&r))
+            .unwrap()
+            .to_vec();
         let mut rbuf = FrameBuf::new();
         let back: SubMsg = frame::decode(&mut rbuf, &bytes).unwrap();
         assert_eq!(back, SubMsg::Done(r));
@@ -596,8 +599,7 @@ mod tests {
 
     #[test]
     fn priority_is_clamped_into_the_served_band() {
-        let clamp =
-            |p: i8| p.clamp(*PRIORITY_RANGE.start(), *PRIORITY_RANGE.end());
+        let clamp = |p: i8| p.clamp(*PRIORITY_RANGE.start(), *PRIORITY_RANGE.end());
         assert_eq!(clamp(127), 8);
         assert_eq!(clamp(-128), -8);
         assert_eq!(clamp(4), 4);

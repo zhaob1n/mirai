@@ -97,7 +97,9 @@ const VISIT_RAMP: [(f32, [u8; 3]); 5] = [
 
 #[inline]
 fn lerp8(a: u8, b: u8, t: f32) -> u8 {
-    (a as f32 + (b as f32 - a as f32) * t).round().clamp(0.0, 255.0) as u8
+    (a as f32 + (b as f32 - a as f32) * t)
+        .round()
+        .clamp(0.0, 255.0) as u8
 }
 
 /// Colour for a candidate whose relative visit share is `f` in `0..=1`.
@@ -254,7 +256,13 @@ mod imp {
         }
 
         /// Builds the wood, grid, star points and coordinate labels once.
-        fn build_static(&self, l: Layout, size: Size, coords: bool, dark: bool) -> Option<gsk::RenderNode> {
+        fn build_static(
+            &self,
+            l: Layout,
+            size: Size,
+            coords: bool,
+            dark: bool,
+        ) -> Option<gsk::RenderNode> {
             let obj = self.obj();
             let s = gtk::Snapshot::new();
             let cell = l.cell;
@@ -320,10 +328,7 @@ mod imp {
 
             // Coordinates.
             if coords {
-                let mut fd = obj
-                    .pango_context()
-                    .font_description()
-                    .unwrap_or_default();
+                let mut fd = obj.pango_context().font_description().unwrap_or_default();
                 fd.set_absolute_size((cell * 0.34) as f64 * pango::SCALE as f64);
                 let mut fg = obj.color();
                 fg.set_alpha(fg.alpha() * 0.8);
@@ -350,7 +355,13 @@ mod imp {
             s.to_node()
         }
 
-        fn static_node(&self, l: Layout, size: Size, coords: bool, dark: bool) -> Option<gsk::RenderNode> {
+        fn static_node(
+            &self,
+            l: Layout,
+            size: Size,
+            coords: bool,
+            dark: bool,
+        ) -> Option<gsk::RenderNode> {
             let key = StaticKey {
                 width: l.width,
                 height: l.height,
@@ -475,13 +486,23 @@ mod imp {
                     seq[p.index()] = n;
                     color = color.other();
                 }
-                let scene = Scene { l, size, board: &board, dark };
+                let scene = Scene {
+                    l,
+                    size,
+                    board: &board,
+                    dark,
+                };
                 self.draw_stones(snapshot, scene, None);
                 self.draw_numbers(snapshot, scene, &seq, None);
                 return;
             }
 
-            let scene = Scene { l, size, board: &position.board, dark };
+            let scene = Scene {
+                l,
+                size,
+                board: &position.board,
+                dark,
+            };
             let dead = self.dead.borrow();
             self.draw_stones(snapshot, scene, dead.as_ref());
             if let Some(territory) = self.territory.borrow().as_ref() {
@@ -535,12 +556,7 @@ mod imp {
     }
 
     impl BoardView {
-        fn draw_stones(
-            &self,
-            snapshot: &gtk::Snapshot,
-            scene: Scene,
-            dead: Option<&DeadSet>,
-        ) {
+        fn draw_stones(&self, snapshot: &gtk::Snapshot, scene: Scene, dead: Option<&DeadSet>) {
             let Scene { l, size, board, .. } = scene;
             let r = l.stone_r;
             let off = (l.cell * 0.05).max(1.0);
@@ -595,7 +611,8 @@ mod imp {
                     let Some(owner) = territory[p.index()] else {
                         continue;
                     };
-                    let alive = board.at(p).is_some() && !dead.as_ref().is_some_and(|d| d.is_dead(p));
+                    let alive =
+                        board.at(p).is_some() && !dead.as_ref().is_some_and(|d| d.is_dead(p));
                     if alive {
                         continue;
                     }
@@ -669,7 +686,12 @@ mod imp {
             cursor: mirai_core::NodeId,
             state: &AppState,
         ) {
-            let Scene { l, size, board, dark } = scene;
+            let Scene {
+                l,
+                size,
+                board,
+                dark,
+            } = scene;
             let marks = {
                 let tree = state.tree();
                 let node = tree.node(cursor);
@@ -827,7 +849,13 @@ fn blit(snapshot: &gtk::Snapshot, buf: Vec<u8>, size: Size, rect: &graphene::Rec
     snapshot.append_scaled_texture(&texture, gsk::ScalingFilter::Nearest, rect);
 }
 
-fn draw_text(snapshot: &gtk::Snapshot, layout: &pango::Layout, cx: f32, cy: f32, color: &gdk::RGBA) {
+fn draw_text(
+    snapshot: &gtk::Snapshot,
+    layout: &pango::Layout,
+    cx: f32,
+    cy: f32,
+    color: &gdk::RGBA,
+) {
     let (tw, th) = layout.pixel_size();
     snapshot.save();
     snapshot.translate(&graphene::Point::new(
@@ -1235,7 +1263,6 @@ impl BoardView {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1276,9 +1303,15 @@ mod tests {
         // Dead centre of A19 (the top-left intersection).
         assert_eq!(l.hit(size, 50.0, 40.0), Some(size.point(0, 0)));
         // 4 px off the centre of (3, 2) still snaps to it.
-        assert_eq!(l.hit(size, 50.0 + 90.0 + 4.0, 40.0 + 60.0 - 4.0), Some(size.point(3, 2)));
+        assert_eq!(
+            l.hit(size, 50.0 + 90.0 + 4.0, 40.0 + 60.0 - 4.0),
+            Some(size.point(3, 2))
+        );
         // The bottom-right corner.
-        assert_eq!(l.hit(size, 50.0 + 18.0 * 30.0, 40.0 + 18.0 * 30.0), Some(size.point(18, 18)));
+        assert_eq!(
+            l.hit(size, 50.0 + 18.0 * 30.0, 40.0 + 18.0 * 30.0),
+            Some(size.point(18, 18))
+        );
     }
 
     #[test]
@@ -1300,7 +1333,10 @@ mod tests {
         let size = Size::square(19);
         let bare = Layout::compute(600, 600, size, false);
         let with_coords = Layout::compute(600, 600, size, true);
-        assert!(with_coords.cell < bare.cell, "coordinates must shrink the grid");
+        assert!(
+            with_coords.cell < bare.cell,
+            "coordinates must shrink the grid"
+        );
         assert_eq!(bare.stone_r, bare.cell * 0.48);
         // The grid is centred: equal margins on both sides.
         let right = 600.0 - (bare.origin_x + 18.0 * bare.cell);

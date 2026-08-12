@@ -237,7 +237,10 @@ impl Parser<'_> {
                     if c == b'\n' || c == b'\r' {
                         self.i += 1;
                         // `\r\n` and `\n\r` are one soft break, not two.
-                        if self.peek().is_some_and(|d| (d == b'\n' || d == b'\r') && d != c) {
+                        if self
+                            .peek()
+                            .is_some_and(|d| (d == b'\n' || d == b'\r') && d != c)
+                        {
                             self.i += 1;
                         }
                         continue;
@@ -253,7 +256,8 @@ impl Parser<'_> {
                 }
             }
         }
-        String::from_utf8(out).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+        String::from_utf8(out)
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
     }
 }
 
@@ -402,13 +406,17 @@ fn build(arena: &[RawNode]) -> Result<GameTree, SgfError> {
             let first = values.first().map(String::as_str).unwrap_or("");
             match name.as_str() {
                 "B" | "W" => {
-                    let color = if name == "B" { Color::Black } else { Color::White };
-                    let p = size.from_sgf(first.as_bytes()).ok_or_else(|| {
-                        SgfError::BadPoint {
+                    let color = if name == "B" {
+                        Color::Black
+                    } else {
+                        Color::White
+                    };
+                    let p = size
+                        .from_sgf(first.as_bytes())
+                        .ok_or_else(|| SgfError::BadPoint {
                             prop: if color == Color::Black { "B" } else { "W" },
                             value: first.to_owned(),
-                        }
-                    })?;
+                        })?;
                     node.mv = Some((color, p));
                 }
                 "AB" => points(size, values, &mut setup.add_black),
@@ -698,8 +706,7 @@ mod tests {
     use crate::board::Board;
     use crate::tree::Candidate;
 
-    const REAL_SGF: &[u8] =
-        include_bytes!("../tests/data/lizzieyzy-autoGame1.sgf");
+    const REAL_SGF: &[u8] = include_bytes!("../tests/data/lizzieyzy-autoGame1.sgf");
 
     /// Raw (still escaped) value of the first occurrence of a property.
     fn raw_value(text: &str, name: &str) -> String {
@@ -821,10 +828,10 @@ mod tests {
 
         let broot = back.root();
         assert_eq!(back.node(broot).comment, "two stone handicap: 白 [x] \\ y");
-        assert_eq!(back.node(broot).setup.add_black, vec![
-            size.point(3, 3),
-            size.point(15, 15)
-        ]);
+        assert_eq!(
+            back.node(broot).setup.add_black,
+            vec![size.point(3, 3), size.point(15, 15)]
+        );
         assert_eq!(back.node(broot).setup.add_empty, vec![size.point(4, 4)]);
 
         let ba = back.children(broot)[0];
@@ -837,10 +844,10 @@ mod tests {
         assert_eq!(back.node(bb).comment, "joseki");
         assert_eq!(back.node(bb).marks.triangle, vec![size.point(2, 2)]);
         assert_eq!(back.node(bb).marks.cross, vec![size.point(5, 5)]);
-        assert_eq!(back.node(balt).marks.labels, vec![(
-            size.point(6, 6),
-            "A:1".to_owned()
-        )]);
+        assert_eq!(
+            back.node(balt).marks.labels,
+            vec![(size.point(6, 6), "A:1".to_owned())]
+        );
 
         // Analysis landed on the node it was attached to, and nowhere else.
         assert_eq!(back.node(bb).analysis.as_ref(), Some(&analysis));

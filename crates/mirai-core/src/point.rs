@@ -132,7 +132,9 @@ impl Size {
         }
         let b = s.as_bytes();
         let (&head, tail) = b.split_first()?;
-        let col = COLUMNS.iter().position(|&c| c == head.to_ascii_uppercase())?;
+        let col = COLUMNS
+            .iter()
+            .position(|&c| c == head.to_ascii_uppercase())?;
         if tail.is_empty() || !tail.iter().all(u8::is_ascii_digit) {
             return None;
         }

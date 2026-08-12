@@ -559,7 +559,10 @@ mod tests {
         // One more stone tips it over.
         own[white[4].index()] = 0.9;
         let dead = DeadSet::from_ownership(&b, &own, 0.4);
-        assert!(white.iter().all(|&p| dead.is_dead(p)), "the chain goes as one");
+        assert!(
+            white.iter().all(|&p| dead.is_dead(p)),
+            "the chain goes as one"
+        );
 
         // Unanimous but weak ownership stays below the threshold.
         let weak = vec![0.3f32; size.points()];

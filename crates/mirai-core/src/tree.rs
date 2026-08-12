@@ -538,10 +538,7 @@ impl GameTree {
 
     /// Adds `p` to this node's setup as `c`, or as `AE` when `c` is `None`.
     pub fn set_setup_stone(&mut self, id: NodeId, p: Point, c: Option<Color>) {
-        let setup = &mut self.nodes[id.index()]
-            .as_mut()
-            .expect("stale NodeId")
-            .setup;
+        let setup = &mut self.nodes[id.index()].as_mut().expect("stale NodeId").setup;
         setup.add_black.retain(|&q| q != p);
         setup.add_white.retain(|&q| q != p);
         setup.add_empty.retain(|&q| q != p);
@@ -656,7 +653,11 @@ mod tests {
         // Two full edge rows, alternating colours: every move is legal and nothing is
         // ever captured, so the expected board is obvious.
         for i in 0..30u16 {
-            let color = if i % 2 == 0 { Color::Black } else { Color::White };
+            let color = if i % 2 == 0 {
+                Color::Black
+            } else {
+                Color::White
+            };
             let p = s.point((i % 19) as u8, 2 * (i / 19) as u8);
             cur = t.play(cur, color, p).expect("legal");
             ids.push(cur);

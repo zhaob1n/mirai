@@ -361,10 +361,7 @@ mod tests {
             parse_url("mirai://box.local").unwrap(),
             ("box.local".to_string(), DEFAULT_PORT)
         );
-        assert_eq!(
-            parse_url("[::1]:1234").unwrap(),
-            ("::1".to_string(), 1234)
-        );
+        assert_eq!(parse_url("[::1]:1234").unwrap(), ("::1".to_string(), 1234));
         assert_eq!(
             parse_url("mirai://[fe80::1]").unwrap(),
             ("fe80::1".to_string(), DEFAULT_PORT)

@@ -52,7 +52,11 @@ fn sample_report(size: Size, candidates: usize, pv_len: usize) -> Report {
             raw_var_time_left: None,
         },
         moves,
-        ownership: Some((0..n).map(|i| q_own(((i % 41) as f64 - 20.0) / 20.0)).collect()),
+        ownership: Some(
+            (0..n)
+                .map(|i| q_own(((i % 41) as f64 - 20.0) / 20.0))
+                .collect(),
+        ),
         policy: None,
     }
 }
@@ -64,7 +68,9 @@ fn a_full_live_report_frames_under_4_kb() {
     assert_eq!(report.ownership.as_ref().unwrap().len(), 361);
 
     let mut buf = FrameBuf::new();
-    let n = encode(&mut buf, &SubMsg::Report(report.clone())).unwrap().len();
+    let n = encode(&mut buf, &SubMsg::Report(report.clone()))
+        .unwrap()
+        .len();
     let framed = buf.frame().to_vec();
     println!("framed SubMsg::Report = {n} bytes (50 candidates, PV 15, pv_visits, 361 ownership)");
     assert!(
@@ -77,7 +83,6 @@ fn a_full_live_report_frames_under_4_kb() {
     let back: SubMsg = mirai_proto::frame::decode(&mut rbuf, &framed).unwrap();
     assert_eq!(back, SubMsg::Report(report));
 }
-
 
 #[test]
 fn dequantisation_error_stays_inside_the_documented_tolerances() {
@@ -100,7 +105,9 @@ fn dequantisation_error_stays_inside_the_documented_tolerances() {
         worst_own = worst_own.max((dq_own(q_own(v)) as f64 - v).abs());
     }
 
-    println!("worst winrate err {worst_wr:.3e}, lead err {worst_lead:.5}, ownership err {worst_own:.5}");
+    println!(
+        "worst winrate err {worst_wr:.3e}, lead err {worst_lead:.5}, ownership err {worst_own:.5}"
+    );
     assert!(worst_wr <= 1e-4, "winrate error {worst_wr}");
     assert!(worst_lead <= 0.02, "score lead error {worst_lead}");
     assert!(worst_own <= 0.005, "ownership error {worst_own}");
@@ -111,8 +118,13 @@ fn an_open_request_is_tiny() {
     let mut req = AnalyzeReq::new(Size::square(19), RuleSet::Chinese, 7.5);
     let size = req.size;
     for i in 0..200u16 {
-        let c = if i % 2 == 0 { Color::Black } else { Color::White };
-        req.moves.push((c, size.point((i % 19) as u8, (i / 19) as u8)));
+        let c = if i % 2 == 0 {
+            Color::Black
+        } else {
+            Color::White
+        };
+        req.moves
+            .push((c, size.point((i % 19) as u8, (i / 19) as u8)));
     }
     req.want = Want::OWNERSHIP | Want::PV_VISITS;
     req.max_visits = Some(1_000_000);

@@ -531,9 +531,10 @@ fn handle_int(int: Int, subs: &mut HashMap<u32, SubState>) -> Option<String> {
                 msg,
             } => {
                 if let Some(st) = subs.remove(&sub) {
-                    st.tx.send_replace(SubEvent::Failed(EngineError::Query(
-                        format!("{code}: {msg}"),
-                    )));
+                    st.tx
+                        .send_replace(SubEvent::Failed(EngineError::Query(format!(
+                            "{code}: {msg}"
+                        ))));
                 }
             }
             ServerMsg::Error {
@@ -565,7 +566,8 @@ fn handle_int(int: Int, subs: &mut HashMap<u32, SubState>) -> Option<String> {
             }
             SubMsg::Failed(why) => {
                 if let Some(st) = subs.remove(&sub) {
-                    st.tx.send_replace(SubEvent::Failed(EngineError::Query(why)));
+                    st.tx
+                        .send_replace(SubEvent::Failed(EngineError::Query(why)));
                 }
             }
         },
@@ -792,7 +794,10 @@ mod tests {
         let err = pick_engine(&engines, Some("nope")).unwrap_err();
         assert!(matches!(err, EngineError::Protocol(_)), "{err}");
         let msg = err.to_string();
-        assert!(msg.contains("nope") && msg.contains("default, big"), "{msg}");
+        assert!(
+            msg.contains("nope") && msg.contains("default, big"),
+            "{msg}"
+        );
 
         let err = pick_engine(&[], None).unwrap_err();
         assert!(matches!(err, EngineError::Protocol(_)), "{err}");

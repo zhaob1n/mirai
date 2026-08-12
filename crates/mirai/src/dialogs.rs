@@ -27,9 +27,7 @@ pub fn new_game(
     on_start: impl Fn(GameSetup) + 'static,
 ) {
     let play = state.config().play.clone();
-    let has_human_model = state
-        .engine_desc()
-        .is_some_and(|d| d.has_human_model);
+    let has_human_model = state.engine_desc().is_some_and(|d| d.has_human_model);
 
     let dialog = adw::Dialog::builder()
         .title("New game")
@@ -135,7 +133,9 @@ pub fn new_game(
     page.add(&player_group);
 
     // -- time control --------------------------------------------------------------
-    let time_group = adw::PreferencesGroup::builder().title("Time control").build();
+    let time_group = adw::PreferencesGroup::builder()
+        .title("Time control")
+        .build();
     let time_row = combo_row(
         "Type",
         &["None", "Absolute", "Byo-yomi", "Fischer increment"],

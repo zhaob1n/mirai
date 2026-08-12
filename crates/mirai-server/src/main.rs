@@ -110,7 +110,10 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
         Ok(rt) => rt,
         Err(e) => {
             error!("could not start the async runtime: {e}");
@@ -344,7 +347,10 @@ mod tests {
             "--print-fingerprint",
         ])
         .unwrap();
-        assert_eq!(a.config.as_deref(), Some(std::path::Path::new("/tmp/s.toml")));
+        assert_eq!(
+            a.config.as_deref(),
+            Some(std::path::Path::new("/tmp/s.toml"))
+        );
         assert_eq!(a.listen.as_deref(), Some("127.0.0.1:9678"));
         assert!(a.print_fingerprint);
     }

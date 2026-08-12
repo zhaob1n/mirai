@@ -20,8 +20,8 @@ use tokio::sync::watch;
 pub use calibrate::{
     CalibrationConfig, CalibrationProgress, CalibrationResult, CalibrationSample, calibrate,
 };
-pub use mirai_proto::types::{AnalyzeReq, AvoidSpec, EngineDesc, MoveInfo, Report, RootInfo, Want};
 pub use local::{LOCAL_ENGINE_SHUTDOWN_GRACE, LocalEngine, LocalEngineConfig};
+pub use mirai_proto::types::{AnalyzeReq, AvoidSpec, EngineDesc, MoveInfo, Report, RootInfo, Want};
 pub use remote::{RemoteEngine, TofuStore};
 pub use tuning::EngineTuning;
 
@@ -103,7 +103,10 @@ pub struct Subscription {
 
 impl Subscription {
     pub fn new(rx: watch::Receiver<SubEvent>, cancel: CancelGuard) -> Subscription {
-        Subscription { rx, _cancel: cancel }
+        Subscription {
+            rx,
+            _cancel: cancel,
+        }
     }
 
     /// A subscription that has already failed — for errors detected before dispatch.

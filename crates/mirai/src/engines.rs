@@ -244,10 +244,9 @@ mod tests {
         let pool = EnginePool::default();
         let profile = local("a", Some(16));
         let engine: Arc<dyn Engine> = Arc::new(Stub);
-        pool.entries.borrow_mut().insert(
-            key(&profile),
-            Entry::Ready(Arc::downgrade(&engine)),
-        );
+        pool.entries
+            .borrow_mut()
+            .insert(key(&profile), Entry::Ready(Arc::downgrade(&engine)));
         assert!(pool.running(&profile).is_some());
         drop(engine);
         assert!(pool.running(&profile).is_none());

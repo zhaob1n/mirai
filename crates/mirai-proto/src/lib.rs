@@ -17,6 +17,6 @@ pub mod types;
 pub use frame::{FrameBuf, FrameError, MAX_FRAME, read_msg, write_msg};
 pub use msg::{ClientMsg, ErrCode, ServerMsg, SubMsg};
 pub use types::{
-    AnalyzeReq, AvoidSpec, EngineDesc, MoveInfo, PROTO_VERSION, POLICY_ILLEGAL, Report, RootInfo,
+    AnalyzeReq, AvoidSpec, EngineDesc, MoveInfo, POLICY_ILLEGAL, PROTO_VERSION, Report, RootInfo,
     Want,
 };

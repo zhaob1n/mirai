@@ -1241,9 +1241,10 @@ fn remote_editor(
             let (tx, rx) = tokio::sync::oneshot::channel();
             let connect_url = url.clone();
             test_state.runtime().spawn(async move {
-                let outcome = mirai_engine::RemoteEngine::connect(&connect_url, &token, engine, None)
-                    .await
-                    .map(|remote| remote.fingerprint().to_string());
+                let outcome =
+                    mirai_engine::RemoteEngine::connect(&connect_url, &token, engine, None)
+                        .await
+                        .map(|remote| remote.fingerprint().to_string());
                 let _ = tx.send(outcome);
             });
 
@@ -1257,10 +1258,15 @@ fn remote_editor(
                 match outcome {
                     Ok(Ok(fingerprint)) => {
                         let pinned = (url.clone(), fingerprint.clone());
-                        crate::dialogs::confirm_fingerprint(&dialog, &url, &fingerprint, move || {
-                            *pin.borrow_mut() = Some(pinned.clone());
-                            trust_row.set_subtitle(&fingerprint_subtitle(&pin.borrow()));
-                        });
+                        crate::dialogs::confirm_fingerprint(
+                            &dialog,
+                            &url,
+                            &fingerprint,
+                            move || {
+                                *pin.borrow_mut() = Some(pinned.clone());
+                                trust_row.set_subtitle(&fingerprint_subtitle(&pin.borrow()));
+                            },
+                        );
                     }
                     Ok(Err(e)) => complain(&banner, format!("Could not connect: {e}")),
                     Err(_) => complain(&banner, "The connection attempt was cancelled."),
@@ -1483,7 +1489,9 @@ fn play_page(state: &AppState) -> adw::PreferencesPage {
     seconds.set_title("Seconds per move");
     strength_group.add(&seconds);
 
-    let human = adw::EntryRow::builder().title("Human model profile").build();
+    let human = adw::EntryRow::builder()
+        .title("Human model profile")
+        .build();
     strength_group.add(&human);
 
     // Seed the rows from the stored setting; the two unused ones keep sensible defaults.
@@ -1594,10 +1602,7 @@ fn play_page(state: &AppState) -> adw::PreferencesPage {
         .model(&gtk::StringList::new(&labels))
         .build();
     let current = state.config().play.rules;
-    let index = RuleSet::ALL
-        .iter()
-        .position(|r| *r == current)
-        .unwrap_or(0) as u32;
+    let index = RuleSet::ALL.iter().position(|r| *r == current).unwrap_or(0) as u32;
     rules.set_selected(index);
     let rules_state = state.clone();
     rules.connect_selected_notify(move |row| {

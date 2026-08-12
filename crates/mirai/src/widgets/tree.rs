@@ -342,11 +342,7 @@ impl MoveTreeView {
                 }
                 // Root and pure setup nodes are hollow.
                 None => {
-                    snapshot.append_fill(
-                        &disc,
-                        gsk::FillRule::Winding,
-                        &with_alpha(fg, 0.08),
-                    );
+                    snapshot.append_fill(&disc, gsk::FillRule::Winding, &with_alpha(fg, 0.08));
                     snapshot.append_stroke(&disc, &hollow_stroke, &outline);
                 }
             }
@@ -446,8 +442,14 @@ mod tests {
         let mut cur = tree.root();
         // A long ladder of passes: legal under every ruleset and cheap to build.
         for i in 0..2000u32 {
-            let color = if i % 2 == 0 { Color::Black } else { Color::White };
-            cur = tree.add_variation(cur, color, mirai_core::Point::PASS).unwrap();
+            let color = if i % 2 == 0 {
+                Color::Black
+            } else {
+                Color::White
+            };
+            cur = tree
+                .add_variation(cur, color, mirai_core::Point::PASS)
+                .unwrap();
         }
         let _ = size;
         let layout = lay_out(&tree);

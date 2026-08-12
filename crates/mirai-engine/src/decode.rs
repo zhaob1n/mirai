@@ -12,7 +12,7 @@
 use mirai_core::{Color, Point, Size};
 use mirai_proto::types::{
     LCB_SCALE, MoveInfo, RAW_VAR_TIME_SCALE, Report, RootInfo, SCORE_SCALE, STDEV_SCALE,
-    UTILITY_SCALE, q16, q_own, q_policy, qs, qu,
+    UTILITY_SCALE, q_own, q_policy, q16, qs, qu,
 };
 use serde_json::Value;
 
@@ -255,7 +255,7 @@ fn floats(v: &Value, key: &str) -> Result<Vec<f64>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mirai_proto::types::{POLICY_ILLEGAL, dq16, dq_own, dq_policy, dqs};
+    use mirai_proto::types::{POLICY_ILLEGAL, dq_own, dq_policy, dq16, dqs};
 
     /// A 5x5 response in the exact shape KataGo emits, trimmed to a readable size.
     fn fixture() -> Value {
@@ -407,12 +407,19 @@ mod tests {
         .unwrap();
         assert!(matches!(
             final_report,
-            RawResponse::Analysis { terminal: true, no_results: false, .. }
+            RawResponse::Analysis {
+                terminal: true,
+                no_results: false,
+                ..
+            }
         ));
 
         // A response with no isDuringSearch field at all is a final one.
         let plain = RawResponse::classify(serde_json::json!({"id": "1", "rootInfo": {}})).unwrap();
-        assert!(matches!(plain, RawResponse::Analysis { terminal: true, .. }));
+        assert!(matches!(
+            plain,
+            RawResponse::Analysis { terminal: true, .. }
+        ));
 
         let terminated = RawResponse::classify(
             serde_json::json!({"id":"17","isDuringSearch":false,"noResults":true,"turnNumber":2}),
@@ -420,7 +427,11 @@ mod tests {
         .unwrap();
         assert!(matches!(
             terminated,
-            RawResponse::Analysis { terminal: true, no_results: true, .. }
+            RawResponse::Analysis {
+                terminal: true,
+                no_results: true,
+                ..
+            }
         ));
 
         assert_eq!(

@@ -46,7 +46,10 @@ pub fn build_query(id: &str, req: &AnalyzeReq) -> Value {
         "includeOwnership".into(),
         json!(req.want.contains(Want::OWNERSHIP)),
     );
-    q.insert("includePolicy".into(), json!(req.want.contains(Want::POLICY)));
+    q.insert(
+        "includePolicy".into(),
+        json!(req.want.contains(Want::POLICY)),
+    );
     q.insert(
         "includePVVisits".into(),
         json!(req.want.contains(Want::PV_VISITS)),
@@ -57,10 +60,7 @@ pub fn build_query(id: &str, req: &AnalyzeReq) -> Value {
     q.insert("includeMovesOwnership".into(), json!(false));
 
     if let Some(ms) = req.report_every_ms {
-        q.insert(
-            "reportDuringSearchEvery".into(),
-            json!(ms as f64 / 1000.0),
-        );
+        q.insert("reportDuringSearchEvery".into(), json!(ms as f64 / 1000.0));
     }
     q.insert("priority".into(), json!(req.priority));
 
@@ -75,7 +75,11 @@ pub fn build_query(id: &str, req: &AnalyzeReq) -> Value {
             "moves": gtp_list(req.size, &spec.moves),
             "untilDepth": spec.until_depth,
         });
-        if spec.allow { allow.push(entry) } else { avoid.push(entry) }
+        if spec.allow {
+            allow.push(entry)
+        } else {
+            avoid.push(entry)
+        }
     }
     if !avoid.is_empty() {
         q.insert("avoidMoves".into(), Value::Array(avoid));

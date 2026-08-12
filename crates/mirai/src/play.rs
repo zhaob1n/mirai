@@ -36,7 +36,9 @@ pub enum Strength {
     Visits(u32),
     TimeMs(u32),
     /// Only offered when `EngineDesc::has_human_model` is true.
-    Human { profile: String },
+    Human {
+        profile: String,
+    },
 }
 
 impl Strength {
@@ -694,10 +696,7 @@ impl PlayController {
         let position = self.state.position();
         let dead = match &ownership {
             Some(raw) => {
-                let f: Vec<f32> = raw
-                    .iter()
-                    .map(|&v| mirai_proto::types::dq_own(v))
-                    .collect();
+                let f: Vec<f32> = raw.iter().map(|&v| mirai_proto::types::dq_own(v)).collect();
                 DeadSet::from_ownership(&position.board, &f, 0.4)
             }
             None => DeadSet::empty(position.board.size),
@@ -811,7 +810,9 @@ impl PlayController {
                 let position = self.state.position();
                 {
                     let mut guard = self.session.borrow_mut();
-                    let Some(s) = guard.as_mut() else { return false };
+                    let Some(s) = guard.as_mut() else {
+                        return false;
+                    };
                     if position.board.at(p).is_none() {
                         return true;
                     }
@@ -1026,10 +1027,22 @@ mod tests {
         assert_eq!(counts.iter().sum::<usize>(), 1000);
         // Weights at t = 4 are 1000^0.25 : 400^0.25 : 20^0.25 = 5.62 : 4.47 : 2.11,
         // i.e. roughly 46% / 37% / 17%.
-        assert!(counts[0] > counts[1], "best move should still lead: {counts:?}");
-        assert!(counts[1] > counts[2], "ordering should follow the weights: {counts:?}");
-        assert!(counts[1] >= 250 && counts[1] <= 500, "second best: {counts:?}");
-        assert!(counts[2] >= 80, "the weakest move must still show up: {counts:?}");
+        assert!(
+            counts[0] > counts[1],
+            "best move should still lead: {counts:?}"
+        );
+        assert!(
+            counts[1] > counts[2],
+            "ordering should follow the weights: {counts:?}"
+        );
+        assert!(
+            counts[1] >= 250 && counts[1] <= 500,
+            "second best: {counts:?}"
+        );
+        assert!(
+            counts[2] >= 80,
+            "the weakest move must still show up: {counts:?}"
+        );
         // The distribution is deterministic for this seed.
         assert_eq!(counts, [472, 366, 162]);
     }

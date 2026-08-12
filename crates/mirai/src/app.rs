@@ -469,11 +469,7 @@ impl AppState {
         // Starting an engine is slow (a local KataGo takes seconds to load its net). If the
         // user picks another engine meanwhile, the older start MUST NOT install itself over
         // the newer one — that used to silently drop a freshly connected remote engine.
-        let activation = self
-            .imp()
-            .activation
-            .get()
-            .wrapping_add(1);
+        let activation = self.imp().activation.get().wrapping_add(1);
         self.imp().activation.set(activation);
 
         // Already running, here or in another window: adopt it without blanking the readout
@@ -776,7 +772,6 @@ impl SpeedMeter {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -794,7 +789,10 @@ mod tests {
 
         // A steady 1200/s must stay at 1200/s however it is smoothed.
         for i in 1..=10 {
-            m.sample(600 + i * 120, t0 + Duration::from_millis(500 + i as u64 * 100));
+            m.sample(
+                600 + i * 120,
+                t0 + Duration::from_millis(500 + i as u64 * 100),
+            );
         }
         assert!((m.rate().unwrap() - 1200.0).abs() < 1.0, "{:?}", m.rate());
     }

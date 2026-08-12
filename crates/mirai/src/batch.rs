@@ -67,7 +67,8 @@ pub fn blunders(tree: &GameTree) -> Vec<Blunder> {
         let Some(parent) = node.parent else {
             continue;
         };
-        let (Some(before), Some(after)) = (tree.node(parent).analysis.as_ref(), node.analysis.as_ref())
+        let (Some(before), Some(after)) =
+            (tree.node(parent).analysis.as_ref(), node.analysis.as_ref())
         else {
             continue;
         };
@@ -157,7 +158,8 @@ impl BatchAnalysis {
             return;
         }
         let Some(engine) = self.state.engine() else {
-            self.state.toast("No engine — start one in Preferences first");
+            self.state
+                .toast("No engine — start one in Preferences first");
             return;
         };
         let nodes = self.state.tree().main_line();
@@ -211,10 +213,13 @@ impl BatchAnalysis {
             return;
         }
         self.teardown();
-        self.state.notify_batch_progress(self.done.get(), self.total.get());
-        self.state.emit_by_name::<()>(signal::TREE_CHANGED, &[]);
         self.state
-            .toast(format!("Analysis cancelled after {} positions", self.done.get()));
+            .notify_batch_progress(self.done.get(), self.total.get());
+        self.state.emit_by_name::<()>(signal::TREE_CHANGED, &[]);
+        self.state.toast(format!(
+            "Analysis cancelled after {} positions",
+            self.done.get()
+        ));
     }
 
     /// Stops the workers and puts the UI back to rest, without reporting anything.
@@ -278,7 +283,8 @@ impl BatchAnalysis {
     /// Aborts the sweep because the engine failed; reports it once.
     fn fail(&self, message: String) {
         self.teardown();
-        self.state.notify_batch_progress(self.done.get(), self.total.get());
+        self.state
+            .notify_batch_progress(self.done.get(), self.total.get());
         self.state.emit_by_name::<()>(signal::TREE_CHANGED, &[]);
         self.state.toast(format!("Analysis stopped: {message}"));
     }
