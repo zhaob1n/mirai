@@ -95,19 +95,34 @@ uses that file as it stands.
   logging), or is better left at KataGo's own default, so an upstream improvement to those
   defaults arrives without mirai having to track it.
 - **Buys.** A working local engine needs two paths, the binary and the model — no config file
-  to find, write or keep in step with the query builder. The defaults are one fixed set of
-  constants, nothing is measured or detected at run time: 4 analysis threads, 16 search threads
-  each, `nnMaxBatchSize` 64, `nnCacheSizePowerOfTwo` 20 (about 3 GiB). Measured on a Radeon
-  RX 6800: 1 → 4 analysis threads takes the cost of moving the cursor to another node from
-  112 ms to 2.4 ms with no loss of single-position speed; 8 → 16 search threads is worth 14% on
-  a single position, where 16 → 32 adds only 8% and worsens in-tree contention. A batch of 64
-  covers those 4 × 16 threads. The cache is the one value set for a reason beyond being
-  required: KataGo's analysis default of 2^23 is sized for the batch server the engine was
-  written for, and settles near 24 GiB with ownership for 128 MiB of pointers up front.
-  2^20 — KataGo's GTP default — settles near 3 GiB for 16 MiB, and a miss only costs a
-  re-evaluation. `nnMutexPoolSizePowerOfTwo` is *not* set: its cost is a few MiB either way,
-  so there is nothing to gain by disagreeing with KataGo about it.
-- **Costs.** mirai owns a file on disk, in the profile's log directory. Its name carries the
+  to find, write or keep in step with the query builder. The fallback is one fixed set of
+  constants: 4 analysis threads, 16 search threads each, `nnMaxBatchSize` 64 and
+  `nnCacheSizePowerOfTwo` 20 (about 3 GiB).
+- **Measured calibration.** A managed local profile can replace the first three values by
+  explicitly running **Automatic tuning** in its editor; it never runs at startup or merely
+  because hardware changed. `mirai-engine::calibrate` starts an isolated KataGo for each
+  candidate against the profile's real binary and model. At one analysis thread it measures
+  search-thread counts 2, 4, 8, 16, 32 and 64 with fixed-visit, ownership-producing queries
+  and takes the first point before a doubling buys less than 10%. It then measures 1, 2 and 4
+  concurrent positions at that search width and takes the highest aggregate visits/second.
+  Each process gets a short warm-up, measurement starts only after the startup handshake,
+  every candidate starts with an empty NN cache, and `nnMaxBatchSize` is raised to cover the
+  winning thread product. The cache size is deliberately not calibrated. On a Radeon RX 6800,
+  1 → 4 analysis threads takes the cost of moving the cursor to another node from
+  112 ms to 2.4 ms with no loss of single-position speed; 8 → 16 search threads is worth 14%
+  on a single position, where 16 → 32 adds only 8% and worsens in-tree contention. The cache
+  is the one value set for a reason beyond being required: KataGo's analysis default of 2^23
+  is sized for the batch server the engine was written for, and settles near 24 GiB with
+  ownership for 128 MiB of pointers up front. 2^20 — KataGo's GTP default — settles near
+  3 GiB for 16 MiB, and a miss only costs a re-evaluation.
+  `nnMutexPoolSizePowerOfTwo` is *not* set: its cost is a few MiB either way, so there is
+  nothing to gain by disagreeing with KataGo about it.
+- **Costs.** Calibration temporarily releases the window's normal engine, refuses to start
+  during engine startup or whole-game analysis, requires other mirai windows to be closed and
+  aborts if one opens. A second model or active search therefore cannot skew the result or exhaust
+  VRAM. Dropping/aborting it still follows INV-3: the in-flight `Subscription` is dropped, then
+  the temporary engine exits. mirai also owns a config file on disk, in the
+  profile's log directory. Its name carries the
   four values (`katago-analysis-a4-s16-b64-c20.cfg`), so profiles tuned differently cannot race
   each other through one path — engines start concurrently, one per window — while an identical
   tuning resolves to a byte-identical file that is left alone, keeping a shared config from
@@ -225,8 +240,9 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 | `src/lib.rs` | **the engine contract** | `Engine`, `Subscription`, `SubEvent`, `CancelGuard`, `EngineError` |
 | `src/query.rs` | KataGo analysis-engine query construction — the only place KataGo field names are written | `build_query`, `action_query`, `terminate_query` |
 | `src/decode.rs` | the only place KataGo JSON becomes a `Report`; classifies every stdout line | `RawResponse::classify`, `decode_report`, `RAW_VAR_TIME_SCALE` |
-| `src/local.rs` | one `katago analysis` subprocess: three tasks, id routing, startup handshake, shutdown | `LocalEngine::spawn`, `LocalEngineConfig`, private `Inner` (`cancel`, `handle`, `deliver`, `fail_all`), `write_lines`, `read_responses`, `drain_stderr`, `supervise`, `handshake`, `override_config` |
+| `src/local.rs` | one `katago analysis` subprocess: three tasks, id routing, startup handshake, shutdown | `LocalEngine::spawn`, `LocalEngine::shutdown`, `LocalEngineConfig`, private `Inner` (`cancel`, `handle`, `deliver`, `fail_all`), `write_lines`, `read_responses`, `drain_stderr`, `supervise`, `handshake`, `override_config` |
 | `src/tuning.rs` | the analysis config mirai writes for itself: the three required KataGo keys plus the cache size, one fixed set of defaults, everything else left to KataGo | `EngineTuning` (`analysis_threads`, `search_threads`, `nn_max_batch_size`, `nn_cache_size_power_of_two`; `Default`, `render`, `write_to` — rewrites only on change, `cache_bytes`, `batch_covers_threads`, the `MAX_*`/`*_CACHE_POWER` bounds), `CACHE_ENTRY_BYTES` |
+| `src/calibrate.rs` | explicit two-stage measurement of search width and concurrent positions against the real local model | `calibrate`, `CalibrationConfig`, `CalibrationProgress`, `CalibrationResult`, `CalibrationSample`, private `measure_candidate`, `select_search_threads`, `select_analysis_threads` |
 | `src/remote.rs` | MRP/1 client: one background task owns the connection, control stream and subscription table | `RemoteEngine::connect`, `RemoteStatus`, `TofuStore`, private `run`, `serve`, `handle_cmd`, `handle_int`, `control_reader`, `uni_acceptor`, `sub_reader`, `reconnect`, `backoff` |
 | `examples/probe.rs` | CLI that drives either backend through the same trait and prints every report — the local-vs-remote comparison harness | `--katago/--model/--config` or `--remote/--token` |
 
@@ -247,7 +263,7 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 | `src/main.rs` | process entry: tracing, the single tokio runtime, resources, CSS, the shared `EnginePool`, `activate`/`open` (one window per file) | `APP_ID`, `RESOURCE_PREFIX` |
 | `src/app.rs` | **INV-7.** `AppState`: the single source of truth *for one window* — properties, signals, tree/cursor API, engine activation, the live-analysis pump, the search-speed meter | `AppState`, `mod signal`, `with_tree_mut`, `with_tree_cached`, `set_cursor`, `play_move`, the `go_*` navigators, `activate_profile`, `remember_active`, `request_for_node`, `restart_analysis`, `set_report`, `analysis_speed`, `SpeedMeter` (+`SPEED_SMOOTHING`) |
 | `src/engines.rs` | the application-wide engines: one per profile, shared by every window, held weakly so the last window to let go takes KataGo with it; writes the generated analysis config when a local profile has no custom one | `EnginePool` (`running`, `acquire`), `Built`, private `key`, `start`, `build` |
-| `src/config.rs` | `$XDG_CONFIG_HOME/mirai/config.toml`: engine profiles and preferences | `Config` (`load`, `save`, `save_merged`, `seeded`, `profile`, `active_profile`, `set_pin`, `default_path`, `data_dir`), private `overlay`, `EngineProfile`, `ProfileKind` (`Local`'s `config` is optional — `None` means mirai generates it — plus `analysis_threads`, `search_threads`, `nn_max_batch_size`, `nn_cache_size_power_of_two`, and `tuning()` which fills the unset ones from `EngineTuning::default`), `AnalysisSettings`, `PlaySettings`, `StrengthSetting`, `UiSettings` |
+| `src/config.rs` | `$XDG_CONFIG_HOME/mirai/config.toml`: engine profiles and preferences; ordered XDG discovery merges all model and custom-analysis candidates | `Config` (`load`, `save`, `save_merged`, `seeded`, `profile`, `active_profile`, `set_pin`, `default_path`, `data_dir`), `discover_models`, `discover_analysis_configs`, private `model_dirs`, `analysis_config_dirs`, `merge_candidates`, `overlay`, `EngineProfile`, `ProfileKind` (`Local`'s optional config and tuning fields), `AnalysisSettings`, `PlaySettings`, `StrengthSetting`, `UiSettings` |
 | `src/util.rs` | formatting helpers and the one `Report` → `NodeAnalysis` conversion | `analysis_of`, `si_visits`, `visits_per_second`, `pct1`, `signed1`, `clock_text`, `gtp` |
 | `src/window.rs` | **INV-8.** The window: layout, every `win.*` action and accelerator, SGF I/O, autosave, score estimate, shortcuts/about | `Ui`, `present`, `with_ui`, `connect_close`, `install_actions`, `primary_menu`, the `update_*` refreshers, `load_sgf`/`do_open`/`do_save`/`do_save_as`, `adopt`, `write_autosave`/`next_autosave_path`/`stale_autosaves`/`offer_restore`/`tree_has_content`, `do_score`/`show_estimate`, `delete_branch`, `AUTOSAVE_SECS`, `AUTOSAVE_PREFIX`, `SCORE_VISITS`, `DEAD_THRESHOLD` |
 | `src/widgets/mod.rs` | widget root; states the no-cairo rule | re-exports `BoardView`, `MoveTreeView`, `WinrateGraph` |
@@ -259,8 +275,8 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 | `src/play.rs` | play mode: turn tracking, clocks, the AI's subscription, resignation, end-of-game scoring | `PlayController` (`start`, `stop`, `on_human_move`, `pass`, `resign`, `undo`, `clocks`, `attach_board`, `set_analyse_hook`), `PlaySession`, `PlayState`, `GameSetup`, `Strength`, `tick_clock`, `resign_check`, `select_move_index`, `result_phrase` |
 | `src/batch.rs` | whole-game analysis: bounded-concurrency sweep over the main line, blunder extraction | `BatchAnalysis` (`start`, `cancel`, `banner`, `connect_finished`), `blunders`, `Blunder`, `in_flight`, `BLUNDER_MIN_DROP`, private `run_worker` |
 | `src/dialogs.rs` | New Game, score summary, certificate confirmation | `new_game`, `show_score_with`, `confirm_fingerprint`, `grey_out_human` |
-| `src/prefs.rs` | preferences dialog, local/remote profile editors, the header-bar engine menu; writes straight through to `Config`. The local editor forks on `Analysis config`: managed by mirai, or a custom file — the file row appears only in the custom mode, which hides the batching-and-memory group because only the two thread values can still be overridden | `present`, `engine_menu_model`, `no_engine_status_page`, private `engines_page`, `refresh_profiles`, `editor_shell`, `open_editor`, `local_editor`, `tuned_row`, `cache_subtitle` |
-| `src/harness.rs` | debug-only scripted-UI harness, inert unless `MIRAI_HARNESS` is set; renders through the app's own GSK renderer | `install`, `parse`, `activate`, `press` (matches a button's visible text: `GtkButton` label, then the first `gtk::Label` in its subtree so `adw::ButtonContent` works, then the tooltip), `shot` |
+| `src/prefs.rs` | preferences dialog, profile editors and header-bar engine menu; writes through to `Config`. Each path row carries a chooser over the merged discovered candidates plus a file button for anything else; managed configs expose tuning and memory, custom configs hide managed-only controls | `present`, `engine_menu_model`, `no_engine_status_page`, private `engines_page`, `refresh_profiles`, `editor_shell`, `open_editor`, `local_editor`, `file_row`, `discovered_button`, `candidate_labels`, `tuned_row`, `cache_subtitle` |
+| `src/harness.rs` | debug-only scripted-UI harness, inert unless `MIRAI_HARNESS` is set; renders through the app's own GSK renderer | `install`, `parse`, `activate`, `press` (matches a button's visible text: `GtkButton` label, then the first `gtk::Label` in its subtree so `adw::ButtonContent` works, then the tooltip; a matching `gtk::MenuButton` is popped up), `select` (sets a visible `adw::ComboRow` by title), `shot` |
 
 Non-Rust in `crates/mirai`: `resources/style.css` (`board-area`, `mirai-clock`, `mirai-readout`,
 `mirai-winrate`, `mirai-movetree`) and `resources/mirai.gresource.xml`.

@@ -6,7 +6,7 @@
 //! Everything here writes straight through to [`crate::config::Config`] and calls
 //! [`AppState::save_config`], so the on-disk `config.toml` is always what the dialog shows.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -17,13 +17,15 @@ use mirai_core::RuleSet;
 
 use crate::app::{AppState, signal};
 use crate::config::{EngineProfile, ProfileKind, StrengthSetting};
-use mirai_engine::EngineTuning;
+use mirai_engine::{CalibrationConfig, CalibrationProgress, CalibrationResult, EngineTuning};
 
 /// Builds and presents the preferences dialog.
 pub fn present(parent: &impl IsA<gtk::Widget>, state: &AppState) {
     let dialog = adw::PreferencesDialog::builder()
         .title("Preferences")
-        .content_width(620)
+        // Wide enough for the four-page view switcher to spell "Appearance" out; below this
+        // libadwaita ellipsises the last title rather than falling back to its narrow layout.
+        .content_width(760)
         .content_height(720)
         .build();
 
@@ -328,7 +330,7 @@ struct Editor {
 
 fn editor_shell(title: &str) -> Editor {
     let header = adw::HeaderBar::new();
-    let save = gtk::Button::with_label("Save");
+    let save = gtk::Button::with_label("Save profile");
     save.add_css_class("suggested-action");
     header.pack_end(&save);
 
@@ -370,10 +372,12 @@ fn open_editor(
     dialog.push_subpage(&page);
 }
 
-/// A read-only row showing a chosen path, with a button that opens a `gtk::FileDialog`.
+/// A read-only row showing a chosen path, with a button that opens a `gtk::FileDialog` and,
+/// when discovery found any, a chooser over those candidates.
 fn file_row(
     title: &str,
     initial: PathBuf,
+    candidates: Vec<PathBuf>,
     dialog: &adw::PreferencesDialog,
 ) -> (adw::ActionRow, Rc<RefCell<PathBuf>>) {
     let cell = Rc::new(RefCell::new(initial));
@@ -384,6 +388,11 @@ fn file_row(
         .build();
     row.set_use_markup(false);
     row.set_subtitle_lines(3);
+
+    // Before the file button, so the discovered list is the first thing reached.
+    if let Some(chooser) = discovered_button(candidates, &row, &cell) {
+        row.add_suffix(&chooser);
+    }
 
     let button = gtk::Button::from_icon_name("document-open-symbolic");
     button.set_valign(gtk::Align::Center);
@@ -438,6 +447,112 @@ fn path_subtitle(path: &Path) -> String {
     }
 }
 
+/// A chooser over every path discovered in the configured XDG directories, living in the row
+/// it fills rather than beside it.
+///
+/// Labels are file names, which is what actually distinguishes candidates; a name two
+/// directories share carries its directory underneath. Both ellipsize in the middle, keeping
+/// the ends that identify a file, and the whole path is in the tooltip either way. The row's
+/// own file button still accepts anything discovery never saw.
+fn discovered_button(
+    candidates: Vec<PathBuf>,
+    row: &adw::ActionRow,
+    path: &Rc<RefCell<PathBuf>>,
+) -> Option<gtk::MenuButton> {
+    if candidates.is_empty() {
+        return None;
+    }
+    let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let popover = gtk::Popover::builder().build();
+    for (candidate, (name, dir)) in candidates.iter().zip(candidate_labels(&candidates)) {
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        content.append(&candidate_label(&name, false));
+        if let Some(dir) = dir {
+            content.append(&candidate_label(&dir, true));
+        }
+        let button = gtk::Button::builder()
+            .child(&content)
+            .tooltip_text(candidate.display().to_string())
+            .build();
+        button.add_css_class("flat");
+        let candidate = candidate.clone();
+        let path = path.clone();
+        button.connect_clicked(glib::clone!(
+            #[weak]
+            row,
+            #[weak]
+            popover,
+            move |_| {
+                row.set_subtitle(&path_subtitle(&candidate));
+                path.replace(candidate.clone());
+                popover.popdown();
+            }
+        ));
+        list.append(&button);
+    }
+    // A discovery directory can hold a dozen networks; the popover scrolls rather than
+    // growing past the dialog.
+    popover.set_child(Some(
+        &gtk::ScrolledWindow::builder()
+            .child(&list)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .propagate_natural_height(true)
+            .propagate_natural_width(true)
+            .max_content_height(320)
+            .build(),
+    ));
+    let button = gtk::MenuButton::builder()
+        .icon_name("view-list-symbolic")
+        .popover(&popover)
+        .valign(gtk::Align::Center)
+        .tooltip_text(format!(
+            "Choose one of {} discovered files",
+            candidates.len()
+        ))
+        .build();
+    button.add_css_class("flat");
+    Some(button)
+}
+
+fn candidate_label(text: &str, dim: bool) -> gtk::Label {
+    let label = gtk::Label::builder()
+        .label(text)
+        .xalign(0.0)
+        .ellipsize(gtk::pango::EllipsizeMode::Middle)
+        .max_width_chars(44)
+        .build();
+    if dim {
+        label.add_css_class("dim-label");
+        label.add_css_class("caption");
+    }
+    label
+}
+
+/// What each candidate is called in the chooser: its file name, plus the directory holding
+/// it only when another candidate shares that name. Discovery deliberately spans several
+/// directories that conventionally hold identically named files - `analysis.cfg` in two XDG
+/// roots, the same network staged twice - so a bare name is not always enough.
+fn candidate_labels(candidates: &[PathBuf]) -> Vec<(String, Option<String>)> {
+    candidates
+        .iter()
+        .map(|path| {
+            let name = match path.file_name() {
+                Some(name) => name.to_string_lossy().into_owned(),
+                None => path.display().to_string(),
+            };
+            let shared = candidates
+                .iter()
+                .filter(|other| other.file_name() == path.file_name())
+                .count()
+                > 1;
+            let dir = shared
+                .then(|| path.parent().map(|dir| dir.display().to_string()))
+                .flatten();
+            (name, dir)
+        })
+        .collect()
+}
+
 /// `0` means "use the default": mirai's own when it generates the analysis config, or
 /// whatever the file says when the user supplies one.
 fn tuned_row(title: &str, subtitle: &str, value: u32, max: f64) -> adw::SpinRow {
@@ -467,7 +582,97 @@ fn cache_subtitle(power: u8) -> String {
             EngineTuning::default().nn_cache_size_power_of_two
         );
     }
-    format!("2^{power} evaluations, roughly {} MiB once warm", (3u64 << power) / 1024)
+    format!(
+        "2^{power} evaluations, roughly {} MiB once warm",
+        (3u64 << power) / 1024
+    )
+}
+
+/// Both halves of a thread setting, in the words the two rows above the tuning group use.
+fn candidate_summary(analysis: u16, search: u16) -> String {
+    format!(
+        "{analysis} position{} in parallel, {search} threads each",
+        if analysis == 1 { "" } else { "s" }
+    )
+}
+
+/// What the run settled on, with the throughput it actually measured there — the numbers
+/// in the rows above are worth trusting only because this one was timed.
+fn measured_subtitle(result: &CalibrationResult) -> String {
+    let tuning = result.tuning;
+    let speed = result
+        .samples
+        .iter()
+        .filter(|s| s.at == tuning.analysis_threads && s.st == tuning.search_threads)
+        .map(|s| s.visits_per_second())
+        .fold(0.0_f64, f64::max);
+    let best = candidate_summary(tuning.analysis_threads, tuning.search_threads);
+    if speed > 0.0 {
+        format!("Fastest here: {best} — about {speed:.0} visits/s. Press Save profile to apply.")
+    } else {
+        format!("Fastest here: {best}. Press Save profile to apply.")
+    }
+}
+
+/// The modal a calibration runs behind: one bar for the eight candidates, one line naming
+/// the setting being timed, and a Cancel that stops the run.
+fn tuning_progress() -> (adw::AlertDialog, gtk::ProgressBar, gtk::Label) {
+    let bar = gtk::ProgressBar::builder()
+        .show_text(true)
+        .text("Starting…")
+        .build();
+    let caption = gtk::Label::builder()
+        .label("Waiting for the current engine to let go of the GPU…")
+        .wrap(true)
+        .build();
+    caption.add_css_class("dim-label");
+
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    body.append(&bar);
+    body.append(&caption);
+
+    let dialog = adw::AlertDialog::new(
+        Some("Tuning KataGo"),
+        Some(
+            "Every setting is timed in its own KataGo, so this takes a few minutes. \
+             Your engine stays stopped until the run ends.",
+        ),
+    );
+    dialog.set_extra_child(Some(&body));
+    dialog.add_response("cancel", "Stop tuning");
+    dialog.set_close_response("cancel");
+    dialog.set_default_response(Some("cancel"));
+    (dialog, bar, caption)
+}
+
+/// True when a second mirai window is open.
+///
+/// Engines are shared application-wide (see [`crate::engines::EnginePool`]), so another
+/// window keeps the running KataGo alive whatever this one drops, and the run would be
+/// timing a GPU it does not have to itself.
+fn other_windows_open(widget: &impl IsA<gtk::Widget>) -> bool {
+    let Some(app) = widget
+        .root()
+        .and_downcast::<gtk::Window>()
+        .and_then(|window| window.application())
+    else {
+        return false;
+    };
+    app.windows()
+        .iter()
+        .filter(|w| w.is::<adw::ApplicationWindow>())
+        .count()
+        > 1
+}
+
+/// Puts the engine back after a tuning run, however the run ended.
+///
+/// The profile restored is the saved one: unsaved edits in the editor are not a decision
+/// the user has made yet, and tuning must not turn them into one.
+fn restore_engine(state: &AppState, previous: Option<&str>) {
+    if let Some(name) = previous {
+        state.activate_profile(name);
+    }
 }
 
 fn local_editor(
@@ -500,6 +705,14 @@ fn local_editor(
             _ => (PathBuf::new(), PathBuf::new(), None, None, None, None, None),
         };
     let custom = config.is_some();
+    let model_candidates = crate::config::discover_models();
+    let config_candidates = crate::config::discover_analysis_configs();
+    // Discovery only supplies chooser entries. Managed mode remains selected until the user
+    // explicitly switches to Custom file.
+    let suggested_config = config
+        .clone()
+        .or_else(|| config_candidates.first().cloned())
+        .unwrap_or_default();
 
     let editor = editor_shell(if editing.is_some() {
         "Edit local engine"
@@ -517,8 +730,8 @@ fn local_editor(
         .title("KataGo")
         .description("Both must exist before the profile can be saved.")
         .build();
-    let (katago_row, katago_path) = file_row("KataGo binary", katago, dialog);
-    let (model_row, model_path) = file_row("Neural network model", model, dialog);
+    let (katago_row, katago_path) = file_row("KataGo binary", katago, Vec::new(), dialog);
+    let (model_row, model_path) = file_row("Neural network model", model, model_candidates, dialog);
     paths.add(&katago_row);
     paths.add(&model_row);
     editor.content.add(&paths);
@@ -526,17 +739,20 @@ fn local_editor(
     // KataGo will not start without a `-config`, but mirai can write that file itself —
     // it needs three keys the user has no reason to care about. A custom file stays
     // available for anyone who does.
-    let source = adw::PreferencesGroup::builder().title("Configuration").build();
+    let source = adw::PreferencesGroup::builder()
+        .title("Configuration")
+        .build();
     let mode = adw::ComboRow::builder()
         .title("Analysis config")
-        .model(&gtk::StringList::new(&[
-            "Managed by mirai",
-            "Custom file",
-        ]))
+        .model(&gtk::StringList::new(&["Managed by mirai", "Custom file"]))
         .selected(u32::from(custom))
         .build();
-    let (config_row, config_path) =
-        file_row("Custom analysis config", config.unwrap_or_default(), dialog);
+    let (config_row, config_path) = file_row(
+        "Custom analysis config",
+        suggested_config,
+        config_candidates,
+        dialog,
+    );
     source.add(&mode);
     source.add(&config_row);
     editor.content.add(&source);
@@ -585,15 +801,263 @@ fn local_editor(
     memory.add(&cache_row);
     editor.content.add(&memory);
 
+    // -- automatic tuning ---------------------------------------------------------------
+    //
+    // Threads and batch size are worth measuring rather than guessing: what a particular
+    // GPU does with them is not something mirai can predict from the model file or the
+    // driver version. The run needs the machine to itself, hence the engine shutdown and
+    // the refusal to start with a second window open.
+    let auto = adw::PreferencesGroup::builder()
+        .title("Automatic tuning")
+        .description(
+            "Times KataGo on this machine at a series of thread settings and fills in the \
+             values above. It starts KataGo once per setting, so allow a few minutes.",
+        )
+        .build();
+    let tune_row = adw::ActionRow::builder()
+        .title("Measure this machine")
+        .subtitle(
+            "Uses the binary and model chosen above, and stops the running engine while \
+             it works.",
+        )
+        .build();
+    tune_row.set_use_markup(false);
+    tune_row.set_subtitle_lines(3);
+    let tune = gtk::Button::with_label("Tune…");
+    tune.set_valign(gtk::Align::Center);
+    tune_row.add_suffix(&tune);
+    tune_row.set_activatable_widget(Some(&tune));
+    auto.add(&tune_row);
+    editor.content.add(&auto);
+
+    let tune_state = state.clone();
+    let tune_banner = editor.banner.clone();
+    let tune_save = editor.save.clone();
+    let tune_katago = katago_path.clone();
+    let tune_model = model_path.clone();
+    let tune_name = name_row.clone();
+    let tune_analysis = analysis_row.clone();
+    let tune_search = search_row.clone();
+    let tune_batch = batch_row.clone();
+    let tune_cache = cache_row.clone();
+    tune.connect_clicked(glib::clone!(
+        #[weak]
+        dialog,
+        #[weak]
+        tune_row,
+        move |button| {
+            let katago = tune_katago.borrow().clone();
+            let model = tune_model.borrow().clone();
+            for (label, path) in [("KataGo binary", &katago), ("neural network model", &model)] {
+                if path.as_os_str().is_empty() {
+                    complain(&tune_banner, format!("Choose the {label} before tuning."));
+                    return;
+                }
+                if !path.exists() {
+                    complain(&tune_banner, format!("{} does not exist.", path.display()));
+                    return;
+                }
+            }
+            if other_windows_open(&dialog) {
+                complain(
+                    &tune_banner,
+                    "Close the other mirai windows before tuning: they keep the current \
+                     KataGo on the GPU, which would skew every measurement.",
+                );
+                return;
+            }
+            if tune_state.busy() {
+                complain(
+                    &tune_banner,
+                    "Wait for engine startup, or finish or cancel the running whole-game \
+                     analysis before tuning.",
+                );
+                return;
+            }
+            tune_banner.set_revealed(false);
+
+            // Measure from where the user is now: whatever the rows say, with `0` meaning
+            // mirai's default, exactly as a real start would read them.
+            let base = EngineTuning::default();
+            let tuning = EngineTuning {
+                analysis_threads: spin_value_u16(&tune_analysis).unwrap_or(base.analysis_threads),
+                search_threads: spin_value_u16(&tune_search).unwrap_or(base.search_threads),
+                nn_max_batch_size: spin_value_u16(&tune_batch).unwrap_or(base.nn_max_batch_size),
+                nn_cache_size_power_of_two: spin_value_u8(&tune_cache)
+                    .unwrap_or(base.nn_cache_size_power_of_two),
+            };
+            let name = match tune_name.text().trim() {
+                "" => "tuning".to_string(),
+                named => named.to_string(),
+            };
+            let log_dir = crate::config::Config::data_dir()
+                .unwrap_or_else(|_| std::env::temp_dir())
+                .join("katago-logs");
+            let config = CalibrationConfig::new(name, katago, model, log_dir, tuning);
+
+            // Hand the GPU over: dropping this window's engine leaves nobody holding the
+            // pool's weak entry, so KataGo exits. The profile that was active comes back
+            // when the run ends, whichever way it ends.
+            let previous = tune_state.config().active_engine.clone();
+            if tune_state.engine().is_some() {
+                tune_state.set_engine(None);
+            }
+
+            button.set_sensitive(false);
+            tune_save.set_sensitive(false);
+
+            let (progress_tx, mut progress_rx) =
+                tokio::sync::mpsc::unbounded_channel::<CalibrationProgress>();
+            let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+            let task = tune_state.runtime().spawn(async move {
+                // Wait beyond LocalEngine's shutdown deadline before putting the next KataGo
+                // on the GPU.
+                tokio::time::sleep(
+                    mirai_engine::LOCAL_ENGINE_SHUTDOWN_GRACE
+                        + std::time::Duration::from_millis(250),
+                )
+                .await;
+                let outcome = mirai_engine::calibrate(config, move |progress| {
+                    let _ = progress_tx.send(progress);
+                })
+                .await;
+                let _ = done_tx.send(outcome);
+            });
+
+            let (progress, bar, caption) = tuning_progress();
+            progress.present(Some(&dialog));
+
+            // Opening a game during the run creates another AppState and may start another
+            // KataGo. Abort instead of presenting measurements taken against a contended GPU.
+            let window_watch = Rc::new(RefCell::new(None));
+            if let Some(app) = dialog
+                .root()
+                .and_downcast::<gtk::Window>()
+                .and_then(|window| window.application())
+            {
+                let watch_banner = tune_banner.clone();
+                let watch_progress = progress.clone();
+                let id = app.connect_window_added(move |_, window| {
+                    if window.is::<adw::ApplicationWindow>() {
+                        complain(
+                            &watch_banner,
+                            "Tuning stopped because another mirai window opened.",
+                        );
+                        watch_progress.close();
+                    }
+                });
+                window_watch.replace(Some((app, id)));
+            }
+
+            // Whichever comes first — the run finishing or the user cancelling — owns the
+            // teardown; the other side finds the flag set and leaves it alone.
+            let finished = Rc::new(Cell::new(false));
+
+            {
+                let finished = finished.clone();
+                let state = tune_state.clone();
+                let previous = previous.clone();
+                let save = tune_save.clone();
+                let button = button.clone();
+                let window_watch = window_watch.clone();
+                progress.connect_response(None, move |_, _| {
+                    if finished.replace(true) {
+                        return;
+                    }
+                    if let Some((app, id)) = window_watch.borrow_mut().take() {
+                        app.disconnect(id);
+                    }
+                    // Aborting drops the calibration's engine and its subscription inside
+                    // the runtime, which is the whole cancellation mechanism. Unlike the
+                    // normal completion path there is no shutdown acknowledgement to await,
+                    // so do not restore the saved engine inside LocalEngine's shutdown grace.
+                    task.abort();
+                    let state = state.clone();
+                    let previous = previous.clone();
+                    let save = save.clone();
+                    let button = button.clone();
+                    // Strong transient capture: this ends after the shutdown grace.
+                    glib::spawn_future_local(async move {
+                        glib::timeout_future(
+                            mirai_engine::LOCAL_ENGINE_SHUTDOWN_GRACE
+                                + std::time::Duration::from_millis(250),
+                        )
+                        .await;
+                        restore_engine(&state, previous.as_deref());
+                        save.set_sensitive(true);
+                        button.set_sensitive(true);
+                    });
+                });
+            }
+
+            // Progress arrives from a runtime thread; the channel is what carries it back
+            // onto this one, and it closes when the task ends or is aborted.
+            glib::spawn_future_local(async move {
+                while let Some(step) = progress_rx.recv().await {
+                    bar.set_fraction(f64::from(step.completed) / f64::from(step.total.max(1)));
+                    bar.set_text(Some(&format!(
+                        "Step {} of {}",
+                        step.completed + 1,
+                        step.total
+                    )));
+                    caption.set_label(&candidate_summary(
+                        step.analysis_threads,
+                        step.search_threads,
+                    ));
+                }
+            });
+
+            let state = tune_state.clone();
+            let banner = tune_banner.clone();
+            let save = tune_save.clone();
+            let button = button.clone();
+            let analysis_row = tune_analysis.clone();
+            let search_row = tune_search.clone();
+            let batch_row = tune_batch.clone();
+            let window_watch = window_watch.clone();
+            glib::spawn_future_local(async move {
+                let outcome = done_rx.await;
+                if finished.replace(true) {
+                    // Cancelled: the response handler has already put everything back.
+                    return;
+                }
+                if let Some((app, id)) = window_watch.borrow_mut().take() {
+                    app.disconnect(id);
+                }
+                progress.close();
+                save.set_sensitive(true);
+                button.set_sensitive(true);
+                match outcome {
+                    Ok(Ok(result)) => {
+                        // Only the three values the run measured. The cache is a memory
+                        // decision, not a speed one, so it stays the user's.
+                        analysis_row.set_value(f64::from(result.tuning.analysis_threads));
+                        search_row.set_value(f64::from(result.tuning.search_threads));
+                        batch_row.set_value(f64::from(result.tuning.nn_max_batch_size));
+                        tune_row.set_subtitle(&measured_subtitle(&result));
+                    }
+                    Ok(Err(e)) => complain(&banner, format!("Tuning failed: {e}")),
+                    // The result channel only goes away with the task behind it.
+                    Err(_) => complain(&banner, "The tuning run stopped without a result."),
+                }
+                restore_engine(&state, previous.as_deref());
+            });
+        }
+    ));
+
     // What `0` falls back to depends on who owns the config file, so say which.
     let apply_mode = {
         let config_row = config_row.clone();
         let memory = memory.clone();
+        let auto = auto.clone();
         let analysis_row = analysis_row.clone();
         let search_row = search_row.clone();
         move |custom: bool| {
             config_row.set_visible(custom);
             memory.set_visible(!custom);
+            // Tuning writes the managed values; with a custom file there is nothing for
+            // it to write.
+            auto.set_visible(!custom);
             let (analysis, search) = if custom {
                 (
                     "numAnalysisThreads — 0 keeps the value from your analysis config".to_string(),
@@ -1226,4 +1690,34 @@ fn bound_switch(
     let state = state.clone();
     row.connect_active_notify(move |_| state.save_config());
     row
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The chooser is useless if two candidates read the same, and noisy if every unique one
+    /// drags its directory along.
+    #[test]
+    fn only_candidates_sharing_a_name_carry_their_directory() {
+        let candidates = [
+            PathBuf::from("/home/u/.config/katago/cfg/analysis/analysis.cfg"),
+            PathBuf::from("/home/u/.config/mirai/cfg/analysis/analysis.cfg"),
+            PathBuf::from("/etc/xdg/mirai/cfg/analysis/analysis-fast.cfg"),
+        ];
+        assert_eq!(
+            candidate_labels(&candidates),
+            vec![
+                (
+                    "analysis.cfg".to_string(),
+                    Some("/home/u/.config/katago/cfg/analysis".to_string())
+                ),
+                (
+                    "analysis.cfg".to_string(),
+                    Some("/home/u/.config/mirai/cfg/analysis".to_string())
+                ),
+                ("analysis-fast.cfg".to_string(), None),
+            ]
+        );
+    }
 }

@@ -58,6 +58,13 @@ starts it. The header bar shows `Starting local-default…` for a few seconds wh
 loads, then the engine's name and version. On an OpenCL build the *very first* start can take
 minutes — see [Troubleshooting](#the-very-first-start-takes-minutes).
 
+First-run discovery looks for `katago` on `PATH`. Networks are merged in this directory order:
+`$XDG_DATA_HOME/katago/models`, `$XDG_DATA_HOME/mirai/models`, `~/.katago/models`, then
+`katago/models` and `mirai/models` under each `$XDG_DATA_DIRS` entry from left to right (using
+the standard defaults when the variable is unset). Within a directory, newer `*.bin.gz` files
+come first. The first candidate seeds `local-default`; the rest are one click away in every
+local-profile editor, on the model row's list button.
+
 **No KataGo was found.** Preferences opens by itself and the Analysis sidebar reads *"No engine
 configured"*.
 
@@ -65,14 +72,18 @@ configured"*.
 
 1. **Preferences → Engines → Add local…**
 2. **Name** — anything unique; it labels the engine in the header-bar menu.
-3. **KataGo binary** and **Neural network model** — press the folder button on each row and
-   pick the file. Both must exist or Save is refused, with the reason in a banner at the top
+3. **KataGo binary** and **Neural network model** — the list button on the model row offers
+   every discovered network by file name, with its directory underneath whenever two share a
+   name and the whole path in the tooltip; the folder button beside it takes any other file.
+   Both paths must exist or **Save profile** is refused, with the reason in a banner at the top
    of the page.
-4. **Analysis config** — leave it at **Managed by mirai**. Choosing *Custom file* reveals one
-   more file row, for your own `analysis.cfg`.
+4. **Analysis config** — leave it at **Managed by mirai**. Choosing *Custom file* reveals the
+   config row, which carries the same pair of buttons. Its list merges every Analysis `*.cfg`
+   in `katago/cfg/analysis` and `mirai/cfg/analysis` under `$XDG_CONFIG_HOME`, then under each
+   `$XDG_CONFIG_DIRS` entry; `analysis.cfg` comes first within its directory.
 5. **Search** and **Batching and memory** — leave every number at **0**, which means *use
    mirai's default*; the [settings reference](#engines) lists them.
-6. **Save.**
+6. **Save profile.**
 
 The first profile added becomes the active one and starts immediately. Later profiles do not
 steal the selection; switch with the engine button in the header bar. The pencil button edits
@@ -445,7 +456,7 @@ mirai will refuse to connect if it ever changes.
 something between the two machines is answering in the desktop's place.
 
 Trusting *pins* that fingerprint: from then on mirai talks only to a server presenting exactly
-that certificate. **Save**, then select the profile from the header-bar engine button.
+that certificate. **Save profile**, then select the profile from the header-bar engine button.
 Everything behaves as it does locally. Changing the Server URL later discards the pin, because
 a pin belongs to the address it came from, and you are asked to confirm the new one.
 
@@ -456,7 +467,7 @@ click through.
 
 | Cause | What to do |
 |---|---|
-| The server's `cert.pem`/`key.pem` were deleted or regenerated, or the server was reinstalled | expected. Get the new value with `mirai-server --print-fingerprint`, then on the laptop edit the remote profile → **Test connection** → check → **Trust** → **Save** |
+| The server's `cert.pem`/`key.pem` were deleted or regenerated, or the server was reinstalled | expected. Get the new value with `mirai-server --print-fingerprint`, then on the laptop edit the remote profile → **Test connection** → check → **Trust** → **Save profile** |
 | Nothing changed on the server | do not click through. Something is intercepting the connection; check the network and the address |
 
 ---
@@ -470,12 +481,13 @@ Four pages. Every change is written to disk immediately; there is no Apply butto
 | Setting | Default | Notes |
 |---|---|---|
 | Engine profiles | one, if a KataGo was found | radio button = active engine; pencil edits, bin deletes |
-| *local* Name / KataGo binary / model | — | both paths must exist to save |
-| *local* Analysis config | Managed by mirai | *Custom file* reveals a path row and hands every KataGo setting except the two thread counts to that file |
+| *local* Name / KataGo binary / model | — | both paths must exist to save; the model row's list button holds every discovered network, the folder button any other file |
+| *local* Analysis config | Managed by mirai | *Custom file* reveals the config row, whose list button holds every discovered Analysis config; all settings except the two thread counts then come from that file |
 | *local* Positions in parallel | 0, meaning 4 | `numAnalysisThreads`: positions searched at once. Four keeps a whole-game sweep and a cursor move from queueing behind each other |
 | *local* Threads per position | 0, meaning 16 | `numSearchThreadsPerAnalysisThread`: how hard one position is searched. Raise on a many-core CPU, but the returns fall off past 16 |
 | *local* GPU batch size | 0, meaning 64 | `nnMaxBatchSize`. Wants to be at least positions × threads. Hidden while a custom config is selected |
 | *local* Neural-net cache | 0, meaning 20 | `nnCacheSizePowerOfTwo`: 2^20 cached evaluations, roughly 3 GiB once warm. Hidden while a custom config is selected |
+| *local* Automatic tuning | off | **Tune…** measures the selected binary and model, updates the three performance rows, and waits for **Save profile** before applying them. Managed configs only |
 | *remote* Server URL / Token / Engine name | — / — / blank | blank engine name means the server's first engine |
 | *remote* Pinned fingerprint | not pinned | read-only; set by **Test connection** and your confirmation |
 
@@ -487,6 +499,16 @@ default. Three of them are there because KataGo refuses to start without
 there is a file at all rather than a handful of command-line overrides. The cache is the
 exception: KataGo's own analysis-engine default is 2^23, meant for a server analysing games
 in bulk, and would settle around 24 GiB on a desktop.
+
+Automatic tuning is deliberately manual and per profile: changing a path or opening Preferences
+never starts a benchmark. Wait for engine startup to finish, and finish or cancel whole-game
+analysis first. Close other mirai windows; opening one while tuning stops the run. The tuner
+temporarily stops this window's normal engine so another search or a second copy of the model
+cannot skew the result or exhaust GPU memory. It starts KataGo once per candidate, so first-run
+OpenCL kernel tuning can make the run take longer than the usual one or two minutes. **Stop
+tuning** cancels the current query and leaves the saved profile unchanged. On success, review the
+measured positions, threads and batch values, then press **Save profile** to persist and activate
+them. The neural-net cache is not changed.
 
 ### Analysis
 
