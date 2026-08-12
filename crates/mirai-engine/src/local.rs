@@ -28,8 +28,8 @@ use crate::{CancelGuard, Engine, EngineError, SubEvent, Subscription};
 /// How many stderr lines to keep for diagnosing a failed start.
 const STDERR_TAIL: usize = 64;
 
-/// How long a dropped engine may take to shut down before it is killed.
-const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+/// How long a dropped local engine may take to shut down before it is killed.
+pub const LOCAL_ENGINE_SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 
 /// Everything needed to start one KataGo process.
 #[derive(Clone, Debug)]
@@ -79,6 +79,7 @@ impl LocalEngineConfig {
 /// process exit promptly; it is killed if it does not.
 pub struct LocalEngine {
     inner: Arc<Inner>,
+    shutdown_complete: oneshot::Receiver<()>,
 }
 
 struct Inner {
@@ -193,6 +194,7 @@ impl LocalEngine {
         );
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let (shutdown_complete_tx, shutdown_complete) = oneshot::channel();
         let inner = Arc::new(Inner {
             desc,
             to_engine,
@@ -203,9 +205,29 @@ impl LocalEngine {
         });
 
         tokio::spawn(read_responses(lines, Arc::downgrade(&inner)));
-        tokio::spawn(supervise(child, Arc::downgrade(&inner), shutdown_rx, tail));
+        tokio::spawn(supervise(
+            child,
+            Arc::downgrade(&inner),
+            shutdown_rx,
+            shutdown_complete_tx,
+            tail,
+        ));
 
-        Ok(LocalEngine { inner })
+        Ok(LocalEngine {
+            inner,
+            shutdown_complete,
+        })
+    }
+
+    /// Closes KataGo's stdin and waits until the child has exited (or been killed after
+    /// the normal shutdown grace period).
+    pub async fn shutdown(self) {
+        let LocalEngine {
+            inner,
+            shutdown_complete,
+        } = self;
+        drop(inner);
+        let _ = shutdown_complete.await;
     }
 }
 
@@ -411,6 +433,7 @@ async fn supervise(
     mut child: Child,
     engine: Weak<Inner>,
     shutdown: oneshot::Receiver<()>,
+    shutdown_complete: oneshot::Sender<()>,
     tail: Arc<Mutex<VecDeque<String>>>,
 ) {
     let status = tokio::select! {
@@ -418,7 +441,7 @@ async fn supervise(
         _ = shutdown => {
             // The engine handle was dropped, so stdin is closed and KataGo should be on
             // its way out. Give it a moment, then insist.
-            match tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await {
+            match tokio::time::timeout(LOCAL_ENGINE_SHUTDOWN_GRACE, child.wait()).await {
                 Ok(status) => status,
                 Err(_) => {
                     tracing::debug!("killing katago after its shutdown grace period");
@@ -433,12 +456,14 @@ async fn supervise(
         Ok(status) => format!("katago exited with {status}"),
         Err(e) => format!("could not wait for katago: {e}"),
     };
-    let Some(inner) = engine.upgrade() else { return };
-    inner.dead.store(true, Ordering::Release);
-    if !inner.subs.is_empty() {
-        tracing::error!(reason, "katago exited with live analyses");
+    if let Some(inner) = engine.upgrade() {
+        inner.dead.store(true, Ordering::Release);
+        if !inner.subs.is_empty() {
+            tracing::error!(reason, "katago exited with live analyses");
+        }
+        inner.fail_all(EngineError::EngineExited(with_tail(reason, &tail)));
     }
-    inner.fail_all(EngineError::EngineExited(with_tail(reason, &tail)));
+    let _ = shutdown_complete.send(());
 }
 
 struct Hello {
