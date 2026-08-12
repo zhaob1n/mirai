@@ -18,10 +18,11 @@ template $MiraiWindow : Adw.ApplicationWindow {
         };
 
         [start]
-        Gtk.Button {
+        Adw.SplitButton {
           icon-name: "document-open-symbolic";
           tooltip-text: _("Open an SGF Game Record (Ctrl+O)");
           action-name: "win.open";
+          menu-model: open_menu;
           accessibility {
             label: _("Open Game Record");
           }
@@ -29,21 +30,20 @@ template $MiraiWindow : Adw.ApplicationWindow {
 
         [start]
         Gtk.Button {
-          icon-name: "folder-download-symbolic";
-          tooltip-text: _("Download a Public Game Record from Fox");
-          action-name: "win.download-fox";
+          tooltip-text: _("Set Up a Game Against the Engine (Ctrl+N)");
+          action-name: "win.new-game";
+          child: Adw.ButtonContent {
+            icon-name: "document-new-symbolic";
+            label: _("New Game…");
+          };
           accessibility {
-            label: _("Download from Fox");
+            label: _("New Game…");
           }
         }
 
         [start]
-        Gtk.ToggleButton live_toggle {
-          icon-name: "media-playback-start-symbolic";
-          tooltip-text: _("Start Live Analysis (Space)");
-          accessibility {
-            label: _("Live Analysis");
-          }
+        Gtk.Separator {
+          styles ["spacer"]
         }
 
         [start]
@@ -58,6 +58,15 @@ template $MiraiWindow : Adw.ApplicationWindow {
           }
         }
 
+        [start]
+        Gtk.ToggleButton live_toggle {
+          icon-name: "media-playback-start-symbolic";
+          tooltip-text: _("Start Live Analysis (Space)");
+          accessibility {
+            label: _("Live Analysis");
+          }
+        }
+
         [end]
         Gtk.MenuButton {
           icon-name: "open-menu-symbolic";
@@ -69,34 +78,11 @@ template $MiraiWindow : Adw.ApplicationWindow {
         }
 
         [end]
-        Gtk.MenuButton {
-          icon-name: "view-more-symbolic";
-          tooltip-text: _("View Options");
-          menu-model: view_menu;
-          accessibility {
-            label: _("View Options");
-          }
-        }
-
-        [end]
         Gtk.ToggleButton sidebar_toggle {
           icon-name: "sidebar-show-right-symbolic";
           tooltip-text: _("Hide Sidebar (F9)");
           accessibility {
             label: _("Sidebar");
-          }
-        }
-
-        [end]
-        Gtk.Button {
-          tooltip-text: _("Set Up a Game Against the Engine (Ctrl+N)");
-          action-name: "win.new-game";
-          child: Adw.ButtonContent {
-            icon-name: "document-new-symbolic";
-            label: _("New Game…");
-          };
-          accessibility {
-            label: _("New Game…");
           }
         }
 
@@ -267,15 +253,19 @@ template $MiraiWindow : Adw.ApplicationWindow {
   };
 }
 
+menu open_menu {
+  section {
+    item ("_Open File…", "win.open")
+    item ("_Download from Fox…", "win.download-fox")
+    item ("_Paste SGF", "win.paste-sgf")
+  }
+}
+
 menu primary_menu {
   section {
     item ("_Save", "win.save")
     item ("Save _As…", "win.save-as")
-  }
-
-  section {
     item ("_Copy SGF", "win.copy-sgf")
-    item ("_Paste SGF", "win.paste-sgf")
   }
 
   section {
@@ -283,22 +273,27 @@ menu primary_menu {
     item ("_Estimate Score", "win.score")
   }
 
+  submenu {
+    label: _("_View");
+
+    section {
+      item ("_Sidebar", "win.toggle-sidebar")
+    }
+
+    section {
+      item ("_Coordinates", "win.toggle-coords")
+      item ("_Move Numbers", "win.toggle-move-numbers")
+    }
+
+    section {
+      item ("_Ownership Overlay", "win.toggle-ownership")
+      item ("_Policy Overlay", "win.toggle-policy")
+    }
+  }
+
   section {
     item ("_Preferences", "win.preferences")
     item ("_Keyboard Shortcuts", "win.shortcuts")
     item ("_About mirai", "win.about")
-  }
-}
-
-menu view_menu {
-  section {
-    item ("_Coordinates", "win.toggle-coords")
-    item ("_Move Numbers", "win.toggle-move-numbers")
-    item ("_Ownership Overlay", "win.toggle-ownership")
-    item ("_Policy Overlay", "win.toggle-policy")
-  }
-
-  section {
-    item ("_Sidebar", "win.toggle-sidebar")
   }
 }
