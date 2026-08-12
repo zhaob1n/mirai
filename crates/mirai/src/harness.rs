@@ -14,7 +14,7 @@
 //! ```
 //!
 //! Steps run in order: `wait:<ms>`, `action:<prefix.name>`, `action:<prefix.name>=<string arg>`,
-//! `shot:<path.png>`, `quit`.
+//! `press:<button text>`, `fill:<entry placeholder>=<text>`, `shot:<path.png>`, `quit`.
 
 use std::time::Duration;
 
@@ -32,6 +32,8 @@ enum Step {
     Press(String),
     /// Set a ComboRow by title substring and raw model index.
     Select(String, u32),
+    /// Fill the first visible SearchEntry whose placeholder contains this text.
+    Fill(String, String),
     Shot(String),
     Quit,
 }
@@ -56,6 +58,9 @@ fn parse(script: &str) -> Vec<Step> {
                         .ok()
                         .map(|index| Step::Select(title.to_string(), index))
                 }),
+                "fill" => rest
+                    .split_once('=')
+                    .map(|(field, text)| Step::Fill(field.to_string(), text.to_string())),
                 "action" => Some(match rest.split_once('=') {
                     Some((name, arg)) => Step::Action(name.to_string(), Some(arg.to_string())),
                     None => Step::Action(rest.to_string(), None),
@@ -139,6 +144,14 @@ pub fn install(app: &adw::Application) {
                         if done { "ok" } else { "NOT FOUND" }
                     );
                     glib::timeout_future(Duration::from_millis(250)).await;
+                }
+                Step::Fill(field, text) => {
+                    let done = fill(&app, &field, &text);
+                    eprintln!(
+                        "harness: fill {field:?} -> {}",
+                        if done { "ok" } else { "NOT FOUND" }
+                    );
+                    glib::timeout_future(Duration::from_millis(120)).await;
                 }
                 Step::Shot(path) => {
                     // `WidgetPaintable::snapshot` yields nothing if the window has not
@@ -248,6 +261,33 @@ fn select(app: &adw::Application, needle: &str, index: u32) -> bool {
     }
 }
 
+/// Fills the first visible `gtk::SearchEntry` whose placeholder contains `needle`.
+fn fill(app: &adw::Application, needle: &str, text: &str) -> bool {
+    fn walk(w: &gtk::Widget, needle: &str, text: &str) -> bool {
+        if w.is_visible()
+            && let Some(entry) = w.downcast_ref::<gtk::SearchEntry>()
+            && entry
+                .placeholder_text()
+                .is_some_and(|placeholder| placeholder.contains(needle))
+        {
+            entry.set_text(text);
+            return true;
+        }
+        let mut child = w.first_child();
+        while let Some(c) = child {
+            if walk(&c, needle, text) {
+                return true;
+            }
+            child = c.next_sibling();
+        }
+        false
+    }
+    match app.active_window() {
+        Some(w) => walk(w.upcast_ref::<gtk::Widget>(), needle, text),
+        None => false,
+    }
+}
+
 /// A button's user-visible text. `GtkButton:label` is empty whenever the button holds a
 /// child widget instead — an `adw::ButtonContent`, for one — so fall back to the first
 /// label in its subtree, and then to the tooltip, which is the only text an icon-only
@@ -311,9 +351,9 @@ mod tests {
     #[test]
     fn script_parsing_covers_every_step_kind() {
         let steps = parse(
-            "wait:250, action:win.toggle-analysis, action:win.set-engine=local, select:Model=2, shot:/tmp/x.png, quit",
+            "wait:250, action:win.toggle-analysis, action:win.set-engine=local, select:Model=2, fill:Exact nickname=柯洁, shot:/tmp/x.png, quit",
         );
-        assert_eq!(steps.len(), 6);
+        assert_eq!(steps.len(), 7);
         assert!(matches!(steps[0], Step::Wait(250)));
         match &steps[1] {
             Step::Action(n, None) => assert_eq!(n, "win.toggle-analysis"),
@@ -327,8 +367,11 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert!(matches!(&steps[3], Step::Select(title, 2) if title == "Model"));
-        assert!(matches!(&steps[4], Step::Shot(p) if p == "/tmp/x.png"));
-        assert!(matches!(steps[5], Step::Quit));
+        assert!(
+            matches!(&steps[4], Step::Fill(field, text) if field == "Exact nickname" && text == "柯洁")
+        );
+        assert!(matches!(&steps[5], Step::Shot(p) if p == "/tmp/x.png"));
+        assert!(matches!(steps[6], Step::Quit));
     }
 
     #[test]
@@ -339,5 +382,6 @@ mod tests {
         // A malformed wait is dropped rather than silently becoming zero.
         assert!(parse("wait:soon").is_empty());
         assert!(parse("select:Model=not-an-index").is_empty());
+        assert!(parse("fill:Nickname").is_empty());
     }
 }

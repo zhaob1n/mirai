@@ -68,6 +68,7 @@ the rest defend the surrounding behaviour and are named so you can find them.
 | **mirai (GUI)** — display-free logic only; everything visual is section 5 | | |
 | `config.rs` | A missing file is a first run, a corrupt one is an error; model/config directories have a fixed XDG order, every valid file is merged without duplicates, and GTP config is excluded; a TOFU pin can never land on a local profile; concurrent-window saves merge correctly | `missing_file_yields_a_seeded_config_not_an_error`, `xdg_system_directories_keep_precedence_and_ignore_relative_entries`, `discovery_directories_follow_the_documented_order`, `network_discovery_merges_every_bin_gz_and_ignores_everything_else`, `analysis_config_discovery_returns_every_analysis_config_but_not_gtp`, `pins_are_recorded_on_remote_profiles_only`, **`a_save_keeps_another_windows_edit`**, `a_removed_profile_is_removed_from_the_file` |
 | `window.rs` | `tree_has_content`: never autosave an empty board and never offer to restore one, with the boundaries that matter (a pass counts, marks alone do not, content deep in a variation is found); INV-8 | **`a_blank_record_is_not_worth_autosaving`** + five boundary cases, **`handlers_do_not_keep_the_window_alive`** |
+| `fox.rs` | Fox's literal property separators and quarter-point komi are normalised; both documented handicap encodings become root setup stones without losing variations; query text and result metadata stay safe at the URL and GTK markup boundaries | `fox_escapes_and_quarter_point_komi_are_normalised`, `fox_setup_nodes_become_one_root_handicap`, `consecutive_black_handicap_moves_are_promoted_too`, `handicap_normalisation_preserves_root_variations`, `query_values_are_utf8_percent_encoded` |
 | `play.rs` | Deterministic at temperature 0 and genuinely spread above it; one bad report never resigns and a good one clears the streak; clock transitions | **`temperature_zero_always_plays_the_engines_choice`**, **`a_lone_bad_report_does_not_resign`**, `the_last_period_expiring_loses_on_time` |
 | `batch.rs` | INV-2 applied to blunder detection — the drop is measured from the mover's side; batch concurrency follows `numAnalysisThreads` and saturates | **`white_blunder_is_measured_from_whites_perspective`**, `in_flight_scales_with_threads_and_saturates_at_sixteen` |
 | `widgets/board.rs`, `widgets/tree.rs`, `widgets/winrate.rs` | Click→`Point` mapping, board geometry, tree lane assignment and graph axis inversion — pure functions deliberately lifted out of `snapshot()` so they are testable at all | `hit_test_snaps_to_the_nearest_intersection`, `lanes_keep_the_main_line_on_zero`, **`deep_lines_do_not_recurse`** (a long game must not blow the stack), `a_white_blunder_is_not_a_black_blunder` |
@@ -228,6 +229,9 @@ A `gtk::MenuButton` matching by label or tooltip is popped up instead of clicked
 the discovered-file choosers in the local-engine editor are opened; its entries are then
 ordinary buttons labelled with the file name, so `press:kata1-b18…` picks one.
 A presented `adw::Dialog` is a descendant of the window, so this reaches dialog buttons too.
+`harness::fill` similarly finds a visible `gtk::SearchEntry` by placeholder substring and sets
+its text, so network-backed search dialogs can be exercised without a test-only application
+path.
 Four traps:
 
 - Mnemonic underscores are stripped before matching (`press:Save` matches `_Save`).
@@ -253,6 +257,7 @@ Four traps:
 | `action:<prefix.name>=<string>` | Activate with a string parameter (`action:win.set-engine=workstation`) | 120 ms |
 | `press:<label substring>` | Click the first visible matching button | 250 ms |
 | `select:<row title substring>=<index>` | Set the first visible matching `adw::ComboRow`; index 0 is its prompt/default entry | 250 ms |
+| `fill:<entry placeholder substring>=<text>` | Fill the first visible `gtk::SearchEntry` whose placeholder matches | 120 ms |
 | `shot:<path.png>` | Render the active window to PNG | see below |
 | `quit` | `app.quit()`, ending the script | — |
 

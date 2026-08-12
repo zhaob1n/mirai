@@ -25,6 +25,8 @@ cargo run -p mirai
 - Whole-game analysis with bounded concurrency, producing a blunder list that jumps to the move.
 - SGF load and save, including multi-game collections, with unknown properties preserved
   byte-for-byte so files from other programs survive a round trip.
+- Browse a Fox Go player's latest public games by exact nickname or UID, then download and
+  open one directly for review.
 
 **Playing**
 - Play KataGo at a chosen strength (visit cap, time budget, or a human-imitation profile when

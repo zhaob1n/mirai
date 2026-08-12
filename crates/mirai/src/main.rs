@@ -7,6 +7,7 @@ mod batch;
 mod config;
 mod dialogs;
 mod engines;
+mod fox;
 #[cfg(debug_assertions)]
 mod harness;
 mod panels;

@@ -127,9 +127,9 @@ disk.
 | **Sidebar** | three pages — **Analysis** (readout, candidate list, blunder list), **Moves** (the branch graph), **Comment** (the current move's comment). Collapses to an overlay on a narrow window |
 | **Bottom bar** | first / previous / next / last, previous / next variation, a slider along the current line, and a readout of side to move, win rate, score lead, visits and — while a search is running — its speed in visits per second; or the status message when there is no analysis |
 
-The ☰ menu holds *New Game…*, *Open…*, *Save*, *Save As…*, *Copy SGF*, *Paste SGF*, *Analyse
-Game*, *Estimate Score*, *Coordinates*, *Move Numbers*, *Ownership Overlay*, *Policy Overlay*,
-*Preferences*, *Keyboard Shortcuts*, *About mirai*.
+The ☰ menu holds *New Game…*, *Open…*, *Download from Fox…*, *Save*, *Save As…*, *Copy SGF*,
+*Paste SGF*, *Analyse Game*, *Estimate Score*, *Coordinates*, *Move Numbers*, *Ownership
+Overlay*, *Policy Overlay*, *Preferences*, *Keyboard Shortcuts*, *About mirai*.
 
 ### Mouse on the board
 
@@ -227,6 +227,14 @@ you choose. <kbd>Ctrl</kbd>+<kbd>V</kbd> pastes a record from the clipboard,
 <kbd>Ctrl</kbd>+<kbd>C</kbd> copies the current one out. Anything mirai does not understand in
 an SGF file is kept verbatim and written back, so files from other programs survive a round
 trip.
+
+**Downloading from Fox.** Choose ☰ → *Download from Fox…*, enter an exact Fox nickname or
+numeric UID, and select a game. The list shows at most the latest 200 public records because
+that is the service's fixed history window; players who hide their records are not bypassed.
+Double-click a row or press **Open Game** to download and load it. Fox's SGF dialect — including
+quarter-point Chinese komi, commentary branches and handicap stones written as opening nodes —
+is normalised on import. The result has no local backing file and is marked `Untitled •`;
+**Save** therefore asks where to store it.
 
 **Several records at once.** Opening a file while mirai is running — from your file manager, or
 another `mirai game.sgf` on the command line — gives that record its own window rather than

@@ -415,6 +415,7 @@ fn primary_menu() -> gio::Menu {
     // needs a way in — otherwise only the engine can ever concede a game.
     file.append(Some("_Resign"), Some("win.resign"));
     file.append(Some("_Open…"), Some("win.open"));
+    file.append(Some("Download from _Fox…"), Some("win.download-fox"));
     file.append(Some("_Save"), Some("win.save"));
     file.append(Some("Save _As…"), Some("win.save-as"));
     menu.append_section(None, &file);
@@ -955,6 +956,22 @@ fn do_open(ui: &Rc<Ui>) {
     });
 }
 
+fn do_download_fox(ui: &Rc<Ui>) {
+    let weak = Rc::downgrade(ui);
+    crate::fox::present(&ui.window, move |download| {
+        with_ui(&weak, |ui| {
+            let moves = download.tree.main_line().len().saturating_sub(1);
+            adopt(ui, download.tree, None);
+            // A downloaded record has no backing file. Mark it dirty so the title makes
+            // that explicit and Save opens the file chooser instead of implying persistence.
+            ui.state.set_modified(true);
+            update_title(ui);
+            ui.state
+                .toast(format!("Downloaded {} ({moves} moves)", download.label));
+        });
+    });
+}
+
 fn write_to(ui: &Rc<Ui>, path: &Path) {
     let text = sgf_text(ui);
     match std::fs::write(path, text) {
@@ -1404,6 +1421,7 @@ fn install_actions(ui: &Rc<Ui>) {
     add("resign", Box::new(|ui| ui.play.resign()));
 
     add("open", Box::new(do_open));
+    add("download-fox", Box::new(do_download_fox));
     add("save", Box::new(do_save));
     add("save-as", Box::new(do_save_as));
 

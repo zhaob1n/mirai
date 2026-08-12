@@ -1094,6 +1094,7 @@ dependencies = [
  "mirai-engine",
  "mirai-proto",
  "serde",
+ "serde_json",
  "thiserror",
  "tokio",
  "toml",

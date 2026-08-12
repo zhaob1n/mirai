@@ -182,7 +182,7 @@ They are commented at the source, and `docs/dev/ARCHITECTURE.md` lists them toge
 
 ## 6. Scope
 
-Deliberately out of scope: online-server game fetching, screen-board OCR, joseki dictionaries,
+Deliberately out of scope: screen-board OCR, joseki dictionaries,
 KataGo auto-download, theme skinning, dual-engine comparison. Proposals to add them should be
 weighed against the maintenance surface, not accepted by default.
 
