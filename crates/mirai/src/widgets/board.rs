@@ -18,6 +18,7 @@ use mirai_core::{Board, COLUMNS, Color, DeadSet, MarkKind, Marks, Point, Positio
 use mirai_proto::types::dq_policy;
 
 use crate::app::AppState;
+use crate::widgets::paint::{fill_disc, hline, over, stroke_disc, stroke_rect, vline};
 
 /// Wood beyond the outermost grid line, in cells.
 const EDGE_PAD: f32 = 0.6;
@@ -149,13 +150,6 @@ fn wood_color(dark: bool) -> gdk::RGBA {
 
 const LINE_COLOR: gdk::RGBA = gdk::RGBA::new(0.10, 0.08, 0.06, 0.85);
 
-#[inline]
-fn circle(cx: f32, cy: f32, r: f32) -> gsk::Path {
-    let pb = gsk::PathBuilder::new();
-    pb.add_circle(&graphene::Point::new(cx, cy), r);
-    pb.to_path()
-}
-
 /// The highlight applied to the stone just played, in the two shades that read against
 /// the stone underneath it.
 fn last_move_tint(color: Color) -> gdk::RGBA {
@@ -286,60 +280,42 @@ mod imp {
             let grid_w = (size.w as f32 - 1.0) * cell;
             let grid_h = (size.h as f32 - 1.0) * cell;
 
-            // Wood.
+            // Wood: a colour node inside a rounded clip, not a rounded-rect fill — see the
+            // note on `paint::fill_disc`.
             let rect = graphene::Rect::new(
                 l.origin_x - pad,
                 l.origin_y - pad,
                 grid_w + 2.0 * pad,
                 grid_h + 2.0 * pad,
             );
-            let pb = gsk::PathBuilder::new();
-            pb.add_rounded_rect(&gsk::RoundedRect::from_rect(rect, (cell * 0.2).min(8.0)));
-            s.append_fill(&pb.to_path(), gsk::FillRule::Winding, &wood_color(dark));
+            let wood = wood_color(dark);
+            s.push_rounded_clip(&gsk::RoundedRect::from_rect(rect, (cell * 0.2).min(8.0)));
+            s.append_color(&wood, &rect);
+            s.pop();
 
-            // Grid.
-            let gb = gsk::PathBuilder::new();
+            // Grid. Axis-aligned lines are rectangles; as one stroked path, GSK re-evaluated
+            // all 38 segments across the whole board every time the board was resized.
+            let ink = over(LINE_COLOR, wood);
+            let lw = (cell * 0.035).max(1.0);
             for y in 0..size.h {
                 let (_, cy) = l.xy(0, y);
-                gb.move_to(l.origin_x, cy);
-                gb.line_to(l.origin_x + grid_w, cy);
+                hline(&s, l.origin_x, l.origin_x + grid_w, cy, lw, &ink);
             }
             for x in 0..size.w {
                 let (cx, _) = l.xy(x, 0);
-                gb.move_to(cx, l.origin_y);
-                gb.line_to(cx, l.origin_y + grid_h);
+                vline(&s, cx, l.origin_y, l.origin_y + grid_h, lw, &ink);
             }
-            s.append_stroke(
-                &gb.to_path(),
-                &gsk::Stroke::new((cell * 0.035).max(1.0)),
-                &LINE_COLOR,
-            );
 
             // A heavier border around the playing area.
-            let bb = gsk::PathBuilder::new();
-            bb.move_to(l.origin_x, l.origin_y);
-            bb.line_to(l.origin_x + grid_w, l.origin_y);
-            bb.line_to(l.origin_x + grid_w, l.origin_y + grid_h);
-            bb.line_to(l.origin_x, l.origin_y + grid_h);
-            bb.close();
-            s.append_stroke(
-                &bb.to_path(),
-                &gsk::Stroke::new((cell * 0.06).max(1.4)),
-                &LINE_COLOR,
-            );
+            let border = graphene::Rect::new(l.origin_x, l.origin_y, grid_w, grid_h);
+            stroke_rect(&s, &border, (cell * 0.06).max(1.4), &ink);
 
             // Star points.
             let star_r = (cell * 0.10).max(1.5);
-            let sb = gsk::PathBuilder::new();
-            let mut any_star = false;
             for p in size.star_points() {
                 let (x, y) = size.xy(p);
                 let (cx, cy) = l.xy(x, y);
-                sb.add_circle(&graphene::Point::new(cx, cy), star_r);
-                any_star = true;
-            }
-            if any_star {
-                s.append_fill(&sb.to_path(), gsk::FillRule::Winding, &LINE_COLOR);
+                fill_disc(&s, cx, cy, star_r, &ink);
             }
 
             // Coordinates.
@@ -495,11 +471,7 @@ mod imp {
             } else if let Some((color, p)) = projection.last {
                 let (x, y) = size.xy(p);
                 let (cx, cy) = l.xy(x, y);
-                snapshot.append_fill(
-                    &circle(cx, cy, l.stone_r * 0.34),
-                    gsk::FillRule::Winding,
-                    &last_move_tint(color),
-                );
+                fill_disc(snapshot, cx, cy, l.stone_r * 0.34, &last_move_tint(color));
             }
 
             self.draw_marks(snapshot, scene, &projection.marks);
@@ -521,26 +493,18 @@ mod imp {
             let r = l.stone_r;
             let off = (l.cell * 0.05).max(1.0);
 
-            // One combined shadow pass so stones are never drawn over a neighbour's shadow.
-            let sb = gsk::PathBuilder::new();
-            let mut any = false;
+            // The shadows are a pass of their own so a stone is never drawn over its
+            // neighbour's shadow. Stones are 0.96 cells across, so the discs never overlap
+            // and drawing them one by one blends exactly like the single path this replaced.
+            let shadow = gdk::RGBA::new(0.0, 0.0, 0.0, 0.25);
             for y in 0..size.h {
                 for x in 0..size.w {
                     if board.at(size.point(x, y)).is_some() {
                         let (cx, cy) = l.xy(x, y);
-                        sb.add_circle(&graphene::Point::new(cx + off, cy + off), r);
-                        any = true;
+                        fill_disc(snapshot, cx + off, cy + off, r, &shadow);
                     }
                 }
             }
-            if !any {
-                return;
-            }
-            snapshot.append_fill(
-                &sb.to_path(),
-                gsk::FillRule::Winding,
-                &gdk::RGBA::new(0.0, 0.0, 0.0, 0.25),
-            );
 
             for y in 0..size.h {
                 for x in 0..size.w {
@@ -583,13 +547,7 @@ mod imp {
                         Color::White => gdk::RGBA::new(0.97, 0.97, 0.95, 0.90),
                     };
                     snapshot.append_color(&fill, &rect);
-                    let pb = gsk::PathBuilder::new();
-                    pb.add_rect(&rect);
-                    snapshot.append_stroke(
-                        &pb.to_path(),
-                        &gsk::Stroke::new(1.0),
-                        &gdk::RGBA::new(0.0, 0.0, 0.0, 0.45),
-                    );
+                    stroke_rect(snapshot, &rect, 1.0, &gdk::RGBA::new(0.0, 0.0, 0.0, 0.45));
                 }
             }
         }
@@ -671,6 +629,19 @@ mod imp {
                     }
                     let (x, y) = size.xy(p);
                     let (cx, cy) = l.xy(x, y);
+                    if kind == MarkKind::Circle {
+                        stroke_disc(
+                            snapshot,
+                            cx,
+                            cy,
+                            r * 0.62,
+                            stroke.line_width(),
+                            &color_at(p),
+                        );
+                        continue;
+                    }
+                    // The other three are genuinely paths, and each covers one stone, so the
+                    // area GSK has to walk is a cell rather than the board.
                     let pb = gsk::PathBuilder::new();
                     match kind {
                         MarkKind::Triangle => {
@@ -683,7 +654,6 @@ mod imp {
                             let h = r * 0.62;
                             pb.add_rect(&graphene::Rect::new(cx - h, cy - h, h * 2.0, h * 2.0));
                         }
-                        MarkKind::Circle => pb.add_circle(&graphene::Point::new(cx, cy), r * 0.62),
                         MarkKind::Cross => {
                             let h = r * 0.6;
                             pb.move_to(cx - h, cy - h);
@@ -691,6 +661,7 @@ mod imp {
                             pb.move_to(cx + h, cy - h);
                             pb.line_to(cx - h, cy + h);
                         }
+                        MarkKind::Circle => unreachable!("handled above"),
                     }
                     snapshot.append_stroke(&pb.to_path(), &stroke, &color_at(p));
                 }
@@ -706,11 +677,7 @@ mod imp {
                 let (cx, cy) = l.xy(x, y);
                 if board.at(*p).is_none() {
                     // A wood disc keeps the label legible over the grid lines.
-                    snapshot.append_fill(
-                        &circle(cx, cy, r * 0.85),
-                        gsk::FillRule::Winding,
-                        &wood_color(dark),
-                    );
+                    fill_disc(snapshot, cx, cy, r * 0.85, &wood_color(dark));
                 }
                 let scale = match text.chars().count() {
                     1 => 0.52,
@@ -744,12 +711,15 @@ mod imp {
                 let (x, y) = size.xy(info.mv);
                 let (cx, cy) = l.xy(x, y);
                 let rgb = ramp_rgb(info.visits as f32 / best);
-                let path = circle(cx, cy, l.stone_r);
-                snapshot.append_fill(&path, gsk::FillRule::Winding, &rgba8(rgb, 0.78));
+                let blob = rgba8(rgb, 0.78);
+                fill_disc(snapshot, cx, cy, l.stone_r, &blob);
                 if info.order == 0 {
-                    snapshot.append_stroke(
-                        &path,
-                        &gsk::Stroke::new(2.0),
+                    stroke_disc(
+                        snapshot,
+                        cx,
+                        cy,
+                        l.stone_r,
+                        2.0,
                         &gdk::RGBA::new(1.0, 1.0, 1.0, 0.95),
                     );
                 }
@@ -857,12 +827,11 @@ fn draw_stone(snapshot: &gtk::Snapshot, cx: f32, cy: f32, r: f32, color: Color, 
     if ghost {
         snapshot.push_opacity(0.35);
     }
-    let path = circle(cx, cy, r);
     let base = match color {
         Color::Black => gdk::RGBA::new(0.09, 0.09, 0.10, 1.0),
         Color::White => gdk::RGBA::new(0.93, 0.92, 0.89, 1.0),
     };
-    snapshot.append_fill(&path, gsk::FillRule::Winding, &base);
+    fill_disc(snapshot, cx, cy, r, &base);
 
     // Specular highlight, clipped to the stone.
     let bounds = graphene::Rect::new(cx - r, cy - r, r * 2.0, r * 2.0);
@@ -890,7 +859,7 @@ fn draw_stone(snapshot: &gtk::Snapshot, cx: f32, cy: f32, r: f32, color: Color, 
         Color::Black => gdk::RGBA::new(1.0, 1.0, 1.0, 0.10),
         Color::White => gdk::RGBA::new(0.0, 0.0, 0.0, 0.32),
     };
-    snapshot.append_stroke(&path, &gsk::Stroke::new((r * 0.07).max(0.8)), &rim);
+    stroke_disc(snapshot, cx, cy, r, (r * 0.07).max(0.8), &rim);
 
     if ghost {
         snapshot.pop();

@@ -19,6 +19,7 @@ use gtk::subclass::prelude::*;
 use mirai_core::{Color, NodeId};
 
 use crate::app::AppState;
+use crate::widgets::paint::{fill_disc, hline};
 
 /// How badly a move hurt the player who played it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -422,14 +423,19 @@ impl WinrateGraph {
             ),
         );
 
-        // Horizontal guides at 0 %, 25 %, 50 %, 75 % and 100 %.
-        let guides = gsk::PathBuilder::new();
+        // Horizontal guides at 0 %, 25 %, 75 % and 100 %. One stroked path spanning the plot
+        // would make GSK walk every segment across the whole graph on each frame; horizontal
+        // lines are rectangles.
         for f in [0.0f32, 0.25, 0.75, 1.0] {
-            let y = geom.y_winrate(f);
-            guides.move_to(geom.left, y);
-            guides.line_to(geom.right, y);
+            hline(
+                snapshot,
+                geom.left,
+                geom.right,
+                geom.y_winrate(f),
+                1.0,
+                &axis,
+            );
         }
-        snapshot.append_stroke(&guides.to_path(), &gsk::Stroke::new(1.0), &axis);
 
         let half = gsk::PathBuilder::new();
         let y50 = geom.y_winrate(0.5);
@@ -552,9 +558,7 @@ impl WinrateGraph {
             &graphene::Rect::new(x - 0.5, geom.top, 1.0, geom.strip_bottom - geom.top),
         );
         if let Some(winrate) = samples[cursor_index].winrate {
-            let dot = gsk::PathBuilder::new();
-            dot.add_circle(&graphene::Point::new(x, geom.y_winrate(winrate)), 3.0);
-            snapshot.append_fill(&dot.to_path(), gsk::FillRule::Winding, &accent);
+            fill_disc(snapshot, x, geom.y_winrate(winrate), 3.0, &accent);
             let font = pango::FontDescription::from_string("Sans 7");
             let text = format!("{:.1}%", winrate * 100.0);
             let tx = (x + 5.0).min(geom.right - 28.0);

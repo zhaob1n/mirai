@@ -269,6 +269,7 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 | `src/window_shell.rs`, `src/window.blp` | `MiraiWindow` owns exactly one `Ui` in GObject state; `close-request` and `dispose` converge on idempotent `shutdown`. The template owns the static hierarchy; Rust inserts the stateful board, graph, tree and analysis panel | `MiraiWindow`, `install_ui`, `with_ui`, `shutdown` |
 | `src/fox.rs`, `src/fox_picker.rs`, `src/fox_picker.blp` | anonymous Fox Go nickname/UID lookup, recent-public-game picker and download; `MiraiFoxPickerDialog` owns the fixed dialog hierarchy; normalises Fox's SGF dialect before handing a `GameTree` to the window | `present`, `FoxPickerDialog`, private `search_games`/`fetch_game`, `parse_fox_sgf`, `normalize_handicap` |
 | `src/widgets/mod.rs` | widget root; states the no-cairo rule | re-exports `BoardView`, `MoveTreeView`, `WinrateGraph` |
+| `src/widgets/paint.rs` | the drawing primitives every custom widget uses, and the rule they enforce: quads, not paths ([`RENDERING.md`](RENDERING.md)) | `fill_disc`, `stroke_disc`, `stroke_rect`, `hline`, `vline`, `over` |
 | `src/widgets/board.rs` | goban rendering from a pushed `BoardProjection`: cached static layer and report-time heat-map textures, stones, marks, move numbers, candidates, PV preview and input | `BoardView` (`refresh_tree`, `refresh_cursor`, `refresh_report`, `point_at`, `set_click_hook`), `BoardProjection`, `StaticKey`, `Layout`, `VISIT_RAMP` |
 | `src/widgets/winrate.rs` | cached main-line `GraphProjection`; cached base render node for curves/guides/blunders, with cursor marker drawn separately | `WinrateGraph` (`refresh`, `refresh_cursor`), `GraphProjection`, `RenderKey`, `Severity`, `Sample`, `Geom` |
 | `src/widgets/tree.rs` | branch graph from a pushed `TreeLayout`, rebuilt on tree changes and reused for cursor-only redraws | `MoveTreeView` (`refresh`, `refresh_cursor`), `lay_out`, `TreeLayout`, `Placed`, `cell_xy` |
@@ -710,7 +711,8 @@ MiraiWindow (adw::ApplicationWindow, `window.blp`)
     │                                   · title · clocks · New Game · view/main menus · sidebar toggle
     ├ bottom: gtk::Box                  first/prev/next/last · branch up/down
     │                                   · contextual Undo/Pass/Resign · move scale · readout
-    └ content: adw::OverlaySplitView    sidebar closes under a breakpoint; toggle reopens it
+    └ content: adw::OverlaySplitView    `win.toggle-sidebar` (F9) hides the sidebar at any width;
+                                        the breakpoint additionally collapses it to an overlay
       ├ content: gtk::Box
       │   ├ adw::Banner                 batch-analysis progress + Cancel
       │   └ gtk::Paned (vertical)
