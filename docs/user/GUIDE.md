@@ -122,15 +122,15 @@ disk.
 
 | Region | What it shows |
 |---|---|
-| **Header bar** | Open, Download from Fox, the ▶/■ live-analysis toggle, the engine button (name + KataGo version; click for profiles and *Preferences*), the file name with `•` while unsaved, the engine or current status beneath it, clocks during a timed game, **New Game…**, the sidebar toggle, View Options (⋮), and Main Menu (☰) |
+| **Header bar** | On the left, the two ways to get a record — **Open** (its ▾ also offers *Download from Fox…* and *Paste SGF*) and **New Game…** — then the engine button (name + KataGo version; click for profiles and *Preferences*) and the ▶/■ live-analysis toggle. In the middle, the file name with `•` while unsaved and the engine or current status beneath it. On the right, the sidebar toggle and Main Menu (☰) |
 | **Board** | wood, grid, star points, optional coordinates, stones. The last move is marked with a red dot, or — when move numbers are on — by its number in red. SGF marks (triangle, square, circle, cross, text labels) are drawn |
 | **Win-rate graph** | solid curve = Black's win rate (left axis 0/50/100); dashed curve = score lead (right axis, never tighter than ±5); vertical line = where you are; coloured bars along the bottom = the blunder strip |
-| **Sidebar** | Three pages — **Analysis** (readout, candidate list, blunder list), **Moves** (the branch graph), **Comment** (the current move's comment). The sidebar button in the header bar (<kbd>F9</kbd>, or ⋮ → *Sidebar*) hides it at any window size, giving the board the whole width; at narrow widths it closes by itself and the same button reopens it as an overlay |
-| **Bottom bar** | First / previous / next / last, previous / next variation, contextual **Undo**, **Pass**, and **Resign** controls during play, a slider along the current line, and a readout of side to move, win rate, score lead, visits and — while a search is running — its speed in visits per second |
+| **Sidebar** | Three pages — **Analysis** (readout, candidate list, blunder list), **Moves** (the branch graph), **Comment** (the current move's comment). The sidebar button in the header bar (<kbd>F9</kbd>, or ☰ → *View* → *Sidebar*) hides it at any window size, giving the board the whole width; at narrow widths it closes by itself and the same button reopens it as an overlay |
+| **Bottom bar** | First / previous / next / last, previous / next variation, then — during a timed game — both clocks, the one counting shown in the accent colour and turning red under ten seconds, followed by the contextual **Undo**, **Pass** and **Resign** controls, a slider along the current line, and a readout of side to move, win rate, score lead, visits and — while a search is running — its speed in visits per second |
 
-The ☰ menu holds *Save*, *Save As…*, *Copy SGF*, *Paste SGF*, *Analyse Game*,
-*Estimate Score*, *Preferences*, *Keyboard Shortcuts*, and *About mirai*. The adjacent ⋮ menu
-holds *Coordinates*, *Move Numbers*, *Ownership Overlay*, *Policy Overlay*, and *Sidebar*.
+The ☰ menu holds *Save*, *Save As…*, *Copy SGF*, *Analyse Game*, *Estimate Score*, a *View*
+submenu — *Sidebar*, *Coordinates*, *Move Numbers*, *Ownership Overlay*, *Policy Overlay*, each
+ticked when it is on — and *Preferences*, *Keyboard Shortcuts*, *About mirai*.
 
 ### Mouse on the board
 

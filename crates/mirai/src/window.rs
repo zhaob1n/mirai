@@ -1285,35 +1285,72 @@ fn install_actions(ui: &Ui) {
         "toggle-analysis",
         Box::new(|ui| ui.state.set_live_analysis(!ui.state.live_analysis())),
     );
-    add(
+    // The view toggles are stateful so the View menu renders a check mark next to whatever
+    // is on. State follows the source of truth — `AppState`, or the split view — rather than
+    // a copy kept here, so a change made by an accelerator, the header button or the menu
+    // shows up in all three.
+    let toggle = |name: &str, initial: bool, flip: UiAction| {
+        let action = gio::SimpleAction::new_stateful(name, None, &initial.to_variant());
+        let weak = weak.clone();
+        action.connect_activate(move |_, _| with_window_ui(&weak, |ui| flip(ui)));
+        group.add_action(&action);
+        action
+    };
+
+    let ownership = toggle(
         "toggle-ownership",
+        ui.state.ownership_overlay(),
         Box::new(|ui| {
             ui.state
                 .set_ownership_overlay(!ui.state.ownership_overlay())
         }),
     );
-    add(
+    ui.state.connect_ownership_overlay_notify(move |state| {
+        ownership.set_state(&state.ownership_overlay().to_variant());
+    });
+
+    let policy = toggle(
         "toggle-policy",
+        ui.state.policy_overlay(),
         Box::new(|ui| ui.state.set_policy_overlay(!ui.state.policy_overlay())),
     );
-    add(
+    ui.state.connect_policy_overlay_notify(move |state| {
+        policy.set_state(&state.policy_overlay().to_variant());
+    });
+
+    let coords = toggle(
         "toggle-coords",
+        ui.state.show_coordinates(),
         Box::new(|ui| ui.state.set_show_coordinates(!ui.state.show_coordinates())),
     );
-    add(
+    ui.state.connect_show_coordinates_notify(move |state| {
+        coords.set_state(&state.show_coordinates().to_variant());
+    });
+
+    let numbers = toggle(
         "toggle-move-numbers",
+        ui.state.show_move_numbers(),
         Box::new(|ui| {
             ui.state
                 .set_show_move_numbers(!ui.state.show_move_numbers())
         }),
     );
-    add(
+    ui.state.connect_show_move_numbers_notify(move |state| {
+        numbers.set_state(&state.show_move_numbers().to_variant());
+    });
+
+    let split = ui.window().split();
+    let sidebar = toggle(
         "toggle-sidebar",
+        split.shows_sidebar(),
         Box::new(|ui| {
             let split = ui.window().split();
             split.set_show_sidebar(!split.shows_sidebar());
         }),
     );
+    split.connect_show_sidebar_notify(move |split| {
+        sidebar.set_state(&split.shows_sidebar().to_variant());
+    });
 
     add(
         "pass",

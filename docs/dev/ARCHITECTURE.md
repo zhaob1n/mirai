@@ -707,9 +707,11 @@ released before `changed` enters window code.
 MiraiWindow (adw::ApplicationWindow, `window.blp`)
 └ adw::ToastOverlay                     ← every toast lands here
   └ adw::ToolbarView
-    ├ top:    adw::HeaderBar            open · Fox download · live-analysis toggle · engine menu
-    │                                   · title · clocks · New Game · view/main menus · sidebar toggle
-    ├ bottom: gtk::Box                  first/prev/next/last · branch up/down
+    ├ top:    adw::HeaderBar            start: Open split button (Fox download, paste SGF)
+    │                                   · New Game · engine menu · live-analysis toggle
+    │                                   centre: title · status
+    │                                   end: sidebar toggle · primary menu (holds the View submenu)
+    ├ bottom: gtk::Box                  first/prev/next/last · branch up/down · clocks
     │                                   · contextual Undo/Pass/Resign · move scale · readout
     └ content: adw::OverlaySplitView    `win.toggle-sidebar` (F9) hides the sidebar at any width;
                                         the breakpoint additionally collapses it to an overlay
