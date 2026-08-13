@@ -758,7 +758,7 @@ impl AppState {
     /// graph and the move tree have something to draw after navigating away.
     pub fn set_report(&self, report: Arc<Report>) {
         let cursor = self.cursor();
-        let max = self.config().analysis.max_suggestions as usize;
+        let max = self.config().analysis.stored_suggestion_limit();
         self.imp().report.replace(Some(report.clone()));
         if let Some(mut meter) = self.imp().speed.get() {
             meter.sample(report.root.visits, Instant::now());

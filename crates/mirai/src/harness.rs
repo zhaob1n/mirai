@@ -14,12 +14,13 @@
 //! ```
 //!
 //! Steps run in order: `wait:<ms>`, `wait-status:<text>`, `action:<prefix.name>`,
-//! `action:<prefix.name>=<string arg>`, `press:<button text>`, `fill:<entry placeholder>=<text>`,
-//! `shot:<path.png>`, `close-window`, `quit`.
+//! `action:<prefix.name>=<string arg>`, `press:<button text>`, `page:<preferences page>`,
+//! `select:<row title>=<index>`, `set:<row title>=<number>`,
+//! `fill:<entry placeholder>=<text>`, `shot:<path.png>`, `close-window`, `quit`.
 
 use std::time::Duration;
 
-use adw::prelude::{ComboRowExt, PreferencesRowExt};
+use adw::prelude::{ComboRowExt, PreferencesDialogExt, PreferencesPageExt, PreferencesRowExt};
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
@@ -32,8 +33,12 @@ enum Step {
     /// Activate the first button whose label contains this text, anywhere in the window's
     /// widget tree — including inside a presented `adw::Dialog`.
     Press(String),
+    /// Open a PreferencesDialog page by title.
+    Page(String),
     /// Set a ComboRow by title substring and raw model index.
     Select(String, u32),
+    /// Set a SpinRow by title substring and value.
+    Set(String, f64),
     /// Fill the first visible SearchEntry whose placeholder contains this text.
     Fill(String, String),
     Shot(String),
@@ -57,11 +62,18 @@ fn parse(script: &str) -> Vec<Step> {
                 "close-window" => Some(Step::CloseWindow),
                 "quit" => Some(Step::Quit),
                 "press" => Some(Step::Press(rest.to_string())),
+                "page" => Some(Step::Page(rest.to_string())),
                 "select" => rest.rsplit_once('=').and_then(|(title, index)| {
                     index
                         .parse()
                         .ok()
                         .map(|index| Step::Select(title.to_string(), index))
+                }),
+                "set" => rest.rsplit_once('=').and_then(|(title, value)| {
+                    value
+                        .parse()
+                        .ok()
+                        .map(|value| Step::Set(title.to_string(), value))
                 }),
                 "fill" => rest
                     .split_once('=')
@@ -149,10 +161,26 @@ pub fn install(app: &adw::Application) {
                     );
                     glib::timeout_future(Duration::from_millis(250)).await;
                 }
+                Step::Page(title) => {
+                    let done = show_page(&app, &title);
+                    eprintln!(
+                        "harness: page {title:?} -> {}",
+                        if done { "ok" } else { "NOT FOUND" }
+                    );
+                    glib::timeout_future(Duration::from_millis(250)).await;
+                }
                 Step::Select(title, index) => {
                     let done = select(&app, &title, index);
                     eprintln!(
                         "harness: select {title:?}={index} -> {}",
+                        if done { "ok" } else { "NOT FOUND" }
+                    );
+                    glib::timeout_future(Duration::from_millis(250)).await;
+                }
+                Step::Set(title, value) => {
+                    let done = set_spin(&app, &title, value);
+                    eprintln!(
+                        "harness: set {title:?}={value} -> {}",
                         if done { "ok" } else { "NOT FOUND" }
                     );
                     glib::timeout_future(Duration::from_millis(250)).await;
@@ -289,6 +317,43 @@ fn press(app: &adw::Application, needle: &str) -> bool {
     }
 }
 
+/// Opens the first `adw::PreferencesPage` whose title contains `needle`.
+///
+/// The libadwaita 1.9 view switcher is not a plain button, so emitting `clicked` on a child
+/// does not select the page reliably. This enters through the dialog's public API instead.
+fn show_page(app: &adw::Application, needle: &str) -> bool {
+    fn walk(w: &gtk::Widget, needle: &str) -> Option<adw::PreferencesPage> {
+        if let Some(page) = w.downcast_ref::<adw::PreferencesPage>()
+            && page.title().contains(needle)
+        {
+            return Some(page.clone());
+        }
+        let mut child = w.first_child();
+        while let Some(c) = child {
+            if let Some(page) = walk(&c, needle) {
+                return Some(page);
+            }
+            child = c.next_sibling();
+        }
+        None
+    }
+
+    let Some(window) = app.active_window() else {
+        return false;
+    };
+    let Some(page) = walk(window.upcast_ref(), needle) else {
+        return false;
+    };
+    let Some(dialog) = page
+        .ancestor(adw::PreferencesDialog::static_type())
+        .and_downcast::<adw::PreferencesDialog>()
+    else {
+        return false;
+    };
+    dialog.set_visible_page(&page);
+    true
+}
+
 /// Selects the first visible `adw::ComboRow` whose title contains `needle`.
 fn select(app: &adw::Application, needle: &str, index: u32) -> bool {
     fn walk(w: &gtk::Widget, needle: &str, index: u32) -> bool {
@@ -310,6 +375,34 @@ fn select(app: &adw::Application, needle: &str, index: u32) -> bool {
     }
     match app.active_window() {
         Some(w) => walk(w.upcast_ref::<gtk::Widget>(), needle, index),
+        None => false,
+    }
+}
+
+/// Sets the first visible `adw::SpinRow` whose title contains `needle`.
+///
+/// The preference rows have no stepper buttons, so `press:` cannot reach a number; this is
+/// how a script changes one.
+fn set_spin(app: &adw::Application, needle: &str, value: f64) -> bool {
+    fn walk(w: &gtk::Widget, needle: &str, value: f64) -> bool {
+        if w.is_visible()
+            && let Some(row) = w.downcast_ref::<adw::SpinRow>()
+            && row.title().contains(needle)
+        {
+            row.set_value(value);
+            return true;
+        }
+        let mut child = w.first_child();
+        while let Some(c) = child {
+            if walk(&c, needle, value) {
+                return true;
+            }
+            child = c.next_sibling();
+        }
+        false
+    }
+    match app.active_window() {
+        Some(w) => walk(w.upcast_ref::<gtk::Widget>(), needle, value),
         None => false,
     }
 }
@@ -404,9 +497,9 @@ mod tests {
     #[test]
     fn script_parsing_covers_every_step_kind() {
         let steps = parse(
-            "wait:250, wait-status:Ready, action:win.toggle-analysis, action:win.set-engine=local, select:Model=2, fill:Exact nickname=柯洁, shot:/tmp/x.png, close-window, quit",
+            "wait:250, wait-status:Ready, action:win.toggle-analysis, action:win.set-engine=local, page:Analysis, select:Model=2, set:Suggestions Shown=0, fill:Exact nickname=柯洁, shot:/tmp/x.png, close-window, quit",
         );
-        assert_eq!(steps.len(), 9);
+        assert_eq!(steps.len(), 11);
         assert!(matches!(steps[0], Step::Wait(250)));
         assert!(matches!(&steps[1], Step::WaitStatus(text) if text == "Ready"));
         match &steps[2] {
@@ -420,13 +513,17 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        assert!(matches!(&steps[4], Step::Select(title, 2) if title == "Model"));
+        assert!(matches!(&steps[4], Step::Page(title) if title == "Analysis"));
+        assert!(matches!(&steps[5], Step::Select(title, 2) if title == "Model"));
         assert!(
-            matches!(&steps[5], Step::Fill(field, text) if field == "Exact nickname" && text == "柯洁")
+            matches!(&steps[6], Step::Set(title, value) if title == "Suggestions Shown" && *value == 0.0)
         );
-        assert!(matches!(&steps[6], Step::Shot(p) if p == "/tmp/x.png"));
-        assert!(matches!(steps[7], Step::CloseWindow));
-        assert!(matches!(steps[8], Step::Quit));
+        assert!(
+            matches!(&steps[7], Step::Fill(field, text) if field == "Exact nickname" && text == "柯洁")
+        );
+        assert!(matches!(&steps[8], Step::Shot(p) if p == "/tmp/x.png"));
+        assert!(matches!(steps[9], Step::CloseWindow));
+        assert!(matches!(steps[10], Step::Quit));
     }
 
     #[test]

@@ -130,8 +130,8 @@ cert_sha256 = "…"             # filled in on first connect
 [analysis]
 live_max_visits    = 1000000  # ceiling for pondering one position
 report_interval_ms = 100
-batch_visits       = 1000     # per move, for whole-game analysis
-max_suggestions    = 10
+batch_visits       = 100      # per move, for whole-game analysis
+max_suggestions    = 10       # 0 shows every move the engine searched
 
 [play]
 temperature      = 0.0        # > 0 samples among candidates instead of always the best

@@ -6,7 +6,7 @@
 //! Everything here writes straight through to [`crate::config::Config`] and calls
 //! [`AppState::save_config`], so the on-disk `config.toml` is always what the dialog shows.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -16,7 +16,9 @@ use gtk::{gio, glib};
 use mirai_core::RuleSet;
 
 use crate::app::{AppState, Change};
-use crate::config::{EngineProfile, ProfileKind, StrengthSetting};
+use crate::config::{
+    AnalysisSettings, EngineProfile, PlaySettings, ProfileKind, StrengthSetting, UiSettings,
+};
 use crate::preferences_shell::{PreferencesDialog, PreferencesWidgets};
 use crate::profile_editor::ProfileEditorPage;
 use mirai_engine::{CalibrationConfig, CalibrationProgress, CalibrationResult, EngineTuning};
@@ -71,9 +73,9 @@ pub fn present(parent: &impl IsA<gtk::Widget>, state: &AppState) {
     let widgets = dialog.widgets();
 
     connect_engines(&dialog, &widgets, state);
-    connect_analysis(&widgets, state);
-    connect_play(&widgets, state);
-    connect_appearance(&widgets, state);
+    connect_analysis(&dialog, &widgets, state);
+    connect_play(&dialog, &widgets, state);
+    connect_appearance(&dialog, &widgets, state);
 
     dialog.present(Some(parent));
 }
@@ -544,6 +546,7 @@ fn tuned_row(title: &str, subtitle: &str, value: u32, max: f64) -> adw::SpinRow 
     row.set_title(title);
     row.set_subtitle(subtitle);
     row.set_value(value as f64);
+    hide_steppers(&row);
     row
 }
 
@@ -1350,208 +1353,371 @@ fn commit_profile(state: &AppState, profile: EngineProfile, editing: Option<&str
 
 // -- Analysis ---------------------------------------------------------------------------
 
-fn connect_analysis(widgets: &PreferencesWidgets, state: &AppState) {
-    let visits = &widgets.analysis_visits_row;
+fn connect_analysis(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state: &AppState) {
+    // Loading a whole page back into its rows must not be mistaken for the user editing
+    // them: the value handlers persist, and a half-loaded page would be persisted too.
+    let syncing = Rc::new(Cell::new(false));
+
     configure_spin(
-        visits,
+        &widgets.analysis_visits_row,
         1000.0,
         10_000_000.0,
         1000.0,
         0,
-        state.config().analysis.live_max_visits as f64,
     );
-    let visits_state = state.clone();
-    visits.connect_value_notify(move |row| {
-        visits_state.config_mut().analysis.live_max_visits = row.value() as u32;
-        visits_state.save_config();
-    });
-
-    let interval = &widgets.analysis_interval_row;
+    configure_spin(&widgets.analysis_interval_row, 20.0, 1000.0, 10.0, 0);
+    configure_spin(&widgets.analysis_suggestions_row, 0.0, 50.0, 1.0, 0);
     configure_spin(
-        interval,
-        20.0,
-        1000.0,
-        10.0,
-        0,
-        state.config().analysis.report_interval_ms as f64,
-    );
-    let interval_state = state.clone();
-    interval.connect_value_notify(move |row| {
-        interval_state.config_mut().analysis.report_interval_ms = row.value() as u16;
-        interval_state.save_config();
-    });
-
-    let suggestions = &widgets.analysis_suggestions_row;
-    configure_spin(
-        suggestions,
-        1.0,
-        50.0,
-        1.0,
-        0,
-        state.config().analysis.max_suggestions as f64,
-    );
-    let suggestions_state = state.clone();
-    suggestions.connect_value_notify(move |row| {
-        suggestions_state.config_mut().analysis.max_suggestions = row.value() as u8;
-        suggestions_state.save_config();
-    });
-
-    let batch_visits = &widgets.analysis_batch_visits_row;
-    configure_spin(
-        batch_visits,
+        &widgets.analysis_batch_visits_row,
         100.0,
         100_000.0,
         100.0,
         0,
-        state.config().analysis.batch_visits as f64,
     );
-    let batch_state = state.clone();
-    batch_visits.connect_value_notify(move |row| {
-        batch_state.config_mut().analysis.batch_visits = row.value() as u32;
-        batch_state.save_config();
+
+    // On this row `0` is not a count but "no limit", so the row says the word instead of
+    // the digit — and takes it back when typed.
+    let suggestions = &widgets.analysis_suggestions_row;
+    suggestions.connect_output(|row| {
+        if row.value() < 0.5 {
+            row.set_text("All");
+            return true;
+        }
+        false
     });
+    suggestions.connect_input(|row| {
+        row.text()
+            .trim()
+            .eq_ignore_ascii_case("all")
+            .then_some(Ok(0.0))
+    });
+
+    load_analysis(widgets, state, &syncing);
+
+    let visits_state = state.clone();
+    let visits_syncing = syncing.clone();
+    widgets
+        .analysis_visits_row
+        .connect_value_notify(move |row| {
+            if visits_syncing.get() {
+                return;
+            }
+            visits_state.config_mut().analysis.live_max_visits = row.value() as u32;
+            visits_state.save_config();
+        });
+
+    let interval_state = state.clone();
+    let interval_syncing = syncing.clone();
+    widgets
+        .analysis_interval_row
+        .connect_value_notify(move |row| {
+            if interval_syncing.get() {
+                return;
+            }
+            interval_state.config_mut().analysis.report_interval_ms = row.value() as u16;
+            interval_state.save_config();
+        });
+
+    let suggestions_state = state.clone();
+    let suggestions_syncing = syncing.clone();
+    widgets
+        .analysis_suggestions_row
+        .connect_value_notify(move |row| {
+            if suggestions_syncing.get() {
+                return;
+            }
+            suggestions_state.config_mut().analysis.max_suggestions = row.value() as u8;
+            suggestions_state.save_config();
+            // The board and the candidate list truncate to this, so redraw them now.
+            suggestions_state.changed(Change::Report);
+        });
+
+    let batch_state = state.clone();
+    let batch_syncing = syncing.clone();
+    widgets
+        .analysis_batch_visits_row
+        .connect_value_notify(move |row| {
+            if batch_syncing.get() {
+                return;
+            }
+            batch_state.config_mut().analysis.batch_visits = row.value() as u32;
+            batch_state.save_config();
+        });
+
+    let reset_state = state.clone();
+    let reset_syncing = syncing.clone();
+    widgets.analysis_reset_button.connect_clicked(glib::clone!(
+        #[weak]
+        dialog,
+        move |_| reset_analysis(&dialog, &reset_state, &reset_syncing)
+    ));
+}
+
+/// Pushes `config.analysis` into the four rows.
+///
+/// The settings are copied out first: the value handlers take `config_mut`, and a `Ref` held
+/// across them would panic.
+fn load_analysis(widgets: &PreferencesWidgets, state: &AppState, syncing: &Cell<bool>) {
+    let settings = state.config().analysis.clone();
+    syncing.set(true);
+    widgets
+        .analysis_visits_row
+        .set_value(settings.live_max_visits as f64);
+    widgets
+        .analysis_interval_row
+        .set_value(settings.report_interval_ms as f64);
+    widgets
+        .analysis_suggestions_row
+        .set_value(settings.max_suggestions as f64);
+    widgets
+        .analysis_batch_visits_row
+        .set_value(settings.batch_visits as f64);
+    syncing.set(false);
+}
+
+fn apply_analysis(
+    dialog: &PreferencesDialog,
+    state: &AppState,
+    syncing: &Cell<bool>,
+    settings: AnalysisSettings,
+) {
+    state.config_mut().analysis = settings;
+    load_analysis(&dialog.widgets(), state, syncing);
+    state.save_config();
+    // A live search is holding the old visit cap and report interval.
+    state.restart_analysis();
+    state.changed(Change::Report);
+}
+
+/// Restores the analysis defaults, offering the previous values back for as long as the
+/// toast is up. Engine profiles are user data and are never part of a reset.
+fn reset_analysis(dialog: &PreferencesDialog, state: &AppState, syncing: &Rc<Cell<bool>>) {
+    let previous = state.config().analysis.clone();
+    apply_analysis(dialog, state, syncing, AnalysisSettings::default());
+
+    let undo_state = state.clone();
+    let undo_syncing = syncing.clone();
+    let toast = undo_toast("Analysis settings restored");
+    toast.connect_button_clicked(glib::clone!(
+        #[weak]
+        dialog,
+        move |_| apply_analysis(&dialog, &undo_state, &undo_syncing, previous.clone())
+    ));
+    dialog.add_toast(toast);
+}
+
+fn undo_toast(title: &str) -> adw::Toast {
+    adw::Toast::builder()
+        .title(title)
+        .button_label("Undo")
+        .build()
 }
 
 // -- Play -------------------------------------------------------------------------------
 
 const STRENGTH_KINDS: [&str; 3] = ["Fixed visits", "Fixed time", "Human-like"];
 
-fn connect_play(widgets: &PreferencesWidgets, state: &AppState) {
-    let kind = &widgets.play_strength_kind_row;
-    let visits = &widgets.play_visits_row;
-    let seconds = &widgets.play_seconds_row;
-    let human = &widgets.play_human_row;
+fn connect_play(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state: &AppState) {
+    let syncing = Rc::new(Cell::new(false));
 
-    kind.set_model(Some(&gtk::StringList::new(&STRENGTH_KINDS)));
-    configure_spin(visits, 1.0, 1_000_000.0, 100.0, 0, 800.0);
-    configure_spin(seconds, 0.1, 300.0, 0.5, 1, 5.0);
-    human.set_text(crate::play::DEFAULT_HUMAN_PROFILE);
+    widgets
+        .play_strength_kind_row
+        .set_model(Some(&gtk::StringList::new(&STRENGTH_KINDS)));
+    configure_spin(&widgets.play_visits_row, 1.0, 1_000_000.0, 100.0, 0);
+    configure_spin(&widgets.play_seconds_row, 0.1, 300.0, 0.5, 1);
+    configure_spin(&widgets.play_temperature_row, 0.0, 2.0, 0.05, 2);
+    configure_spin(&widgets.play_threshold_row, 0.0, 0.5, 0.01, 2);
+    configure_spin(&widgets.play_streak_row, 1.0, 10.0, 1.0, 0);
+    let labels: Vec<&str> = RuleSet::ALL.iter().map(|rules| rules.label()).collect();
+    widgets
+        .play_rules_row
+        .set_model(Some(&gtk::StringList::new(&labels)));
 
-    let selected = {
-        let config = state.config();
-        match &config.play.strength {
-            StrengthSetting::Visits { visits: value } => {
-                visits.set_value(*value as f64);
-                0
-            }
-            StrengthSetting::Time { time_ms } => {
-                seconds.set_value(*time_ms as f64 / 1000.0);
-                1
-            }
-            StrengthSetting::Human { profile } => {
-                human.set_text(profile);
-                2
-            }
-        }
-    };
-    kind.set_selected(selected);
+    load_play(widgets, state, &syncing);
 
-    let sync = {
-        let visits = visits.clone();
-        let seconds = seconds.clone();
-        let human = human.clone();
-        let kind = kind.clone();
+    // The mode and its three value rows all describe one setting, so they share a handler.
+    let on_strength: Rc<dyn Fn()> = {
         let state = state.clone();
-        move |persist: bool| {
-            let selected = kind.selected();
-            visits.set_visible(selected == 0);
-            seconds.set_visible(selected == 1);
-            human.set_visible(selected == 2);
-            if !persist {
+        let syncing = syncing.clone();
+        let dialog = dialog.downgrade();
+        Rc::new(move || {
+            if syncing.get() {
                 return;
             }
-            state.config_mut().play.strength = match selected {
-                0 => StrengthSetting::Visits {
-                    visits: visits.value() as u32,
-                },
-                1 => StrengthSetting::Time {
-                    time_ms: (seconds.value() * 1000.0) as u32,
-                },
-                _ => StrengthSetting::Human {
-                    profile: human.text().trim().to_string(),
-                },
+            let Some(dialog) = dialog.upgrade() else {
+                return;
             };
-            state.save_config();
-        }
+            let widgets = dialog.widgets();
+            sync_strength_rows(&widgets);
+            store_strength(&widgets, &state);
+        })
     };
-    sync(false);
+    let on_kind = on_strength.clone();
+    widgets
+        .play_strength_kind_row
+        .connect_selected_notify(move |_| on_kind());
+    let on_visits = on_strength.clone();
+    widgets
+        .play_visits_row
+        .connect_value_notify(move |_| on_visits());
+    let on_seconds = on_strength.clone();
+    widgets
+        .play_seconds_row
+        .connect_value_notify(move |_| on_seconds());
+    widgets
+        .play_human_row
+        .connect_changed(move |_| on_strength());
 
-    let on_kind = sync.clone();
-    kind.connect_selected_notify(move |_| on_kind(true));
-    let on_visits = sync.clone();
-    visits.connect_value_notify(move |_| on_visits(true));
-    let on_seconds = sync.clone();
-    seconds.connect_value_notify(move |_| on_seconds(true));
-    human.connect_changed(move |_| sync(true));
-
-    let temperature = &widgets.play_temperature_row;
-    configure_spin(
-        temperature,
-        0.0,
-        2.0,
-        0.05,
-        2,
-        state.config().play.temperature as f64,
-    );
     let temperature_state = state.clone();
-    temperature.connect_value_notify(move |row| {
-        temperature_state.config_mut().play.temperature = row.value() as f32;
-        temperature_state.save_config();
-    });
+    let temperature_syncing = syncing.clone();
+    widgets
+        .play_temperature_row
+        .connect_value_notify(move |row| {
+            if temperature_syncing.get() {
+                return;
+            }
+            temperature_state.config_mut().play.temperature = row.value() as f32;
+            temperature_state.save_config();
+        });
 
-    let threshold = &widgets.play_threshold_row;
-    configure_spin(
-        threshold,
-        0.0,
-        0.5,
-        0.01,
-        2,
-        state.config().play.resign_threshold as f64,
-    );
     let threshold_state = state.clone();
-    threshold.connect_value_notify(move |row| {
+    let threshold_syncing = syncing.clone();
+    widgets.play_threshold_row.connect_value_notify(move |row| {
+        if threshold_syncing.get() {
+            return;
+        }
         threshold_state.config_mut().play.resign_threshold = row.value() as f32;
         threshold_state.save_config();
     });
 
-    let streak = &widgets.play_streak_row;
-    configure_spin(
-        streak,
-        1.0,
-        10.0,
-        1.0,
-        0,
-        state.config().play.resign_streak as f64,
-    );
     let streak_state = state.clone();
-    streak.connect_value_notify(move |row| {
+    let streak_syncing = syncing.clone();
+    widgets.play_streak_row.connect_value_notify(move |row| {
+        if streak_syncing.get() {
+            return;
+        }
         streak_state.config_mut().play.resign_streak = row.value() as u8;
         streak_state.save_config();
     });
 
-    let rules = &widgets.play_rules_row;
-    let labels: Vec<&str> = RuleSet::ALL.iter().map(|rules| rules.label()).collect();
-    rules.set_model(Some(&gtk::StringList::new(&labels)));
-    let current = state.config().play.rules;
-    rules.set_selected(
-        RuleSet::ALL
-            .iter()
-            .position(|rules| *rules == current)
-            .unwrap_or(0) as u32,
-    );
     let rules_state = state.clone();
-    rules.connect_selected_notify(move |row| {
+    let rules_syncing = syncing.clone();
+    widgets.play_rules_row.connect_selected_notify(move |row| {
+        if rules_syncing.get() {
+            return;
+        }
         let Some(&chosen) = RuleSet::ALL.get(row.selected() as usize) else {
             return;
         };
         rules_state.config_mut().play.rules = chosen;
         rules_state.save_config();
     });
+
+    let reset_state = state.clone();
+    let reset_syncing = syncing.clone();
+    widgets.play_reset_button.connect_clicked(glib::clone!(
+        #[weak]
+        dialog,
+        move |_| reset_play(&dialog, &reset_state, &reset_syncing)
+    ));
+}
+
+/// Only the row the selected strength mode uses is shown.
+fn sync_strength_rows(widgets: &PreferencesWidgets) {
+    let selected = widgets.play_strength_kind_row.selected();
+    widgets.play_visits_row.set_visible(selected == 0);
+    widgets.play_seconds_row.set_visible(selected == 1);
+    widgets.play_human_row.set_visible(selected == 2);
+}
+
+fn store_strength(widgets: &PreferencesWidgets, state: &AppState) {
+    let strength = match widgets.play_strength_kind_row.selected() {
+        0 => StrengthSetting::Visits {
+            visits: widgets.play_visits_row.value() as u32,
+        },
+        1 => StrengthSetting::Time {
+            time_ms: (widgets.play_seconds_row.value() * 1000.0) as u32,
+        },
+        _ => StrengthSetting::Human {
+            profile: widgets.play_human_row.text().trim().to_string(),
+        },
+    };
+    state.config_mut().play.strength = strength;
+    state.save_config();
+}
+
+/// Pushes `config.play` into every row on the page, including the two strength rows the
+/// current mode does not use — they keep their own defaults so switching mode lands on a
+/// sensible value.
+fn load_play(widgets: &PreferencesWidgets, state: &AppState, syncing: &Cell<bool>) {
+    let play = state.config().play.clone();
+    syncing.set(true);
+    widgets.play_visits_row.set_value(800.0);
+    widgets.play_seconds_row.set_value(5.0);
+    widgets
+        .play_human_row
+        .set_text(crate::play::DEFAULT_HUMAN_PROFILE);
+    let selected = match &play.strength {
+        StrengthSetting::Visits { visits } => {
+            widgets.play_visits_row.set_value(*visits as f64);
+            0
+        }
+        StrengthSetting::Time { time_ms } => {
+            widgets.play_seconds_row.set_value(*time_ms as f64 / 1000.0);
+            1
+        }
+        StrengthSetting::Human { profile } => {
+            widgets.play_human_row.set_text(profile);
+            2
+        }
+    };
+    widgets.play_strength_kind_row.set_selected(selected);
+    widgets
+        .play_temperature_row
+        .set_value(play.temperature as f64);
+    widgets
+        .play_threshold_row
+        .set_value(play.resign_threshold as f64);
+    widgets.play_streak_row.set_value(play.resign_streak as f64);
+    widgets.play_rules_row.set_selected(
+        RuleSet::ALL
+            .iter()
+            .position(|rules| *rules == play.rules)
+            .unwrap_or(0) as u32,
+    );
+    sync_strength_rows(widgets);
+    syncing.set(false);
+}
+
+fn apply_play(
+    dialog: &PreferencesDialog,
+    state: &AppState,
+    syncing: &Cell<bool>,
+    settings: PlaySettings,
+) {
+    state.config_mut().play = settings;
+    load_play(&dialog.widgets(), state, syncing);
+    state.save_config();
+}
+
+fn reset_play(dialog: &PreferencesDialog, state: &AppState, syncing: &Rc<Cell<bool>>) {
+    let previous = state.config().play.clone();
+    apply_play(dialog, state, syncing, PlaySettings::default());
+
+    let undo_state = state.clone();
+    let undo_syncing = syncing.clone();
+    let toast = undo_toast("Play settings restored");
+    toast.connect_button_clicked(glib::clone!(
+        #[weak]
+        dialog,
+        move |_| apply_play(&dialog, &undo_state, &undo_syncing, previous.clone())
+    ));
+    dialog.add_toast(toast);
 }
 
 // -- Appearance -------------------------------------------------------------------------
 
-fn connect_appearance(widgets: &PreferencesWidgets, state: &AppState) {
+fn connect_appearance(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state: &AppState) {
     bind_switch(&widgets.show_coordinates_row, state, "show-coordinates");
     bind_switch(&widgets.show_move_numbers_row, state, "show-move-numbers");
     bind_switch(&widgets.ownership_overlay_row, state, "ownership-overlay");
@@ -1565,6 +1731,43 @@ fn connect_appearance(widgets: &PreferencesWidgets, state: &AppState) {
         sgf_state.config_mut().ui.save_analysis_in_sgf = row.is_active();
         sgf_state.save_config();
     });
+
+    let reset_state = state.clone();
+    widgets
+        .appearance_reset_button
+        .connect_clicked(glib::clone!(
+            #[weak]
+            dialog,
+            move |_| reset_ui(&dialog, &reset_state)
+        ));
+}
+
+/// The four display toggles are bound to `AppState` properties, so setting the properties
+/// moves the switches; only the SGF switch owns its own key.
+fn apply_ui(dialog: &PreferencesDialog, state: &AppState, ui: UiSettings) {
+    state.set_show_coordinates(ui.show_coordinates);
+    state.set_show_move_numbers(ui.show_move_numbers);
+    state.set_ownership_overlay(ui.ownership_overlay);
+    state.set_policy_overlay(ui.policy_overlay);
+    dialog
+        .widgets()
+        .save_analysis_row
+        .set_active(ui.save_analysis_in_sgf);
+    state.save_config();
+}
+
+fn reset_ui(dialog: &PreferencesDialog, state: &AppState) {
+    let previous = state.config().ui.clone();
+    apply_ui(dialog, state, UiSettings::default());
+
+    let undo_state = state.clone();
+    let toast = undo_toast("Appearance settings restored");
+    toast.connect_button_clicked(glib::clone!(
+        #[weak]
+        dialog,
+        move |_| apply_ui(&dialog, &undo_state, previous.clone())
+    ));
+    dialog.add_toast(toast);
 }
 
 fn bind_switch(row: &adw::SwitchRow, state: &AppState, property: &'static str) {
@@ -1577,19 +1780,38 @@ fn bind_switch(row: &adw::SwitchRow, state: &AppState, property: &'static str) {
     row.connect_active_notify(move |_| state.save_config());
 }
 
-fn configure_spin(row: &adw::SpinRow, min: f64, max: f64, step: f64, digits: u32, value: f64) {
+/// A preference spin row: fixed range, and no `+`/`−` — see [`hide_steppers`]. The value
+/// itself arrives later, from the page's `load_*`.
+fn configure_spin(row: &adw::SpinRow, min: f64, max: f64, step: f64, digits: u32) {
     row.configure(
-        Some(&gtk::Adjustment::new(
-            value,
-            min,
-            max,
-            step,
-            step * 10.0,
-            0.0,
-        )),
+        Some(&gtk::Adjustment::new(min, min, max, step, step * 10.0, 0.0)),
         0.0,
         digits,
     );
+    hide_steppers(row);
+}
+
+/// Drops the steppers from a spin row: the value is typed, scrolled or arrowed instead.
+///
+/// Stepping a visit budget by 1 000 up to ten million was never a real gesture, and the two
+/// buttons crowd every settings row. libadwaita has no property for this, so the row's only
+/// buttons — the pair inside its internal `GtkSpinButton` — are hidden directly. Hiding,
+/// rather than shrinking them with CSS, is also what keeps them out of the accessibility
+/// tree.
+fn hide_steppers(row: &adw::SpinRow) {
+    fn walk(w: &gtk::Widget) {
+        if let Some(button) = w.downcast_ref::<gtk::Button>() {
+            button.set_visible(false);
+            return;
+        }
+        let mut child = w.first_child();
+        while let Some(c) = child {
+            let next = c.next_sibling();
+            walk(&c);
+            child = next;
+        }
+    }
+    walk(row.upcast_ref());
 }
 
 #[cfg(test)]

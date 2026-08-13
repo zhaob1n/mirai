@@ -309,13 +309,37 @@ impl EngineProfile {
     }
 }
 
+/// Ceiling on the candidates stored per node. Display may be unbounded — that is one board —
+/// but a [`mirai_core::NodeAnalysis`] is kept for every node and written into SGF, so the
+/// stored copy always has a limit. 50 is the maximum the preferences row offers, so no
+/// non-zero setting is affected by it.
+pub const MAX_STORED_CANDIDATES: usize = 50;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AnalysisSettings {
     pub live_max_visits: u32,
     pub report_interval_ms: u16,
     pub batch_visits: u32,
+    /// `0` means "every candidate the engine returned"; resolve it with
+    /// [`AnalysisSettings::suggestion_limit`] rather than reading it directly.
     pub max_suggestions: u8,
+}
+
+impl AnalysisSettings {
+    /// How many candidates to draw and to list.
+    pub fn suggestion_limit(&self) -> usize {
+        if self.max_suggestions == 0 {
+            usize::MAX
+        } else {
+            self.max_suggestions as usize
+        }
+    }
+
+    /// [`Self::suggestion_limit`], clamped to what is worth keeping on every node.
+    pub fn stored_suggestion_limit(&self) -> usize {
+        self.suggestion_limit().min(MAX_STORED_CANDIDATES)
+    }
 }
 
 impl Default for AnalysisSettings {
@@ -323,7 +347,7 @@ impl Default for AnalysisSettings {
         AnalysisSettings {
             live_max_visits: 1_000_000,
             report_interval_ms: 100,
-            batch_visits: 1000,
+            batch_visits: 100,
             max_suggestions: 10,
         }
     }
@@ -743,6 +767,18 @@ mod tests {
                 .is_empty()
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `0` is the only value that means something other than a count, and the stored copy
+    /// must stay bounded whatever the board is asked to draw.
+    #[test]
+    fn zero_suggestions_means_every_candidate_but_storage_stays_capped() {
+        let mut settings = AnalysisSettings::default();
+        assert_eq!(settings.suggestion_limit(), 10);
+        assert_eq!(settings.stored_suggestion_limit(), 10);
+        settings.max_suggestions = 0;
+        assert_eq!(settings.suggestion_limit(), usize::MAX);
+        assert_eq!(settings.stored_suggestion_limit(), MAX_STORED_CANDIDATES);
     }
 
     #[test]

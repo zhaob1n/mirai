@@ -70,7 +70,7 @@ template $MiraiPreferencesDialog : Adw.PreferencesDialog {
 
       Adw.SpinRow analysis_suggestions_row {
         title: _("Suggestions Shown");
-        subtitle: _("Candidate moves kept on the board and in the panel");
+        subtitle: _("Candidate moves kept on the board and in the panel — “All” keeps every move the engine searched");
       }
     }
 
@@ -80,6 +80,14 @@ template $MiraiPreferencesDialog : Adw.PreferencesDialog {
       Adw.SpinRow analysis_batch_visits_row {
         title: _("Visits per Move");
         subtitle: _("Budget for each position when analysing a whole game");
+      }
+    }
+
+    Adw.PreferencesGroup {
+      Gtk.Button analysis_reset_button {
+        styles ["pill"]
+        halign: center;
+        label: _("Restore Analysis Defaults");
       }
     }
   }
@@ -132,6 +140,14 @@ template $MiraiPreferencesDialog : Adw.PreferencesDialog {
         subtitle: _("Used for new games");
       }
     }
+
+    Adw.PreferencesGroup {
+      Gtk.Button play_reset_button {
+        styles ["pill"]
+        halign: center;
+        label: _("Restore Play Defaults");
+      }
+    }
   }
 
   Adw.PreferencesPage {
@@ -173,6 +189,14 @@ template $MiraiPreferencesDialog : Adw.PreferencesDialog {
       Adw.SwitchRow save_analysis_row {
         title: _("Save Analysis in SGF");
         subtitle: _("Write winrates and candidate moves alongside the moves");
+      }
+    }
+
+    Adw.PreferencesGroup {
+      Gtk.Button appearance_reset_button {
+        styles ["pill"]
+        halign: center;
+        label: _("Restore Appearance Defaults");
       }
     }
   }

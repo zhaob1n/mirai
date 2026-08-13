@@ -7,6 +7,9 @@ use mirai_engine::Report;
 
 /// Converts a wire [`Report`] into the dequantised, Black-perspective [`NodeAnalysis`]
 /// that the tree stores and the SGF writer persists.
+///
+/// `max_candidates` is an already-resolved limit — see
+/// [`crate::config::AnalysisSettings::stored_suggestion_limit`], which never yields zero.
 pub fn analysis_of(report: &Report, max_candidates: usize) -> NodeAnalysis {
     NodeAnalysis {
         visits: report.root.visits,
@@ -16,7 +19,7 @@ pub fn analysis_of(report: &Report, max_candidates: usize) -> NodeAnalysis {
         candidates: report
             .moves
             .iter()
-            .take(max_candidates.max(1))
+            .take(max_candidates)
             .map(|m| Candidate {
                 mv: m.mv,
                 visits: m.visits,

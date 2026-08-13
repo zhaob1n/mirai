@@ -293,9 +293,8 @@ composite templates), `resources/style.css` (`board-area`, `mirai-clock`, `mirai
 
 | I want to change… | open |
 |---|---|
-| how candidate moves are coloured | `widgets/board.rs` — `VISIT_RAMP` (the blue→green→red visit ramp) and `ramp_rgb`; applied in `draw_candidates`, which also draws the white ring on `order == 0` and picks label colour with `text_on` |
-| which numbers appear in a candidate blob | `widgets/board.rs` — `draw_candidates` (win rate always; score lead and visits appear as the cell grows) |
-| how many candidates are drawn or listed | `config.rs` — `AnalysisSettings::max_suggestions` |
+| candidate blob colour, visit depth and labels | `widgets/board.rs` — `VISIT_RAMP`, `ramp_position`, `blob_alpha` and `draw_candidates`; sub-2%-share moves keep the blob but omit labels, and `order == 0` gets the white ring |
+| how many candidates are drawn or listed | `config.rs` — `AnalysisSettings::suggestion_limit` (`max_suggestions = 0` means all) |
 | the ownership or policy heat map | `widgets/board.rs` — `ownership_texture` / `policy_texture`, appended by `BoardView::snapshot` |
 | a keyboard shortcut, or what an action does | `window.rs` — `install_actions` (action bodies and the accel table), `show_shortcuts` for the help window |
 | live-analysis visit cap / report rate | `config.rs` — `AnalysisSettings`, consumed by `AppState::restart_analysis` |
@@ -387,7 +386,8 @@ not a legality question. `Node` is all-public data — the tree owns structure, 
 ### NodeAnalysis and Candidate
 
 `NodeAnalysis` is the *stored* form of an evaluation: dequantised, Black-perspective, truncated to
-`AnalysisSettings::max_suggestions`, produced only by `util::analysis_of`, with ownership left
+`AnalysisSettings::stored_suggestion_limit` (at most 50 even when the display shows all), produced
+only by `util::analysis_of`, with ownership left
 quantised at one byte per point. It exists so the win-rate graph and move tree can draw a whole
 game after the live report for a node is gone. The live `Report` — all fields, still quantised —
 lives separately in `AppState::last_report()` and is discarded the moment the cursor moves.

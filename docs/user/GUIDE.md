@@ -163,15 +163,19 @@ The search runs up to **Maximum visits** and the display refreshes every **Repor
    ╰───────╯
 ```
 
-The lower two lines are dropped when the board is drawn too small for them.
+The lower two lines are dropped when the board is drawn too small for them. A move that received
+less than 2% as many visits as the busiest move is drawn without numbers: it is still visible,
+but it does not turn a crowded board into a wall of uncertain readouts.
 
-**Colour is visit share**, not quality: this candidate's visits over the most-visited
-candidate's. The ramp runs **blue → teal → green → yellow → red**, so red is where the search
-spent its time and blue is a move it glanced at. **The engine's own choice is outlined in
-white** — usually the red one, but when two moves are close the visit counts and the final
-preference can disagree, and the white outline is the answer to *"what would KataGo play?"*.
+**Colour and depth are visit share**, not quality: this candidate's visits over the most-visited
+candidate's. The ramp runs **indigo → blue → teal → green → yellow → red**, and low-visit
+moves also fade into the board, so red and solid is where the search spent its time while faint
+indigo is a move it glanced at. **The engine's own choice is outlined in white** — usually the
+red one, but when two moves are close the visit counts and the final preference can disagree,
+and the white outline is the answer to *"what would KataGo play?"*.
 
-**Suggestions shown** controls how many blobs are drawn (10 by default).
+**Suggestions shown** controls how many blobs and list rows appear (10 by default). Choose
+**All** to keep every move the engine searched; visit-depth fading keeps the board readable.
 
 ### The candidate list
 
@@ -262,7 +266,7 @@ so you never have to work out whose turn it was.
 | over 10 % | red |
 
 **Whole-game analysis.** <kbd>Ctrl</kbd>+<kbd>A</kbd> sweeps the main line at **Visits per
-move** (1000 by default), several positions at a time, with a progress banner and a **Cancel**
+move** (100 by default), several positions at a time, with a progress banner and a **Cancel**
 button over the board. Cancelling keeps everything analysed so far. When it finishes, the
 curves fill in and a **Blunders** list appears at the bottom of the Analysis page:
 
@@ -525,8 +529,12 @@ them. The neural-net cache is not changed.
 |---|---|---|---|
 | **Maximum visits** | 1 000 000 | 1 000 – 10 000 000 | you want a live search to settle on an answer and stop using the GPU |
 | **Report interval** | 100 ms | 20 – 1 000 | the display feels busy, or the link to a remote engine is slow |
-| **Suggestions shown** | 10 | 1 – 50 | you want a cleaner board — this caps blobs and list rows together |
-| **Visits per move** | 1 000 | 100 – 100 000 | reviewing: 500 is quick, 5 000 is thorough |
+| **Suggestions shown** | 10 | All / 1 – 50 | you want every searched move, or a cleaner board — this caps blobs and list rows together |
+| **Visits per move** | 100 | 100 – 100 000 | reviewing: 100 is quick, 5 000 is thorough |
+
+The numeric rows accept typing, scrolling and the keyboard's arrow keys; the old `+`/`−`
+steppers were impractical for ranges such as one thousand to ten million. Each page ends with a
+**Restore … Defaults** button. Its toast offers **Undo**; engine profiles are never reset.
 
 ### Play
 

@@ -87,14 +87,32 @@ impl Layout {
     }
 }
 
-/// The Lizzie visit ramp: blue (rarely searched) through green to red (the engine's choice).
-const VISIT_RAMP: [(f32, [u8; 3]); 5] = [
-    (0.00, [0x28, 0x48, 0xC8]),
-    (0.25, [0x28, 0xA0, 0xA0]),
-    (0.50, [0x48, 0xC8, 0x48]),
-    (0.75, [0xE8, 0xC8, 0x38]),
-    (1.00, [0xE8, 0x50, 0x38]),
+/// The visit ramp: indigo (barely searched) through blue, teal, green and amber to red (the
+/// engine's choice). Seven stops rather than five because the low end is where the
+/// candidates crowd — KataGo spends most of its visits on one or two moves.
+const VISIT_RAMP: [(f32, [u8; 3]); 7] = [
+    (0.00, [0x3B, 0x2E, 0x8F]),
+    (0.18, [0x2B, 0x5F, 0xD9]),
+    (0.36, [0x18, 0x9E, 0xC0]),
+    (0.54, [0x2E, 0xB8, 0x62]),
+    (0.72, [0xC8, 0xCF, 0x2C]),
+    (0.88, [0xF0, 0xA4, 0x22]),
+    (1.00, [0xE2, 0x3D, 0x2E]),
 ];
+
+/// Opacity floor and ceiling for a candidate blob, and the natural-log span between them.
+///
+/// Depth is the second, blunter channel for the same quantity the hue carries: how much
+/// search a move actually got. A share five log units below the best move (≈0.7% of its
+/// visits) is drawn at the floor and no fainter. LizzieYzy computes the same thing as
+/// `minAlpha + (maxAlpha - minAlpha) * max(0, log(share) / 5 + 1)`.
+const BLOB_ALPHA_MIN: f32 = 0.18;
+const BLOB_ALPHA_MAX: f32 = 0.85;
+const BLOB_ALPHA_DECAY: f32 = 5.0;
+
+/// Below this share the numbers are noise on a crowded board, and unreadable through a faint
+/// blob. The engine's own choice keeps its numbers whatever its share.
+const LABEL_MIN_SHARE: f32 = 0.02;
 
 #[inline]
 fn lerp8(a: u8, b: u8, t: f32) -> u8 {
@@ -103,7 +121,7 @@ fn lerp8(a: u8, b: u8, t: f32) -> u8 {
         .clamp(0.0, 255.0) as u8
 }
 
-/// Colour for a candidate whose relative visit share is `f` in `0..=1`.
+/// Colour for a candidate at ramp position `f` in `0..=1`.
 fn ramp_rgb(f: f32) -> [u8; 3] {
     let f = if f.is_nan() { 0.0 } else { f.clamp(0.0, 1.0) };
     let mut i = 0;
@@ -120,6 +138,26 @@ fn ramp_rgb(f: f32) -> [u8; 3] {
     ]
 }
 
+/// Where a visit share sits on the ramp.
+///
+/// The raw share leaves everything but the best move on the bottom stop, so it is
+/// square-rooted first — the same spread LizzieYzy applies with its default
+/// `suggestion-color-ratio = 2`.
+#[inline]
+fn ramp_position(share: f32) -> f32 {
+    share.max(0.0).sqrt()
+}
+
+/// How opaque the blob for a candidate with this visit share is drawn.
+fn blob_alpha(share: f32) -> f32 {
+    let t = if share > 0.0 {
+        (share.ln() / BLOB_ALPHA_DECAY + 1.0).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    BLOB_ALPHA_MIN + (BLOB_ALPHA_MAX - BLOB_ALPHA_MIN) * t
+}
+
 #[inline]
 fn rgba8(c: [u8; 3], alpha: f32) -> gdk::RGBA {
     gdk::RGBA::new(
@@ -130,9 +168,10 @@ fn rgba8(c: [u8; 3], alpha: f32) -> gdk::RGBA {
     )
 }
 
-/// Black or white text, whichever reads better on `rgb`.
-fn text_on(rgb: [u8; 3]) -> gdk::RGBA {
-    let lum = (0.299 * rgb[0] as f32 + 0.587 * rgb[1] as f32 + 0.114 * rgb[2] as f32) / 255.0;
+/// Black or white text, whichever reads better on `bg` — the blob already composited over
+/// the board, because a faint blob is mostly wood.
+fn text_on(bg: gdk::RGBA) -> gdk::RGBA {
+    let lum = 0.299 * bg.red() + 0.587 * bg.green() + 0.114 * bg.blue();
     if lum > 0.58 {
         gdk::RGBA::new(0.04, 0.04, 0.04, 1.0)
     } else {
@@ -191,7 +230,8 @@ struct BoardProjection {
     last: Option<(Color, Point)>,
     move_numbers: Option<Box<[u16]>>,
     report: Option<Arc<mirai_engine::Report>>,
-    max_suggestions: usize,
+    /// Resolved from `AnalysisSettings::suggestion_limit`, so `usize::MAX` means "all".
+    suggestion_limit: usize,
     show_coordinates: bool,
     ownership_overlay: bool,
     policy_overlay: bool,
@@ -481,7 +521,7 @@ mod imp {
                     scene,
                     projection.position.to_play,
                     report,
-                    projection.max_suggestions,
+                    projection.suggestion_limit,
                 );
             }
         }
@@ -699,7 +739,12 @@ mod imp {
             report: &mirai_engine::Report,
             max: usize,
         ) {
-            let Scene { l, size, board, .. } = scene;
+            let Scene {
+                l,
+                size,
+                board,
+                dark,
+            } = scene;
             let best = report.best_visits().max(1) as f32;
             let obj = self.obj();
             let mut fd = obj.pango_context().font_description().unwrap_or_default();
@@ -710,8 +755,9 @@ mod imp {
                 }
                 let (x, y) = size.xy(info.mv);
                 let (cx, cy) = l.xy(x, y);
-                let rgb = ramp_rgb(info.visits as f32 / best);
-                let blob = rgba8(rgb, 0.78);
+                let share = info.visits as f32 / best;
+                let rgb = ramp_rgb(ramp_position(share));
+                let blob = rgba8(rgb, blob_alpha(share));
                 fill_disc(snapshot, cx, cy, l.stone_r, &blob);
                 if info.order == 0 {
                     stroke_disc(
@@ -724,7 +770,13 @@ mod imp {
                     );
                 }
 
-                let fg = text_on(rgb);
+                // A barely searched move is a hint, not a readout: its blob is nearly
+                // transparent, so numbers on it would be unreadable clutter.
+                if share < LABEL_MIN_SHARE && info.order != 0 {
+                    continue;
+                }
+
+                let fg = text_on(over(blob, wood_color(dark)));
                 let mut lines: Vec<(String, f32)> = Vec::with_capacity(3);
                 lines.push((crate::util::pct1(info.winrate_for(to_play)), 0.22));
                 if l.cell >= 26.0 {
@@ -974,7 +1026,7 @@ impl BoardView {
         let state = self.state();
         if let Some(projection) = self.imp().projection.borrow_mut().as_mut() {
             projection.report = state.last_report();
-            projection.max_suggestions = state.config().analysis.max_suggestions as usize;
+            projection.suggestion_limit = state.config().analysis.suggestion_limit();
         } else {
             self.rebuild_projection(&state);
             self.queue_draw();
@@ -1026,7 +1078,7 @@ impl BoardView {
             last,
             move_numbers,
             report: state.last_report(),
-            max_suggestions: state.config().analysis.max_suggestions as usize,
+            suggestion_limit: state.config().analysis.suggestion_limit(),
             show_coordinates: state.show_coordinates(),
             ownership_overlay: state.ownership_overlay(),
             policy_overlay: state.policy_overlay(),
@@ -1251,7 +1303,7 @@ impl BoardView {
             .moves
             .iter()
             .enumerate()
-            .take(projection.max_suggestions)
+            .take(projection.suggestion_limit)
         {
             if info.mv.is_pass()
                 || !projection.size.contains(info.mv)
@@ -1277,20 +1329,43 @@ mod tests {
 
     #[test]
     fn visit_ramp_hits_its_control_points() {
-        assert_eq!(ramp_rgb(0.0), [0x28, 0x48, 0xC8]);
-        assert_eq!(ramp_rgb(0.25), [0x28, 0xA0, 0xA0]);
-        assert_eq!(ramp_rgb(0.5), [0x48, 0xC8, 0x48]);
-        assert_eq!(ramp_rgb(0.75), [0xE8, 0xC8, 0x38]);
-        assert_eq!(ramp_rgb(1.0), [0xE8, 0x50, 0x38]);
+        for (position, colour) in VISIT_RAMP {
+            assert_eq!(ramp_rgb(position), colour, "at {position}");
+        }
     }
 
     #[test]
     fn visit_ramp_interpolates_and_clamps() {
-        // Halfway between #2848C8 and #28A0A0.
-        assert_eq!(ramp_rgb(0.125), [0x28, 0x74, 0xB4]);
+        // Inside the first segment, #3B2E8F -> #2B5FD9: red falls, green and blue rise.
+        let mid = ramp_rgb(0.09);
+        assert!((0x2B..0x3B).contains(&mid[0]), "{mid:?}");
+        assert!((0x2E..0x5F).contains(&mid[1]), "{mid:?}");
+        assert!((0x8F..0xD9).contains(&mid[2]), "{mid:?}");
         assert_eq!(ramp_rgb(-3.0), ramp_rgb(0.0));
         assert_eq!(ramp_rgb(9.0), ramp_rgb(1.0));
         assert_eq!(ramp_rgb(f32::NAN), ramp_rgb(0.0));
+    }
+
+    /// Depth is the channel that says how much search a move actually got, so it has to fall
+    /// with the visit share and stop at a floor rather than vanishing.
+    #[test]
+    fn opacity_tracks_how_much_a_move_was_searched() {
+        assert!((blob_alpha(1.0) - BLOB_ALPHA_MAX).abs() < 1e-6);
+        assert_eq!(blob_alpha(0.0), BLOB_ALPHA_MIN);
+        assert_eq!(blob_alpha(0.001), BLOB_ALPHA_MIN);
+        assert_eq!(blob_alpha(f32::NAN), BLOB_ALPHA_MIN);
+        assert!(blob_alpha(0.5) > blob_alpha(0.05));
+        assert!(blob_alpha(0.05) > blob_alpha(0.005));
+    }
+
+    /// The square root is the whole point: without it a 4%-visit move would sit on the
+    /// bottom stop with a 0.04% one.
+    #[test]
+    fn ramp_position_spreads_the_crowded_low_end() {
+        assert_eq!(ramp_position(1.0), 1.0);
+        assert_eq!(ramp_position(0.25), 0.5);
+        assert_eq!(ramp_position(-1.0), 0.0);
+        assert!(ramp_position(0.04) > 0.04);
     }
 
     fn layout() -> Layout {

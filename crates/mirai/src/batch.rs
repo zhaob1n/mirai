@@ -174,7 +174,7 @@ impl BatchAnalysis {
             let cfg = self.state.config();
             (
                 cfg.analysis.batch_visits,
-                cfg.analysis.max_suggestions as usize,
+                cfg.analysis.stored_suggestion_limit(),
             )
         };
         let workers = in_flight(engine.describe().analysis_threads).min(nodes.len());

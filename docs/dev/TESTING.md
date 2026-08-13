@@ -399,7 +399,7 @@ preceding `wait:`. A `No engine to estimate the score with` toast means the engi
 up; check the KataGo log directory (section 7).
 
 **(d) Whole-game analysis.** `win.analyse-game` is `BatchAnalysis::start`; each node is
-analysed to `analysis.batch_visits` (1000 by default) with concurrency scaled to the engine's
+analysed to `analysis.batch_visits` (100 by default) with concurrency scaled to the engine's
 `numAnalysisThreads`.
 
 ```sh

@@ -315,7 +315,7 @@ impl AnalysisPanel {
         let state = self.state();
         let size = state.tree().info.size;
         let to_play = state.to_play();
-        let max = state.config().analysis.max_suggestions as usize;
+        let limit = state.config().analysis.suggestion_limit();
 
         let (headline, rows) = match state.last_report() {
             Some(report) => {
@@ -332,7 +332,7 @@ impl AnalysisPanel {
                 let rows = report
                     .moves
                     .iter()
-                    .take(max.max(1))
+                    .take(limit)
                     .map(|m| Row {
                         point: m.mv,
                         pv_first: m.pv.first().copied().unwrap_or(m.mv),
@@ -363,7 +363,7 @@ impl AnalysisPanel {
                         let rows = a
                             .candidates
                             .iter()
-                            .take(max.max(1))
+                            .take(limit)
                             .map(|c| Row {
                                 point: c.mv,
                                 pv_first: c.pv.first().copied().unwrap_or(c.mv),

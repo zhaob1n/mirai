@@ -25,6 +25,8 @@ mod imp {
         #[template_child]
         pub analysis_batch_visits_row: TemplateChild<adw::SpinRow>,
         #[template_child]
+        pub analysis_reset_button: TemplateChild<gtk::Button>,
+        #[template_child]
         pub play_strength_kind_row: TemplateChild<adw::ComboRow>,
         #[template_child]
         pub play_visits_row: TemplateChild<adw::SpinRow>,
@@ -41,6 +43,8 @@ mod imp {
         #[template_child]
         pub play_rules_row: TemplateChild<adw::ComboRow>,
         #[template_child]
+        pub play_reset_button: TemplateChild<gtk::Button>,
+        #[template_child]
         pub show_coordinates_row: TemplateChild<adw::SwitchRow>,
         #[template_child]
         pub show_move_numbers_row: TemplateChild<adw::SwitchRow>,
@@ -50,6 +54,8 @@ mod imp {
         pub policy_overlay_row: TemplateChild<adw::SwitchRow>,
         #[template_child]
         pub save_analysis_row: TemplateChild<adw::SwitchRow>,
+        #[template_child]
+        pub appearance_reset_button: TemplateChild<gtk::Button>,
     }
 
     #[glib::object_subclass]
@@ -96,6 +102,7 @@ impl PreferencesDialog {
             analysis_interval_row: imp.analysis_interval_row.get(),
             analysis_suggestions_row: imp.analysis_suggestions_row.get(),
             analysis_batch_visits_row: imp.analysis_batch_visits_row.get(),
+            analysis_reset_button: imp.analysis_reset_button.get(),
             play_strength_kind_row: imp.play_strength_kind_row.get(),
             play_visits_row: imp.play_visits_row.get(),
             play_seconds_row: imp.play_seconds_row.get(),
@@ -104,11 +111,13 @@ impl PreferencesDialog {
             play_threshold_row: imp.play_threshold_row.get(),
             play_streak_row: imp.play_streak_row.get(),
             play_rules_row: imp.play_rules_row.get(),
+            play_reset_button: imp.play_reset_button.get(),
             show_coordinates_row: imp.show_coordinates_row.get(),
             show_move_numbers_row: imp.show_move_numbers_row.get(),
             ownership_overlay_row: imp.ownership_overlay_row.get(),
             policy_overlay_row: imp.policy_overlay_row.get(),
             save_analysis_row: imp.save_analysis_row.get(),
+            appearance_reset_button: imp.appearance_reset_button.get(),
         }
     }
 }
@@ -127,6 +136,7 @@ pub struct PreferencesWidgets {
     pub analysis_interval_row: adw::SpinRow,
     pub analysis_suggestions_row: adw::SpinRow,
     pub analysis_batch_visits_row: adw::SpinRow,
+    pub analysis_reset_button: gtk::Button,
     pub play_strength_kind_row: adw::ComboRow,
     pub play_visits_row: adw::SpinRow,
     pub play_seconds_row: adw::SpinRow,
@@ -135,9 +145,11 @@ pub struct PreferencesWidgets {
     pub play_threshold_row: adw::SpinRow,
     pub play_streak_row: adw::SpinRow,
     pub play_rules_row: adw::ComboRow,
+    pub play_reset_button: gtk::Button,
     pub show_coordinates_row: adw::SwitchRow,
     pub show_move_numbers_row: adw::SwitchRow,
     pub ownership_overlay_row: adw::SwitchRow,
     pub policy_overlay_row: adw::SwitchRow,
     pub save_analysis_row: adw::SwitchRow,
+    pub appearance_reset_button: gtk::Button,
 }
