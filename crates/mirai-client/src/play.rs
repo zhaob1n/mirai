@@ -159,7 +159,11 @@ pub fn resign_check(
     (streak, required > 0 && streak >= required && past_opening)
 }
 
-pub fn select_move_index(moves: &[MoveInfo], temperature: f32, rng: &mut SplitMix64) -> Option<usize> {
+pub fn select_move_index(
+    moves: &[MoveInfo],
+    temperature: f32,
+    rng: &mut SplitMix64,
+) -> Option<usize> {
     if moves.is_empty() {
         return None;
     }
@@ -294,7 +298,13 @@ impl Play {
         Some((text(0), text(1)))
     }
 
-    pub fn start(&mut self, game: &mut GameSession, setup: GameSetup, engine_name: &str, date: &str) {
+    pub fn start(
+        &mut self,
+        game: &mut GameSession,
+        setup: GameSetup,
+        engine_name: &str,
+        date: &str,
+    ) {
         self.stop();
         let mut info = GameInfo::new(setup.size, setup.rules);
         info.komi = setup.komi;
@@ -394,7 +404,8 @@ impl Play {
             Strength::TimeMs(t) => Some(*t),
             _ => seconds.map(|sec| (sec * 1000.0).max(100.0) as u32),
         };
-        let mut req = game.request_for_cursor(Want::OWNERSHIP, s.strength.visits().unwrap_or(u32::MAX));
+        let mut req =
+            game.request_for_cursor(Want::OWNERSHIP, s.strength.visits().unwrap_or(u32::MAX));
         req.max_time_ms = ms;
         req.priority = 8;
         req.report_every_ms = Some(200);
@@ -590,10 +601,10 @@ impl Play {
         }
         if forced.is_some() {
             self.rescore(game);
-            if let Some(s) = self.session.as_mut() {
-                if let Some(result) = s.forced_result.clone() {
-                    s.state = PlayState::Over(result);
-                }
+            if let Some(s) = self.session.as_mut()
+                && let Some(result) = s.forced_result.clone()
+            {
+                s.state = PlayState::Over(result);
             }
         } else {
             self.rescore(game);
@@ -614,10 +625,10 @@ impl Play {
         }
         let forced = self.session.as_ref().and_then(|s| s.forced_result.clone());
         self.rescore(game);
-        if let Some(result) = forced {
-            if let Some(s) = self.session.as_mut() {
-                s.state = PlayState::Over(result);
-            }
+        if let Some(result) = forced
+            && let Some(s) = self.session.as_mut()
+        {
+            s.state = PlayState::Over(result);
         }
     }
 
@@ -654,7 +665,11 @@ impl Play {
                 result_phrase(&counted_str),
                 counted.black,
                 counted.white,
-                if counted.approximate { ", estimated" } else { "" },
+                if counted.approximate {
+                    ", estimated"
+                } else {
+                    ""
+                },
             ),
             None => format!(
                 "{}\n\n{}\n\nBlack {:.1} — White {:.1}{}",
@@ -662,7 +677,11 @@ impl Play {
                 result_phrase(&counted_str),
                 counted.black,
                 counted.white,
-                if counted.approximate { " (estimated)" } else { "" },
+                if counted.approximate {
+                    " (estimated)"
+                } else {
+                    ""
+                },
             ),
         };
         let result = s.forced_result.clone().unwrap_or(counted_str);
@@ -811,10 +830,11 @@ mod tests {
     fn starting_a_game_places_handicap_and_asks_white_to_play() {
         let mut game = GameSession::blank();
         let mut play = Play::new();
-        let mut setup = GameSetup::default();
-        setup.size = mirai_core::Size::square(19);
-        setup.handicap = 2;
-        setup.human = Some(Color::White);
+        let setup = GameSetup {
+            handicap: 2,
+            human: Some(Color::White),
+            ..Default::default()
+        };
         play.start(&mut game, setup, "KataGo", "2026-08-17");
         assert_eq!(game.tree().info.handicap, 2);
         assert_eq!(game.to_play(), Color::White);

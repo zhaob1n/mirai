@@ -412,7 +412,11 @@ mod tests {
         assert_eq!(found[0].player, Color::White);
         assert_eq!(found[0].move_number, 2);
         assert_eq!(found[0].best, Some(best));
-        assert!((found[0].drop - 0.40).abs() < 1e-6, "drop was {}", found[0].drop);
+        assert!(
+            (found[0].drop - 0.40).abs() < 1e-6,
+            "drop was {}",
+            found[0].drop
+        );
     }
 
     #[test]

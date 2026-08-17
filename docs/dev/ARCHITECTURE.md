@@ -299,7 +299,7 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 | `src/panels/mod.rs` | sidebar panel root | re-exports `AnalysisPanel` |
 | `src/panels/analysis.rs`, `src/panels/analysis.blp` | the `MiraiAnalysisPanel` composite template, candidate `ColumnView` model spliced in place at report rate, and dynamic blunder rows | `AnalysisPanel` (`connect_pv_preview`, `set_blunders`, `clear_blunders`), `CandidateObject`, `Row`, `Headline`, `severity_class`, `pv_text`, `text_column` |
 | `src/play.rs` | window-owned play controller: GTK timers, dialogs and the live AI subscription; move choice and resignation also live in `mirai-client` | `PlayController`, `PlaySession`, `PlayState`, `GameSetup`, `Strength`, `tick_clock`, `resign_check`, `select_move_index` |
-| `src/batch.rs` | window-owned whole-game coordinator; `blunders` / `in_flight` wrap `mirai_client::batch` | `BatchAnalysis`, `BatchMessage`, `RuntimeTask`, `blunders`, `Blunder`, `in_flight`, `BLUNDER_MIN_DROP` |
+| `src/batch.rs` | window-owned whole-game coordinator; `blunders` / `in_flight` wrap `mirai_client::batch` | `BatchAnalysis`, `BatchMessage`, `RuntimeTask`, `blunders`, `Blunder`, `in_flight` |
 | `src/new_game.rs`, `src/new_game.blp` | The `MiraiNewGameDialog` `CompositeTemplate` and its state-dependent setup wiring | `present`, `NewGameDialog` |
 | `src/dialogs.rs` | Dynamic result and certificate-confirmation alert dialogs | `show_score_with`, `confirm_fingerprint` |
 | `src/preferences_shell.rs`, `src/preferences.blp` | The `MiraiPreferencesDialog` `CompositeTemplate`: four fixed pages, groups, controls and accessible labels | `PreferencesDialog`, `PreferencesWidgets` |

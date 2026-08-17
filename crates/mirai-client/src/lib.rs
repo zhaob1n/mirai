@@ -16,13 +16,13 @@
 
 pub mod analysis;
 pub mod batch;
+pub mod fox;
 pub mod game;
 pub mod play;
-pub mod fox;
 pub mod session;
 
 pub use analysis::{PV_LEN, SpeedMeter, analysis_of, request_for_node};
 pub use batch::{Analysed, Blunder, Planned, blunders, in_flight, plan_mainline, sweep};
-pub use play::{GameSetup, Play, PlayState, Strength};
 pub use game::GameSession;
+pub use play::{GameSetup, Play, PlayState, Strength};
 pub use session::{Peer, RemoteConnector, Session, SessionConfig, SessionState};

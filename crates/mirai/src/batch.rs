@@ -34,8 +34,6 @@ pub struct Blunder {
     pub best: Option<Point>,
 }
 
-pub const BLUNDER_MIN_DROP: f32 = mirai_client::batch::BLUNDER_MIN_DROP;
-
 pub fn in_flight(analysis_threads: u16) -> usize {
     mirai_client::batch::in_flight(analysis_threads)
 }

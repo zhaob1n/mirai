@@ -49,15 +49,17 @@ fn json_err(body: &str) -> Result<serde_json::Value, String> {
 
 pub async fn lookup_user<F: Fetch>(fetch: &F, nickname: &str) -> Result<FoxUser, String> {
     let nick = urlencoding(nickname);
-    let url = format!(
-        "https://newframe.foxwq.com/cgi/QueryUserInfoPanel?srcuid=0&username={nick}"
-    );
+    let url = format!("https://newframe.foxwq.com/cgi/QueryUserInfoPanel?srcuid=0&username={nick}");
     let body = fetch.get(&url).await?;
     let value = json_err(&body)?;
     Ok(FoxUser {
         uid: value
             .get("uid")
-            .and_then(|v| v.as_str().map(str::to_string).or_else(|| v.as_u64().map(|n| n.to_string())))
+            .and_then(|v| {
+                v.as_str()
+                    .map(str::to_string)
+                    .or_else(|| v.as_u64().map(|n| n.to_string()))
+            })
             .unwrap_or_default(),
         name: value
             .get("username")
@@ -233,7 +235,10 @@ fn scale_fox_komi(sgf: &str) -> String {
         return sgf.to_string();
     }
     let mut scaled = value / 100.0;
-    if (-4.0..=4.0).contains(&scaled) || (scaled.fract() - 0.25).abs() < 1e-3 || (scaled.fract() - 0.75).abs() < 1e-3 {
+    if (-4.0..=4.0).contains(&scaled)
+        || (scaled.fract() - 0.25).abs() < 1e-3
+        || (scaled.fract() - 0.75).abs() < 1e-3
+    {
         scaled *= 2.0;
     }
     format!("{}KM[{scaled}]{}", &sgf[..start], &rest[end..])
