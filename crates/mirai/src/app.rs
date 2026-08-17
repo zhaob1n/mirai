@@ -670,8 +670,8 @@ impl AppState {
         req.report_every_ms = Some(report_every);
         req.priority = 4;
 
-        // The clock starts at dispatch, so the first sample charges the search for the
-        // engine's queueing and warm-up too; later samples are pure deltas.
+        // Fresh meter per search. The first report only marks the visit baseline so a
+        // cache-hot first snapshot cannot appear as an enormous visits/s.
         imp.speed.set(Some(SpeedMeter::started(Instant::now())));
         let mut sub = engine.subscribe(req);
         let this = self.clone();
