@@ -268,11 +268,15 @@ impl FoxGame {
         }
         let title = glib::markup_escape_text(&self.matchup());
         let subtitle = glib::markup_escape_text(&details.join(" · "));
-        adw::ActionRow::builder()
+        let row = adw::ActionRow::builder()
             .title(title)
             .subtitle(subtitle)
             .activatable(true)
-            .build()
+            .build();
+        let next = gtk::Image::from_icon_name("go-next-symbolic");
+        next.add_css_class("dim-label");
+        row.add_suffix(&next);
+        row
     }
 }
 

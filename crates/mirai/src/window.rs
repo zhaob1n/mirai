@@ -1231,6 +1231,7 @@ fn show_shortcuts(ui: &Ui) {
             "File",
             &[
                 ("Open", "win.open"),
+                ("Download from Fox", "win.download-fox"),
                 ("Save", "win.save"),
                 ("Save As", "win.save-as"),
                 ("Copy SGF", "win.copy-sgf"),
@@ -1516,6 +1517,7 @@ fn install_actions(ui: &Ui) {
             ("win.undo", &["<Control>z"]),
             ("win.delete-branch", &["Delete"]),
             ("win.open", &["<Control>o"]),
+            ("win.download-fox", &["<Control><Shift>o"]),
             ("win.save", &["<Control>s"]),
             ("win.save-as", &["<Control><Shift>s"]),
             ("win.copy-sgf", &["<Control>c"]),

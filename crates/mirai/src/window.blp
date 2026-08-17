@@ -30,6 +30,16 @@ template $MiraiWindow : Adw.ApplicationWindow {
 
         [start]
         Gtk.Button {
+          icon-name: "folder-download-symbolic";
+          tooltip-text: _("Download a Public Game Record from Fox (Ctrl+Shift+O)");
+          action-name: "win.download-fox";
+          accessibility {
+            label: _("Download from Fox");
+          }
+        }
+
+        [start]
+        Gtk.Button {
           tooltip-text: _("Set Up a Game Against the Engine (Ctrl+N)");
           action-name: "win.new-game";
           child: Adw.ButtonContent {
