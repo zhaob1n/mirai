@@ -16,6 +16,7 @@ use gtk::pango;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 
+use mirai_client::batch::is_blunder_drop;
 use mirai_core::{Color, NodeId};
 
 use crate::app::AppState;
@@ -48,9 +49,8 @@ impl Severity {
 
 /// Classifies a win-rate drop expressed as a fraction of 1.
 pub(crate) fn severity_of_drop(drop: f32) -> Severity {
-    // NaN is not ordered against anything, so it is matched explicitly here and
-    // classified as "no drop", exactly as the previous `!(drop > 0.02)` did.
-    if drop.is_nan() || drop <= 0.02 {
+    // Same floor as `mirai_client::batch::blunders`: NaN and ≤ 2 % are noise.
+    if !is_blunder_drop(drop) {
         Severity::None
     } else if drop < 0.05 {
         Severity::Minor

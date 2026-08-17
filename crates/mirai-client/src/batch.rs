@@ -110,8 +110,15 @@ where
         .collect()
 }
 
-/// Anything smaller than this is search noise, not a mistake worth listing.
+/// Smallest drop that is still noise. The blunder list and the win-rate strip share this
+/// floor: a move is listed or coloured only when the mover's loss is strictly above it.
 pub const BLUNDER_MIN_DROP: f32 = 0.02;
+
+/// `true` when `drop` is large enough to list or colour. NaN is not a blunder.
+#[inline]
+pub fn is_blunder_drop(drop: f32) -> bool {
+    drop > BLUNDER_MIN_DROP
+}
 
 /// How many positions to keep in flight for an engine with `analysis_threads` threads.
 pub fn in_flight(analysis_threads: u16) -> usize {
@@ -151,7 +158,7 @@ pub fn blunders(tree: &GameTree) -> Vec<Blunder> {
             continue;
         };
         let drop = winrate_for(before.winrate, player) - winrate_for(after.winrate, player);
-        if drop.is_nan() || drop < BLUNDER_MIN_DROP {
+        if !is_blunder_drop(drop) {
             continue;
         }
         out.push(Blunder {
@@ -428,6 +435,18 @@ mod tests {
         assert!(blunders(&tree).is_empty());
         tree.set_analysis(ids[2], Some(stored(0.51, None)));
         assert!(blunders(&tree).is_empty());
+    }
+
+    #[test]
+    fn a_two_percent_drop_is_still_noise() {
+        let mut tree = game(3);
+        let ids: Vec<_> = tree.main_line();
+        // White to play: Black 50 % → 52 % is a 2 % loss for White.
+        tree.set_analysis(ids[1], Some(stored(0.50, None)));
+        tree.set_analysis(ids[2], Some(stored(0.52, None)));
+        assert!(blunders(&tree).is_empty());
+        tree.set_analysis(ids[2], Some(stored(0.53, None)));
+        assert_eq!(blunders(&tree).len(), 1);
     }
 
     #[test]

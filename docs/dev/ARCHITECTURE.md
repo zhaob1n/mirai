@@ -329,7 +329,7 @@ composite templates), `resources/style.css` (`board-area`, `mirai-clock`, `mirai
 | scoring | `mirai-core/src/score.rs` — `score`; rule flags in `rules.rs` — `RuleSet::rules` |
 | an SGF property | `mirai-core/src/sgf.rs` — `build` (read) and `write_node` (write) |
 | the move-tree layout | `widgets/tree.rs` — `lay_out` |
-| blunder colours or thresholds | `widgets/winrate.rs` — `Severity::color`, `severity_of_drop` |
+| blunder colours or thresholds | `mirai-client/src/batch.rs` — `BLUNDER_MIN_DROP`; `widgets/winrate.rs` — `Severity::color`, `severity_of_drop` |
 | AI move choice or resignation | `mirai-client/src/play.rs` — `select_move_index`, `resign_check`; GTK wrapper `crates/mirai/src/play.rs` |
 
 ---
