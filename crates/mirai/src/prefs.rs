@@ -1444,6 +1444,18 @@ fn connect_analysis(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, st
             batch_state.save_config();
         });
 
+    let auto_state = state.clone();
+    let auto_syncing = syncing.clone();
+    widgets
+        .analysis_auto_open_row
+        .connect_active_notify(move |row| {
+            if auto_syncing.get() {
+                return;
+            }
+            auto_state.config_mut().analysis.auto_analyse_on_open = row.is_active();
+            auto_state.save_config();
+        });
+
     let reset_state = state.clone();
     let reset_syncing = syncing.clone();
     widgets.analysis_reset_button.connect_clicked(glib::clone!(
@@ -1453,7 +1465,7 @@ fn connect_analysis(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, st
     ));
 }
 
-/// Pushes `config.analysis` into the four rows.
+/// Pushes `config.analysis` into the preference rows.
 ///
 /// The settings are copied out first: the value handlers take `config_mut`, and a `Ref` held
 /// across them would panic.
@@ -1472,6 +1484,9 @@ fn load_analysis(widgets: &PreferencesWidgets, state: &AppState, syncing: &Cell<
     widgets
         .analysis_batch_visits_row
         .set_value(settings.batch_visits as f64);
+    widgets
+        .analysis_auto_open_row
+        .set_active(settings.auto_analyse_on_open);
     syncing.set(false);
 }
 

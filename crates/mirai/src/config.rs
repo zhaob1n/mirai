@@ -324,6 +324,8 @@ pub struct AnalysisSettings {
     /// `0` means "every candidate the engine returned"; resolve it with
     /// [`AnalysisSettings::suggestion_limit`] rather than reading it directly.
     pub max_suggestions: u8,
+    /// Start a whole-game sweep when a record is opened, pasted or downloaded.
+    pub auto_analyse_on_open: bool,
 }
 
 impl AnalysisSettings {
@@ -349,6 +351,7 @@ impl Default for AnalysisSettings {
             report_interval_ms: 100,
             batch_visits: 100,
             max_suggestions: 10,
+            auto_analyse_on_open: false,
         }
     }
 }

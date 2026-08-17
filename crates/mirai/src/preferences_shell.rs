@@ -25,6 +25,8 @@ mod imp {
         #[template_child]
         pub analysis_batch_visits_row: TemplateChild<adw::SpinRow>,
         #[template_child]
+        pub analysis_auto_open_row: TemplateChild<adw::SwitchRow>,
+        #[template_child]
         pub analysis_reset_button: TemplateChild<gtk::Button>,
         #[template_child]
         pub play_strength_kind_row: TemplateChild<adw::ComboRow>,
@@ -102,6 +104,7 @@ impl PreferencesDialog {
             analysis_interval_row: imp.analysis_interval_row.get(),
             analysis_suggestions_row: imp.analysis_suggestions_row.get(),
             analysis_batch_visits_row: imp.analysis_batch_visits_row.get(),
+            analysis_auto_open_row: imp.analysis_auto_open_row.get(),
             analysis_reset_button: imp.analysis_reset_button.get(),
             play_strength_kind_row: imp.play_strength_kind_row.get(),
             play_visits_row: imp.play_visits_row.get(),
@@ -136,6 +139,7 @@ pub struct PreferencesWidgets {
     pub analysis_interval_row: adw::SpinRow,
     pub analysis_suggestions_row: adw::SpinRow,
     pub analysis_batch_visits_row: adw::SpinRow,
+    pub analysis_auto_open_row: adw::SwitchRow,
     pub analysis_reset_button: gtk::Button,
     pub play_strength_kind_row: adw::ComboRow,
     pub play_visits_row: adw::SpinRow,

@@ -81,6 +81,11 @@ template $MiraiPreferencesDialog : Adw.PreferencesDialog {
         title: _("Visits per Move");
         subtitle: _("Budget for each position when analysing a whole game");
       }
+
+      Adw.SwitchRow analysis_auto_open_row {
+        title: _("Analyse on Open");
+        subtitle: _("Sweep the main line when a record is opened or downloaded");
+      }
     }
 
     Adw.PreferencesGroup {

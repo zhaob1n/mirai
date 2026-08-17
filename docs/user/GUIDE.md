@@ -267,8 +267,7 @@ so you never have to work out whose turn it was.
 
 **Whole-game analysis.** <kbd>Ctrl</kbd>+<kbd>A</kbd> sweeps the main line at **Visits per
 move** (100 by default), several positions at a time, with a progress banner and a **Cancel**
-button over the board. Cancelling keeps everything analysed so far. When it finishes, the
-curves fill in and a **Blunders** list appears at the bottom of the Analysis page:
+button over the board. The curves fill in as each position lands. Cancelling keeps everything analysed so far. When it finishes, a **Blunders** list appears at the bottom of the Analysis page:
 
 ```
 ▾ Blunders (4)
@@ -531,6 +530,7 @@ them. The neural-net cache is not changed.
 | **Report interval** | 100 ms | 20 – 1 000 | the display feels busy, or the link to a remote engine is slow |
 | **Suggestions shown** | 10 | All / 1 – 50 | you want every searched move, or a cleaner board — this caps blobs and list rows together |
 | **Visits per move** | 100 | 100 – 100 000 | reviewing: 100 is quick, 5 000 is thorough |
+| **Analyse on Open** | off | on / off | turn on to start a whole-game sweep whenever a record is opened, pasted or downloaded |
 
 The numeric rows accept typing, scrolling and the keyboard's arrow keys; the old `+`/`−`
 steppers were impractical for ranges such as one thousand to ten million. Each page ends with a

@@ -123,6 +123,7 @@ pub struct Ui {
     analysis_stack: gtk::Stack,
     comment_node: Cell<Option<NodeRef>>,
     scale_guard: Cell<bool>,
+    pending_auto_analyse: Cell<bool>,
     tasks: WindowTasks,
     autosave: Option<PathBuf>,
 }
@@ -325,6 +326,7 @@ pub fn present(
         analysis_stack,
         comment_node: Cell::new(None),
         scale_guard: Cell::new(false),
+        pending_auto_analyse: Cell::new(false),
         tasks: WindowTasks::default(),
         autosave: next_autosave_path(),
     });
@@ -484,13 +486,18 @@ fn handle_change(ui: &Ui, change: Change) {
             refresh_engine_menu(ui);
             update_analysis_page(ui);
             update_subtitle(ui);
+            maybe_auto_analyse(ui);
         }
         Change::Toast(text) => ui.toasts.add_toast(adw::Toast::new(&text)),
         Change::Play => {
             update_clocks(ui);
             update_play_controls(ui);
         }
-        Change::BatchProgress(_, _) => {}
+        Change::BatchProgress(_, _) => {
+            if let Some(graph) = ui.winrate.upgrade() {
+                graph.refresh();
+            }
+        }
     }
 }
 
@@ -754,6 +761,23 @@ fn adopt(ui: &Ui, tree: GameTree, path: Option<PathBuf>) {
     update_readout(ui);
     update_title(ui);
     update_clocks(ui);
+    ui.pending_auto_analyse
+        .set(ui.state.config().analysis.auto_analyse_on_open);
+    maybe_auto_analyse(ui);
+}
+
+/// Starts a whole-game sweep if the user asked for one on open and an engine is ready.
+fn maybe_auto_analyse(ui: &Ui) {
+    if !ui.pending_auto_analyse.get() {
+        return;
+    }
+    if ui.state.engine().is_none() {
+        return;
+    }
+    ui.pending_auto_analyse.set(false);
+    if ui.state.tree().main_line().len() >= 2 {
+        ui.batch.start();
+    }
 }
 
 fn load_sgf(ui: &Ui, path: &Path, remember: bool) {
