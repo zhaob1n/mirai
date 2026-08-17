@@ -122,7 +122,7 @@ disk.
 
 | Region | What it shows |
 |---|---|
-| **Header bar** | On the left, the two ways to get a record — **Open** (its ▾ also offers *Download from Fox…* and *Paste SGF*) and **New Game…** — then the engine button (name + KataGo version; click for profiles and *Preferences*) and the ▶/■ live-analysis toggle. In the middle, the file name with `•` while unsaved and the engine or current status beneath it. On the right, the sidebar toggle and Main Menu (☰) |
+| **Header bar** | On the left, the two ways to get a record — **Open** (its ▾ also offers *Download from Fox…* and *Paste SGF*) and **New Game…** — then the engine button (name + KataGo version; click for profiles and *Preferences*) and the ▶/■ live-analysis toggle. In the middle, the record's name with `•` while unsaved and the engine or current status beneath it. A saved record is named by its file; one that has never been saved — downloaded, pasted or just played — is named `Black vs White` from the record itself, falling back to the event and then to `Untitled`. On the right, the sidebar toggle and Main Menu (☰) |
 | **Board** | wood, grid, star points, optional coordinates, stones. The last move is marked with a red dot, or — when move numbers are on — by its number in red. SGF marks (triangle, square, circle, cross, text labels) are drawn |
 | **Win-rate graph** | solid curve = Black's win rate (left axis 0/50/100); dashed curve = score lead (right axis, never tighter than ±5); vertical line = where you are; coloured bars along the bottom = the blunder strip |
 | **Sidebar** | Three pages — **Analysis** (readout, candidate list, blunder list), **Moves** (the branch graph), **Comment** (the current move's comment). The sidebar button in the header bar (<kbd>F9</kbd>, or ☰ → *View* → *Sidebar*) hides it at any window size, giving the board the whole width; at narrow widths it closes by itself and the same button reopens it as an overlay |
@@ -238,8 +238,8 @@ numeric UID, and select a game. The list shows at most the latest 200 public rec
 that is the service's fixed history window; players who hide their records are not bypassed.
 Double-click a row or press **Open Game** to download and load it. Fox's SGF dialect — including
 quarter-point Chinese komi, commentary branches and handicap stones written as opening nodes —
-is normalised on import. The result has no local backing file and is marked `Untitled •`;
-**Save** therefore asks where to store it.
+is normalised on import. The result has no local backing file: it is named after its players,
+`柯洁 vs 申真谞 •`, and **Save** therefore asks where to store it.
 
 **Several records at once.** Opening a file while mirai is running — from your file manager, or
 another `mirai game.sgf` on the command line — gives that record its own window rather than

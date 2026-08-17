@@ -734,11 +734,14 @@ mod tests {
 
     #[test]
     fn fox_setup_nodes_become_one_root_handicap() {
-        let raw = "(;GM[1]FF[4]SZ[19]KM[0]HA[3];AB[dd];AB[pd];AB[dp];W[dm])";
+        let raw = "(;GM[1]FF[4]SZ[19]KM[0]HA[3]PB[柯洁]PW[党毅飞];AB[dd];AB[pd];AB[dp];W[dm])";
         let tree = parse_fox_sgf(raw).expect("Fox handicap SGF");
         let root = tree.root();
         assert_eq!(tree.info.handicap, 3);
         assert_eq!(tree.node(root).setup.add_black.len(), 3);
+        // The rebuild must carry the metadata across: the window titles itself from it.
+        assert_eq!(tree.info.players[0].name, "柯洁");
+        assert_eq!(tree.info.players[1].name, "党毅飞");
         assert_eq!(tree.main_line().len(), 2);
         assert_eq!(
             tree.node(tree.main_line()[1]).mv.map(|m| m.0),

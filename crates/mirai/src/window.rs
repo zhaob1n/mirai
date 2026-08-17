@@ -632,12 +632,29 @@ fn update_play_controls(ui: &Ui) {
         .set_visible(in_progress && ui.play.is_human_vs_engine());
 }
 
+/// The name for a record with no backing file: who played it, else the event it came from.
+fn record_label(info: &mirai_core::GameInfo) -> Option<String> {
+    let black = info.players[0].name.trim();
+    let white = info.players[1].name.trim();
+    if black.is_empty() && white.is_empty() {
+        let event = info.event.trim();
+        return (!event.is_empty()).then(|| event.to_string());
+    }
+    Some(format!(
+        "{} vs {}",
+        if black.is_empty() { "?" } else { black },
+        if white.is_empty() { "?" } else { white }
+    ))
+}
+
 fn update_title(ui: &Ui) {
+    // A saved record is named by its file; an imported one by the only identity it has.
     let name = ui
         .file
         .borrow()
         .as_ref()
         .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .or_else(|| record_label(&ui.state.tree().info))
         .unwrap_or_else(|| "Untitled".to_string());
     let shown = if ui.state.modified() {
         format!("{name} •")
@@ -1427,6 +1444,8 @@ fn install_actions(ui: &Ui) {
                         let tree = trees.remove(0);
                         let moves = tree.main_line().len().saturating_sub(1);
                         adopt(ui, tree, None);
+                        // Nothing on disk holds this record: it is unsaved from the start.
+                        ui.state.set_modified(true);
                         ui.state.toast(format!("Pasted a game of {moves} moves"));
                     }
                     Ok(_) => ui.state.toast("The clipboard holds no game record"),
@@ -1518,7 +1537,7 @@ fn install_actions(ui: &Ui) {
 #[cfg(test)]
 mod tests {
 
-    use super::tree_has_content;
+    use super::{record_label, tree_has_content};
     use mirai_core::{Color, GameInfo, GameTree, MarkKind, Point, RuleSet, Size};
 
     fn empty_tree() -> GameTree {
@@ -1588,5 +1607,24 @@ mod tests {
         let root = tree.root();
         tree.toggle_mark(root, MarkKind::Triangle, Size::square(19).point(3, 3));
         assert!(!tree_has_content(&tree));
+    }
+
+    #[test]
+    fn an_unsaved_record_is_named_by_who_played_it() {
+        // A download or a paste has no file to be named after; the header bar used to say
+        // "Untitled" even though the record knows both players.
+        let mut info = GameInfo::new(Size::square(19), RuleSet::Chinese);
+        info.players[0].name = "柯洁".to_string();
+        info.players[1].name = "申真谞".to_string();
+        assert_eq!(record_label(&info).as_deref(), Some("柯洁 vs 申真谞"));
+
+        info.players[1].name.clear();
+        assert_eq!(record_label(&info).as_deref(), Some("柯洁 vs ?"));
+
+        info.players[0].name.clear();
+        assert_eq!(record_label(&info), None, "nameless falls back to Untitled");
+
+        info.event = "LG Cup".to_string();
+        assert_eq!(record_label(&info).as_deref(), Some("LG Cup"));
     }
 }
