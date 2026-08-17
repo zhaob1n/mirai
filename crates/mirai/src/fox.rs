@@ -2,15 +2,18 @@
 // Copyright (C) 2026 Huang Zhaobin
 //! Public Fox Go game lookup, SGF normalisation and the game picker dialog.
 
+use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
 use mirai_core::{Color, GameTree, Node, NodeId, Point, sgf};
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
-use crate::fox_picker::FoxPickerDialog;
+use crate::config::Config;
+use crate::fox_picker::{FoxPickerDialog, FoxRow};
 
 const USER_URL: &str = "https://newframe.foxwq.com/cgi/QueryUserInfoPanel";
 const GAMES_URL: &str = "https://h5.foxwq.com/yehuDiamond/chessbook_local/YHWQFetchChessList";
@@ -51,7 +54,7 @@ struct GamesResponse {
     resultstr: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct FoxGame {
     #[serde(default)]
     chessid: String,
@@ -96,6 +99,13 @@ struct SgfResponse {
     resultstr: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct LastSearch {
+    query: String,
+    account: String,
+    rows: Vec<FoxGame>,
+}
+
 struct Games {
     account: String,
     rows: Vec<FoxGame>,
@@ -104,6 +114,50 @@ struct Games {
 pub(crate) struct DownloadedGame {
     pub(crate) tree: GameTree,
     pub(crate) label: String,
+}
+
+fn last_search_path() -> Option<PathBuf> {
+    Config::data_dir()
+        .ok()
+        .map(|dir| dir.join("fox-last-search.json"))
+}
+
+static LAST_SEARCH: LazyLock<Mutex<Option<LastSearch>>> =
+    LazyLock::new(|| Mutex::new(load_last_search()));
+
+fn load_last_search() -> Option<LastSearch> {
+    last_search_path().and_then(|path| read_last_search(&path))
+}
+
+fn read_last_search(path: &Path) -> Option<LastSearch> {
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+fn write_last_search(path: &Path, search: &LastSearch) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+    }
+    let text = serde_json::to_string(search).map_err(|error| error.to_string())?;
+    std::fs::write(path, text).map_err(|error| error.to_string())
+}
+
+fn cached_search() -> Option<LastSearch> {
+    LAST_SEARCH
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
+fn remember_search(search: LastSearch) {
+    if let Some(path) = last_search_path()
+        && let Err(error) = write_last_search(&path, &search)
+    {
+        tracing::warn!(%error, "could not cache the Fox search");
+    }
+    *LAST_SEARCH
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(search);
 }
 
 fn api_error(
@@ -255,7 +309,9 @@ impl FoxGame {
         }
     }
 
-    fn row(&self) -> adw::ActionRow {
+    /// How this record reads in the list. Plain text: the labels bound to it do
+    /// not parse markup, so a nickname with `<` in it is not a problem.
+    fn list_row(&self) -> FoxRow {
         let mut details = Vec::with_capacity(5);
         if !self.starttime.is_empty() {
             details.push(display_text(&self.starttime));
@@ -266,17 +322,7 @@ impl FoxGame {
         if !self.title.is_empty() {
             details.push(display_text(&self.title));
         }
-        let title = glib::markup_escape_text(&self.matchup());
-        let subtitle = glib::markup_escape_text(&details.join(" · "));
-        let row = adw::ActionRow::builder()
-            .title(title)
-            .subtitle(subtitle)
-            .activatable(true)
-            .build();
-        let next = gtk::Image::from_icon_name("go-next-symbolic");
-        next.add_css_class("dim-label");
-        row.add_suffix(&next);
-        row
+        FoxRow::new(&self.matchup(), &details.join(" · "))
     }
 }
 
@@ -517,9 +563,8 @@ fn normalize_handicap(mut tree: GameTree) -> GameTree {
 }
 
 impl FoxPickerDialog {
-    fn with_handler(on_open: impl Fn(DownloadedGame) + 'static) -> Self {
+    fn wired() -> Self {
         let dialog = FoxPickerDialog::new();
-        dialog.install_handler(on_open);
         let widgets = dialog.widgets();
         widgets.stack.set_visible_child(&widgets.status_page);
 
@@ -550,20 +595,39 @@ impl FoxPickerDialog {
             dialog,
             move |_| dialog.start_download()
         ));
-        widgets.result_list.connect_row_selected(glib::clone!(
+        dialog.connect_selection_changed(glib::clone!(
             #[weak]
             dialog,
-            move |_, _| dialog.refresh_actions()
+            move || dialog.refresh_actions()
         ));
-        widgets.result_list.connect_row_activated(glib::clone!(
+        widgets.result_list.connect_activate(glib::clone!(
             #[weak]
             dialog,
-            move |list, row| {
-                list.select_row(Some(row));
-                dialog.start_download();
+            move |_, _| dialog.start_download()
+        ));
+        dialog.connect_closed(glib::clone!(
+            #[weak]
+            dialog,
+            move |_| {
+                // The dialog outlives its own close, so an in-flight request has
+                // to be dropped here rather than by disposal.
+                dialog.abort_task();
+                dialog.set_busy(false);
             }
         ));
         dialog
+    }
+
+    /// Puts the dialog back into a state fit to be shown again.
+    fn prepare_to_show(&self) {
+        self.abort_task();
+        self.set_busy(false);
+        let widgets = self.widgets();
+        widgets.banner.set_revealed(false);
+        if self.has_games() {
+            widgets.stack.set_visible_child(&widgets.results_page);
+        }
+        self.refresh_actions();
     }
 
     fn refresh_actions(&self) {
@@ -576,7 +640,7 @@ impl FoxPickerDialog {
         widgets.result_list.set_sensitive(idle);
         widgets
             .open_button
-            .set_sensitive(idle && widgets.result_list.selected_row().is_some());
+            .set_sensitive(idle && self.has_selection());
     }
 
     fn set_busy(&self, busy: bool) {
@@ -605,48 +669,26 @@ impl FoxPickerDialog {
         let task = glib::spawn_future_local(async move {
             let result = search_games(&query).await;
             if let Some(dialog) = weak.upgrade() {
-                dialog.finish_search(result);
+                dialog.finish_search(query, result);
             }
         });
         self.replace_task(task);
     }
 
-    fn finish_search(&self, result: Result<Games, FoxError>) {
+    fn finish_search(&self, query: String, result: Result<Games, FoxError>) {
         self.set_busy(false);
-        let widgets = self.widgets();
         match result {
-            Ok(found) if found.rows.is_empty() => {
-                self.clear_games();
-                widgets
-                    .status_page
-                    .set_icon_name(Some("edit-find-symbolic"));
-                widgets.status_page.set_title("No public games");
-                widgets.status_page.set_description(Some(
-                    "This account has no visible games in Fox's recent-history window.",
-                ));
-                widgets.stack.set_visible_child(&widgets.status_page);
-            }
             Ok(found) => {
-                while let Some(child) = widgets.result_list.first_child() {
-                    widgets.result_list.remove(&child);
-                }
-                let count = found.rows.len();
-                widgets.result_label.set_label(&format!(
-                    "{} · {count} recent games",
-                    display_text(&found.account)
-                ));
-                for game in &found.rows {
-                    widgets.result_list.append(&game.row());
-                }
-                self.replace_games(found.rows);
-                if let Some(first) = widgets.result_list.row_at_index(0) {
-                    widgets.result_list.select_row(Some(&first));
-                }
-                widgets.stack.set_visible_child(&widgets.results_page);
-                self.refresh_actions();
+                remember_search(LastSearch {
+                    query,
+                    account: found.account.clone(),
+                    rows: found.rows.clone(),
+                });
+                self.show_search(found);
             }
             Err(error) => {
                 self.clear_games();
+                let widgets = self.widgets();
                 widgets
                     .status_page
                     .set_icon_name(Some("dialog-warning-symbolic"));
@@ -659,19 +701,49 @@ impl FoxPickerDialog {
         }
     }
 
+    fn show_search(&self, found: Games) {
+        let widgets = self.widgets();
+        if found.rows.is_empty() {
+            self.clear_games();
+            widgets
+                .status_page
+                .set_icon_name(Some("edit-find-symbolic"));
+            widgets.status_page.set_title("No public games");
+            widgets.status_page.set_description(Some(
+                "This account has no visible games in Fox's recent-history window.",
+            ));
+            widgets.stack.set_visible_child(&widgets.status_page);
+            return;
+        }
+
+        let count = found.rows.len();
+        widgets.result_label.set_label(&format!(
+            "{} · {count} recent games",
+            display_text(&found.account)
+        ));
+        let rows: Vec<FoxRow> = found.rows.iter().map(FoxGame::list_row).collect();
+        self.replace_games(found.rows, &rows);
+        widgets.stack.set_visible_child(&widgets.results_page);
+        self.refresh_actions();
+    }
+
+    fn restore_last_search(&self) {
+        let Some(last) = cached_search() else {
+            return;
+        };
+        self.widgets().entry.set_text(&last.query);
+        self.show_search(Games {
+            account: last.account,
+            rows: last.rows,
+        });
+    }
+
     fn start_download(&self) {
         if self.is_busy() {
             return;
         }
         let widgets = self.widgets();
-        let Some(index) = widgets
-            .result_list
-            .selected_row()
-            .map(|row| row.index() as usize)
-        else {
-            return;
-        };
-        let Some(game) = self.game(index) else {
+        let Some(game) = self.selected_game() else {
             return;
         };
 
@@ -710,9 +782,29 @@ impl FoxPickerDialog {
     }
 }
 
-pub(crate) fn present(parent: &impl IsA<gtk::Widget>, on_open: impl Fn(DownloadedGame) + 'static) {
-    let dialog = FoxPickerDialog::with_handler(on_open);
+/// Shows the picker for `parent`'s window, reusing the one kept in `slot`.
+///
+/// One picker per window: libadwaita refuses to present the same dialog in two
+/// windows at once, and several mirai windows are normal. Keeping it also keeps
+/// its record list, so opening it again costs nothing.
+pub(crate) fn present(
+    parent: &impl IsA<gtk::Widget>,
+    slot: &std::cell::RefCell<Option<FoxPickerDialog>>,
+    on_open: impl Fn(DownloadedGame) + 'static,
+) {
+    let dialog = slot
+        .borrow_mut()
+        .get_or_insert_with(FoxPickerDialog::wired)
+        .clone();
+    dialog.install_handler(on_open);
+    dialog.prepare_to_show();
     dialog.present(Some(parent));
+    // Populate only once the dialog has a viewport. A list view whose rows have
+    // never been measured tracks its whole model, so filling it beforehand
+    // builds every row widget inside the layout pass that shows the dialog.
+    if !dialog.has_games() {
+        dialog.restore_last_search();
+    }
     dialog.widgets().entry.grab_focus();
 }
 
@@ -779,5 +871,46 @@ mod tests {
         assert_eq!(rank(108, 2), "P9");
 
         assert_eq!(display_text("<event>\0name"), "<event>�name");
+    }
+
+    #[test]
+    fn last_search_round_trips_through_json() {
+        // Reopening the picker must not require another Fox lookup: the last successful
+        // query and its rows are written to a cache file and read back as-is.
+        let dir = std::env::temp_dir().join(format!("mirai-fox-search-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("fox-last-search.json");
+        let search = LastSearch {
+            query: "柯洁".into(),
+            account: "柯洁".into(),
+            rows: vec![FoxGame {
+                chessid: "abc".into(),
+                blacknick: "柯洁".into(),
+                blackenname: String::new(),
+                whitenick: "申真谞".into(),
+                whiteenname: String::new(),
+                blackdan: 23,
+                whitedan: 23,
+                blackocc: 0,
+                whiteocc: 0,
+                winner: 1,
+                point: 75,
+                movenum: 241,
+                boardsize: 19,
+                starttime: "2024-01-01 12:00:00".into(),
+                title: String::new(),
+            }],
+        };
+        write_last_search(&path, &search).expect("write cache");
+        assert_eq!(read_last_search(&path).as_ref(), Some(&search));
+
+        std::fs::write(&path, "not json").unwrap();
+        assert_eq!(
+            read_last_search(&path),
+            None,
+            "a corrupt cache must be ignored, not fatal"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

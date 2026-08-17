@@ -121,6 +121,9 @@ pub struct Ui {
     undo_button: gtk::Button,
     resign_button: gtk::Button,
     analysis_stack: gtk::Stack,
+    /// This window's Fox picker, built the first time it is asked for. One per
+    /// window: libadwaita refuses to present one dialog in two windows at once.
+    fox_picker: RefCell<Option<crate::fox_picker::FoxPickerDialog>>,
     comment_node: Cell<Option<NodeRef>>,
     scale_guard: Cell<bool>,
     pending_auto_analyse: Cell<bool>,
@@ -324,6 +327,7 @@ pub fn present(
         undo_button,
         resign_button,
         analysis_stack,
+        fox_picker: RefCell::new(None),
         comment_node: Cell::new(None),
         scale_guard: Cell::new(false),
         pending_auto_analyse: Cell::new(false),
@@ -920,7 +924,7 @@ fn do_open(ui: &Ui) {
 
 fn do_download_fox(ui: &Ui) {
     let weak = ui.weak_window();
-    crate::fox::present(&ui.window(), move |download| {
+    crate::fox::present(&ui.window(), &ui.fox_picker, move |download| {
         with_window_ui(&weak, |ui| {
             let moves = download.tree.main_line().len().saturating_sub(1);
             adopt(ui, download.tree, None);

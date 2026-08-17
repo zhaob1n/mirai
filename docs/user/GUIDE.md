@@ -236,7 +236,8 @@ trip.
 **Downloading from Fox.** Click the download button in the header bar, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>. Enter an exact Fox nickname or
 numeric UID, and pick a game. The list shows at most the latest 200 public records because
 that is the service's fixed history window; players who hide their records are not bypassed.
-Click a row — or select it and press **Open Game** — to download and load it. Fox's SGF dialect — including
+A successful search is cached: opening the dialog again restores the last query and its
+list, so downloading one game does not force another lookup. Click a row — or select it and press **Open Game** — to download and load it. Fox's SGF dialect — including
 quarter-point Chinese komi, commentary branches and handicap stones written as opening nodes —
 is normalised on import. The result has no local backing file: it is named after its players,
 `柯洁 vs 申真谞 •`, and **Save** therefore asks where to store it.
@@ -599,6 +600,7 @@ the board's right-click menu.
 |---|---|
 | `~/.config/mirai/config.toml` | settings and engine profiles |
 | `~/.local/share/mirai/autosave-*.sgf` | the record each open window is looking at, one file per window |
+| `~/.local/share/mirai/fox-last-search.json` | last Fox search query and game list, restored the next time the download dialog opens |
 | `~/.local/share/mirai/katago-logs/` | KataGo's own logs, one file per engine start, and the generated `katago-analysis-*.cfg` |
 | `~/.config/mirai/server.toml` | `mirai-server`'s settings, on the machine running it |
 
@@ -610,8 +612,9 @@ window **deletes** its autosave, so a file still there on the next start is one 
 behind, and that is what mirai offers to restore. The autosave is not your file: restoring it
 does not make it the target of a plain Save. KataGo's logs accumulate and can be deleted at any
 time, as can the generated analysis config — mirai writes it again whenever its contents would
-change. Nothing else is written; your own KataGo installation, model and any analysis config
-you supplied are never modified.
+change. The Fox search cache can be deleted; the next lookup writes it again. Nothing else is
+written; your own KataGo installation, model and any analysis config you supplied are never
+modified.
 
 ---
 

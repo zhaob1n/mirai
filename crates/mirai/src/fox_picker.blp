@@ -101,10 +101,9 @@ template $MiraiFoxPickerDialog : Adw.Dialog {
             hscrollbar-policy: never;
             vexpand: true;
 
-            child: Gtk.ListBox result_list {
-              selection-mode: single;
-              activate-on-single-click: true;
-              styles ["boxed-list"]
+            child: Gtk.ListView result_list {
+              single-click-activate: true;
+              styles ["card", "separators"]
             };
           }
         }
