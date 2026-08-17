@@ -23,21 +23,28 @@ so the GUI has one code path and never knows which kind of engine it holds. Ever
 its whole position, so nothing anywhere holds engine-side session state and cancelling an
 analysis is just dropping a handle.
 
-```
-                    ┌───────────────────────────────┐
-                    │  mirai  (GTK4 + libadwaita)   │  bin
-                    └───┬──────────┬────────────┬───┘
-                        v          v            v
-   ┌────────────────────┐  ┌──────────────┐  ┌──────────────────┐
-   │   mirai-engine     │─>│ mirai-proto  │─>│   mirai-core     │
-   │ Engine/Local/Remote│  │ MRP/1 + QUIC │  │ rules, tree, SGF │
-   └─────────┬──────────┘  └──────┬───────┘  └──────────────────┘
-             │      ┌─────────────┴──────────────┐          ^
-             └─────>│  mirai-server  (headless)  │──────────┘
-                    └────────────────────────────┘  bin
+```mermaid
+flowchart TB
+    gtk["mirai — GTK4 + libadwaita"]
+    client["mirai-client — analysis / session"]
+    engine["mirai-engine — Local / Remote"]
+    proto["mirai-proto — MRP/1 + QUIC"]
+    core["mirai-core — rules, tree, SGF"]
+    server["mirai-server — headless"]
+    katago["katago analysis"]
 
-   mirai-engine ──spawn/stdio──> katago analysis            (LocalEngine)
-   mirai        ──QUIC/MRP/1───> mirai-server ──> katago    (RemoteEngine)
+    gtk --> client
+    gtk --> engine
+    client --> engine
+    client --> core
+    engine --> proto
+    engine --> core
+    proto --> core
+    server --> engine
+    server --> core
+    engine -->|"spawn / stdio"| katago
+    gtk -->|"QUIC / MRP/1"| server
+    server --> katago
 ```
 
 | crate | owns | depends on | may **not** depend on |
@@ -45,8 +52,9 @@ analysis is just dropping a handle.
 | `mirai-core` | geometry, rulesets, legality, superko, scoring, game tree, SGF, time control | serde, smallvec, arrayvec, encoding_rs, base64, zstd, postcard | any workspace crate; GTK; tokio; anything doing real I/O |
 | `mirai-proto` | MRP/1 value types, messages, frame codec, QUIC transport, SHA-256 for cert pins | `mirai-core`, quinn, rustls, rcgen, postcard, zstd, bitflags, tokio | `mirai-engine`, `mirai`, serde_json, **anything KataGo-specific** |
 | `mirai-engine` | the `Engine` trait and its two implementations; KataGo query building and response decoding | `mirai-core`, `mirai-proto`, tokio, serde_json, dashmap, quinn | GTK/glib/adw, `mirai`, `mirai-server` |
+| `mirai-client` | shared application layer: analysis requests, sweep planning, play, Fox, TOFU session | `mirai-core`, `mirai-engine` (`remote` only), tokio, serde_json | GTK/glib/adw, `mirai`, `mirai-server`, KataGo JSON |
 | `mirai-server` | headless host: one KataGo per configured engine, multiplexed across clients, token auth | `mirai-core`, `mirai-engine`, `mirai-proto`, clap, toml, subtle, quinn | GTK, `mirai` |
-| `mirai` | `AppState`, window, custom `gsk` widgets, panels, play mode, batch analysis, preferences, config | all three libraries, gtk4, libadwaita, glib, tokio, toml, directories | — |
+| `mirai` | `AppState`, window, custom `gsk` widgets, GTK adapters over `mirai-client`, preferences, config | all four libraries, gtk4, libadwaita, glib, tokio, toml, directories | — |
 
 Versions are pinned once in the root `[workspace.dependencies]`; members use
 `dep.workspace = true`. `mirai` and `mirai-server` are binaries; nothing depends on either.
@@ -61,6 +69,8 @@ Versions are pinned once in the root `[workspace.dependencies]`; members use
 - **`mirai-engine` knows nothing about GTK.** tokio only, `Send + Sync`, so a server, a CLI
   example and a GUI can all drive it. `mirai-engine/examples/probe.rs` runs both backends with
   no GUI at all, which is how the two paths get compared.
+- **`mirai-client` has no GTK and does not open files.** Frontends supply I/O and drawing. It
+  takes `mirai-engine` with `remote` only. A `use gtk::` here is the same design break.
 - **Only `mirai` links GTK.** A `use gtk::` elsewhere is a design break; fix the design.
 
 ---
@@ -229,7 +239,8 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 | `src/types.rs` | **INV-2, INV-5, INV-6.** Quantised wire values, the request and report types | `AnalyzeReq`, `Report`, `RootInfo`, `MoveInfo`, `EngineDesc`, `Want`, `AvoidSpec`, `PROTO_VERSION`, `POLICY_ILLEGAL`, the `*_SCALE` constants, `q16`/`dq16`/`qs`/`dqs`/`qu`/`dqu`/`q_own`/`q_policy`, `winrate_for`, `score_lead_for` |
 | `src/msg.rs` | the three message enums and the error code set | `ClientMsg`, `ServerMsg`, `SubMsg`, `ErrCode` |
 | `src/frame.rs` | length-prefixed postcard framing with optional zstd, generic over `AsyncRead`/`AsyncWrite` | `read_msg`/`write_msg`, `encode`/`decode`, `FrameBuf` (reused per connection, so steady state does not allocate), `MAX_FRAME`, `COMPRESS_THRESHOLD`, `FrameError`, private `Bounded` decompression-bomb guard |
-| `src/transport.rs` | QUIC endpoints, stream topology, TOFU certificate verification, URL parsing | `connect`, `client_endpoint`, `server_endpoint`, `TofuVerifier`, `load_or_generate_cert`, `fingerprint_of`, `parse_url`, `transport_config`, `ALPN`, `DEFAULT_PORT`, `URL_SCHEME` |
+| `src/endpoint.rs` | ALPN, default port, `mirai://` parsing — always compiled, even without Quinn | `parse_url`, `sni_for`, `ALPN`, `DEFAULT_PORT`, `URL_SCHEME`, `AddressError` |
+| `src/transport.rs` | QUIC endpoints, stream topology, TOFU certificate verification | `connect`, `client_endpoint`, `server_endpoint`, `TofuVerifier`, `load_or_generate_cert`, `fingerprint_of`, `transport_config` |
 | `src/sha256.rs` | in-tree SHA-256, only for certificate fingerprints | `sha256`, `fingerprint` |
 | `tests/wire_size.rs` | measures the size claim and pins the quantisation error budget | — |
 
@@ -246,6 +257,18 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 | `src/remote.rs` | MRP/1 client: one background task owns the connection, control stream and subscription table | `RemoteEngine::connect`, `RemoteStatus`, `TofuStore`, private `run`, `serve`, `handle_cmd`, `handle_int`, `control_reader`, `uni_acceptor`, `sub_reader`, `reconnect`, `backoff` |
 | `examples/probe.rs` | CLI that drives either backend through the same trait and prints every report — the local-vs-remote comparison harness | `--katago/--model/--config` or `--remote/--token` |
 
+### `mirai-client` — shared application layer
+
+| file | owns | key symbols |
+|---|---|---|
+| `src/lib.rs` | crate root and re-exports | — |
+| `src/analysis.rs` | position → `AnalyzeReq`, `Report` → `NodeAnalysis`, search-speed meter | `request_for_node`, `analysis_of`, `SpeedMeter`, `PV_LEN` |
+| `src/batch.rs` | main-line plan and bounded sweep; INV-2 blunder detection | `plan_mainline`, `sweep`, `blunders`, `in_flight`, `Planned`, `Analysed`, `Blunder` |
+| `src/game.rs` | cursor, dirty flag, revision, Save path; mutations go through here | `GameSession` |
+| `src/session.rs` | TOFU policy in front of `RemoteEngine`; `Engine` impl that refuses until trusted | `Session`, `SessionConfig`, `SessionState`, `Peer`, `RemoteConnector` |
+| `src/play.rs` | clocks, resignation, move sampling, scoring; no UI | `Play`, `PlayState`, `GameSetup`, `Strength`, `select_move_index`, `resign_check` |
+| `src/fox.rs` | Fox lookup / list / SGF normalisation; HTTP behind `Fetch` | `Fetch`, `lookup_user`, `list_games`, `fetch_sgf`, `normalize_fox_sgf` |
+
 ### `mirai-server` — headless host
 
 | file | owns | key symbols |
@@ -261,10 +284,10 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 |---|---|---|
 | `build.rs` | compiles `resources/mirai.gresource.xml` into the binary | — |
 | `src/main.rs`, `src/application_shell.rs` | process entry and application lifetime: tracing, resources, CSS, `activate`/`open`; `MiraiApplication` uniquely owns the Tokio runtime and shared `EnginePool` and shuts them down from GObject disposal | `APP_ID`, `RESOURCE_PREFIX`, `MiraiApplication` |
-| `src/app.rs` | **INV-7.** `AppState`: the source of truth *for one window* — properties, epoch-qualified node references, tree/cursor API, explicit `EngineState`, the single `Change` dispatcher, engine activation, live-analysis pump and search-speed meter | `AppState`, `TreeEpoch`, `NodeRef`, `Change`, `EngineState`, `with_tree_mut`, `set_tree`, `resolve_node`, `set_cursor`, `play_move`, `activate_profile`, `cancel_tasks`, `request_for_node`, `restart_analysis`, `set_report`, `SpeedMeter` |
+| `src/app.rs` | **INV-7.** `AppState`: the source of truth *for one window* — properties, epoch-qualified node references, tree/cursor API, explicit `EngineState`, the single `Change` dispatcher, engine activation, live-analysis pump; feeds `mirai_client::SpeedMeter` | `AppState`, `TreeEpoch`, `NodeRef`, `Change`, `EngineState`, `with_tree_mut`, `set_tree`, `resolve_node`, `set_cursor`, `play_move`, `activate_profile`, `cancel_tasks`, `request_for_node`, `restart_analysis`, `set_report` |
 | `src/engines.rs` | the application-wide engines: one per profile, shared by every window, held weakly so the last window to let go takes KataGo with it; writes the generated analysis config when a local profile has no custom one | `EnginePool` (`running`, `acquire`), `Built`, private `key`, `start`, `build` |
 | `src/config.rs` | `$XDG_CONFIG_HOME/mirai/config.toml`: engine profiles and preferences; ordered XDG discovery merges all model and custom-analysis candidates | `Config` (`load`, `save`, `save_merged`, `seeded`, `profile`, `active_profile`, `set_pin`, `default_path`, `data_dir`), `discover_models`, `discover_analysis_configs`, private `model_dirs`, `analysis_config_dirs`, `merge_candidates`, `overlay`, `EngineProfile`, `ProfileKind` (`Local`'s optional config and tuning fields), `AnalysisSettings`, `PlaySettings`, `StrengthSetting`, `UiSettings` |
-| `src/util.rs` | formatting helpers and the one `Report` → `NodeAnalysis` conversion | `analysis_of`, `si_visits`, `visits_per_second`, `pct1`, `signed1`, `clock_text`, `gtp` |
+| `src/util.rs` | formatting helpers; `analysis_of` is a thin wrap of `mirai_client::analysis_of` | `analysis_of`, `si_visits`, `visits_per_second`, `pct1`, `signed1`, `clock_text`, `gtp` |
 | `src/window.rs` | window behaviour and unique per-window `Ui`: the `Change` dispatcher, deterministic task/source registry, every `win.*` action, SGF I/O, autosave, score estimate and shutdown ordering | `Ui`, `WindowTasks`, `TaskSlot`, `SourceSlot`, `present`, `handle_change`, `connect_close`, `install_actions`, `adopt`, `write_autosave`, `do_score` |
 | `src/window_shell.rs`, `src/window.blp` | `MiraiWindow` owns exactly one `Ui` in GObject state; `close-request` and `dispose` converge on idempotent `shutdown`. The template owns the static hierarchy; Rust inserts the stateful board, graph, tree and analysis panel | `MiraiWindow`, `install_ui`, `with_ui`, `shutdown` |
 | `src/fox.rs`, `src/fox_picker.rs`, `src/fox_picker.blp` | anonymous Fox Go nickname/UID lookup, recent-public-game picker and download; `MiraiFoxPickerDialog` owns the fixed dialog hierarchy; normalises Fox's SGF dialect before handing a `GameTree` to the window | `present`, `FoxPickerDialog`, private `search_games`/`fetch_game`, `parse_fox_sgf`, `normalize_handicap` |
@@ -275,8 +298,8 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 | `src/widgets/tree.rs` | branch graph from a pushed `TreeLayout`, rebuilt on tree changes and reused for cursor-only redraws | `MoveTreeView` (`refresh`, `refresh_cursor`), `lay_out`, `TreeLayout`, `Placed`, `cell_xy` |
 | `src/panels/mod.rs` | sidebar panel root | re-exports `AnalysisPanel` |
 | `src/panels/analysis.rs`, `src/panels/analysis.blp` | the `MiraiAnalysisPanel` composite template, candidate `ColumnView` model spliced in place at report rate, and dynamic blunder rows | `AnalysisPanel` (`connect_pv_preview`, `set_blunders`, `clear_blunders`), `CandidateObject`, `Row`, `Headline`, `severity_class`, `pv_text`, `text_column` |
-| `src/play.rs` | window-owned play state machine: turn tracking, clocks, AI subscription, resignation and scoring; async callbacks carry only a weak `MiraiWindow` | `PlayController`, `PlaySession`, `PlayState`, `GameSetup`, `Strength`, `tick_clock`, `resign_check`, `select_move_index` |
-| `src/batch.rs` | window-owned whole-game coordinator: one runtime task owns the bounded queue and subscriptions; GTK receives typed completion messages | `BatchAnalysis`, `BatchMessage`, `RuntimeTask`, `blunders`, `Blunder`, `in_flight`, `BLUNDER_MIN_DROP` |
+| `src/play.rs` | window-owned play controller: GTK timers, dialogs and the live AI subscription; move choice and resignation also live in `mirai-client` | `PlayController`, `PlaySession`, `PlayState`, `GameSetup`, `Strength`, `tick_clock`, `resign_check`, `select_move_index` |
+| `src/batch.rs` | window-owned whole-game coordinator; `blunders` / `in_flight` wrap `mirai_client::batch` | `BatchAnalysis`, `BatchMessage`, `RuntimeTask`, `blunders`, `Blunder`, `in_flight`, `BLUNDER_MIN_DROP` |
 | `src/new_game.rs`, `src/new_game.blp` | The `MiraiNewGameDialog` `CompositeTemplate` and its state-dependent setup wiring | `present`, `NewGameDialog` |
 | `src/dialogs.rs` | Dynamic result and certificate-confirmation alert dialogs | `show_score_with`, `confirm_fingerprint` |
 | `src/preferences_shell.rs`, `src/preferences.blp` | The `MiraiPreferencesDialog` `CompositeTemplate`: four fixed pages, groups, controls and accessible labels | `PreferencesDialog`, `PreferencesWidgets` |
@@ -298,7 +321,7 @@ composite templates), `resources/style.css` (`board-area`, `mirai-clock`, `mirai
 | the ownership or policy heat map | `widgets/board.rs` — `ownership_texture` / `policy_texture`, appended by `BoardView::snapshot` |
 | a keyboard shortcut, or what an action does | `window.rs` — `install_actions` (action bodies and the accel table), `show_shortcuts` for the help window |
 | live-analysis visit cap / report rate | `config.rs` — `AnalysisSettings`, consumed by `AppState::restart_analysis` |
-| the search-speed reading (visits per second) | `app.rs` — `SpeedMeter`, fed from `set_report` and reset by `restart_analysis`; formatted by `util::visits_per_second`, shown in `panels/analysis.rs` (`Headline::speed`) and `window.rs` (`update_readout`) |
+| the search-speed reading (visits per second) | `mirai-client/src/analysis.rs` — `SpeedMeter`; `AppState` feeds it from `set_report` and resets it in `restart_analysis`; formatted by `util::visits_per_second`, shown in `panels/analysis.rs` (`Headline::speed`) and `window.rs` (`update_readout`) |
 | the KataGo command line or its config overrides | `mirai-engine/src/local.rs` — `LocalEngine::spawn`, `override_config` |
 | what goes into KataGo's analysis config | `mirai-engine/src/tuning.rs` — `EngineTuning::render` and its defaults; the profile side is `ProfileKind::tuning` in `config.rs`, the write site `build` in `engines.rs` |
 | a KataGo query field, or how a response is read | `mirai-engine/src/query.rs` — `build_query`; `mirai-engine/src/decode.rs` — `decode_report` |
@@ -307,7 +330,7 @@ composite templates), `resources/style.css` (`board-area`, `mirai-clock`, `mirai
 | an SGF property | `mirai-core/src/sgf.rs` — `build` (read) and `write_node` (write) |
 | the move-tree layout | `widgets/tree.rs` — `lay_out` |
 | blunder colours or thresholds | `widgets/winrate.rs` — `Severity::color`, `severity_of_drop` |
-| AI move choice or resignation | `play.rs` — `select_move_index`, `resign_check` |
+| AI move choice or resignation | `mirai-client/src/play.rs` — `select_move_index`, `resign_check`; GTK wrapper `crates/mirai/src/play.rs` |
 
 ---
 
@@ -387,17 +410,17 @@ not a legality question. `Node` is all-public data — the tree owns structure, 
 
 `NodeAnalysis` is the *stored* form of an evaluation: dequantised, Black-perspective, truncated to
 `AnalysisSettings::stored_suggestion_limit` (at most 50 even when the display shows all), produced
-only by `util::analysis_of`, with ownership left
+only by `mirai_client::analysis_of`, with ownership left
 quantised at one byte per point. It exists so the win-rate graph and move tree can draw a whole
 game after the live report for a node is gone. The live `Report` — all fields, still quantised —
 lives separately in `AppState::last_report()` and is discarded the moment the cursor moves.
 
-```
-KataGo JSON ─decode_report─> Report (quantised, Black) ─analysis_of─> NodeAnalysis (f32, Black)
-                              │                                        │
-                              └─ AppState::last_report()               └─ Node::analysis
-                                 board candidates, analysis panel         winrate graph, move
-                                                                          tree, SGF `MRAI`
+```mermaid
+flowchart LR
+    json["KataGo JSON"] -->|"decode_report"| report["Report — quantised, Black"]
+    report --> live["AppState::last_report — board, analysis panel"]
+    report -->|"analysis_of"| stored["NodeAnalysis — f32, Black"]
+    stored --> node["Node::analysis — winrate graph, move tree, SGF MRAI"]
 ```
 
 ### SGF mapping
@@ -486,19 +509,17 @@ thread.
 There is one cancellation mechanism — **drop the `Subscription`** — and everything else is
 plumbing that leads to that drop.
 
-```
-navigate / toggle / close window
-        │
-        v  AppState::restart_analysis: pump.take() -> glib::JoinHandle::abort()
-        │  aborting the future drops its captured locals
-        v  Subscription dropped -> CancelGuard::drop runs the boxed closure
-   ┌────┴───────────────────────┐
-   v                            v
-LocalEngine: Inner::cancel      RemoteEngine: Cmd::Cancel
-  terminate action on stdin       ClientMsg::Cancel  +  stop_sending on that
-  (query.rs terminate_query)      subscription's stream
-  KataGo stops the search         server resets the stream; buffered stale reports
-                                  are dropped in the network stack, never decoded
+```mermaid
+flowchart TB
+    trigger["navigate / toggle / close window"]
+    restart["AppState::restart_analysis — pump.take, JoinHandle::abort"]
+    dropSub["Subscription dropped — CancelGuard::drop"]
+    local["LocalEngine::Inner::cancel — terminate on stdin"]
+    remote["RemoteEngine Cmd::Cancel — ClientMsg::Cancel and stop_sending"]
+
+    trigger --> restart --> dropSub
+    dropSub --> local
+    dropSub --> remote
 ```
 
 `AppState`'s `generation` counter is a belt-and-braces guard so a pump already inside
@@ -513,40 +534,27 @@ drops every in-flight `Subscription`; there is no parallel query-cancellation AP
 
 ### One live-analysis cycle: pressing Left
 
-```
- user     GTK main context                                 tokio                    KataGo
-  │
- Left ──> accel "win.prev" -> SimpleAction
-  │         with_window_ui(weak, …)             window.rs   (WeakRef upgrade, INV-8)
-  │         AppState::go_prev -> go_back(1)
-  │           borrow tree, walk parents, DROP the borrow    (INV-10)
-  │         AppState::set_cursor
-  │           cursor := id;  last_report := None
-  │           changed(Cursor) ─> window::handle_change
-  │             BoardView/MoveTreeView/WinrateGraph: refresh cursor projections
-  │             AnalysisPanel: refresh without a report
-  │             window: flush+load comment, scale, readout, clocks
-  │           changed(Report) ─> refresh report projections and readout
-  │         restart_analysis
-  │           abort old pump ──> Subscription dropped ──> terminate ──────────> search stops
-  │           generation += 1
-  │           request_for_cursor: whole position + Want flags (INV-4)
-  │           engine.subscribe(req) ── sync ──> watch channel, id in DashMap,
-  │                                            query line to stdin ──────────> query
-  │           glib::spawn_future_local(pump)
-  │                                                                      (~100 ms later)
-  │                                            reader task: classify, decode_report,
-  │                                            send_replace(Report)  <──── isDuringSearch
-  │  pump wakes on sub.next()
-  │    generation still matches?
-  │    AppState::set_report: store report; borrow_mut tree, cache analysis_of(...),
-  │                          DROP the borrow, then changed(Report)       (INV-10)
-  │           handle_change ─┬─ BoardView: upload heat-map textures
-  │                          ├─ WinrateGraph: rebuild cached base node
-  │                          ├─ AnalysisPanel: splice rows in place
-  │                          └─ window: update_readout
-  │  GTK frame clock -> BoardView::snapshot appends cached layers
-  v  redrawn board          … repeats at ~10 Hz until Done, then the pump idles
+```mermaid
+sequenceDiagram
+    actor User
+    participant GTK as GTK main
+    participant App as AppState
+    participant Tokio as tokio
+    participant KG as KataGo
+
+    User->>GTK: Left / win.prev
+    GTK->>App: go_prev then set_cursor
+    Note over App: drop the tree borrow (INV-10)
+    App->>GTK: changed Cursor and Report
+    App->>App: restart_analysis
+    App-->>KG: abort pump, drop Subscription, terminate
+    App->>Tokio: subscribe whole position (INV-4)
+    Tokio->>KG: query line
+    GTK->>GTK: spawn pump
+    KG-->>Tokio: isDuringSearch report
+    Tokio-->>App: send_replace Report
+    App->>GTK: set_report then changed Report
+    Note over GTK: snapshot cached layers, ~10 Hz until Done
 ```
 
 Two properties to internalise: the board never asks an engine for anything — it reads `AppState`
@@ -790,9 +798,9 @@ and how a violation shows up.
 | # | invariant | enforced in | how you would notice it broken |
 |---|---|---|---|
 | **INV-1** | Point encoding: `index = y * width + x`, `y = 0` is the **top** row, `PASS` is the maximum `u16`, boards are 2..=19 per side. KataGo's `ownership`/`policy` index identically to the board array; never add a remap | `mirai-core/src/point.rs` (`Point`, `Size`, `MIN_DIM`/`MAX_DIM`); consumed unremapped by `BoardView::snapshot` | The ownership overlay is mirrored or transposed — dark shading sits over the opponent's group. This is the canary check for the whole encoding design |
-| **INV-2** | Perspective: KataGo runs `reportAnalysisWinratesAs=BLACK`; everything stored and transmitted is Black's, converted only at display time via `winrate_for` / `score_lead_for` | `override_config` in `mirai-engine/src/local.rs` sets it; `mirai-proto/src/types.rs` provides the only converters; `util::analysis_of` keeps stored values Black | A win rate that reads `1 - x`: plausible on screen, so check it as an *invariant*, not by eye. A komi sweep must be monotonically decreasing for Black |
+| **INV-2** | Perspective: KataGo runs `reportAnalysisWinratesAs=BLACK`; everything stored and transmitted is Black's, converted only at display time via `winrate_for` / `score_lead_for` | `override_config` in `mirai-engine/src/local.rs` sets it; `mirai-proto/src/types.rs` provides the only converters; `mirai_client::analysis_of` keeps stored values Black | A win rate that reads `1 - x`: plausible on screen, so check it as an *invariant*, not by eye. A komi sweep must be monotonically decreasing for Black |
 | **INV-3** | Cancellation: dropping a `Subscription` is the only mechanism. Local enqueues a KataGo `terminate`; remote sends `Cancel` **and** `stop_sending` on that subscription's stream | `CancelGuard` in `mirai-engine/src/lib.rs`; the closures installed by `LocalEngine::subscribe` and `RemoteEngine::subscribe`; `AppState::restart_analysis` and `session.rs`'s `pump` are the drop sites | KataGo keeps burning CPU with no subscription open, or stale reports appear for the previous position. Prove it by sampling a CPU *rate*, not a total |
-| **INV-4** | Stateless queries: every request carries its whole position; there is no engine-side session state | `AnalyzeReq` in `mirai-proto/src/types.rs`; built in one place, `AppState::request_for_node`; `build_query` never emits `analyzeTurns` | An analysis that is correct only after visiting nodes in a particular order; a remote client that needs resynchronising after a reconnect |
+| **INV-4** | Stateless queries: every request carries its whole position; there is no engine-side session state | `AnalyzeReq` in `mirai-proto/src/types.rs`; built in `mirai_client::request_for_node`, with the visit cap added by `AppState::request_for_node`; `build_query` never emits `analyzeTurns` | An analysis that is correct only after visiting nodes in a particular order; a remote client that needs resynchronising after a reconnect |
 | **INV-5** | Komi crosses the wire as a doubled integer (`komi_x2`), because KataGo accepts only integer or half-integer komi | `AnalyzeReq` (`komi_x2`, `komi()`) in `mirai-proto/src/types.rs` | Komi silently rounded, or a rejected query from a fractional komi |
 | **INV-6** | Quantisation: wire floats are fixed-point; every scale lives in `mirai-proto/src/types.rs`. Round-trip error budget: winrate ≤ 1e-4, score lead ≤ 0.02 pt, ownership ≤ 0.005 | the `q*`/`dq*` helpers and `*_SCALE` constants; both engine paths use them, so reports are bit-identical | `mirai-proto/tests/wire_size.rs` fails on frame size or error budget. Changing a scale means bumping `PROTO_VERSION` and updating that test and [`PROTOCOL.md`](PROTOCOL.md) |
 | **INV-7** | One source of truth: `AppState` owns application state; one window dispatcher pushes projections to widgets, which never hold siblings | `mirai/src/app.rs` (`Change`) and `window::handle_change` | Two dispatchers observe different intermediate states, or sibling widgets disagree after an edit |

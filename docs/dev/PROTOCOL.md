@@ -607,21 +607,28 @@ The credential is the opaque UTF-8 `Hello.token`, checked against a server-side 
 
 ### 8.3 Subscription lifecycle
 
-```
-                  ClientMsg::Open{sub,engine,req}
-       IDLE ─────────────────────────────────────────► REQUESTED
-                                                          │
-          ┌───────────────────────────────────────────────┤
-          │ ServerMsg::Error{Some(sub),..}                │ ServerMsg::Opened{sub}
-          ▼                                               ▼
-       REJECTED (terminal)                            ACTIVE ◄────────────┐
-                                                          │  SubMsg::Report │
-                                                          ├─────────────────┘
-          ┌──────────────────┬──────────────────┬─────────┴──────────┬──────────────────┐
-          │ SubMsg::Done     │ SubMsg::Failed   │ ClientMsg::Cancel  │ connection lost  │
-          ▼                  ▼                  ▼                    ▼
-        DONE               FAILED            CANCELLED             FAILED
-     (stream FIN)       (stream FIN)      (stream RESET)     (never replayed)
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Requested: ClientMsg::Open
+    Requested --> Rejected: ServerMsg::Error Some(sub)
+    Requested --> Active: ServerMsg::Opened
+    Active --> Active: SubMsg::Report
+    Active --> Done: SubMsg::Done
+    Active --> FailedFin: SubMsg::Failed
+    Active --> Cancelled: ClientMsg::Cancel
+    Active --> FailedLost: connection lost
+    Rejected --> [*]
+    Done --> [*]
+    FailedFin --> [*]
+    Cancelled --> [*]
+    FailedLost --> [*]
+
+    Rejected: REJECTED
+    Done: DONE — stream FIN
+    FailedFin: FAILED — stream FIN
+    Cancelled: CANCELLED — stream RESET
+    FailedLost: FAILED — never replayed
 ```
 
 All terminal states are final: the id is retired and the stream closed.

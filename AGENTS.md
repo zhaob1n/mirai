@@ -5,7 +5,7 @@ one document your task points at. Do not re-explore the tree; it is mapped for y
 
 **mirai** is a GTK4/libadwaita desktop application that drives KataGo for Go analysis, review
 and play, either as a local subprocess or over a network via a purpose-built protocol
-(MRP/1). Five crates, GPL-3.0-or-later.
+(MRP/1). Six crates, GPL-3.0-or-later.
 
 The code is complete, reviewed and shipping. Treat it as a working system to extend carefully,
 not a draft to rewrite.
@@ -30,6 +30,7 @@ not a draft to rewrite.
 crates/mirai-core     geometry, rules, scoring, game tree, SGF     no I/O, no GUI
 crates/mirai-proto    MRP/1 types, frame codec, QUIC transport     knows nothing about KataGo
 crates/mirai-engine   Engine trait, LocalEngine, RemoteEngine      knows nothing about GTK
+crates/mirai-client   shared analysis, session, play, Fox          no GTK, no files
 crates/mirai-server   headless host sharing KataGo across clients
 crates/mirai          the GTK application                          the only crate that links GTK
 ```

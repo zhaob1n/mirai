@@ -199,18 +199,30 @@ server exits only if none came up.
 
 ## Architecture
 
-```
-mirai-core ── geometry, rules, scoring, game tree, SGF        (no I/O, no GUI)
-     │
-     ├── mirai-proto ── MRP/1 types, frame codec, QUIC transport
-     │        │
-     │        ├── mirai-engine ── Engine trait
-     │        │        ├── LocalEngine   → katago analysis subprocess
-     │        │        └── RemoteEngine  → mirai-server over MRP/1
-     │        │
-     │        └── mirai-server ── hosts LocalEngines for remote clients
-     │
-     └── mirai ── the GTK application
+```mermaid
+flowchart TB
+    gtk["mirai — GTK application"]
+    client["mirai-client — analysis, session, play, Fox"]
+    engine["mirai-engine — Engine trait"]
+    local["LocalEngine"]
+    remote["RemoteEngine"]
+    proto["mirai-proto — MRP/1 types, frame, QUIC"]
+    core["mirai-core — geometry, rules, tree, SGF"]
+    server["mirai-server"]
+    katago["katago analysis"]
+
+    gtk --> client
+    gtk --> engine
+    client --> engine
+    client --> core
+    engine --> local
+    engine --> remote
+    engine --> proto
+    engine --> core
+    proto --> core
+    server --> engine
+    local --> katago
+    remote --> server
 ```
 
 Four decisions shape everything else:
