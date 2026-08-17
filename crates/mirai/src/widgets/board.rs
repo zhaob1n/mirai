@@ -1048,26 +1048,7 @@ impl BoardView {
             let last = node
                 .mv
                 .filter(|&(color, p)| !p.is_pass() && position.board.at(p) == Some(color));
-            let move_numbers = state.show_move_numbers().then(|| {
-                let mut numbers = vec![0u16; size.points()];
-                let mut n = 0u16;
-                for id in tree.path_to(cursor) {
-                    let node = tree.node(id);
-                    if node.mv.is_some() {
-                        n = n.saturating_add(1);
-                    }
-                    if let Some(m) = node.move_number_override {
-                        n = m;
-                    }
-                    if let Some((_, p)) = node.mv
-                        && !p.is_pass()
-                        && size.contains(p)
-                    {
-                        numbers[p.index()] = n;
-                    }
-                }
-                numbers.into_boxed_slice()
-            });
+            let move_numbers = state.show_move_numbers().then(|| tree.move_numbers(cursor));
             (size, rules, marks, last, move_numbers)
         };
         self.imp().projection.replace(Some(BoardProjection {

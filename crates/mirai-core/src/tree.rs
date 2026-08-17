@@ -321,6 +321,35 @@ impl GameTree {
         n
     }
 
+    /// The move number standing on every point of the board at `id`, `0` where no numbered
+    /// stone was played.
+    ///
+    /// Numbering follows [`GameTree::move_number`], `MN` overrides included; when a point was
+    /// played more than once on this line the later move wins, which is what a board showing
+    /// stone numbers must display. Passes and off-board points are skipped, and a captured
+    /// stone leaves its number behind — a caller draws numbers only where a stone stands.
+    pub fn move_numbers(&self, id: NodeId) -> Box<[u16]> {
+        let size = self.info.size;
+        let mut numbers = vec![0u16; size.points()];
+        let mut n = 0u16;
+        for at in self.path_to(id) {
+            let node = self.node(at);
+            if node.mv.is_some() {
+                n = n.saturating_add(1);
+            }
+            if let Some(m) = node.move_number_override {
+                n = m;
+            }
+            if let Some((_, p)) = node.mv
+                && !p.is_pass()
+                && size.contains(p)
+            {
+                numbers[p.index()] = n;
+            }
+        }
+        numbers.into_boxed_slice()
+    }
+
     /// The position at `id`, replaying only what the cache does not already cover.
     pub fn position(&mut self, id: NodeId) -> &Position {
         self.ensure_position(id);
@@ -788,6 +817,36 @@ mod tests {
         let b = t.play(a, Color::White, s.point(1, 1)).unwrap();
         assert_eq!(t.move_number(b), 43);
         assert_eq!(t.position(b).move_number, 43);
+    }
+
+    /// What a board draws stone numbers from: the number of the stone standing on each point,
+    /// after every `MN` override and after a point has been played twice.
+    #[test]
+    fn per_point_move_numbers_take_the_override_and_the_later_stone() {
+        let mut t = tree(RuleSet::Chinese);
+        let s = t.info.size;
+        let root = t.root();
+        let contested = s.point(3, 3);
+        let first = t.play(root, Color::Black, contested).unwrap();
+        t.node_mut(first).move_number_override = Some(42);
+        let mut at = first;
+        for (x, y) in [(3, 2), (2, 3), (4, 3), (3, 4)] {
+            at = t.play(at, Color::White, s.point(x, y)).unwrap();
+        }
+        // Black is captured, so White may have the point itself.
+        assert_eq!(t.position(at).board.at(contested), None);
+        let retaken = t.play(at, Color::White, contested).unwrap();
+
+        let numbers = t.move_numbers(retaken);
+        assert_eq!(numbers.len(), s.points());
+        assert_eq!(numbers[s.point(3, 2).index()], 43);
+        // 47, not the 42 the captured stone carried.
+        assert_eq!(numbers[contested.index()], 47);
+        assert_eq!(numbers[s.point(0, 0).index()], 0);
+
+        // A pass is numbered but occupies nothing.
+        let passed = t.play(retaken, Color::Black, Point::PASS).unwrap();
+        assert_eq!(t.move_numbers(passed)[contested.index()], 47);
     }
 
     #[test]
