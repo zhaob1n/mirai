@@ -2,5 +2,7 @@
 <gresources>
   <gresource prefix="/io/github/mirai/Mirai">
     <file compressed="true">style.css</file>
+    <file preprocess="xml-stripblanks">icons/hicolor/scalable/apps/io.github.mirai.Mirai.svg</file>
+    <file preprocess="xml-stripblanks">icons/hicolor/symbolic/apps/io.github.mirai.Mirai-symbolic.svg</file>
   </gresource>
 </gresources>

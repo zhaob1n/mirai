@@ -51,6 +51,11 @@ fn main() -> glib::ExitCode {
     let application = application_shell::MiraiApplication::new(APP_ID, flags);
 
     application.connect_startup(|_| {
+        if let Some(display) = gtk::gdk::Display::default() {
+            gtk::IconTheme::for_display(&display)
+                .add_resource_path(&format!("{RESOURCE_PREFIX}/icons/hicolor"));
+            gtk::Window::set_default_icon_name(APP_ID);
+        }
         let provider = gtk::CssProvider::new();
         provider.load_from_resource(&format!("{RESOURCE_PREFIX}/style.css"));
         if let Some(display) = gtk::gdk::Display::default() {

@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-License-Identifier: GPL-3.0-or-later
+Copyright (C) 2026 Huang Zhaobin
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <title>Mirai</title>
+  <desc>Mirai GNOME app icon: a Go board with black and white stones; the white stone is softly highlighted to indicate AI analysis.</desc>
+  <defs>
+    <radialGradient id="blackStone" cx="36%" cy="30%" r="72%">
+      <stop offset="0" stop-color="#77767b"/>
+      <stop offset="0.42" stop-color="#3d3846"/>
+      <stop offset="1" stop-color="#241f31"/>
+    </radialGradient>
+    <radialGradient id="whiteStone" cx="36%" cy="28%" r="74%">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.64" stop-color="#fbfbfb"/>
+      <stop offset="1" stop-color="#f0f0f0"/>
+    </radialGradient>
+    <filter id="glowOuter" x="-140%" y="-140%" width="380%" height="380%">
+      <feGaussianBlur stdDeviation="10.8"/>
+    </filter>
+    <filter id="glowInner" x="-120%" y="-120%" width="340%" height="340%">
+      <feGaussianBlur stdDeviation="4.8"/>
+    </filter>
+    <clipPath id="boardClip">
+      <rect x="16" y="14" width="96" height="96" rx="10" ry="10"/>
+    </clipPath>
+  </defs>
+
+  <!-- Thin front profile in GNOME app-icon style. -->
+  <path fill="#c28a53" d="M26 14h76c5.52 0 10 4.48 10 10v80c0 5.52-4.48 10-10 10H26c-5.52 0-10-4.48-10-10V24c0-5.52 4.48-10 10-10Z"/>
+
+  <!-- Lighter honey-wood board surface. -->
+  <rect x="16" y="14" width="96" height="96" rx="10" ry="10" fill="#f2d5ad"/>
+
+  <!-- Simplified Go grid. -->
+  <g clip-path="url(#boardClip)" fill="none" stroke="#9a6d45" stroke-width="2" stroke-linecap="round" opacity="0.82">
+    <path d="M32 22v80M48 22v80M64 22v80M80 22v80M96 22v80"/>
+    <path d="M24 30h80M24 46h80M24 62h80M24 78h80M24 94h80"/>
+  </g>
+
+  <!-- Minimal star points. -->
+  <g fill="#9a6d45" opacity="0.9">
+    <circle cx="48" cy="78" r="2"/>
+    <circle cx="80" cy="30" r="2"/>
+  </g>
+
+  <!-- Stones on intersections. -->
+  <circle cx="48" cy="46" r="11" fill="url(#blackStone)"/>
+
+  <!-- AI-analysis target white stone, shifted one intersection to the right. -->
+  <circle cx="80" cy="62" r="18.5" fill="#c7f3ff" opacity="0.68" filter="url(#glowOuter)"/>
+  <circle cx="80" cy="62" r="13.8" fill="#62a0ea" opacity="0.78" filter="url(#glowInner)"/>
+  <circle cx="80" cy="62" r="11" fill="url(#whiteStone)" stroke="#f8f8f8" stroke-width="0.7"/>
+</svg>

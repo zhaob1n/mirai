@@ -3,6 +3,8 @@
 A KataGo analysis and playing GUI for the Linux desktop, plus a purpose-built protocol for
 driving KataGo over a network.
 
+![mirai](docs/user/preview.png)
+
 Point it at a local KataGo and it analyses positions, reviews SGF files and plays games
 against you. Point it at `mirai-server` on the machine with the GPU and it behaves
 identically from a laptop that has none.

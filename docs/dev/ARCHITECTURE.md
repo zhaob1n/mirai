@@ -310,7 +310,9 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 Non-Rust in `crates/mirai`: `src/window.blp`, `src/new_game.blp`, `src/preferences.blp`,
 `src/profile_editor.blp`, `src/fox_picker.blp` and `src/panels/analysis.blp` (Blueprint
 composite templates), `resources/style.css` (`board-area`, `mirai-clock`, `mirai-readout`,
-`mirai-winrate`, `mirai-movetree`) and `resources/mirai.gresource.xml`.
+`mirai-winrate`, `mirai-movetree`), `resources/icons/hicolor/` (`io.github.mirai.Mirai` and
+its `-symbolic` sibling) and `resources/mirai.gresource.xml`. The store-style preview lives
+at `docs/user/preview.png`.
 
 ### Quick index
 
