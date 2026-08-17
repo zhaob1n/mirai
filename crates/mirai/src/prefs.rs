@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use adw::prelude::*;
-use gtk::{gio, glib, prelude::IsA};
+use gtk::{gio, glib};
 
 use mirai_core::RuleSet;
 
@@ -1463,28 +1463,6 @@ fn connect_analysis(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, st
         dialog,
         move |_| reset_analysis(&dialog, &reset_state, &reset_syncing)
     ));
-
-    let analysis_defaults = AnalysisSettings::default();
-    attach_spin_reset(
-        &widgets.analysis_visits_row,
-        f64::from(analysis_defaults.live_max_visits),
-    );
-    attach_spin_reset(
-        &widgets.analysis_interval_row,
-        f64::from(analysis_defaults.report_interval_ms),
-    );
-    attach_spin_reset(
-        &widgets.analysis_suggestions_row,
-        f64::from(analysis_defaults.max_suggestions),
-    );
-    attach_spin_reset(
-        &widgets.analysis_batch_visits_row,
-        f64::from(analysis_defaults.batch_visits),
-    );
-    attach_switch_reset(
-        &widgets.analysis_auto_open_row,
-        analysis_defaults.auto_analyse_on_open,
-    );
 }
 
 /// Pushes `config.analysis` into the preference rows.
@@ -1657,29 +1635,6 @@ fn connect_play(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state:
         dialog,
         move |_| reset_play(&dialog, &reset_state, &reset_syncing)
     ));
-
-    let play_defaults = PlaySettings::default();
-    attach_combo_reset(&widgets.play_strength_kind_row, 0);
-    attach_spin_reset(&widgets.play_visits_row, 800.0);
-    attach_spin_reset(&widgets.play_seconds_row, 5.0);
-    attach_entry_reset(&widgets.play_human_row, crate::play::DEFAULT_HUMAN_PROFILE);
-    attach_spin_reset(
-        &widgets.play_temperature_row,
-        f64::from(play_defaults.temperature),
-    );
-    attach_spin_reset(
-        &widgets.play_threshold_row,
-        f64::from(play_defaults.resign_threshold),
-    );
-    attach_spin_reset(
-        &widgets.play_streak_row,
-        f64::from(play_defaults.resign_streak),
-    );
-    let chinese = RuleSet::ALL
-        .iter()
-        .position(|&rules| rules == RuleSet::Chinese)
-        .unwrap_or(0) as u32;
-    attach_combo_reset(&widgets.play_rules_row, chinese);
 }
 
 /// Only the row the selected strength mode uses is shown.
@@ -1800,19 +1755,6 @@ fn connect_appearance(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, 
             dialog,
             move |_| reset_ui(&dialog, &reset_state)
         ));
-
-    let ui_defaults = UiSettings::default();
-    attach_switch_reset(&widgets.show_coordinates_row, ui_defaults.show_coordinates);
-    attach_switch_reset(
-        &widgets.show_move_numbers_row,
-        ui_defaults.show_move_numbers,
-    );
-    attach_switch_reset(
-        &widgets.ownership_overlay_row,
-        ui_defaults.ownership_overlay,
-    );
-    attach_switch_reset(&widgets.policy_overlay_row, ui_defaults.policy_overlay);
-    attach_switch_reset(&widgets.save_analysis_row, ui_defaults.save_analysis_in_sgf);
 }
 
 /// The four display toggles are bound to `AppState` properties, so setting the properties
@@ -1853,7 +1795,7 @@ fn bind_switch(row: &adw::SwitchRow, state: &AppState, property: &'static str) {
     row.connect_active_notify(move |_| state.save_config());
 }
 
-/// A preference spin row: fixed range, no `+`/`−` — see [`hide_steppers`]. The value
+/// A preference spin row: fixed range, and no `+`/`−` — see [`hide_steppers`]. The value
 /// itself arrives later, from the page's `load_*`.
 fn configure_spin(row: &adw::SpinRow, min: f64, max: f64, step: f64, digits: u32) {
     row.configure(
@@ -1870,7 +1812,7 @@ fn configure_spin(row: &adw::SpinRow, min: f64, max: f64, step: f64, digits: u32
 /// buttons crowd every settings row. libadwaita has no property for this, so the row's only
 /// buttons — the pair inside its internal `GtkSpinButton` — are hidden directly. Hiding,
 /// rather than shrinking them with CSS, is also what keeps them out of the accessibility
-/// tree. Per-row reset is a separate suffix button, added after this walk.
+/// tree.
 fn hide_steppers(row: &adw::SpinRow) {
     fn walk(w: &gtk::Widget) {
         if let Some(button) = w.downcast_ref::<gtk::Button>() {
@@ -1885,77 +1827,6 @@ fn hide_steppers(row: &adw::SpinRow) {
         }
     }
     walk(row.upcast_ref());
-}
-
-fn suffix_reset(row: &impl IsA<adw::ActionRow>) -> gtk::Button {
-    let button = gtk::Button::from_icon_name("edit-undo-symbolic");
-    button.set_valign(gtk::Align::Center);
-    button.set_tooltip_text(Some("Reset to Default"));
-    button.add_css_class("flat");
-    row.add_suffix(&button);
-    button
-}
-
-fn attach_spin_reset(row: &adw::SpinRow, default: f64) {
-    let button = suffix_reset(row);
-    let sync = {
-        let row = row.clone();
-        let button = button.clone();
-        move || button.set_sensitive((row.value() - default).abs() > 1e-9)
-    };
-    sync();
-    let on_change = sync.clone();
-    row.connect_value_notify(move |_| on_change());
-    let row = row.clone();
-    button.connect_clicked(move |_| row.set_value(default));
-}
-
-fn attach_switch_reset(row: &adw::SwitchRow, default: bool) {
-    let button = suffix_reset(row);
-    let sync = {
-        let row = row.clone();
-        let button = button.clone();
-        move || button.set_sensitive(row.is_active() != default)
-    };
-    sync();
-    let on_change = sync.clone();
-    row.connect_active_notify(move |_| on_change());
-    let row = row.clone();
-    button.connect_clicked(move |_| row.set_active(default));
-}
-
-fn attach_combo_reset(row: &adw::ComboRow, default: u32) {
-    let button = suffix_reset(row);
-    let sync = {
-        let row = row.clone();
-        let button = button.clone();
-        move || button.set_sensitive(row.selected() != default)
-    };
-    sync();
-    let on_change = sync.clone();
-    row.connect_selected_notify(move |_| on_change());
-    let row = row.clone();
-    button.connect_clicked(move |_| row.set_selected(default));
-}
-
-fn attach_entry_reset(row: &adw::EntryRow, default: &str) {
-    let button = gtk::Button::from_icon_name("edit-undo-symbolic");
-    button.set_valign(gtk::Align::Center);
-    button.set_tooltip_text(Some("Reset to Default"));
-    button.add_css_class("flat");
-    row.add_suffix(&button);
-    let default = default.to_string();
-    let sync = {
-        let row = row.clone();
-        let button = button.clone();
-        let default = default.clone();
-        move || button.set_sensitive(row.text().trim() != default)
-    };
-    sync();
-    let on_change = sync.clone();
-    row.connect_changed(move |_| on_change());
-    let row = row.clone();
-    button.connect_clicked(move |_| row.set_text(&default));
 }
 
 #[cfg(test)]

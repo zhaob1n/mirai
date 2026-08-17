@@ -532,11 +532,9 @@ them. The neural-net cache is not changed.
 | **Visits per move** | 100 | 100 – 100 000 | reviewing: 100 is quick, 5 000 is thorough |
 | **Analyse on Open** | off | on / off | turn on to start a whole-game sweep whenever a record is opened, pasted or downloaded |
 
-Numeric rows accept typing, scrolling and the keyboard's arrow keys; `+`/`−` steppers are
-hidden because they are useless on ranges such as one thousand to ten million. Each row has
-an undo button that is active only while that setting differs from its default. Each page
-also ends with **Restore … Defaults**, which resets the whole page; its toast offers
-**Undo**. Engine profiles are never reset.
+The numeric rows accept typing, scrolling and the keyboard's arrow keys; the old `+`/`−`
+steppers were impractical for ranges such as one thousand to ten million. Each page ends with a
+**Restore … Defaults** button. Its toast offers **Undo**; engine profiles are never reset.
 
 ### Play
 
