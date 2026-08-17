@@ -175,6 +175,15 @@ impl Geom {
     }
 }
 
+/// The main-line node under widget x, copied out so the projection borrow can end.
+fn node_at(projection: &GraphProjection, width: f32, height: f32, x: f32) -> Option<NodeId> {
+    if projection.line.is_empty() {
+        return None;
+    }
+    let geom = Geom::new(width, height, projection.line.len());
+    Some(projection.line[geom.index_at(x, projection.line.len())])
+}
+
 fn with_alpha(c: gdk::RGBA, a: f32) -> gdk::RGBA {
     gdk::RGBA::new(c.red(), c.green(), c.blue(), a)
 }
@@ -314,17 +323,17 @@ impl WinrateGraph {
 
     /// Moves the cursor to the main-line node nearest to a widget x coordinate.
     fn jump_to(&self, x: f32) {
-        let projection = self.imp().projection.borrow();
-        if projection.line.is_empty() {
-            return;
-        }
-        let geom = Geom::new(
+        let Some(id) = node_at(
+            &self.imp().projection.borrow(),
             self.width() as f32,
             self.height() as f32,
-            projection.line.len(),
-        );
-        let i = geom.index_at(x, projection.line.len());
-        self.state().set_cursor(projection.line[i]);
+            x,
+        ) else {
+            return;
+        };
+        // INV-10: `set_cursor` emits Cursor and Report, both of which rebuild
+        // this projection. `id` is a copy — the RefCell is not borrowed.
+        self.state().set_cursor(id);
     }
 
     /// Collects the main line into drawable samples.
@@ -652,5 +661,18 @@ mod tests {
         // A single sample must not divide by zero.
         let g1 = Geom::new(300.0, 140.0, 1);
         assert_eq!(g1.index_at(123.0, 1), 0);
+    }
+
+    #[test]
+    fn a_click_takes_an_owned_node_so_the_projection_can_be_rebuilt() {
+        let projection = std::cell::RefCell::new(GraphProjection {
+            line: vec![NodeId(1), NodeId(2), NodeId(3)],
+            samples: vec![],
+            cursor_index: 0,
+        });
+        let id = node_at(&projection.borrow(), 300.0, 140.0, 150.0).expect("a node");
+        *projection.borrow_mut() = GraphProjection::default();
+        assert!(matches!(id, NodeId(1) | NodeId(2) | NodeId(3)));
+        assert!(node_at(&projection.borrow(), 300.0, 140.0, 150.0).is_none());
     }
 }
