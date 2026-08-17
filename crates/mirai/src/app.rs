@@ -16,6 +16,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 
+use mirai_client::SpeedMeter;
 use mirai_core::{Color, GameInfo, GameTree, IllegalMove, NodeId, Point, Position, RuleSet, Size};
 use mirai_engine::{AnalyzeReq, Engine, EngineDesc, EngineError, Report, SubEvent, Want};
 
@@ -624,66 +625,11 @@ impl AppState {
 
     /// Builds a stateless analysis request for the position at `id`.
     ///
-    /// This is the single place that turns a node into an `AnalyzeReq`; live analysis and
-    /// whole-game analysis both go through it, so they cannot drift apart.
+    /// The construction itself lives in [`mirai_client::analysis`], shared with the
+    /// HarmonyOS client; all this adds is the configured default visit cap.
     pub fn request_for_node(&self, id: NodeId, max_visits: Option<u32>, want: Want) -> AnalyzeReq {
-        let (size, rules, komi) = {
-            let t = self.tree();
-            (t.info.size, t.info.rules, t.info.komi)
-        };
-        let mut req = AnalyzeReq::new(size, rules, komi);
-
-        self.with_tree_cached(|t| {
-            // Setup stones become `initialStones` only when they precede every move, which
-            // is what real SGFs do. Anything later cannot be expressed as initial stones
-            // plus a move list, so that case falls back to the replayed board.
-            let mut setup: Vec<(Color, Point)> = Vec::new();
-            let mut moves: Vec<(Color, Point)> = Vec::new();
-            let mut late_setup = false;
-            for nid in t.path_to(id) {
-                let node = t.node(nid);
-                if !node.setup.is_empty() {
-                    if moves.is_empty() {
-                        for &p in &node.setup.add_black {
-                            setup.push((Color::Black, p));
-                        }
-                        for &p in &node.setup.add_white {
-                            setup.push((Color::White, p));
-                        }
-                        setup.retain(|(_, p)| !node.setup.add_empty.contains(p));
-                    } else {
-                        late_setup = true;
-                    }
-                }
-                if let Some((c, p)) = node.mv {
-                    moves.push((c, p));
-                }
-            }
-
-            if late_setup {
-                // Correct, just without move history.
-                let pos = t.position(id);
-                req.initial_player = Some(pos.to_play);
-                req.initial_stones = pos
-                    .board
-                    .stones()
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, s)| s.map(|c| (c, Point(i as u16))))
-                    .collect();
-            } else {
-                req.initial_stones = setup;
-                if moves.is_empty() {
-                    req.initial_player = Some(t.position(id).to_play);
-                }
-                req.moves = moves;
-            }
-        });
-
-        req.want = want;
-        req.max_visits = max_visits.or_else(|| Some(self.config().analysis.live_max_visits));
-        req.pv_len = Some(15);
-        req
+        let max_visits = max_visits.unwrap_or_else(|| self.config().analysis.live_max_visits);
+        self.with_tree_cached(|t| mirai_client::request_for_node(t, id, want, max_visits))
     }
 
     /// [`Self::request_for_node`] for the node the user is looking at.
@@ -815,63 +761,9 @@ fn should_toast_illegal_move(error: IllegalMove) -> bool {
     !matches!(error, IllegalMove::Occupied)
 }
 
-/// Measures how fast a search is running, in visits per second.
-///
-/// KataGo reports no timing of its own — a report carries a visit count and nothing else —
-/// so the rate is measured here from the visit delta between consecutive reports over the
-/// wall time between them. Reports arrive at ~10 Hz and a single interval is noisy, so the
-/// samples are exponentially smoothed; the readout would otherwise be unreadable.
-#[derive(Clone, Copy)]
-pub struct SpeedMeter {
-    mark: Instant,
-    visits: u32,
-    rate: f32,
-}
-
-/// Weight of the newest sample. At the default 100 ms report interval this settles within
-/// about a second and still tracks a real slowdown.
-const SPEED_SMOOTHING: f32 = 0.35;
-
-impl SpeedMeter {
-    /// A meter for a search dispatched at `now`, which has reported nothing yet.
-    pub fn started(now: Instant) -> SpeedMeter {
-        SpeedMeter {
-            mark: now,
-            visits: 0,
-            rate: 0.0,
-        }
-    }
-
-    /// The smoothed rate, or `None` before any report showed progress.
-    pub fn rate(&self) -> Option<f32> {
-        (self.rate > 0.0).then_some(self.rate)
-    }
-
-    /// Folds in a report of `visits` total visits observed at `now`.
-    ///
-    /// A report with no new visits is ignored rather than counted as a zero-rate sample:
-    /// the final report is echoed as `Done`, and a search that has hit its visit cap would
-    /// otherwise decay its own last reading towards zero.
-    pub fn sample(&mut self, visits: u32, now: Instant) {
-        let dt = now.saturating_duration_since(self.mark).as_secs_f32();
-        if visits <= self.visits || dt < 0.001 {
-            return;
-        }
-        let sample = (visits - self.visits) as f32 / dt;
-        self.rate = if self.rate > 0.0 {
-            self.rate + SPEED_SMOOTHING * (sample - self.rate)
-        } else {
-            sample
-        };
-        self.mark = now;
-        self.visits = visits;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     #[test]
     fn occupied_points_need_no_redundant_toast() {
@@ -879,57 +771,5 @@ mod tests {
         assert!(should_toast_illegal_move(IllegalMove::Suicide));
         assert!(should_toast_illegal_move(IllegalMove::Ko));
         assert!(should_toast_illegal_move(IllegalMove::OffBoard));
-    }
-    #[test]
-    fn speed_meter_measures_visits_per_second() {
-        let t0 = Instant::now();
-        let mut m = SpeedMeter::started(t0);
-        assert_eq!(m.rate(), None, "nothing has been reported yet");
-
-        // 600 visits in 0.5 s, counting from dispatch.
-        m.sample(600, t0 + Duration::from_millis(500));
-        assert!((m.rate().unwrap() - 1200.0).abs() < 1.0, "{:?}", m.rate());
-
-        // A steady 1200/s must stay at 1200/s however it is smoothed.
-        for i in 1..=10 {
-            m.sample(
-                600 + i * 120,
-                t0 + Duration::from_millis(500 + i as u64 * 100),
-            );
-        }
-        assert!((m.rate().unwrap() - 1200.0).abs() < 1.0, "{:?}", m.rate());
-    }
-
-    #[test]
-    fn a_repeated_final_report_does_not_zero_the_rate() {
-        let t0 = Instant::now();
-        let mut m = SpeedMeter::started(t0);
-        m.sample(1000, t0 + Duration::from_millis(500));
-        let running = m.rate().unwrap();
-
-        // The engine echoes its last report as `Done`: same visit count, later arrival.
-        m.sample(1000, t0 + Duration::from_millis(900));
-        assert_eq!(m.rate(), Some(running));
-    }
-
-    #[test]
-    fn the_meter_tracks_a_slowdown() {
-        let t0 = Instant::now();
-        let mut m = SpeedMeter::started(t0);
-        let mut visits = 0;
-        let mut at = t0;
-        for _ in 0..10 {
-            visits += 200;
-            at += Duration::from_millis(100);
-            m.sample(visits, at);
-        }
-        assert!((m.rate().unwrap() - 2000.0).abs() < 1.0, "{:?}", m.rate());
-
-        for _ in 0..20 {
-            visits += 20;
-            at += Duration::from_millis(100);
-            m.sample(visits, at);
-        }
-        assert!((m.rate().unwrap() - 200.0).abs() < 20.0, "{:?}", m.rate());
     }
 }

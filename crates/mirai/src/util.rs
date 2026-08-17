@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Huang Zhaobin
 //! Small shared helpers.
 
-use mirai_core::{Candidate, NodeAnalysis, Point, Size};
+use mirai_core::{NodeAnalysis, Point, Size};
 use mirai_engine::Report;
 
 /// Converts a wire [`Report`] into the dequantised, Black-perspective [`NodeAnalysis`]
@@ -11,29 +11,7 @@ use mirai_engine::Report;
 /// `max_candidates` is an already-resolved limit — see
 /// [`crate::config::AnalysisSettings::stored_suggestion_limit`], which never yields zero.
 pub fn analysis_of(report: &Report, max_candidates: usize) -> NodeAnalysis {
-    NodeAnalysis {
-        visits: report.root.visits,
-        winrate: report.root.winrate_f32(),
-        score_lead: report.root.score_lead_f32(),
-        score_stdev: report.root.score_stdev_f32(),
-        candidates: report
-            .moves
-            .iter()
-            .take(max_candidates)
-            .map(|m| Candidate {
-                mv: m.mv,
-                visits: m.visits,
-                winrate: m.winrate_f32(),
-                score_lead: m.score_lead_f32(),
-                prior: m.prior_f32(),
-                pv: m.pv.clone(),
-            })
-            .collect(),
-        ownership: report
-            .ownership
-            .as_ref()
-            .map(|o| o.clone().into_boxed_slice()),
-    }
+    mirai_client::analysis_of(report, max_candidates)
 }
 
 /// SI-abbreviated visit count: `947`, `1.2k`, `34k`, `1.1m`.

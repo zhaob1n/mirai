@@ -34,63 +34,24 @@ pub struct Blunder {
     pub best: Option<Point>,
 }
 
-/// Anything smaller than this is search noise, not a mistake worth listing. It is also
-/// where the winrate graph's blunder strip starts colouring bars.
-pub const BLUNDER_MIN_DROP: f32 = 0.02;
+pub const BLUNDER_MIN_DROP: f32 = mirai_client::batch::BLUNDER_MIN_DROP;
 
-/// How many positions to keep in flight for an engine with `analysis_threads` threads.
 pub fn in_flight(analysis_threads: u16) -> usize {
-    ((analysis_threads as usize).max(1) * 2).min(16)
+    mirai_client::batch::in_flight(analysis_threads)
 }
 
-/// A stored (Black-perspective) win rate seen from `c`'s point of view.
-#[inline]
-fn winrate_for(black_winrate: f32, c: Color) -> f32 {
-    match c {
-        Color::Black => black_winrate,
-        Color::White => 1.0 - black_winrate,
-    }
-}
-
-/// Extracts the blunders of the main line from the analyses already stored in the tree.
-///
-/// Each move is judged from the perspective of the player who made it: the win rate the
-/// position had for them before the move, minus the win rate it has for them after. Nodes
-/// whose own or whose parent's analysis is missing are skipped — an unanalysed gap is not
-/// evidence of a mistake.
 pub fn blunders(tree: &GameTree, epoch: TreeEpoch) -> Vec<Blunder> {
-    let mut out = Vec::new();
-    for id in tree.main_line() {
-        let node = tree.node(id);
-        let Some((player, played)) = node.mv else {
-            continue;
-        };
-        let Some(parent) = node.parent else {
-            continue;
-        };
-        let (Some(before), Some(after)) =
-            (tree.node(parent).analysis.as_ref(), node.analysis.as_ref())
-        else {
-            continue;
-        };
-        let drop = winrate_for(before.winrate, player) - winrate_for(after.winrate, player);
-        if drop.is_nan() || drop < BLUNDER_MIN_DROP {
-            continue;
-        }
-        out.push(Blunder {
-            node: NodeRef { epoch, id },
-            move_number: tree.move_number(id),
-            player,
-            drop,
-            played,
-            best: before
-                .candidates
-                .first()
-                .map(|c| c.mv)
-                .filter(|&best| best != played),
-        });
-    }
-    out
+    mirai_client::batch::blunders(tree)
+        .into_iter()
+        .map(|b| Blunder {
+            node: NodeRef { epoch, id: b.node },
+            move_number: b.move_number,
+            player: b.player,
+            drop: b.drop,
+            played: b.played,
+            best: b.best,
+        })
+        .collect()
 }
 
 enum BatchMessage {

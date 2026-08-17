@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 mirai-core.workspace = true
+mirai-client.workspace = true
 mirai-engine.workspace = true
 mirai-proto.workspace = true
 gtk.workspace = true

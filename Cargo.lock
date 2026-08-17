@@ -1090,6 +1090,7 @@ dependencies = [
  "glib-build-tools",
  "gtk4",
  "libadwaita",
+ "mirai-client",
  "mirai-core",
  "mirai-engine",
  "mirai-proto",
