@@ -122,13 +122,13 @@ disk.
 
 | Region | What it shows |
 |---|---|
-| **Header bar** | On the left, the ways to get a record — **Open** (its ▾ also offers *Paste SGF*), an icon-only **Download from Fox** button, and **New Game…** — then the engine button (name + KataGo version; click for profiles and *Preferences*) and the ▶/■ live-analysis toggle. In the middle, the record's name with `•` while unsaved and the engine or current status beneath it. A saved record is named by its file; one that has never been saved — downloaded, pasted or just played — is named `Black vs White` from the record itself, falling back to the event and then to `Untitled`. On the right, the sidebar toggle and Main Menu (☰) |
+| **Header bar** | On the left, the ways to get a record — **Open** (its ▾ also offers *Paste SGF* and *Clear Board*), an icon-only **Download from Fox** button, and **New Game…** — then the engine button (name + KataGo version; click for profiles and *Preferences*) and the ▶/■ live-analysis toggle. In the middle, the record's name with `•` while unsaved and the engine or current status beneath it. A saved record is named by its file; one that has never been saved — downloaded, pasted or just played — is named `Black vs White` from the record itself, falling back to the event and then to `Untitled`. On the right, the sidebar toggle and Main Menu (☰) |
 | **Board** | wood, grid, star points, optional coordinates, stones. The last move is marked with a red dot, or — when move numbers are on — by its number in red. SGF marks (triangle, square, circle, cross, text labels) are drawn |
 | **Win-rate graph** | solid curve = Black's win rate (left axis 0/50/100); dashed curve = score lead (right axis, never tighter than ±5); vertical line = where you are; coloured bars along the bottom = the blunder strip |
 | **Sidebar** | Three pages — **Analysis** (readout, candidate list, blunder list), **Moves** (the branch graph), **Comment** (the current move's comment). The sidebar button in the header bar (<kbd>F9</kbd>, or ☰ → *View* → *Sidebar*) hides it at any window size, giving the board the whole width; at narrow widths it closes by itself and the same button reopens it as an overlay |
 | **Bottom bar** | First / previous / next / last, previous / next variation, then — during a timed game — both clocks, the one counting shown in the accent colour and turning red under ten seconds, followed by the contextual **Undo**, **Pass** and **Resign** controls, a slider along the current line, and a readout of side to move, win rate, score lead, visits and — while a search is running — its speed in visits per second |
 
-The ☰ menu holds *Save*, *Save As…*, *Copy SGF*, *Analyse Game*, *Estimate Score*, a *View*
+The ☰ menu holds *Clear Board*, *Save*, *Save As…*, *Copy SGF*, *Analyse Game*, *Estimate Score*, a *View*
 submenu — *Sidebar*, *Coordinates*, *Move Numbers*, *Ownership Overlay*, *Policy Overlay*, each
 ticked when it is on — and *Preferences*, *Keyboard Shortcuts*, *About mirai*.
 
@@ -300,7 +300,11 @@ read from the SGF, drawn, and written back, but mirai has no tool for adding new
 
 ## 6. Playing
 
-<kbd>Ctrl</kbd>+<kbd>N</kbd> or the **New Game…** button.
+<kbd>Ctrl</kbd>+<kbd>N</kbd> or the **New Game…** button. To wipe the current record back to
+an empty board without starting a game against the engine, use ☰ → *Clear Board* or
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd>. Size, rules and komi stay; stones, comments
+and the file path do not.
+
 
 ### The New Game dialog
 
@@ -575,7 +579,7 @@ first-run configuration rather than start with half of one.
 | <kbd>End</kbd> | last move | <kbd>Ctrl</kbd>+<kbd>A</kbd> | analyse whole game | <kbd>p</kbd> | pass | <kbd>Ctrl</kbd>+<kbd>S</kbd> | save |
 | <kbd>←</kbd> <kbd>→</kbd> | one move | <kbd>Ctrl</kbd>+<kbd>E</kbd> | estimate score | <kbd>Ctrl</kbd>+<kbd>Z</kbd> | undo | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> | save as |
 | <kbd>Page Up/Down</kbd> | ten moves | <kbd>o</kbd> | ownership overlay | <kbd>Delete</kbd> | delete branch | <kbd>Ctrl</kbd>+<kbd>C</kbd> | copy record |
-| <kbd>↑</kbd> <kbd>↓</kbd> | variations | <kbd>y</kbd> | policy overlay | | | <kbd>Ctrl</kbd>+<kbd>V</kbd> | paste record |
+| <kbd>↑</kbd> <kbd>↓</kbd> | variations | <kbd>y</kbd> | policy overlay | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> | clear board | <kbd>Ctrl</kbd>+<kbd>V</kbd> | paste record |
 | | | <kbd>c</kbd> | coordinates | | | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> | download from Fox |
 | | | <kbd>n</kbd> | move numbers | | | | |
 | | | <kbd>F9</kbd> | show/hide sidebar | | | | |

@@ -93,6 +93,7 @@ Everything else is discoverable from the interface. The parts that are not:
 | <kbd>p</kbd> | pass |
 | <kbd>Delete</kbd> | delete this branch |
 | <kbd>Ctrl</kbd>+<kbd>n</kbd> | new game |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>n</kbd> | clear board |
 | <kbd>Ctrl</kbd>+<kbd>z</kbd> | undo |
 | <kbd>Ctrl</kbd>+<kbd>e</kbd> | score estimate |
 | <kbd>Ctrl</kbd>+<kbd>a</kbd> | analyse the whole game |

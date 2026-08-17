@@ -17,7 +17,7 @@ use gtk::gdk;
 use gtk::gio;
 use gtk::glib;
 
-use mirai_core::{DeadSet, GameTree, NodeId, Point, sgf};
+use mirai_core::{DeadSet, GameInfo, GameTree, NodeId, Point, sgf};
 use mirai_engine::{Report, SubEvent, Want};
 
 use crate::app::{AppState, Change, NodeRef};
@@ -932,6 +932,20 @@ fn do_download_fox(ui: &Ui) {
     });
 }
 
+/// Empty board, same size / rules / komi as `tree`. Identity and stones do not carry over.
+fn blank_tree(tree: &GameTree) -> GameTree {
+    let mut info = GameInfo::new(tree.info.size, tree.info.rules);
+    info.komi = tree.info.komi;
+    GameTree::new(info)
+}
+
+fn do_clear_board(ui: &Ui) {
+    let tree = blank_tree(&ui.state.tree());
+    adopt(ui, tree, None);
+    // This is a new blank record, not an opened one.
+    ui.pending_auto_analyse.set(false);
+}
+
 fn write_to(ui: &Ui, path: &Path) {
     let text = sgf_text(ui);
     match std::fs::write(path, text) {
@@ -1256,6 +1270,7 @@ fn show_shortcuts(ui: &Ui) {
             &[
                 ("Open", "win.open"),
                 ("Download from Fox", "win.download-fox"),
+                ("Clear Board", "win.clear-board"),
                 ("Save", "win.save"),
                 ("Save As", "win.save-as"),
                 ("Copy SGF", "win.copy-sgf"),
@@ -1422,6 +1437,7 @@ fn install_actions(ui: &Ui) {
 
     add("open", Box::new(do_open));
     add("download-fox", Box::new(do_download_fox));
+    add("clear-board", Box::new(do_clear_board));
     add("save", Box::new(do_save));
     add("save-as", Box::new(do_save_as));
 
@@ -1542,6 +1558,7 @@ fn install_actions(ui: &Ui) {
             ("win.delete-branch", &["Delete"]),
             ("win.open", &["<Control>o"]),
             ("win.download-fox", &["<Control><Shift>o"]),
+            ("win.clear-board", &["<Control><Shift>n"]),
             ("win.save", &["<Control>s"]),
             ("win.save-as", &["<Control><Shift>s"]),
             ("win.copy-sgf", &["<Control>c"]),
@@ -1563,7 +1580,7 @@ fn install_actions(ui: &Ui) {
 #[cfg(test)]
 mod tests {
 
-    use super::{record_label, tree_has_content};
+    use super::{blank_tree, record_label, tree_has_content};
     use mirai_core::{Color, GameInfo, GameTree, MarkKind, Point, RuleSet, Size};
 
     fn empty_tree() -> GameTree {
@@ -1652,5 +1669,26 @@ mod tests {
 
         info.event = "LG Cup".to_string();
         assert_eq!(record_label(&info).as_deref(), Some("LG Cup"));
+    }
+
+    #[test]
+    fn clearing_the_board_keeps_size_rules_and_komi() {
+        let mut info = GameInfo::new(Size::square(9), RuleSet::Japanese);
+        info.komi = 0.5;
+        info.players[0].name = "Black".to_string();
+        let mut tree = GameTree::new(info);
+        let root = tree.root();
+        tree.play(root, Color::Black, Size::square(9).point(2, 2))
+            .expect("C7 is legal");
+
+        let blank = blank_tree(&tree);
+        assert_eq!(blank.info.size, Size::square(9));
+        assert_eq!(blank.info.rules, RuleSet::Japanese);
+        assert_eq!(blank.info.komi, 0.5);
+        assert!(
+            blank.info.players[0].name.is_empty(),
+            "a cleared board is a new untitled record"
+        );
+        assert!(!tree_has_content(&blank));
     }
 }
