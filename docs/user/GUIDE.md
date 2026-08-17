@@ -122,7 +122,7 @@ disk.
 
 | Region | What it shows |
 |---|---|
-| **Header bar** | On the left, the ways to get a record — **Open** (its ▾ also offers *Download from Fox…* and *Paste SGF*), an icon-only **Download from Fox** button, and **New Game…** — then the engine button (name + KataGo version; click for profiles and *Preferences*) and the ▶/■ live-analysis toggle. In the middle, the record's name with `•` while unsaved and the engine or current status beneath it. A saved record is named by its file; one that has never been saved — downloaded, pasted or just played — is named `Black vs White` from the record itself, falling back to the event and then to `Untitled`. On the right, the sidebar toggle and Main Menu (☰) |
+| **Header bar** | On the left, the ways to get a record — **Open** (its ▾ also offers *Paste SGF*), an icon-only **Download from Fox** button, and **New Game…** — then the engine button (name + KataGo version; click for profiles and *Preferences*) and the ▶/■ live-analysis toggle. In the middle, the record's name with `•` while unsaved and the engine or current status beneath it. A saved record is named by its file; one that has never been saved — downloaded, pasted or just played — is named `Black vs White` from the record itself, falling back to the event and then to `Untitled`. On the right, the sidebar toggle and Main Menu (☰) |
 | **Board** | wood, grid, star points, optional coordinates, stones. The last move is marked with a red dot, or — when move numbers are on — by its number in red. SGF marks (triangle, square, circle, cross, text labels) are drawn |
 | **Win-rate graph** | solid curve = Black's win rate (left axis 0/50/100); dashed curve = score lead (right axis, never tighter than ±5); vertical line = where you are; coloured bars along the bottom = the blunder strip |
 | **Sidebar** | Three pages — **Analysis** (readout, candidate list, blunder list), **Moves** (the branch graph), **Comment** (the current move's comment). The sidebar button in the header bar (<kbd>F9</kbd>, or ☰ → *View* → *Sidebar*) hides it at any window size, giving the board the whole width; at narrow widths it closes by itself and the same button reopens it as an overlay |
@@ -233,7 +233,7 @@ you choose. <kbd>Ctrl</kbd>+<kbd>V</kbd> pastes a record from the clipboard,
 an SGF file is kept verbatim and written back, so files from other programs survive a round
 trip.
 
-**Downloading from Fox.** Click the download button in the header bar, or Open ▾ → *Download from Fox…*, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>. Enter an exact Fox nickname or
+**Downloading from Fox.** Click the download button in the header bar, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>. Enter an exact Fox nickname or
 numeric UID, and pick a game. The list shows at most the latest 200 public records because
 that is the service's fixed history window; players who hide their records are not bypassed.
 Click a row — or select it and press **Open Game** — to download and load it. Fox's SGF dialect — including
