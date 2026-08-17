@@ -1,28 +1,39 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! Engine drivers: one trait, two implementations.
+//! Engine drivers: one trait, up to two implementations.
 //!
 //! [`LocalEngine`] drives a KataGo `analysis` subprocess; [`RemoteEngine`] drives a
 //! `mirai-server` over MRP/1. Both produce bit-identical [`Report`]s, so the GUI has a
-//! single code path.
+//! single code path. Each driver is one Cargo feature, both on by default: a client that
+//! only ever talks to a server compiles neither the subprocess nor the KataGo JSON code.
 
+#[cfg(feature = "local")]
 pub mod calibrate;
+#[cfg(feature = "local")]
 pub mod decode;
+#[cfg(feature = "local")]
 pub mod local;
+#[cfg(feature = "local")]
 pub mod query;
+#[cfg(feature = "remote")]
 pub mod remote;
+#[cfg(feature = "local")]
 pub mod tuning;
 
 use std::sync::Arc;
 
 use tokio::sync::watch;
 
+#[cfg(feature = "local")]
 pub use calibrate::{
     CalibrationConfig, CalibrationProgress, CalibrationResult, CalibrationSample, calibrate,
 };
+#[cfg(feature = "local")]
 pub use local::{LOCAL_ENGINE_SHUTDOWN_GRACE, LocalEngine, LocalEngineConfig};
 pub use mirai_proto::types::{AnalyzeReq, AvoidSpec, EngineDesc, MoveInfo, Report, RootInfo, Want};
+#[cfg(feature = "remote")]
 pub use remote::{RemoteEngine, TofuStore};
+#[cfg(feature = "local")]
 pub use tuning::EngineTuning;
 
 /// Why an analysis stopped, or why an engine could not be used at all.

@@ -6,14 +6,20 @@
 //! * [`msg`] — control-stream and subscription-stream messages.
 //! * [`frame`] — length-prefixed, optionally zstd-compressed postcard framing over any
 //!   `AsyncRead + AsyncWrite`.
-//! * [`transport`] — the QUIC client and server that carry those frames.
+//! * [`endpoint`] — ALPN, default port and `mirai://` URL parsing.
+//! * [`transport`] — the Quinn QUIC client and server that carry those frames; behind the
+//!   default `quinn-transport` feature, so a peer that drives a platform QUIC stack can
+//!   depend on the codec alone.
 
+pub mod endpoint;
 pub mod frame;
 pub mod msg;
 pub mod sha256;
+#[cfg(feature = "quinn-transport")]
 pub mod transport;
 pub mod types;
 
+pub use endpoint::{ALPN, AddressError, DEFAULT_PORT, URL_SCHEME, parse_url};
 pub use frame::{FrameBuf, FrameError, MAX_FRAME, read_msg, write_msg};
 pub use msg::{ClientMsg, ErrCode, ServerMsg, SubMsg};
 pub use types::{

@@ -5,16 +5,23 @@ rust-version.workspace = true
 version.workspace = true
 license.workspace = true
 
+[features]
+# The Quinn client/server. On by default so desktop and server builds are unchanged; a
+# peer that drives a platform QUIC stack (HarmonyOS) takes the codec alone with
+# `default-features = false` and pulls in no TLS crate.
+default = ["quinn-transport"]
+quinn-transport = ["dep:quinn", "dep:rustls", "dep:rcgen"]
+
 [dependencies]
 mirai-core.workspace = true
 serde.workspace = true
 postcard.workspace = true
 zstd.workspace = true
-quinn.workspace = true
-rustls.workspace = true
-rcgen.workspace = true
-tokio.workspace = true
-bytes.workspace = true
+# `io-util` for the `AsyncRead`/`AsyncWrite` extension traits the frame codec is generic over.
+tokio = { workspace = true, features = ["io-util"] }
 thiserror.workspace = true
 bitflags.workspace = true
-tracing.workspace = true
+
+quinn = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+rcgen = { workspace = true, optional = true }

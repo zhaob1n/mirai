@@ -5,23 +5,40 @@ rust-version.workspace = true
 version.workspace = true
 license.workspace = true
 
+[features]
+# Both drivers, so desktop and server builds are unchanged. A consumer that only talks to
+# a `mirai-server` — the HarmonyOS client — takes `remote` alone and then builds no
+# subprocess handling, no KataGo JSON and no GPU calibration.
+default = ["local", "remote"]
+local = [
+    "dep:serde_json",
+    "dep:dashmap",
+    "tokio/process",
+    "tokio/io-util",
+]
+remote = ["dep:quinn", "mirai-proto/quinn-transport"]
+
 [dependencies]
 mirai-core.workspace = true
-mirai-proto.workspace = true
-serde.workspace = true
-serde_json.workspace = true
+# The codec and the wire types are always needed; the QUIC transport comes with `remote`.
+mirai-proto = { workspace = true, default-features = false }
 tokio.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
-dashmap.workspace = true
-quinn.workspace = true
-rustls.workspace = true
+
+serde_json = { workspace = true, optional = true }
+dashmap = { workspace = true, optional = true }
+quinn = { workspace = true, optional = true }
 
 [dev-dependencies]
 anyhow.workspace = true
 clap.workspace = true
 tracing-subscriber.workspace = true
+# `signal` is only used by `examples/probe.rs`, to close a QUIC connection on Ctrl-C
+# instead of leaving the server to notice via the idle timeout.
+tokio = { workspace = true, features = ["signal"] }
 
 [[example]]
 name = "probe"
 path = "examples/probe.rs"
+required-features = ["local", "remote"]

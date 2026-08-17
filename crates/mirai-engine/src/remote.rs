@@ -93,6 +93,9 @@ pub struct RemoteEngine {
     peer: Arc<Peer>,
     desc: EngineDesc,
     fingerprint: String,
+    /// The server's own identification from `Welcome`, e.g. `mirai-server/0.1.0`. Kept
+    /// because a client shows it next to the engine name.
+    server: String,
     next_sub: AtomicU32,
     cmd: mpsc::UnboundedSender<Cmd>,
     status: watch::Receiver<RemoteStatus>,
@@ -125,6 +128,7 @@ impl RemoteEngine {
         let session = handshake(url, token, expect_fingerprint).await?;
         let desc = pick_engine(&session.engines, engine.as_deref())?;
         let fingerprint = session.fingerprint.clone();
+        let server = session.server.clone();
 
         tracing::info!(
             url,
@@ -154,6 +158,7 @@ impl RemoteEngine {
             peer,
             desc,
             fingerprint,
+            server,
             next_sub: AtomicU32::new(1),
             cmd: cmd_tx,
             status: status_rx,
@@ -164,6 +169,11 @@ impl RemoteEngine {
     /// The server certificate's SHA-256, lowercase hex — the value to pin.
     pub fn fingerprint(&self) -> &str {
         &self.fingerprint
+    }
+
+    /// What the server called itself in `Welcome`, e.g. `mirai-server/0.1.0`.
+    pub fn server(&self) -> &str {
+        &self.server
     }
 
     pub fn connected(&self) -> bool {

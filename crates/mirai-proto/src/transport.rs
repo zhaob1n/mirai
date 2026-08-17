@@ -29,9 +29,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 
 use crate::sha256::fingerprint;
 
-pub const ALPN: &[u8] = b"mirai/1";
-pub const DEFAULT_PORT: u16 = 9678;
-pub const URL_SCHEME: &str = "mirai://";
+pub use crate::endpoint::{ALPN, AddressError, DEFAULT_PORT, URL_SCHEME, parse_url, sni_for};
 
 #[derive(Debug, thiserror::Error)]
 pub enum TransportError {
@@ -50,6 +48,12 @@ pub enum TransportError {
          refusing to connect"
     )]
     FingerprintMismatch { expected: String, got: String },
+}
+
+impl From<AddressError> for TransportError {
+    fn from(e: AddressError) -> TransportError {
+        TransportError::Address(e.url, e.reason)
+    }
 }
 
 /// Shared QUIC tuning. Keep-alives are short so a dead peer is noticed while a user is
@@ -194,6 +198,11 @@ impl ServerCertVerifier for TofuVerifier {
         _now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
         let got = fingerprint(end_entity);
+        // Recorded before the comparison, and on every outcome: when a pin does not match,
+        // this is the only place the certificate that was actually offered is visible, and
+        // `connect` needs it to explain the failure. Recording is not trusting — the caller
+        // persists a fingerprint only after a human agrees to it.
+        *self.observed.lock().expect("fingerprint mutex") = Some(got.clone());
         if let Some(expected) = &self.expected
             && *expected != got
         {
@@ -201,7 +210,6 @@ impl ServerCertVerifier for TofuVerifier {
                 "certificate fingerprint {got} does not match the pinned {expected}"
             )));
         }
-        *self.observed.lock().expect("fingerprint mutex") = Some(got);
         Ok(ServerCertVerified::assertion())
     }
 
@@ -264,37 +272,6 @@ pub fn client_endpoint(
     Ok(ep)
 }
 
-/// Splits `mirai://host:port` (or a bare `host:port` / `host`) into its parts.
-pub fn parse_url(url: &str) -> Result<(String, u16), TransportError> {
-    let rest = url.trim().strip_prefix(URL_SCHEME).unwrap_or(url.trim());
-    let rest = rest.trim_end_matches('/');
-    if rest.is_empty() {
-        return Err(TransportError::Address(
-            url.to_string(),
-            "empty host".into(),
-        ));
-    }
-    // IPv6 literal in brackets.
-    if let Some(close) = rest.strip_prefix('[').and_then(|r| r.find(']')) {
-        let host = &rest[1..=close];
-        let port = match rest[close + 2..].strip_prefix(':') {
-            Some(p) => p
-                .parse()
-                .map_err(|_| TransportError::Address(url.into(), "bad port".into()))?,
-            None => DEFAULT_PORT,
-        };
-        return Ok((host.to_string(), port));
-    }
-    match rest.rsplit_once(':') {
-        Some((h, p)) => Ok((
-            h.to_string(),
-            p.parse()
-                .map_err(|_| TransportError::Address(url.into(), "bad port".into()))?,
-        )),
-        None => Ok((rest.to_string(), DEFAULT_PORT)),
-    }
-}
-
 /// Resolves `mirai://host:port` and opens a QUIC connection.
 ///
 /// Returns the connection and the server's certificate fingerprint, which the caller
@@ -322,23 +299,40 @@ pub async fn connect(
 
     // A self-signed certificate is generated for its hostname; the verifier only compares
     // fingerprints, but rustls still needs a syntactically valid SNI name.
-    let sni = if host.parse::<std::net::IpAddr>().is_ok() {
-        "localhost".to_string()
-    } else {
-        host
-    };
+    let sni = sni_for(&host);
 
-    let conn = endpoint
+    let attempt = endpoint
         .connect(addr, &sni)
         .map_err(|e| TransportError::Connect(e.to_string()))?
-        .await
-        .map_err(|e| TransportError::Connect(e.to_string()))?;
+        .await;
 
-    let fp = observed
-        .lock()
-        .expect("fingerprint mutex")
-        .clone()
-        .unwrap_or_default();
+    // The verifier rejects a mismatched pin *inside* the handshake, so what surfaces here is
+    // a bare TLS alert. A user cannot act on "error 40"; they can act on being told which
+    // certificate was offered instead of the one they trusted.
+    let observed_fingerprint = || {
+        observed
+            .lock()
+            .expect("fingerprint mutex")
+            .clone()
+            .unwrap_or_default()
+    };
+    let conn = match attempt {
+        Ok(conn) => conn,
+        Err(e) => {
+            let got = observed_fingerprint();
+            if let Some(expected) = expected_fingerprint
+                && !got.is_empty()
+                && expected != got
+            {
+                return Err(TransportError::FingerprintMismatch { expected, got });
+            }
+            return Err(TransportError::Connect(e.to_string()));
+        }
+    };
+
+    // Defence in depth: a handshake that somehow succeeded against the wrong certificate
+    // must still not be used.
+    let fp = observed_fingerprint();
     if let Some(expected) = expected_fingerprint
         && expected != fp
     {
@@ -350,25 +344,6 @@ pub async fn connect(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn urls_parse_with_and_without_scheme_and_port() {
-        assert_eq!(
-            parse_url("mirai://192.168.1.10:9678").unwrap(),
-            ("192.168.1.10".to_string(), 9678)
-        );
-        assert_eq!(
-            parse_url("mirai://box.local").unwrap(),
-            ("box.local".to_string(), DEFAULT_PORT)
-        );
-        assert_eq!(parse_url("[::1]:1234").unwrap(), ("::1".to_string(), 1234));
-        assert_eq!(
-            parse_url("mirai://[fe80::1]").unwrap(),
-            ("fe80::1".to_string(), DEFAULT_PORT)
-        );
-        assert!(parse_url("mirai://host:notaport").is_err());
-        assert!(parse_url("mirai://").is_err());
-    }
 
     #[test]
     fn generated_cert_is_reused_and_private_key_is_restricted() {
@@ -399,5 +374,80 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Starts a real server on an ephemeral port, accepting connections, and returns its
+    /// address and certificate fingerprint.
+    ///
+    /// The accept loop is the point: without it the handshake never progresses, so the client
+    /// never sees a certificate and every failure looks like a timeout.
+    fn a_server(tag: &str) -> (std::net::SocketAddr, String) {
+        let dir = std::env::temp_dir().join(format!("mirai-tp-{}-{tag}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let (certs, key) = load_or_generate_cert(
+            &dir.join("cert.pem"),
+            &dir.join("key.pem"),
+            &["localhost".into()],
+        )
+        .expect("certificate");
+        let fp = fingerprint_of(&certs);
+        let listen = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 0));
+        let endpoint = server_endpoint(listen, certs, key).expect("server endpoint");
+        let addr = endpoint.local_addr().expect("bound");
+        tokio::spawn(async move {
+            while let Some(incoming) = endpoint.accept().await {
+                // A rejected handshake resolves to an error here; either way the client has
+                // by then seen the certificate, which is all these tests need.
+                let _ = incoming.await;
+            }
+        });
+        (addr, fp)
+    }
+
+    /// A pin mismatch is rejected inside the TLS handshake, so the transport error is a bare
+    /// alert. What a user needs is which certificate was offered instead — and a caller that
+    /// wants to re-prompt for trust needs to tell this apart from an unreachable server.
+    #[tokio::test]
+    async fn a_pin_mismatch_is_reported_as_a_mismatch_not_as_a_generic_failure() {
+        let (addr, real) = a_server("mismatch");
+        let wrong = "b".repeat(64);
+
+        let err = connect(&format!("mirai://{addr}"), Some(wrong.clone()))
+            .await
+            .expect_err("connected with the wrong pin");
+
+        match err {
+            TransportError::FingerprintMismatch { expected, got } => {
+                assert_eq!(expected, wrong);
+                assert_eq!(got, real, "the offered certificate must be named");
+            }
+            other => panic!("expected a fingerprint mismatch, got {other}"),
+        }
+    }
+
+    /// The matching pin must still connect, or the check above would be satisfied by a
+    /// client that simply refuses everything.
+    #[tokio::test]
+    async fn the_pinned_fingerprint_connects() {
+        let (addr, real) = a_server("match");
+
+        let (_conn, fp) = connect(&format!("mirai://{addr}"), Some(real.clone()))
+            .await
+            .expect("the pinned certificate was refused");
+        assert_eq!(fp, real);
+    }
+
+    /// An unreachable address must not be dressed up as a certificate problem.
+    #[tokio::test]
+    async fn an_unreachable_server_is_not_a_mismatch() {
+        // Nothing listens on UDP port 1; the handshake times out rather than being rejected.
+        let attempt = connect("mirai://127.0.0.1:1", Some("c".repeat(64)));
+        match tokio::time::timeout(Duration::from_secs(2), attempt).await {
+            Ok(Err(TransportError::FingerprintMismatch { .. })) => {
+                panic!("a silent port was reported as a certificate mismatch")
+            }
+            Ok(Err(_)) | Err(_) => {} // a connection error, or still trying: both are honest
+            Ok(Ok(_)) => panic!("connected to a port with no server on it"),
+        }
     }
 }
