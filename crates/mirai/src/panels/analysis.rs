@@ -447,10 +447,13 @@ impl AnalysisPanel {
 
     // -- blunders -----------------------------------------------------------------------
 
-    /// Fills the blunder list from a completed whole-game analysis.
+    /// Fills the blunder list from stored main-line analyses.
     pub fn set_blunders(&self, rows: Vec<Blunder>) {
+        self.clear_blunders();
+        if rows.is_empty() {
+            return;
+        }
         let inner = self.inner();
-        clear_list(&inner.blunder_list);
         let size = self.state().tree().info.size;
 
         let mut nodes = Vec::with_capacity(rows.len());
@@ -478,7 +481,7 @@ impl AnalysisPanel {
         inner
             .blunder_expander
             .set_label(Some(&format!("Blunders ({})", rows.len())));
-        inner.blunder_expander.set_visible(!rows.is_empty());
+        inner.blunder_expander.set_visible(true);
     }
 
     pub fn clear_blunders(&self) {

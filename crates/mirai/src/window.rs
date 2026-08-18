@@ -460,7 +460,7 @@ fn handle_change(ui: &Ui, change: Change) {
             ui.board.refresh_tree();
             ui.move_tree.refresh();
             ui.winrate.refresh();
-            ui.analysis.clear_blunders();
+            refresh_blunders(ui);
             ui.analysis.refresh();
         }
         Change::Cursor => {
@@ -493,6 +493,7 @@ fn handle_change(ui: &Ui, change: Change) {
         }
         Change::BatchProgress(_, _) => {
             ui.winrate.refresh();
+            refresh_blunders(ui);
         }
     }
 }
@@ -711,6 +712,16 @@ fn update_analysis_page(ui: &Ui) {
     let empty = ui.state.config().engine_profiles.is_empty();
     ui.analysis_stack
         .set_visible_child_name(if empty { "empty" } else { "panel" });
+}
+
+/// Rebuilds the sidebar blunder list from analyses already stored on the main line.
+///
+/// The list is a projection of the tree, not a leftover of the last sweep. Clearing it
+/// on every `Change::Tree` made a finished review vanish when a comment flushed or a
+/// result was written.
+fn refresh_blunders(ui: &Ui) {
+    let rows = crate::batch::blunders(&ui.state.tree(), ui.state.tree_epoch());
+    ui.analysis.set_blunders(rows);
 }
 
 // -- comment pane -----------------------------------------------------------------------

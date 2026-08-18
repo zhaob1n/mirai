@@ -257,7 +257,8 @@ better whoever just moved. Curves are drawn only from analysis actually stored o
 unanalysed stretches leave gaps. A whole-game analysis fills them in.
 
 **The blunder strip.** One bar per move, measured from the point of view of whoever played it,
-so you never have to work out whose turn it was.
+so you never have to work out whose turn it was. A bar is only drawn when both that move and
+the position before it have been analysed — an unanalysed stretch is a gap, not a mistake.
 
 | Win rate lost | Bar |
 |---|---|
@@ -268,7 +269,10 @@ so you never have to work out whose turn it was.
 
 **Whole-game analysis.** <kbd>Ctrl</kbd>+<kbd>A</kbd> sweeps the main line at **Visits per
 move** (100 by default), several positions at a time, with a progress banner and a **Cancel**
-button over the board. The curves fill in as each position lands. Cancelling keeps everything analysed so far. When it finishes, a **Blunders** list appears at the bottom of the Analysis page:
+button over the board. The curves fill in as each position lands. Cancelling keeps everything
+analysed so far. A **Blunders** list appears at the bottom of the Analysis page from the
+analyses stored on the main line — it updates as the sweep proceeds, stays when you navigate
+or edit a comment, and follows the record if the tree changes:
 
 ```
 ▾ Blunders (4)

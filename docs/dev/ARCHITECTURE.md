@@ -414,7 +414,9 @@ not a legality question. `Node` is all-public data — the tree owns structure, 
 `AnalysisSettings::stored_suggestion_limit` (at most 50 even when the display shows all), produced
 only by `mirai_client::analysis_of`, with ownership left
 quantised at one byte per point. It exists so the win-rate graph and move tree can draw a whole
-game after the live report for a node is gone. The live `Report` — all fields, still quantised —
+game after the live report for a node is gone. Live analysis writes it only when the new report
+has more visits than what is already stored, so a finished sweep is not replaced by the first
+handful of pondering visits. The live `Report` — all fields, still quantised —
 lives separately in `AppState::last_report()` and is discarded the moment the cursor moves.
 
 ```mermaid
@@ -675,7 +677,7 @@ that gains engines later cannot silently switch the client to a different one.
 handle, the active engine, the last report and the live-analysis pump. Widgets never hold pointers
 to each other: they take an `AppState` clone (a GObject ref), read from it, and subscribe to its
 notifications. Anything that looks like widget-to-widget coupling is either a hook installed once
-by `window::present` (board ↔ analysis panel PV preview, batch → panel blunder list, play → batch)
+by `window::present` (board ↔ analysis panel PV preview, play → batch)
 or a bug.
 
 Two implications: a new piece of shared state belongs on `AppState`, not on a widget; and a widget
@@ -701,12 +703,12 @@ refresh. This avoids several independently ordered signal callbacks observing ha
 
 | change | emitted by | dispatcher work |
 |---|---|---|
-| `Tree` | `with_tree_mut`, `set_tree`, batch completion | rebuild board/tree/graph projections, refresh analysis and window chrome |
+| `Tree` | `with_tree_mut`, `set_tree`, batch completion | rebuild board/tree/graph projections, recompute the blunder list, refresh analysis and window chrome |
 | `Cursor` | `set_cursor`, `play_move`, `set_tree` | flush/load comment, update scale/readout/clocks, refresh cursor projections |
 | `Report` | `set_report` and report clearing | refresh board textures, graph data, analysis rows and readout |
 | `Engine` | engine-state transitions and profile edits | rebuild menu/page/subtitle from `EngineState` |
 | `Toast(String)` | `AppState::toast` | add one `adw::Toast` |
-| `Play`, `BatchProgress` | the window-owned controllers | refresh play controls/clocks or batch progress |
+| `Play`, `BatchProgress` | the window-owned controllers | refresh play controls/clocks, or the graph and blunder list as the sweep lands |
 
 Ordering remains explicit: cursor state is current before `Report`, and every tree borrow is
 released before `changed` enters window code.

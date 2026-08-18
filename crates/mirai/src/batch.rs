@@ -256,15 +256,12 @@ impl BatchAnalysis {
         self.state.set_busy(false);
         self.state.changed(Change::Tree);
 
-        let rows = blunders(&self.state.tree(), self.state.tree_epoch());
-        self.state.toast(match rows.len() {
+        let n = blunders(&self.state.tree(), self.state.tree_epoch()).len();
+        self.state.toast(match n {
             0 => format!("Analysed {analysed} positions — no blunders"),
             1 => format!("Analysed {analysed} positions — 1 blunder"),
             n => format!("Analysed {analysed} positions — {n} blunders"),
         });
-        if let Some(window) = self.window.upgrade() {
-            window.with_ui(|ui| ui.analysis.set_blunders(rows));
-        }
     }
 
     fn fail(&self, message: String) {
