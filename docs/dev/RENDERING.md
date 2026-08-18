@@ -56,7 +56,8 @@ The window is whatever niri gives it, ~1486×1634 on a 6016×3384@60 Hz output a
 `niri msg action set-window-width/-height` is how it was resized for the sweep, and there is
 deliberately no in-process size knob because a tiling compositor ignores `set_default_size`.
 Pin the output before comparing runs: a second monitor at 160 Hz moves the deadline from
-16.7 ms to 6.2 ms.
+16.7 ms to 6.2 ms. Check `/proc/loadavg` too — a busy machine coarsens the animation into fewer,
+larger steps, which is enough to hide a whole class of defect (§6).
 
 ```sh
 tools/perf/dense-board.py /tmp/dense.sgf
@@ -195,11 +196,12 @@ nothing to keep.
 | showing it (board shrinks, stays width-limited) | 11–13 |
 
 **The rule: defer text while `cell` is moving, and only then.** Blobs, stones and marks are
-quads and always paint.
+quads and always paint. "Moving" needs one qualification, below: a single repeated value is not
+a stop.
 
 ```mermaid
 flowchart LR
-    S["snapshot()"] --> Q{"cell == cell of<br/>previous snapshot?"}
+    S["snapshot()"] --> Q{"cell repeated<br/>twice running?"}
     Q -- yes --> P["paint text"]
     Q -- no --> D["quads only"]
     D --> T["one-shot tick callback"]
@@ -239,18 +241,38 @@ the numbers on screen about four times as often for the same frame cost: 1 % aga
 frame either way out of ninety, and the machine was not idle. What makes the fold smooth is the
 quad rewrite of §4; this section only decides how much of the board's text survives it.
 
-Text switching on and off could in principle flicker, since `cell` can repeat mid-animation.
-Measured across 18 folds in four runs, it does not: the state changes at most twice per fold —
-one contiguous block off, then on — because `cell` either freezes early (hiding) or moves on
-almost every frame (showing).
+### One repeat is not a stop
 
-One frame still pays: the first paint at a size never seen before has to rasterise the glyphs,
-measured at 16.5 ms once, against 2.6 ms when the size is already in the cache (folding back to
-a previous width). That is inherent, and it is one frame at the end of an animation.
+`cell` can repeat *mid*-animation: width is an integer, and a spring near its end moves less
+than a pixel per frame. Taking one repeat as "settled" therefore paints text on a plateau
+frame — and that paint is always a cold one, because the previous frame skipped it, so it
+rasterises glyphs at a size the next frame throws away again. Measured on a 29-frame fold:
+`...NNNNN.....................N.N`, where the lone `N` cost 19.3 ms and blew its frame at
+30 ms. `745da27` predicted exactly this and was dismissed on the grounds that painting at an
+unchanged `cell` is cheap; it is cheap only when the *previous* frame painted too.
+
+So text waits for `CELL_SETTLED = 2` repeats. Same binary, six folds each, 60 Hz, move numbers
+on a 190-move record and no engine:
+
+| repeats required | frames where text came back and then vanished | frames over 1.6 × the interval |
+|---|---|---|
+| 1 | 3, in 2 of 6 folds | 3 |
+| **2** | **0** | 1 |
+
+The remaining one is the settle frame: the first paint at a size never seen before has to
+rasterise the glyphs, 16.5–21.8 ms, against 2.6 ms when that size is still cached (folding back
+to a width already visited). No rule avoids it — it is one frame at the end of an animation.
+A plateau long enough to fool two repeats is one the eye cannot tell from a stop, so treating
+it as a stop is the intended behaviour rather than a hole.
+
+**A loaded machine hides this.** The first six folds measured for this section produced 13–16
+animation frames each and never plateaued; the same folds on an idle machine produce 22–31, and
+that is where the flicker appears. Frames per animation is the variable to watch — it rises
+with idle CPU and with refresh rate, and a coarse animation simply cannot land on a repeat.
 
 Verified with `tools/perf/numbered-game.py` and **no engine at all**, so that nothing but the
-tick callback could bring the text back: numbers vanish for the 5 frames where `cell` moves,
-then return on the very next frame. A `shot:` screenshot cannot see this — capturing re-enters
+tick callback could bring the text back: numbers vanish while `cell` moves and return two
+frames after it stops. A `shot:` screenshot cannot see any of this — capturing re-enters
 `snapshot()` at the current `cell`, which by definition matches, so the capture always has its
 text. The frame timeline is the instrument here, not the screenshot.
 
@@ -267,8 +289,9 @@ problem.
 - If a new widget needs a path, keep the node's bounds small and its segment count low, then
   measure it with `MIRAI_FRAMES=1` before assuming it is fine.
 - Pango on the board is sized to `cell`. Text may be deferred while `cell` moves, never merely
-  because the widget was reallocated, and the redraw that brings it back belongs on a tick
-  callback. A new overlay that draws per-intersection text has to do the same.
+  because the widget was reallocated; "stopped" means two repeats, not one; and the redraw that
+  brings it back belongs on a tick callback. A new overlay that draws per-intersection text has
+  to do the same.
 - `MIRAI_SPIN` on a dense board is the cheapest regression check: it should stay a
   single-digit millisecond paint. `MIRAI_NO_LABEL_DEFER=1` is the check for §6 — with an engine
   running, folding the sidebar should go from 0–2 % missed frames to about 30 %.

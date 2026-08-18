@@ -114,6 +114,16 @@ const BLOB_ALPHA_DECAY: f32 = 5.0;
 /// blob. The engine's own choice keeps its numbers whatever its share.
 const LABEL_MIN_SHARE: f32 = 0.02;
 
+/// How many times `Layout::cell` must repeat before the board draws text again.
+///
+/// Two, not one. A spring can sit on the same integer width for a single frame near its end,
+/// so one repeat is no evidence that it has stopped — and accepting one was measured doing
+/// real damage: on a 31-frame fold the board took a mid-animation plateau for a stop, paid
+/// 19 ms rasterising glyphs at a size it then threw away, blew that frame at 30 ms, and
+/// dropped the text again on the next. A plateau long enough to fool two repeats is one the
+/// eye cannot tell from a stop anyway.
+const CELL_SETTLED: u8 = 2;
+
 #[inline]
 fn lerp8(a: u8, b: u8, t: f32) -> u8 {
     (a as f32 + (b as f32 - a as f32) * t)
@@ -282,6 +292,8 @@ mod imp {
         /// moves keeps its text for free, while a board whose `cell` changed re-rasterises
         /// every digit. This is the only thing worth deferring on.
         pub drawn_cell: Cell<Option<f32>>,
+        /// Consecutive snapshots that have shared `drawn_cell`; see [`CELL_SETTLED`].
+        pub cell_repeats: Cell<u8>,
         /// Set while the one-shot tick callback that repaints at a settled `cell` is queued.
         pub label_tick: Cell<bool>,
     }
@@ -473,18 +485,20 @@ mod imp {
                 return;
             }
             crate::render_probe::trace("board-cell", l.cell);
-            // Text is deferred exactly while `cell` is moving. GSK caches a rasterised glyph
-            // under its `PangoFont`, so a board that only moves or recentres keeps every
-            // digit for free and a board whose `cell` changed pays for all of them again —
-            // measured at 0.5-1.9 ms against 11-17 ms on one fold (`RENDERING.md` §6).
-            // Deferring on the allocation instead was both too eager, suppressing the frames
-            // that were already cheap, and unsound: GTK skips `size_allocate` when the
-            // pixel size is unchanged, so the signal goes quiet exactly on the plateau
-            // frames of a spring.
-            let labels = match self.drawn_cell.replace(Some(l.cell)) {
-                Some(previous) => previous == l.cell,
-                None => true,
-            } || !crate::render_probe::label_defer();
+            // Text is deferred while `cell` is moving. GSK caches a rasterised glyph under its
+            // `PangoFont`, so a board that only moves or recentres keeps every digit for free
+            // and a board whose `cell` changed pays for all of them again — measured at
+            // 0.5-1.9 ms against 11-19 ms (`RENDERING.md` §6). Deferring on the allocation
+            // instead was both too eager, suppressing frames that were already cheap, and
+            // unsound: GTK skips `size_allocate` when the pixel size is unchanged, so that
+            // signal goes quiet exactly on a spring's plateau frames.
+            let repeats = if self.drawn_cell.replace(Some(l.cell)) == Some(l.cell) {
+                self.cell_repeats.get().saturating_add(1)
+            } else {
+                0
+            };
+            self.cell_repeats.set(repeats);
+            let labels = repeats >= CELL_SETTLED || !crate::render_probe::label_defer();
             if !labels {
                 self.redraw_next_frame();
             }

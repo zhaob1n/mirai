@@ -203,11 +203,12 @@ Each of these cost real debugging time. They are documented so they cost you non
 | A widget refuses to shrink, or eats the window | `gtk::Paned` resize/shrink flags. A fixed strip wants `resize_end_child(false)` plus a size request, not a hardcoded `position`. |
 | A title widget is invisible | `adw::HeaderBar::show_title(false)` hides the *title widget*, not just the text. |
 | A screen capture of the running app is black | Wayland. The XWayland root window is not composited. Use the built-in harness, which renders through the app's own GSK renderer. |
-| The empty-board win rate is ~35.6%, not ~50% | Correct for the bundled network. Settle such questions by running raw `katago analysis` with the identical query and comparing; do not tune our code toward an expectation. |
 | A "did not shut down cleanly" prompt after doing nothing | Guarded now by `tree_has_content`: an autosave with no move, setup stone or comment is neither written nor offered. |
 | A `size_allocate` override does not run on every animation frame | `gtk_widget_allocate` returns early when the pixel size, baseline and `alloc_needed` are all unchanged, so the vfunc goes quiet exactly on the plateau frames of a spring. Never use it as "something is still animating". |
 | A `queue_draw` from inside `snapshot()` is ignored | GTK clears `draw_needed` *after* the vfunc returns. Ask for the next frame with a tick callback, not a GLib idle — an idle runs between frames at a priority the frame clock outranks. |
 | Board text stutters an animation, but only in one direction | Glyphs are cached per `PangoFont`, so moving the board is free and resizing it is not. `Layout::cell` only tracks the sidebar while the board is width-limited ([`docs/dev/RENDERING.md`](docs/dev/RENDERING.md) §6). |
+| A geometry value repeating for one frame is not the animation ending | Width is an integer and a spring's last frames move under a pixel. Deciding "settled" on one repeat costs a wasted cold paint *and* a visible flicker; `BoardView` waits for two ([`docs/dev/RENDERING.md`](docs/dev/RENDERING.md) §6). |
+| A frame-timing bug that reproduces only on an idle machine | Load coarsens animations — 13–16 frames per fold instead of 22–31 — and a coarse animation never lands on a repeated value. Check `/proc/loadavg` before trusting a clean run. |
 
 ---
 
