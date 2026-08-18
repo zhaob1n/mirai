@@ -14,6 +14,15 @@ pub fn analysis_of(report: &Report, max_candidates: usize) -> NodeAnalysis {
     mirai_client::analysis_of(report, max_candidates)
 }
 
+/// `true` when a newly arrived evaluation should replace what the node already stores.
+///
+/// Live analysis streams from a handful of visits up. Writing every snapshot would
+/// clobber a finished whole-game sweep with a noisier one and make blunder bars flicker
+/// off as the user sits on a move.
+pub fn replaces_stored_analysis(existing_visits: Option<u32>, new_visits: u32) -> bool {
+    existing_visits.is_none_or(|v| v < new_visits)
+}
+
 /// SI-abbreviated visit count: `947`, `1.2k`, `34k`, `1.1m`.
 pub fn si_visits(v: u32) -> String {
     match v {
@@ -84,5 +93,13 @@ mod tests {
         assert_eq!(clock_text(600.0), "10:00");
         assert_eq!(clock_text(3661.0), "1:01:01");
         assert_eq!(clock_text(-5.0), "0:00");
+    }
+
+    #[test]
+    fn a_shallower_search_does_not_replace_stored_analysis() {
+        assert!(replaces_stored_analysis(None, 8));
+        assert!(replaces_stored_analysis(Some(100), 101));
+        assert!(!replaces_stored_analysis(Some(100), 100));
+        assert!(!replaces_stored_analysis(Some(100), 8));
     }
 }

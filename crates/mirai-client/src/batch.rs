@@ -448,6 +448,20 @@ mod tests {
     }
 
     #[test]
+    fn an_unanalysed_parent_is_not_a_blunder() {
+        let mut tree = game(3);
+        let ids: Vec<_> = tree.main_line();
+        tree.set_analysis(ids[1], Some(stored(0.50, None)));
+        tree.set_analysis(ids[3], Some(stored(0.95, None)));
+        assert!(blunders(&tree).is_empty());
+
+        tree.set_analysis(ids[2], Some(stored(0.90, None)));
+        let found = blunders(&tree);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].node, ids[2]);
+    }
+
+    #[test]
     fn in_flight_scales_with_threads_and_saturates_at_sixteen() {
         assert_eq!(in_flight(1), 2);
         assert_eq!(in_flight(8), 16);

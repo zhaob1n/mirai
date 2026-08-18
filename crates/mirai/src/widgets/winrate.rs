@@ -17,7 +17,7 @@ use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 
 use mirai_client::batch::is_blunder_drop;
-use mirai_core::{Color, NodeId};
+use mirai_core::{Color, GameTree, NodeId};
 
 use crate::app::AppState;
 use crate::widgets::paint::{fill_disc, hline};
@@ -89,6 +89,31 @@ struct Sample {
     /// Blunder severity of the move *leading into* this node.
     blunder: Severity,
 }
+
+/// One sample per main-line node. Blunders use the immediate parent only: an unanalysed
+/// gap is not a mistake, matching [`mirai_client::batch::blunders`].
+fn collect_samples(tree: &GameTree, line: &[NodeId]) -> Vec<Sample> {
+    let mut samples = Vec::with_capacity(line.len());
+    let mut prev_winrate: Option<f32> = None;
+    for &id in line {
+        let node = tree.node(id);
+        let analysis = node.analysis.as_ref();
+        let winrate = analysis.map(|a| a.winrate);
+        let lead = analysis.map(|a| a.score_lead);
+        let blunder = match (node.mv, prev_winrate, winrate) {
+            (Some((mover, _)), Some(before), Some(after)) => blunder_severity(mover, before, after),
+            _ => Severity::None,
+        };
+        samples.push(Sample {
+            winrate,
+            lead,
+            blunder,
+        });
+        prev_winrate = winrate;
+    }
+    samples
+}
+
 #[derive(Default)]
 struct GraphProjection {
     line: Vec<NodeId>,
@@ -353,31 +378,9 @@ impl WinrateGraph {
             .count()
             .saturating_sub(1);
 
-        let mut samples = Vec::with_capacity(line.len());
-        let mut prev_winrate: Option<f32> = None;
-        for &id in &line {
-            let node = tree.node(id);
-            let analysis = node.analysis.as_ref();
-            let winrate = analysis.map(|a| a.winrate);
-            let lead = analysis.map(|a| a.score_lead);
-            let blunder = match (node.mv, prev_winrate, winrate) {
-                (Some((mover, _)), Some(before), Some(after)) => {
-                    blunder_severity(mover, before, after)
-                }
-                _ => Severity::None,
-            };
-            samples.push(Sample {
-                winrate,
-                lead,
-                blunder,
-            });
-            if winrate.is_some() {
-                prev_winrate = winrate;
-            }
-        }
         GraphProjection {
+            samples: collect_samples(&tree, &line),
             line,
-            samples,
             cursor_index,
         }
     }
@@ -661,6 +664,49 @@ mod tests {
             blunder_severity(Color::Black, before, after),
             Severity::None
         );
+    }
+
+    #[test]
+    fn a_gap_is_not_a_blunder_bar() {
+        use mirai_core::{GameInfo, NodeAnalysis, RuleSet, Size};
+
+        let size = Size::square(19);
+        let mut tree = GameTree::new(GameInfo::new(size, RuleSet::Chinese));
+        let mut ids = vec![tree.root()];
+        for (c, gtp) in [
+            (Color::Black, "D4"),
+            (Color::White, "Q16"),
+            (Color::Black, "Q4"),
+        ] {
+            let at = *ids.last().unwrap();
+            ids.push(tree.play(at, c, size.from_gtp(gtp).unwrap()).unwrap());
+        }
+
+        let stored = |winrate: f32| NodeAnalysis {
+            visits: 1000,
+            winrate,
+            score_lead: 0.0,
+            score_stdev: 1.0,
+            candidates: vec![],
+            ownership: None,
+        };
+        // Move 1 at 80 %, move 3 at 40 %, move 2 empty. Spanning the gap would paint
+        // move 3 as a 40-point drop that then vanishes when move 2 lands.
+        tree.set_analysis(ids[1], Some(stored(0.80)));
+        tree.set_analysis(ids[3], Some(stored(0.40)));
+        let samples = collect_samples(&tree, &tree.main_line());
+        assert_eq!(samples[2].blunder, Severity::None);
+        assert_eq!(samples[3].blunder, Severity::None);
+
+        tree.set_analysis(ids[2], Some(stored(0.41)));
+        let samples = collect_samples(&tree, &tree.main_line());
+        assert_eq!(samples[2].blunder, Severity::None);
+        assert_eq!(samples[3].blunder, Severity::None);
+
+        tree.set_analysis(ids[2], Some(stored(0.95)));
+        let samples = collect_samples(&tree, &tree.main_line());
+        assert_eq!(samples[2].blunder, Severity::Major);
+        assert_eq!(samples[3].blunder, Severity::Major);
     }
 
     #[test]

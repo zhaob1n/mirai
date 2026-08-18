@@ -720,8 +720,10 @@ impl AppState {
         *imp.pump.borrow_mut() = Some(handle);
     }
 
-    /// Stores a report and notifies observers. Also caches it into the node so the winrate
-    /// graph and the move tree have something to draw after navigating away.
+    /// Stores a report and notifies observers. The live [`Report`] always replaces the
+    /// previous one; the node's cached [`mirai_core::NodeAnalysis`] is updated only when
+    /// this report searched deeper, so a whole-game sweep is not clobbered by the first
+    /// handful of live visits.
     pub fn set_report(&self, report: Arc<Report>) {
         let cursor = self.cursor();
         let max = self.config().analysis.stored_suggestion_limit();
@@ -733,10 +735,13 @@ impl AppState {
         // is borrowed and the `Arc` moves into the cell last instead of being cloned into
         // it. The dispatcher below is the first thing that can observe either.
         let analysis = crate::util::analysis_of(&report, max);
-        self.imp()
-            .tree
-            .borrow_mut()
-            .set_analysis(cursor, Some(analysis));
+        {
+            let mut tree = self.imp().tree.borrow_mut();
+            let existing = tree.node(cursor).analysis.as_ref().map(|a| a.visits);
+            if crate::util::replaces_stored_analysis(existing, analysis.visits) {
+                tree.set_analysis(cursor, Some(analysis));
+            }
+        }
         self.imp().report.replace(Some(report));
         self.changed(Change::Report);
     }
