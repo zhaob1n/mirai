@@ -132,10 +132,15 @@ pub struct Ui {
 }
 
 impl Ui {
-    fn window(&self) -> MiraiWindow {
-        self.window
-            .upgrade()
-            .expect("window state outlived its GObject owner")
+    /// This window, while it still exists.
+    ///
+    /// A `WeakRef` *is* an `Option`, and `expect`ing that away was the one sharp edge left in
+    /// `Ui`: the value is dropped from `MiraiWindow::dispose`, where the reference may already
+    /// be cleared, so any future line in the release path that wanted the window would have
+    /// panicked during teardown. Callers that only need a dialog parent pass this straight
+    /// through as `Option`.
+    fn window(&self) -> Option<MiraiWindow> {
+        self.window.upgrade()
     }
 
     fn weak_window(&self) -> glib::WeakRef<MiraiWindow> {
@@ -148,11 +153,12 @@ impl Drop for Ui {
     /// `close-request`, its `dispose` and the application's `shutdown` all reduce to
     /// [`MiraiWindow::take_ui`].
     ///
-    /// Nothing here may reach back through `self.window`. A `Ui` is dropped from
-    /// `MiraiWindow::dispose`, where the weak reference may already be cleared, and it is
-    /// taken out of the window before it drops, so every [`AppState`] hook that tries to
-    /// re-enter finds no state and does nothing. Work that genuinely needs the widget tree
-    /// belongs at the call site, ahead of the drop.
+    /// The window itself is unreachable from here in every sense that matters. `take_ui`
+    /// runs first, so every [`AppState`] hook that tries to re-enter through `with_ui` finds
+    /// no state and does nothing, and [`Ui::window`] hands back an `Option` that is already
+    /// `None` once `dispose` has cleared the weak reference. Work that genuinely needs the
+    /// widget tree therefore belongs at the call site, ahead of the drop — it cannot be made
+    /// to work by reaching for it in here.
     fn drop(&mut self) {
         // Ordering, not necessity: the slots would release themselves when `tasks` drops,
         // but the timers must not fire while the tree is being flushed.
@@ -345,7 +351,7 @@ pub fn present(
         autosave: next_autosave_file(),
     });
     window.with_ui(|ui| {
-        install_actions(ui);
+        install_actions(&window, ui);
         connect_state(ui);
         connect_comment(ui);
         connect_scale(ui);
@@ -390,10 +396,8 @@ pub fn present(
         .ok()
         .and_then(|mut stale| stale.pop());
 
-    window.with_ui(|ui| {
-        install_autosave(ui);
-        connect_close(ui);
-    });
+    window.with_ui(install_autosave);
+    connect_close(&window);
 
     // Start the configured engine, if any.
     let active = state.config().active_profile().map(|p| p.name.clone());
@@ -519,8 +523,7 @@ fn connect_comment(ui: &Ui) {
     ui.comment.add_controller(focus);
 }
 
-fn connect_close(ui: &Ui) {
-    let window = ui.window();
+fn connect_close(window: &MiraiWindow) {
     let weak = window.downgrade();
     window.connect_close_request(move |_| {
         if let Some(window) = weak.upgrade() {
@@ -661,7 +664,9 @@ fn update_title(ui: &Ui) {
         name
     };
     ui.title.set_title(&shown);
-    ui.window().set_title(Some(&format!("{shown} — mirai")));
+    if let Some(window) = ui.window() {
+        window.set_title(Some(&format!("{shown} — mirai")));
+    }
 }
 
 fn update_subtitle(ui: &Ui) {
@@ -880,7 +885,7 @@ fn choose_game(ui: &Ui, trees: Vec<GameTree>, path: Option<PathBuf>, label: Stri
             with_window_ui(&weak, |ui| adopt(ui, tree, path.clone()));
         }
     });
-    dialog.present(Some(&ui.window()));
+    dialog.present(ui.window().as_ref());
 }
 
 fn do_open(ui: &Ui) {
@@ -889,7 +894,7 @@ fn do_open(ui: &Ui) {
     let (filters, default) = sgf_filters();
     dialog.set_filters(Some(&filters));
     dialog.set_default_filter(Some(&default));
-    let future = dialog.open_future(Some(&ui.window()));
+    let future = dialog.open_future(ui.window().as_ref());
     let weak = ui.weak_window();
     glib::spawn_future_local(async move {
         match future.await {
@@ -911,8 +916,9 @@ fn do_open(ui: &Ui) {
 }
 
 fn do_download_fox(ui: &Ui) {
+    let Some(window) = ui.window() else { return };
     let weak = ui.weak_window();
-    crate::fox::present(&ui.window(), &ui.fox_picker, move |download| {
+    crate::fox::present(&window, &ui.fox_picker, move |download| {
         with_window_ui(&weak, |ui| {
             let moves = download.tree.main_line().len().saturating_sub(1);
             adopt(ui, download.tree, None);
@@ -975,7 +981,7 @@ fn do_save_as(ui: &Ui) {
         .map(|p| file_label(p))
         .unwrap_or_else(|| "game.sgf".to_string());
     dialog.set_initial_name(Some(&suggested));
-    let future = dialog.save_future(Some(&ui.window()));
+    let future = dialog.save_future(ui.window().as_ref());
     let weak = ui.weak_window();
     glib::spawn_future_local(async move {
         match future.await {
@@ -1143,7 +1149,7 @@ fn offer_restore(ui: &Ui, autosave: PathBuf) {
         }
         let _ = std::fs::remove_file(&autosave);
     });
-    dialog.present(Some(&ui.window()));
+    dialog.present(ui.window().as_ref());
 }
 
 // -- score estimate ---------------------------------------------------------------------
@@ -1230,7 +1236,7 @@ fn show_estimate(ui: &Ui, report: &Report) {
     dialog.add_responses(&[("close", "Close")]);
     dialog.set_default_response(Some("close"));
     dialog.set_close_response("close");
-    dialog.present(Some(&ui.window()));
+    dialog.present(ui.window().as_ref());
 }
 
 // -- dialogs ----------------------------------------------------------------------------
@@ -1292,7 +1298,7 @@ fn show_shortcuts(ui: &Ui) {
         }
         dialog.add(section);
     }
-    dialog.present(Some(&ui.window()));
+    dialog.present(ui.window().as_ref());
 }
 
 fn show_about(ui: &Ui) {
@@ -1303,7 +1309,7 @@ fn show_about(ui: &Ui) {
         .developer_name("Huang Zhaobin")
         .comments("A KataGo analysis and playing board for GNOME.")
         .build();
-    about.present(Some(&ui.window()));
+    about.present(ui.window().as_ref());
 }
 
 // -- actions ----------------------------------------------------------------------------
@@ -1327,7 +1333,7 @@ fn delete_branch(ui: &Ui) {
 /// The body of a window action.
 type UiAction = Box<dyn Fn(&Ui)>;
 
-fn install_actions(ui: &Ui) {
+fn install_actions(window: &MiraiWindow, ui: &Ui) {
     let group = gio::SimpleActionGroup::new();
     let weak = ui.weak_window();
     let add = |name: &str, f: UiAction| {
@@ -1404,15 +1410,11 @@ fn install_actions(ui: &Ui) {
         numbers.set_state(&state.show_move_numbers().to_variant());
     });
 
-    let split = ui.window().split();
-    let sidebar = toggle(
-        "toggle-sidebar",
-        split.shows_sidebar(),
-        Box::new(|ui| {
-            let split = ui.window().split();
-            split.set_show_sidebar(!split.shows_sidebar());
-        }),
-    );
+    let split = window.split();
+    let sidebar = toggle("toggle-sidebar", split.shows_sidebar(), {
+        let split = split.clone();
+        Box::new(move |_: &Ui| split.set_show_sidebar(!split.shows_sidebar()))
+    });
     split.connect_show_sidebar_notify(move |split| {
         sidebar.set_state(&split.shows_sidebar().to_variant());
     });
@@ -1509,8 +1511,9 @@ fn install_actions(ui: &Ui) {
     add(
         "new-game",
         Box::new(|ui| {
+            let Some(window) = ui.window() else { return };
             let weak = ui.weak_window();
-            crate::new_game::present(&ui.window(), &ui.state, move |setup| {
+            crate::new_game::present(&window, &ui.state, move |setup| {
                 with_window_ui(&weak, |ui| {
                     ui.batch.cancel();
                     ui.comment_node.set(None);
@@ -1523,7 +1526,11 @@ fn install_actions(ui: &Ui) {
     );
     add(
         "preferences",
-        Box::new(|ui| crate::prefs::present(&ui.window(), &ui.state)),
+        Box::new(|ui| {
+            if let Some(window) = ui.window() {
+                crate::prefs::present(&window, &ui.state);
+            }
+        }),
     );
     add("shortcuts", Box::new(show_shortcuts));
     add("about", Box::new(show_about));
@@ -1547,7 +1554,6 @@ fn install_actions(ui: &Ui) {
     }
     group.add_action(&set_engine);
 
-    let window = ui.window();
     window.insert_action_group("win", Some(&group));
 
     if let Some(app) = window.application() {

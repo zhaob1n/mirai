@@ -765,8 +765,12 @@ the harness `quit` step and a termination signal all release exactly like closin
 itself is `Ui`'s `Drop`: it flushes the comment, stops the timers, stops play and batch work,
 cancels AppState startup/analysis tasks, saves config, clears the engine, and drops an
 `AutosaveFile` which deletes the file it names. Expressing it as `Drop` is what makes a
-forgotten exit path impossible. Nothing in it may reach back through `Ui::window`: a `Ui` is
-dropped from `dispose`, where that weak reference may already be cleared.
+forgotten exit path impossible. Nothing in it can reach back at the window: `take_ui` runs
+first, so an `AppState` hook re-entering through `with_ui` finds no state, and `Ui::window`
+returns an `Option` — `None` by the time `dispose` has cleared the weak reference — rather
+than the `expect` it used to be. Anything that needs the widget tree belongs at the call site,
+ahead of the drop. That is also why `connect_close` and `install_actions` take the window as an
+argument: `present` has it, and neither wants a second route to it.
 
 Transient futures may retain GTK objects only when their finite lifetime is explicit. Calibration
 uses a single `CalibrationRun` owner taken by either completion or cancellation; its window-added
