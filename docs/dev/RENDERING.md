@@ -50,11 +50,13 @@ branch, because it gets reused:
   setup stones carry no numbers, so `dense-board.py` cannot exercise the text passes.
 
 Runs use an isolated `XDG_CONFIG_HOME`/`XDG_DATA_HOME`, whose `[ui]` block has to be reset
-between runs because the view toggles are persisted. §3–§5 ran with no engine, so nothing
-in those numbers is KataGo's — and, it turned out, nothing in them is analysis labels either
-(§6). The window is whatever niri gives it, ~1486×1634 on a 6016×3384@60 Hz output at scale 2;
-`niri msg action set-window-width/-height` was used for the size sweep. Pin the output before
-comparing runs: a second monitor at 160 Hz changes the deadline from 16.7 ms to 6.2 ms.
+between runs because the view toggles are persisted. §3–§5 ran with no engine, so nothing in
+those numbers is KataGo's — and, it turned out, nothing in them is analysis labels either (§6).
+The window is whatever niri gives it, ~1486×1634 on a 6016×3384@60 Hz output at scale 2;
+`niri msg action set-window-width/-height` is how it was resized for the sweep, and there is
+deliberately no in-process size knob because a tiling compositor ignores `set_default_size`.
+Pin the output before comparing runs: a second monitor at 160 Hz moves the deadline from
+16.7 ms to 6.2 ms.
 
 ```sh
 tools/perf/dense-board.py /tmp/dense.sgf
@@ -183,8 +185,9 @@ re-rasterises all of them. Measured on one fold, in the same run: the candidate 
 `cell` moved.
 
 `cell` is `min(width/units_x, height/units_y)`, so it tracks the sidebar only while the board
-is width-limited. That makes the two directions of the same animation behave differently, which
-is why the first attempt at this looked fine and stuttered anyway:
+is width-limited. That makes the two directions of one animation behave differently, and it is
+why the first attempt at this looked right: it *was* inside budget, it just hid text that cost
+nothing to keep.
 
 | fold, ~15 animation frames | frames where `cell` changed |
 |---|---|
@@ -203,18 +206,20 @@ flowchart LR
     T --> S
 ```
 
-Two GTK details decide the shape of that loop, and the first version of this fix got both
-wrong:
+Two GTK details decide the shape of that loop:
 
 - **The allocation is not the signal.** `gtk_widget_allocate` returns early when
   `!alloc_needed && !size_changed && !baseline_changed`, so `size_allocate` goes quiet exactly
-  on the plateau frames of a spring — while a fold that leaves `cell` alone still allocates on
-  every frame. Keying on it therefore suppressed the frames that were already cheap and could
-  fall silent on the ones that were not.
+  on the plateau frames a spring produces near its end — while a fold that leaves `cell` alone
+  still allocates on every frame. Keying on it therefore suppressed frames that were already
+  cheap, and can fall silent on frames that are not. The over-suppression was measured; the
+  silence follows from the code path and was never reproduced here, so treat it as unsound
+  rather than as a bug that bit.
 - **`queue_draw` inside `snapshot` is lost.** `gtk_widget_do_snapshot` clears `draw_needed`
-  *after* the vfunc returns. A GLib idle does get the redraw out, but it runs between frames at
-  a priority the frame clock outranks, so it can land its repaint in the middle of the
-  animation. A tick callback runs in the next frame's update phase, ahead of layout and paint.
+  *after* the vfunc returns, so the deferral needs *some* cross-frame hop — the first version
+  was right about that. A GLib idle is the wrong one: it runs between frames at a priority the
+  frame clock outranks, so its repaint can land mid-animation. A tick callback runs in the next
+  frame's update phase, ahead of layout and paint, and is served by that same frame.
 
 No timeout, in either version: libadwaita's split-view animation is a spring, not a duration,
 and `show-sidebar` flips when F9 is pressed rather than when the pixels settle.
@@ -229,8 +234,15 @@ per run, debug build, 6016×3384@60 Hz at scale 2. `over` counts animation frame
 | defer whenever `size_allocate` ran | 12 % | 4.3 ms | 1 % |
 | defer while `cell` moves | **44 %** | 4.0 ms | 2 % |
 
-The deferral is worth having — 29 % of frames miss otherwise — and keying it on `cell` keeps
-the numbers on screen about four times as often for the same frame cost.
+The deferral is worth having — 29 % of frames miss without it. Keying it on `cell` then keeps
+the numbers on screen about four times as often for the same frame cost: 1 % against 2 % is one
+frame either way out of ninety, and the machine was not idle. What makes the fold smooth is the
+quad rewrite of §4; this section only decides how much of the board's text survives it.
+
+Text switching on and off could in principle flicker, since `cell` can repeat mid-animation.
+Measured across 18 folds in four runs, it does not: the state changes at most twice per fold —
+one contiguous block off, then on — because `cell` either freezes early (hiding) or moves on
+almost every frame (showing).
 
 One frame still pays: the first paint at a size never seen before has to rasterise the glyphs,
 measured at 16.5 ms once, against 2.6 ms when the size is already in the cache (folding back to

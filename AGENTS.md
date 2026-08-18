@@ -112,9 +112,11 @@ captures must be explicitly transient and own one teardown path.
 drawn with `gsk` in `snapshot()`. No `GtkDrawingArea`, no cairo. Tree-derived projections,
 heat-map textures and reusable render nodes are built outside `snapshot()`. Draw with quads —
 colour nodes, border nodes, rounded clips, the helpers in `widgets/paint.rs` — and never hand
-GSK a `fill` or `stroke` node for a shape they can draw: GSK rasterises each new path node
-once, and rebuilding board-sized paths every frame cost 30–120 ms a frame
-([`docs/dev/RENDERING.md`](docs/dev/RENDERING.md)).
+GSK a `fill` or `stroke` node for a shape they can draw: GSK keys its rasterisation cache on
+the path pointer, so a path rebuilt every frame always misses, and rebuilding board-sized paths
+cost 30–120 ms a frame. Text is cached per `PangoFont` instead, never per position, so board
+text may be deferred while `Layout::cell` moves — never merely because the widget was
+reallocated ([`docs/dev/RENDERING.md`](docs/dev/RENDERING.md)).
 
 **INV-10 — borrow and identity discipline.** Release every `RefCell` tree borrow before calling
 `changed`, `set_cursor`, `set_report` or `toast`; dispatcher code borrows the tree again.
@@ -184,6 +186,9 @@ defaults, or source text.
 - Refactor with no behaviour change → no new test; the existing suite is the check.
 - GUI change → drive it and look at it. Visual confirmation *is* the proof; see the harness
   recipes in [`docs/dev/TESTING.md`](docs/dev/TESTING.md).
+- Per-frame cost → a screenshot cannot prove it and the suite cannot see it. Measure with
+  `MIRAI_FRAMES=1` and `tools/perf/`, and quote the numbers
+  ([`docs/dev/RENDERING.md`](docs/dev/RENDERING.md)).
 
 ---
 

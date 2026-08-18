@@ -207,9 +207,12 @@ Board, win-rate graph and move tree are `gtk::Widget` subclasses drawing in `sna
   are uploaded once per report as `gdk::MemoryTexture`s; the win-rate graph caches its base
   render node and redraws only the cursor marker while navigating. Widgets consume pushed
   projections, so `snapshot()` does not walk `AppState` or rebuild tree-derived data.
-- **Costs.** No cairo conveniences: circles are `gsk::PathBuilder` paths and text uses
-  `pango::Layout`. Projection and cache invalidation are explicit. The honest verification path
-  is the app's own renderer through `harness.rs`.
+- **Costs.** No cairo conveniences: a circle is a colour node inside a rounded clip
+  (`widgets/paint.rs`), and text is a `pango::Layout` per label. Projection and cache
+  invalidation are explicit. Text is deferred while the board is being resized, because GSK
+  caches a glyph per `PangoFont` — so moving the board is free and rescaling it is not
+  ([`RENDERING.md`](RENDERING.md) §6). The honest verification path is the app's own renderer
+  through `harness.rs`, plus `render_probe.rs` for anything per-frame.
 
 ---
 
