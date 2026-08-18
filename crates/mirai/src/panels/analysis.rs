@@ -148,7 +148,7 @@ mod imp {
         pub blunder_expander: TemplateChild<gtk::Expander>,
         #[template_child]
         pub blunder_list: TemplateChild<gtk::ListBox>,
-        pub window: glib::WeakRef<crate::window_shell::MiraiWindow>,
+        pub state: OnceCell<AppState>,
         pub inner: OnceCell<super::Inner>,
         pub pv_hooks: RefCell<Vec<PvHook>>,
         /// The nodes the blunder rows jump to, parallel to the list box's children.
@@ -187,20 +187,24 @@ glib::wrapper! {
 }
 
 impl AnalysisPanel {
-    pub fn new(window: &crate::window_shell::MiraiWindow) -> AnalysisPanel {
+    pub fn new(state: &AppState) -> AnalysisPanel {
         let this: AnalysisPanel = glib::Object::new();
-        this.imp().window.set(Some(window));
+        this.imp()
+            .state
+            .set(state.clone())
+            .expect("a fresh AnalysisPanel cannot already hold a state");
         this.imp().last_pv.set(gtk::INVALID_LIST_POSITION);
         this.build();
         this
     }
 
-    pub fn state(&self) -> AppState {
+    /// The window state this panel reads, held directly rather than fetched back through the
+    /// window on every report.
+    pub fn state(&self) -> &AppState {
         self.imp()
-            .window
-            .upgrade()
-            .and_then(|window| window.with_ui(|ui| ui.state.clone()))
-            .expect("AnalysisPanel has no live window state")
+            .state
+            .get()
+            .expect("AnalysisPanel was built without a state")
     }
 
     fn inner(&self) -> &Inner {

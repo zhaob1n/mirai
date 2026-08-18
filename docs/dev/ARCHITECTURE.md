@@ -283,13 +283,13 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 | file | owns | key symbols |
 |---|---|---|
 | `build.rs` | compiles `resources/mirai.gresource.xml` into the binary | — |
-| `src/main.rs`, `src/application_shell.rs` | process entry and application lifetime: tracing, resources, CSS, `activate`/`open`; `MiraiApplication` uniquely owns the Tokio runtime and shared `EnginePool` and shuts them down from GObject disposal | `APP_ID`, `RESOURCE_PREFIX`, `MiraiApplication` |
+| `src/main.rs`, `src/application_shell.rs` | process entry and application lifetime: tracing, resources, CSS, `activate`/`open`; `MiraiApplication` uniquely owns the Tokio runtime and shared `EnginePool`, releases both from the GApplication `shutdown` vfunc (disposal is the backstop for a remote invocation, which never starts up), and turns SIGINT/SIGTERM/SIGHUP into an ordinary `quit` | `APP_ID`, `RESOURCE_PREFIX`, `MiraiApplication`, private `release`, `watch_termination_signals` |
 | `src/app.rs` | **INV-7.** `AppState`: the source of truth *for one window* — properties, epoch-qualified node references, tree/cursor API, explicit `EngineState`, the single `Change` dispatcher, engine activation, live-analysis pump; feeds `mirai_client::SpeedMeter` | `AppState`, `TreeEpoch`, `NodeRef`, `Change`, `EngineState`, `with_tree_mut`, `set_tree`, `resolve_node`, `set_cursor`, `play_move`, `activate_profile`, `cancel_tasks`, `request_for_node`, `restart_analysis`, `set_report` |
 | `src/engines.rs` | the application-wide engines: one per profile, shared by every window, held weakly so the last window to let go takes KataGo with it; writes the generated analysis config when a local profile has no custom one | `EnginePool` (`running`, `acquire`), `Built`, private `key`, `start`, `build` |
 | `src/config.rs` | `$XDG_CONFIG_HOME/mirai/config.toml`: engine profiles and preferences; ordered XDG discovery merges all model and custom-analysis candidates | `Config` (`load`, `save`, `save_merged`, `seeded`, `profile`, `active_profile`, `set_pin`, `default_path`, `data_dir`), `discover_models`, `discover_analysis_configs`, private `model_dirs`, `analysis_config_dirs`, `merge_candidates`, `overlay`, `EngineProfile`, `ProfileKind` (`Local`'s optional config and tuning fields), `AnalysisSettings`, `PlaySettings`, `StrengthSetting`, `UiSettings` |
 | `src/util.rs` | formatting helpers; `analysis_of` is a thin wrap of `mirai_client::analysis_of` | `analysis_of`, `si_visits`, `visits_per_second`, `pct1`, `signed1`, `clock_text`, `gtp` |
-| `src/window.rs` | window behaviour and unique per-window `Ui`: the `Change` dispatcher, deterministic task/source registry, every `win.*` action, SGF I/O, autosave, score estimate and shutdown ordering | `Ui`, `WindowTasks`, `TaskSlot`, `SourceSlot`, `present`, `handle_change`, `connect_close`, `install_actions`, `adopt`, `write_autosave`, `do_score`, `blank_tree` |
-| `src/window_shell.rs`, `src/window.blp` | `MiraiWindow` owns exactly one `Ui` in GObject state; `close-request` and `dispose` converge on idempotent `shutdown`. The template owns the static hierarchy; Rust inserts the stateful board, graph, tree and analysis panel | `MiraiWindow`, `install_ui`, `with_ui`, `shutdown` |
+| `src/window.rs` | window behaviour and unique per-window `Ui`: the `Change` dispatcher, deterministic task/source registry, every `win.*` action, SGF I/O, autosave, score estimate and shutdown ordering | `Ui` (whose `Drop` is the release), `WindowTasks`, `TaskSlot`, `SourceSlot`, `AutosaveFile`, `present`, `handle_change`, `connect_close`, `install_actions`, `adopt`, `write_autosave`, `do_score`, `blank_tree` |
+| `src/window_shell.rs`, `src/window.blp` | `MiraiWindow` owns exactly one `Ui` in GObject state; `close-request`, `dispose` and the application's `shutdown` converge on idempotent `shutdown`, which only takes the `Ui` out and lets it drop. The template owns the static hierarchy; Rust inserts the stateful board, graph, tree and analysis panel | `MiraiWindow`, `install_ui`, `with_ui`, `take_ui`, `shutdown` |
 | `src/fox.rs`, `src/fox_picker.rs`, `src/fox_picker.blp` | anonymous Fox Go nickname/UID lookup, recent-public-game picker and download; the last successful search is cached in `$XDG_DATA_HOME/mirai/fox-last-search.json` and restored when the dialog opens; the up-to-200 records live in a `GListModel` of `FoxRow` behind a `GtkListView`, and the model is filled *after* `present` because a list view whose rows have never been measured tracks its whole model; one picker per window, kept in `Ui`, because libadwaita refuses to present one dialog in two windows; normalises Fox's SGF dialect before handing a `GameTree` to the window | `present`, `FoxPickerDialog` (`wired`, `prepare_to_show`, `replace_games`, `selected_game`), `FoxRow`, private `search_games`/`fetch_game`, `parse_fox_sgf`, `normalize_handicap`, `LastSearch`, `row_factory` |
 | `src/widgets/mod.rs` | widget root; states the no-cairo rule | re-exports `BoardView`, `MoveTreeView`, `WinrateGraph` |
 | `src/widgets/paint.rs` | the drawing primitives every custom widget uses, and the rule they enforce: quads, not paths ([`RENDERING.md`](RENDERING.md)) | `fill_disc`, `stroke_disc`, `stroke_rect`, `hline`, `vline`, `over` |
@@ -752,12 +752,21 @@ directly to logic.
 `MiraiWindow` is the sole owner of one plain `Ui` value in its GObject implementation. Every
 long-lived callback captures `glib::WeakRef<MiraiWindow>` and enters through
 `MiraiWindow::with_ui`; no callback owns the window state. Stateful controllers (`PlayController`
-and `BatchAnalysis`) are also unique fields of `Ui` and use the same weak-window route.
+and `BatchAnalysis`) are also unique fields of `Ui` and use the same weak-window route. The
+custom widgets do not: `BoardView`, `WinrateGraph`, `MoveTreeView` and `AnalysisPanel` are
+constructed with their window's `AppState` and hold it directly, which is sound because nothing
+in them points back at the window, and it keeps a weak upgrade plus a `RefCell` borrow off every
+refresh.
 
-`close-request` calls `MiraiWindow::shutdown`, and `ObjectImpl::dispose` calls the same method as a
-backstop. `begin_shutdown` makes the operation idempotent; `take_ui` is the single release point.
-`Ui::shutdown` flushes the comment, removes autosave and timers, aborts the score task, stops play
-and batch work, cancels AppState startup/analysis tasks, saves config and clears the engine.
+`close-request` calls `MiraiWindow::shutdown`, `ObjectImpl::dispose` calls it as a backstop, and
+`ApplicationImpl::shutdown` calls it for every window the application still holds — so a `quit`,
+the harness `quit` step and a termination signal all release exactly like closing the window.
+`begin_shutdown` makes it idempotent and `take_ui` is the single release point, but the release
+itself is `Ui`'s `Drop`: it flushes the comment, stops the timers, stops play and batch work,
+cancels AppState startup/analysis tasks, saves config, clears the engine, and drops an
+`AutosaveFile` which deletes the file it names. Expressing it as `Drop` is what makes a
+forgotten exit path impossible. Nothing in it may reach back through `Ui::window`: a `Ui` is
+dropped from `dispose`, where that weak reference may already be cleared.
 
 Transient futures may retain GTK objects only when their finite lifetime is explicit. Calibration
 uses a single `CalibrationRun` owner taken by either completion or cancellation; its window-added
@@ -771,7 +780,7 @@ windows in one process is a normal state, not an edge case. Each owns a complete
 
 | Shared | Rule |
 |---|---|
-| Engines | `EnginePool` in `MiraiApplication`, keyed on the whole `EngineProfile`. A window adopts a running engine synchronously through `running`, or joins an in-flight start through `acquire`; entries are `Weak`, so KataGo exits with the last window using it. The application owns the pool and runtime until GObject disposal |
+| Engines | `EnginePool` in `MiraiApplication`, keyed on the whole `EngineProfile`. A window adopts a running engine synchronously through `running`, or joins an in-flight start through `acquire`; entries are `Weak`, so KataGo exits with the last window using it. The application owns the pool and runtime and releases both from its `shutdown` vfunc, with GObject disposal as the backstop |
 | `config.toml` | Each window holds the `Config` it loaded, so writing the whole thing back would revert another window's edits. `Config::save_merged` applies only this window's own diff onto the file as it stands |
 | Autosave | One file per window, `autosave-<pid>-<start>-<n>.sgf`. A clean close deletes it; anything found at startup is therefore a crash leftover, and each new window is offered one, most recent first. This replaced the single `autosave.sgf` plus `clean-exit` flag, which could not say which window had exited |
 
@@ -806,7 +815,7 @@ and how a violation shows up.
 | **INV-5** | Komi crosses the wire as a doubled integer (`komi_x2`), because KataGo accepts only integer or half-integer komi | `AnalyzeReq` (`komi_x2`, `komi()`) in `mirai-proto/src/types.rs` | Komi silently rounded, or a rejected query from a fractional komi |
 | **INV-6** | Quantisation: wire floats are fixed-point; every scale lives in `mirai-proto/src/types.rs`. Round-trip error budget: winrate ≤ 1e-4, score lead ≤ 0.02 pt, ownership ≤ 0.005 | the `q*`/`dq*` helpers and `*_SCALE` constants; both engine paths use them, so reports are bit-identical | `mirai-proto/tests/wire_size.rs` fails on frame size or error budget. Changing a scale means bumping `PROTO_VERSION` and updating that test and [`PROTOCOL.md`](PROTOCOL.md) |
 | **INV-7** | One source of truth: `AppState` owns application state; one window dispatcher pushes projections to widgets, which never hold siblings | `mirai/src/app.rs` (`Change`) and `window::handle_change` | Two dispatchers observe different intermediate states, or sibling widgets disagree after an edit |
-| **INV-8** | Window ownership: `MiraiWindow` owns exactly one `Ui`; long-lived callbacks hold only `WeakRef<MiraiWindow>`; close and dispose share idempotent shutdown | `window_shell.rs` (`with_ui`, `take_ui`, `shutdown`) and window-owned controllers | Closing a window leaves tasks, handlers or KataGo alive |
+| **INV-8** | Window ownership: `MiraiWindow` owns exactly one `Ui`; long-lived callbacks hold only `WeakRef<MiraiWindow>`; close, dispose and the application's shutdown all reduce to dropping the `Ui` | `window_shell.rs` (`with_ui`, `take_ui`, `shutdown`), `Drop for Ui`, and window-owned controllers | Closing a window, quitting, or a termination signal leaves tasks, an autosave file or KataGo behind |
 | **INV-9** | Rendering: custom widgets draw with GSK; `snapshot()` consumes widget-local projections and cached textures/nodes. No `DrawingArea`, cairo or tree replay in a frame | `mirai/src/widgets/` | Frame-time allocation/state traversal, or a cairo context in the GUI |
 | **INV-10** | Release tree borrows before dispatch; retain epoch-qualified `NodeRef`, not arena-local `NodeId`, across tree replacement | `AppState::changed`, `set_tree`, `resolve_node`; async consumers in window/play/batch | `BorrowMutError`, `stale NodeId`, or an old async result applied to a new game |
 

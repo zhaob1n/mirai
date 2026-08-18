@@ -7,7 +7,7 @@
 //! layout is cached and only recomputed when [`GameTree::revision`] moves, because it is
 //! the one part of the widget that is O(tree) rather than O(visible).
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::HashMap;
 
 use gtk::gdk;
@@ -109,7 +109,7 @@ mod imp {
 
     #[derive(Default)]
     pub struct MoveTreeView {
-        pub window: glib::WeakRef<crate::window_shell::MiraiWindow>,
+        pub state: OnceCell<AppState>,
         pub(super) layout: RefCell<TreeLayout>,
         /// Tree revision the cached layout was built from; `None` means "never built".
         pub revision: Cell<Option<u64>>,
@@ -138,9 +138,12 @@ glib::wrapper! {
 }
 
 impl MoveTreeView {
-    pub fn new(window: &crate::window_shell::MiraiWindow) -> MoveTreeView {
+    pub fn new(state: &AppState) -> MoveTreeView {
         let this: MoveTreeView = glib::Object::new();
-        this.imp().window.set(Some(window));
+        this.imp()
+            .state
+            .set(state.clone())
+            .expect("a fresh MoveTreeView cannot already hold a state");
         this.add_css_class("mirai-movetree");
         this.set_halign(gtk::Align::Start);
         this.set_valign(gtk::Align::Start);
@@ -160,12 +163,13 @@ impl MoveTreeView {
         this
     }
 
-    pub fn state(&self) -> AppState {
+    /// The window state this view draws, held directly rather than fetched back through the
+    /// window on every layout pass.
+    pub fn state(&self) -> &AppState {
         self.imp()
-            .window
-            .upgrade()
-            .and_then(|window| window.with_ui(|ui| ui.state.clone()))
-            .expect("MoveTreeView has no live window state")
+            .state
+            .get()
+            .expect("MoveTreeView was built without a state")
     }
 
     /// Wraps the view in the `gtk::ScrolledWindow` the window packs.

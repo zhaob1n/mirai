@@ -10,7 +10,7 @@
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use gtk::{gdk, gio, glib, graphene, gsk, pango};
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -255,7 +255,7 @@ mod imp {
 
     #[derive(Default)]
     pub struct BoardView {
-        pub window: glib::WeakRef<crate::window_shell::MiraiWindow>,
+        pub state: OnceCell<AppState>,
         pub layout: Cell<Layout>,
         /// Candidate index under the pointer.
         pub hover: Cell<Option<usize>>,
@@ -925,9 +925,12 @@ glib::wrapper! {
 }
 
 impl BoardView {
-    pub fn new(window: &crate::window_shell::MiraiWindow, state: &AppState) -> BoardView {
+    pub fn new(state: &AppState) -> BoardView {
         let this: BoardView = glib::Object::new();
-        this.imp().window.set(Some(window));
+        this.imp()
+            .state
+            .set(state.clone())
+            .expect("a fresh BoardView cannot already hold a state");
         this.build_menu();
         this.install_controllers();
         this.observe(state);
@@ -935,12 +938,16 @@ impl BoardView {
         this
     }
 
-    pub fn state(&self) -> AppState {
+    /// The window state this view draws, held directly.
+    ///
+    /// A view cannot be built without one, so there is no live-window question to ask: the
+    /// old route back through `MiraiWindow` cost a weak upgrade and a `RefCell` borrow on
+    /// every refresh, and could only answer it by panicking.
+    pub fn state(&self) -> &AppState {
         self.imp()
-            .window
-            .upgrade()
-            .and_then(|window| window.with_ui(|ui| ui.state.clone()))
-            .expect("BoardView has no live window state")
+            .state
+            .get()
+            .expect("BoardView was built without a state")
     }
 
     /// The intersection under widget coordinates `(x, y)`, if any.
@@ -998,7 +1005,7 @@ impl BoardView {
                     move |_, _| {
                         view.imp().static_layer.borrow_mut().take();
                         let state = view.state();
-                        view.rebuild_projection(&state);
+                        view.rebuild_projection(state);
                         view.queue_resize();
                         view.queue_draw();
                     }
@@ -1009,7 +1016,7 @@ impl BoardView {
 
     pub(crate) fn refresh_tree(&self) {
         let state = self.state();
-        self.rebuild_projection(&state);
+        self.rebuild_projection(state);
         self.queue_resize();
         self.queue_draw();
     }
@@ -1018,7 +1025,7 @@ impl BoardView {
         self.imp().hover.set(None);
         self.imp().pinned.set(None);
         let state = self.state();
-        self.rebuild_projection(&state);
+        self.rebuild_projection(state);
         self.queue_draw();
     }
 
@@ -1028,7 +1035,7 @@ impl BoardView {
             projection.report = state.last_report();
             projection.suggestion_limit = state.config().analysis.suggestion_limit();
         } else {
-            self.rebuild_projection(&state);
+            self.rebuild_projection(state);
             self.queue_draw();
             return;
         }

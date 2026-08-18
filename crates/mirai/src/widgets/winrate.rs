@@ -6,7 +6,7 @@
 //! current main line, so the graph is a pure function of the tree and costs nothing when
 //! no analysis has been stored yet.
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 
 use gtk::gdk;
 use gtk::glib;
@@ -193,7 +193,7 @@ mod imp {
 
     #[derive(Default)]
     pub struct WinrateGraph {
-        pub window: glib::WeakRef<crate::window_shell::MiraiWindow>,
+        pub state: OnceCell<AppState>,
         pub pressed: Cell<bool>,
         pub(super) projection: RefCell<GraphProjection>,
         pub(super) render_cache: RefCell<Option<(RenderKey, gsk::RenderNode)>>,
@@ -228,9 +228,12 @@ glib::wrapper! {
 }
 
 impl WinrateGraph {
-    pub fn new(window: &crate::window_shell::MiraiWindow) -> WinrateGraph {
+    pub fn new(state: &AppState) -> WinrateGraph {
         let this: WinrateGraph = glib::Object::new();
-        this.imp().window.set(Some(window));
+        this.imp()
+            .state
+            .set(state.clone())
+            .expect("a fresh WinrateGraph cannot already hold a state");
         this.add_css_class("mirai-winrate");
         this.set_hexpand(true);
         this.set_tooltip_text(Some(
@@ -290,16 +293,17 @@ impl WinrateGraph {
         this
     }
 
-    pub fn state(&self) -> AppState {
+    /// The window state this graph plots, held directly rather than fetched back through the
+    /// window on every refresh.
+    pub fn state(&self) -> &AppState {
         self.imp()
-            .window
-            .upgrade()
-            .and_then(|window| window.with_ui(|ui| ui.state.clone()))
-            .expect("WinrateGraph has no live window state")
+            .state
+            .get()
+            .expect("WinrateGraph was built without a state")
     }
     pub(crate) fn refresh(&self) {
         let state = self.state();
-        *self.imp().projection.borrow_mut() = self.samples(&state);
+        *self.imp().projection.borrow_mut() = self.samples(state);
         self.imp().render_cache.borrow_mut().take();
         self.queue_draw();
     }

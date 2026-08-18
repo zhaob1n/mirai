@@ -77,8 +77,10 @@ runtime and shared `EnginePool` (whose engine entries are weak). Config writes u
 
 **INV-8 — window ownership.** `MiraiWindow` owns exactly one plain `Ui` value in its GObject
 state. Long-lived handlers capture `glib::WeakRef<MiraiWindow>` and enter through
-`MiraiWindow::with_ui`; stateful controllers do the same. `close-request` and `dispose` converge
-on idempotent `MiraiWindow::shutdown`, whose `take_ui` is the single release point. Finite async
+`MiraiWindow::with_ui`; stateful controllers do the same, while the custom widgets are handed
+their window's `AppState` and hold it directly. `close-request`, `dispose` and
+`ApplicationImpl::shutdown` all reduce to `MiraiWindow::shutdown`, whose `take_ui` drops the
+`Ui` — and releasing *is* `Ui`'s `Drop`, so a new exit path cannot forget it. Finite async
 captures must be explicitly transient and own one teardown path.
 
 **INV-9 — rendering.** Board, win-rate graph and move tree are custom `gtk::Widget` subclasses

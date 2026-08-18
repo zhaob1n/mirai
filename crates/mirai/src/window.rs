@@ -108,9 +108,9 @@ pub struct Ui {
     pub move_scale: gtk::Scale,
     pub engine_menu: gtk::MenuButton,
     pub analysis: AnalysisPanel,
-    board: glib::WeakRef<BoardView>,
-    winrate: glib::WeakRef<WinrateGraph>,
-    move_tree: glib::WeakRef<MoveTreeView>,
+    board: BoardView,
+    winrate: WinrateGraph,
+    move_tree: MoveTreeView,
     pub file: RefCell<Option<PathBuf>>,
     title: adw::WindowTitle,
     clock_box: gtk::Box,
@@ -198,10 +198,10 @@ pub fn present(
     let state = AppState::new(config, config_path, runtime, pool);
     let window = MiraiWindow::new(app);
     let toasts = window.toasts();
-    let board = BoardView::new(&window, &state);
-    let winrate = WinrateGraph::new(&window);
-    let move_tree = MoveTreeView::new(&window);
-    let analysis = AnalysisPanel::new(&window);
+    let board = BoardView::new(&state);
+    let winrate = WinrateGraph::new(&state);
+    let move_tree = MoveTreeView::new(&state);
+    let analysis = AnalysisPanel::new(&state);
     let comment = gtk::TextView::builder()
         .wrap_mode(gtk::WrapMode::WordChar)
         .left_margin(8)
@@ -322,9 +322,9 @@ pub fn present(
         batch,
         analysis: analysis.clone(),
         readout,
-        board: board.downgrade(),
-        winrate: winrate.downgrade(),
-        move_tree: move_tree.downgrade(),
+        board: board.clone(),
+        winrate: winrate.clone(),
+        move_tree: move_tree.clone(),
         move_scale,
         engine_menu,
         file: RefCell::new(None),
@@ -379,12 +379,8 @@ pub fn present(
         update_subtitle(ui);
         load_comment(ui);
         ui.analysis.refresh();
-        if let Some(tree) = ui.move_tree.upgrade() {
-            tree.refresh();
-        }
-        if let Some(graph) = ui.winrate.upgrade() {
-            graph.refresh();
-        }
+        ui.move_tree.refresh();
+        ui.winrate.refresh();
     });
 
     // Whatever an earlier run left behind, one record per window, most recent first. A
@@ -457,15 +453,9 @@ fn handle_change(ui: &Ui, change: Change) {
         Change::Tree => {
             update_scale(ui);
             update_title(ui);
-            if let Some(board) = ui.board.upgrade() {
-                board.refresh_tree();
-            }
-            if let Some(tree) = ui.move_tree.upgrade() {
-                tree.refresh();
-            }
-            if let Some(graph) = ui.winrate.upgrade() {
-                graph.refresh();
-            }
+            ui.board.refresh_tree();
+            ui.move_tree.refresh();
+            ui.winrate.refresh();
             ui.analysis.clear_blunders();
             ui.analysis.refresh();
         }
@@ -475,25 +465,15 @@ fn handle_change(ui: &Ui, change: Change) {
             update_scale(ui);
             update_readout(ui);
             update_clocks(ui);
-            if let Some(board) = ui.board.upgrade() {
-                board.refresh_cursor();
-            }
-            if let Some(tree) = ui.move_tree.upgrade() {
-                tree.refresh();
-            }
-            if let Some(graph) = ui.winrate.upgrade() {
-                graph.refresh_cursor();
-            }
+            ui.board.refresh_cursor();
+            ui.move_tree.refresh();
+            ui.winrate.refresh_cursor();
             ui.analysis.refresh();
         }
         Change::Report => {
             update_readout(ui);
-            if let Some(board) = ui.board.upgrade() {
-                board.refresh_report();
-            }
-            if let Some(graph) = ui.winrate.upgrade() {
-                graph.refresh();
-            }
+            ui.board.refresh_report();
+            ui.winrate.refresh();
             ui.analysis.refresh();
         }
         Change::Engine => {
@@ -508,9 +488,7 @@ fn handle_change(ui: &Ui, change: Change) {
             update_play_controls(ui);
         }
         Change::BatchProgress(_, _) => {
-            if let Some(graph) = ui.winrate.upgrade() {
-                graph.refresh();
-            }
+            ui.winrate.refresh();
         }
     }
 }
