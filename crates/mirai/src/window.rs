@@ -407,6 +407,8 @@ pub fn present(
 
     window.present();
 
+    crate::render_probe::install(&window);
+
     window.with_ui(|ui| {
         if let Some(path) = path {
             load_sgf(ui, &path, true);

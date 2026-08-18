@@ -453,6 +453,7 @@ mod imp {
         }
 
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
+            let _t = crate::render_probe::Timer::new("board-snapshot");
             let projection = self.projection.borrow();
             let Some(projection) = projection.as_ref() else {
                 return;
@@ -461,6 +462,7 @@ mod imp {
             if l.cell < 3.0 {
                 return;
             }
+            crate::render_probe::trace("board-cell", l.cell);
             // Paint numbers on the first snapshot, and on any snapshot that was not
             // preceded by `size_allocate`. A sidebar fold allocates every frame — even
             // when easing holds the same integer width for two ticks — so comparing
@@ -642,6 +644,7 @@ mod imp {
             if self.defer_labels.get() {
                 return;
             }
+            let _t = crate::render_probe::Timer::new("board-numbers");
             let Scene { l, size, board, .. } = scene;
             let obj = self.obj();
             let mut fd = obj.pango_context().font_description().unwrap_or_default();
@@ -789,6 +792,7 @@ mod imp {
             report: &mirai_engine::Report,
             max: usize,
         ) {
+            let _t = crate::render_probe::Timer::new("board-candidates");
             let Scene {
                 l,
                 size,

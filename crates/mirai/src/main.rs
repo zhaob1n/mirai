@@ -18,6 +18,7 @@ mod play;
 mod preferences_shell;
 mod prefs;
 mod profile_editor;
+mod render_probe;
 mod util;
 mod widgets;
 mod window;

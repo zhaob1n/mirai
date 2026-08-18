@@ -32,22 +32,28 @@ consecutive frames.
 ## 2. How it was measured
 
 `perf` is not installed on the development machine and external screen capture is black under
-Wayland, so the application measures itself. Branch `perf-probe` carries the instrument:
+Wayland, so the application measures itself. The instrument lives in the tree rather than on a
+branch, because it gets reused:
 
-- **`crates/mirai/src/render_probe.rs`** — `frame-dt` lines (the frame clock's own cadence,
-  quantised to the 60 Hz refresh: `16.67` is a hit, `50.00` means two frames were missed) and
+- **`crates/mirai/src/render_probe.rs`** — `frame-dt` lines (the frame clock's own cadence:
+  `16.67` is a hit on a 60 Hz output, `50.00` means two frames were missed) and
   `frame-phases` lines, which split each frame into GTK's phases: `update` (animations),
   `layout` (measure and allocate), `paint` (snapshot the widget tree, then GSK renders it).
-- **Ablation flags** — `MIRAI_NO_BOARD`, `MIRAI_NO_GRAPH`, `MIRAI_NO_WOOD`, `MIRAI_NO_GRID`,
-  `MIRAI_NO_STARS`, `MIRAI_NO_STONES`, `MIRAI_NO_SHADOW`, `MIRAI_COLLAPSED`, `MIRAI_SPIN`.
+  `Timer` brackets one drawing pass and `trace` records a scalar beside it. Everything is
+  behind `cfg!(debug_assertions)`, so a release build folds the module away.
+- **Ablation flags** — `MIRAI_NO_BOARD`, `MIRAI_NO_GRAPH`, `MIRAI_COLLAPSED`, `MIRAI_SPIN`,
+  `MIRAI_DUMP_NODE` (writes the window's render node for `gtk4-rendernode-tool`).
 - **`tools/perf/frame-stats.py`** — aggregates the stderr into a per-action table.
-- **`tools/perf/dense-board.py`** — writes the 285-stone position used as the worst case.
-- **`MIRAI_DUMP_NODE`** — writes the window's render node for `gtk4-rendernode-tool`.
+- **`tools/perf/dense-board.py`** — the 285-stone position used as the worst case.
+- **`tools/perf/numbered-game.py`** — 190 real moves, the worst case for move numbers;
+  setup stones carry no numbers, so `dense-board.py` cannot exercise the text passes.
 
-Runs use an isolated `XDG_CONFIG_HOME`/`XDG_DATA_HOME` and no engine, so nothing in the
-numbers is KataGo's — and, it later turned out, nothing in them is analysis labels either
-(§6). The window is whatever niri gives it, ~1486×1634; `niri msg action
-set-window-width/-height` was used for the size sweep.
+Runs use an isolated `XDG_CONFIG_HOME`/`XDG_DATA_HOME`, whose `[ui]` block has to be reset
+between runs because the view toggles are persisted. §3–§5 ran with no engine, so nothing
+in those numbers is KataGo's — and, it turned out, nothing in them is analysis labels either
+(§6). The window is whatever niri gives it, ~1486×1634 on a 6016×3384@60 Hz output at scale 2;
+`niri msg action set-window-width/-height` was used for the size sweep. Pin the output before
+comparing runs: a second monitor at 160 Hz changes the deadline from 16.7 ms to 6.2 ms.
 
 ```sh
 tools/perf/dense-board.py /tmp/dense.sgf
