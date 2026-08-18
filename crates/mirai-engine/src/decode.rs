@@ -110,10 +110,17 @@ pub fn decode_report(size: Size, v: &Value) -> Result<Report, String> {
         raw_var_time_left: num(root_v, "rawVarTimeLeft").map(|v| qu(v, RAW_VAR_TIME_SCALE)),
     };
 
-    let mut moves: Vec<(u64, MoveInfo)> = match v.get("moveInfos") {
+    let moves = match v.get("moveInfos") {
         Some(Value::Array(list)) => {
-            let mut out = Vec::with_capacity(list.len());
-            for m in list {
+            // KataGo emits moveInfos in `order` already, but that is not promised anywhere
+            // and the GUI treats moves[0] as the engine's choice. Sorting borrowed JSON
+            // values costs one pointer array: sorting decoded moves would memcpy a
+            // PV-carrying struct on every swap, and then needed a second `Vec` to strip the
+            // sort key off again.
+            let mut ordered: Vec<&Value> = list.iter().collect();
+            ordered.sort_by_key(|m| order_of(m));
+            let mut out = Vec::with_capacity(ordered.len());
+            for m in ordered {
                 out.push(decode_move(size, m)?);
             }
             out
@@ -121,36 +128,13 @@ pub fn decode_report(size: Size, v: &Value) -> Result<Report, String> {
         Some(_) => return Err("moveInfos is not an array".into()),
         None => Vec::new(),
     };
-    // KataGo emits moveInfos in `order` already, but that is not promised anywhere and
-    // the GUI treats moves[0] as the engine's choice.
-    moves.sort_by_key(|&(order, _)| order);
 
     let ownership = match v.get("ownership") {
-        Some(list) => {
-            let vals = floats(list, "ownership")?;
-            if vals.len() != size.points() {
-                return Err(format!(
-                    "ownership has {} entries, expected {}",
-                    vals.len(),
-                    size.points()
-                ));
-            }
-            Some(vals.into_iter().map(q_own).collect())
-        }
+        Some(list) => Some(quantised(list, "ownership", size.points(), q_own)?),
         None => None,
     };
     let policy = match v.get("policy") {
-        Some(list) => {
-            let vals = floats(list, "policy")?;
-            if vals.len() != size.points() + 1 {
-                return Err(format!(
-                    "policy has {} entries, expected {}",
-                    vals.len(),
-                    size.points() + 1
-                ));
-            }
-            Some(vals.into_iter().map(q_policy).collect())
-        }
+        Some(list) => Some(quantised(list, "policy", size.points() + 1, q_policy)?),
         None => None,
     };
 
@@ -161,17 +145,16 @@ pub fn decode_report(size: Size, v: &Value) -> Result<Report, String> {
             .unwrap_or(0)
             .min(u16::MAX as u64) as u16,
         root,
-        moves: moves.into_iter().map(|(_, m)| m).collect(),
+        moves,
         ownership,
         policy,
     })
 }
 
-/// Returns the move's raw `order` alongside it, so ordering survives the `u8` clamp.
-fn decode_move(size: Size, m: &Value) -> Result<(u64, MoveInfo), String> {
+/// One `moveInfos` entry. Sorting them is the caller's job, via [`order_of`].
+fn decode_move(size: Size, m: &Value) -> Result<MoveInfo, String> {
     let mv = point(size, m.get("move"))?;
     let visits = count(m, "visits");
-    let order = m.get("order").and_then(Value::as_u64).unwrap_or(u64::MAX);
 
     let pv = match m.get("pv") {
         Some(Value::Array(list)) => list
@@ -188,32 +171,36 @@ fn decode_move(size: Size, m: &Value) -> Result<(u64, MoveInfo), String> {
         _ => Vec::new(),
     };
 
-    Ok((
-        order,
-        MoveInfo {
-            mv,
-            visits,
-            edge_visits: m
-                .get("edgeVisits")
-                .and_then(Value::as_u64)
-                .map_or(visits, |v| v.min(u32::MAX as u64) as u32),
-            winrate: q16(num(m, "winrate").unwrap_or(0.5)),
-            prior: q16(num(m, "prior").unwrap_or(0.0)),
-            lcb: qs(num(m, "lcb").unwrap_or(0.0), LCB_SCALE),
-            utility: qs(num(m, "utility").unwrap_or(0.0), UTILITY_SCALE),
-            utility_lcb: qs(num(m, "utilityLcb").unwrap_or(0.0), UTILITY_SCALE),
-            score_lead: qs(num(m, "scoreLead").unwrap_or(0.0), SCORE_SCALE),
-            score_selfplay: qs(num(m, "scoreSelfplay").unwrap_or(0.0), SCORE_SCALE),
-            score_stdev: qu(num(m, "scoreStdev").unwrap_or(0.0), STDEV_SCALE),
-            order: order.min(u8::MAX as u64) as u8,
-            play_value: num(m, "playSelectionValue")
-                .unwrap_or(0.0)
-                .round()
-                .clamp(0.0, u32::MAX as f64) as u32,
-            pv,
-            pv_visits,
-        },
-    ))
+    Ok(MoveInfo {
+        mv,
+        visits,
+        edge_visits: m
+            .get("edgeVisits")
+            .and_then(Value::as_u64)
+            .map_or(visits, |v| v.min(u32::MAX as u64) as u32),
+        winrate: q16(num(m, "winrate").unwrap_or(0.5)),
+        prior: q16(num(m, "prior").unwrap_or(0.0)),
+        lcb: qs(num(m, "lcb").unwrap_or(0.0), LCB_SCALE),
+        utility: qs(num(m, "utility").unwrap_or(0.0), UTILITY_SCALE),
+        utility_lcb: qs(num(m, "utilityLcb").unwrap_or(0.0), UTILITY_SCALE),
+        score_lead: qs(num(m, "scoreLead").unwrap_or(0.0), SCORE_SCALE),
+        score_selfplay: qs(num(m, "scoreSelfplay").unwrap_or(0.0), SCORE_SCALE),
+        score_stdev: qu(num(m, "scoreStdev").unwrap_or(0.0), STDEV_SCALE),
+        // Clamped for the wire; `order_of` is what ordering actually uses, so two moves
+        // colliding at 255 stay in the order KataGo gave them.
+        order: order_of(m).min(u8::MAX as u64) as u8,
+        play_value: num(m, "playSelectionValue")
+            .unwrap_or(0.0)
+            .round()
+            .clamp(0.0, u32::MAX as f64) as u32,
+        pv,
+        pv_visits,
+    })
+}
+
+/// A move's raw `order`. Missing sorts last, which is where KataGo puts unsearched moves.
+fn order_of(m: &Value) -> u64 {
+    m.get("order").and_then(Value::as_u64).unwrap_or(u64::MAX)
 }
 
 fn point(size: Size, v: Option<&Value>) -> Result<Point, String> {
@@ -243,13 +230,34 @@ fn count(v: &Value, key: &str) -> u32 {
         .min(u32::MAX as u64) as u32
 }
 
-fn floats(v: &Value, key: &str) -> Result<Vec<f64>, String> {
+/// Quantises a KataGo float array straight into its wire form.
+///
+/// The `Vec<f64>` this used to collect first existed only to be length-checked: 2.9 KB for
+/// one 19x19 ownership map, allocated and dropped again ten times a second per subscription,
+/// and once more per client on the server.
+fn quantised<T>(
+    v: &Value,
+    key: &str,
+    expected: usize,
+    q: impl Fn(f64) -> T,
+) -> Result<Vec<T>, String> {
     let Value::Array(list) = v else {
         return Err(format!("{key} is not an array"));
     };
-    list.iter()
-        .map(|x| x.as_f64().ok_or_else(|| format!("{key} has a non-number")))
-        .collect()
+    if list.len() != expected {
+        return Err(format!(
+            "{key} has {} entries, expected {expected}",
+            list.len()
+        ));
+    }
+    let mut out = Vec::with_capacity(expected);
+    for x in list {
+        let f = x
+            .as_f64()
+            .ok_or_else(|| format!("{key} has a non-number"))?;
+        out.push(q(f));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

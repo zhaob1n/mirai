@@ -212,6 +212,8 @@ pub struct GameTree {
     root: NodeId,
     cache: Option<(NodeId, Position)>,
     revision: u64,
+    /// Bumped by only the subset of mutations a branch graph is placed from.
+    structure_revision: u64,
     pub info: GameInfo,
 }
 
@@ -223,6 +225,7 @@ impl GameTree {
             root: NodeId(0),
             cache: None,
             revision: 0,
+            structure_revision: 0,
             info,
         }
     }
@@ -249,10 +252,11 @@ impl GameTree {
         self.get(id).expect("stale NodeId")
     }
 
-    /// Bumps the revision and drops the cached position: the caller may change anything.
+    /// Bumps both revisions and drops the cached position: the caller may change anything,
+    /// a node's move included.
     #[inline]
     pub fn node_mut(&mut self, id: NodeId) -> &mut Node {
-        self.revision += 1;
+        self.touch_structure();
         self.cache = None;
         self.nodes[id.index()].as_mut().expect("stale NodeId")
     }
@@ -301,22 +305,26 @@ impl GameTree {
     }
 
     /// The move number a node carries, honouring every `MN` override on the way down.
+    ///
+    /// Walks up instead of collecting the path first. The deepest override wins, and by the
+    /// time the walk reaches it the moves below it are exactly what has been counted — so
+    /// one upward pass answers what two passes over a buffered path used to. That buffer
+    /// was a `SmallVec<[NodeId; 64]>`, which every node past move 64 spilled onto the heap,
+    /// once per call, and a whole-game sweep calls this once per main-line node.
     pub fn move_number(&self, id: NodeId) -> u16 {
         let mut n = 0u16;
         let mut cur = Some(id);
-        let mut path: SmallVec<[NodeId; 64]> = SmallVec::new();
         while let Some(c) = cur {
-            path.push(c);
-            cur = self.node(c).parent;
-        }
-        for &p in path.iter().rev() {
-            let node = self.node(p);
+            let node = self.node(c);
+            // An override replaces the count *at its own node*, so that node's own move
+            // never adds to it — only the moves already counted below it do.
+            if let Some(m) = node.move_number_override {
+                return m.saturating_add(n);
+            }
             if node.mv.is_some() {
                 n = n.saturating_add(1);
             }
-            if let Some(m) = node.move_number_override {
-                n = m;
-            }
+            cur = node.parent;
         }
         n
     }
@@ -475,7 +483,7 @@ impl GameTree {
             .expect("stale NodeId")
             .children
             .push(id);
-        self.revision += 1;
+        self.touch_structure();
         Ok(id)
     }
 
@@ -490,7 +498,7 @@ impl GameTree {
             .expect("stale NodeId")
             .children
             .push(id);
-        self.revision += 1;
+        self.touch_structure();
         id
     }
 
@@ -524,7 +532,7 @@ impl GameTree {
         if matches!(&self.cache, Some((cached, _)) if !self.contains(*cached)) {
             self.cache = None;
         }
-        self.revision += 1;
+        self.touch_structure();
     }
 
     /// Makes the line through `id` the main line, all the way up to the root.
@@ -545,7 +553,7 @@ impl GameTree {
                 children.insert(0, c);
             }
         }
-        self.revision += 1;
+        self.touch_structure();
     }
 
     pub fn set_comment(&mut self, id: NodeId, text: impl Into<String>) {
@@ -592,6 +600,27 @@ impl GameTree {
     #[inline]
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    /// Bumped only when the node set, the child order, or a node's move changes — exactly
+    /// what placing a branch graph depends on, and nothing else.
+    ///
+    /// A view that lays the tree out keys its cache on this rather than on
+    /// [`GameTree::revision`]. Storing an analysis is a mutation too, so against the general
+    /// counter a running engine invalidated the layout ten times a second: the cache missed
+    /// on every navigation step, precisely while the user was navigating.
+    #[inline]
+    pub fn structure_revision(&self) -> u64 {
+        self.structure_revision
+    }
+
+    /// Records a change to the node set, to child order, or to a node's move. Bumps the
+    /// general revision as well, so a structural change can never be recorded as less than
+    /// a change.
+    #[inline]
+    fn touch_structure(&mut self) {
+        self.revision += 1;
+        self.structure_revision += 1;
     }
 }
 
@@ -859,5 +888,40 @@ mod tests {
         assert_eq!(t.node(root).marks.of(MarkKind::Triangle), &[p]);
         t.toggle_mark(root, MarkKind::Triangle, p);
         assert!(t.node(root).marks.is_empty());
+    }
+
+    /// Placing a branch graph depends on the node set, the child order and each node's move
+    /// — and on nothing else. Storing an analysis ten times a second must therefore not read
+    /// as a structural change, or every view keyed on it rebuilds while the engine runs.
+    #[test]
+    fn only_structural_edits_bump_the_structure_revision() {
+        let mut t = tree(RuleSet::Chinese);
+        let s = t.info.size;
+        let root = t.root();
+        let a = t.play(root, Color::Black, s.point(3, 3)).unwrap();
+
+        let structure = t.structure_revision();
+        let revision = t.revision();
+
+        t.set_analysis(a, None);
+        t.set_comment(a, "note");
+        t.toggle_mark(a, MarkKind::Triangle, s.point(0, 0));
+        t.set_setup_stone(root, s.point(1, 1), Some(Color::White));
+
+        assert_eq!(
+            t.structure_revision(),
+            structure,
+            "node metadata is not tree structure"
+        );
+        assert!(
+            t.revision() > revision,
+            "but they are still mutations a UI redraws for"
+        );
+
+        t.play(a, Color::White, s.point(4, 4)).unwrap();
+        assert!(
+            t.structure_revision() > structure,
+            "a new node changes the structure"
+        );
     }
 }

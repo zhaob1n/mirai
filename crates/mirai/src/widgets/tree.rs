@@ -3,9 +3,11 @@
 //! `MoveTreeView` — the branch graph. Step 10.
 //!
 //! Nodes sit on a fixed grid: the column is the node's depth from the root and the row is
-//! a *lane* handed out by a depth-first walk that keeps the main line on lane 0. The
-//! layout is cached and only recomputed when [`GameTree::revision`] moves, because it is
-//! the one part of the widget that is O(tree) rather than O(visible).
+//! a *lane* handed out by a depth-first walk that keeps the main line on lane 0. The layout
+//! is cached and only recomputed when [`GameTree::structure_revision`] moves, because it is
+//! the one part of the widget that is O(tree) rather than O(visible). Deliberately *not*
+//! `GameTree::revision`: that counts a stored analysis as a change too, so a running engine
+//! would invalidate this ten times a second and every navigation step would rebuild.
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::HashMap;
@@ -111,8 +113,8 @@ mod imp {
     pub struct MoveTreeView {
         pub state: OnceCell<AppState>,
         pub(super) layout: RefCell<TreeLayout>,
-        /// Tree revision the cached layout was built from; `None` means "never built".
-        pub revision: Cell<Option<u64>>,
+        /// Structure revision the cached layout was built from; `None` means "never built".
+        pub structure: Cell<Option<u64>>,
     }
 
     #[glib::object_subclass]
@@ -190,15 +192,15 @@ impl MoveTreeView {
 
     fn ensure_layout(&self) {
         let state = self.state();
-        let revision = state.tree().revision();
-        if self.imp().revision.get() == Some(revision) {
+        let structure = state.tree().structure_revision();
+        if self.imp().structure.get() == Some(structure) {
             return;
         }
         let layout = lay_out(&state.tree());
         let w = (MARGIN * 2.0 + RADIUS * 2.0 + layout.cols as f32 * CELL_W).ceil() as i32;
         let h = (MARGIN * 2.0 + RADIUS * 2.0 + layout.lanes as f32 * CELL_H).ceil() as i32;
         *self.imp().layout.borrow_mut() = layout;
-        self.imp().revision.set(Some(revision));
+        self.imp().structure.set(Some(structure));
         // The ScrolledWindow pans over this; we never implement gtk::Scrollable.
         if self.width_request() != w || self.height_request() != h {
             self.set_size_request(w, h);

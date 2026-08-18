@@ -186,9 +186,9 @@ impl PlayController {
     pub fn attach_board(&self, board: &BoardView) {
         *self.board.borrow_mut() = Some(board.clone());
         let weak = self.window.clone();
-        board.set_click_hook(Some(Box::new(move |p: Point| {
+        board.set_click_hook(move |p: Point| {
             with_play(&weak, |play| play.on_board_click(p)).unwrap_or(false)
-        })));
+        });
     }
 
     /// What the "Analyse game" button in the result dialog runs. The window wires this to

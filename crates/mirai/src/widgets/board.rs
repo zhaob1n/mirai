@@ -203,6 +203,10 @@ fn is_dark() -> bool {
 }
 
 /// A callback that gets first refusal on a click, and reports whether it consumed it.
+///
+/// `Rc`, not `Box`: the hook re-enters this widget — the play controller redraws the score
+/// overlay from inside it — so a click clones the handle and releases the cell before
+/// calling, rather than holding a borrow across it.
 pub type ClickHook = Rc<dyn Fn(Point) -> bool + 'static>;
 
 /// The geometry and position a single `snapshot` pass draws against.
@@ -958,8 +962,11 @@ impl BoardView {
 
     /// When set, a primary click calls this instead of [`AppState::play_move`].
     /// Returning `true` means the click was consumed.
-    pub fn set_click_hook(&self, f: Option<Box<dyn Fn(Point) -> bool + 'static>>) {
-        *self.imp().click_hook.borrow_mut() = f.map(Rc::from);
+    ///
+    /// Taken by value so the closure is boxed exactly once, into the `Rc` it is stored in.
+    pub fn set_click_hook(&self, hook: impl Fn(Point) -> bool + 'static) {
+        let hook: ClickHook = Rc::new(hook);
+        *self.imp().click_hook.borrow_mut() = Some(hook);
     }
 
     /// Extra dead-stone shading and territory squares drawn during scoring.

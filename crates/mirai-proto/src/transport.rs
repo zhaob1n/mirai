@@ -19,7 +19,7 @@
 
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
@@ -56,6 +56,22 @@ impl From<AddressError> for TransportError {
     }
 }
 
+/// The one crypto provider this crate uses, assembled once per process.
+///
+/// `ring::default_provider()` builds fresh cipher-suite and key-exchange vectors on every
+/// call (`DEFAULT_CIPHER_SUITES.to_vec()` / `DEFAULT_KX_GROUPS.to_vec()`). A client
+/// endpoint wants two of them — the `ClientConfig` builder and the [`TofuVerifier`] —
+/// and every reconnection builds another endpoint, so handing out clones of one `Arc`
+/// turns that into a pointer bump. There is nothing to choose per call either way:
+/// `rustls` is pinned to `ring` deliberately, because a second installed provider makes
+/// `ClientConfig::builder()` panic at runtime.
+static PROVIDER: LazyLock<Arc<rustls::crypto::CryptoProvider>> =
+    LazyLock::new(|| Arc::new(rustls::crypto::ring::default_provider()));
+
+fn provider() -> Arc<rustls::crypto::CryptoProvider> {
+    Arc::clone(&PROVIDER)
+}
+
 /// Shared QUIC tuning. Keep-alives are short so a dead peer is noticed while a user is
 /// still looking at the board.
 pub fn transport_config() -> quinn::TransportConfig {
@@ -68,10 +84,6 @@ pub fn transport_config() -> quinn::TransportConfig {
     ));
     tc.max_concurrent_uni_streams(quinn::VarInt::from_u32(256));
     tc
-}
-
-fn provider() -> Arc<rustls::crypto::CryptoProvider> {
-    Arc::new(rustls::crypto::ring::default_provider())
 }
 
 // ---------------------------------------------------------------------------------------

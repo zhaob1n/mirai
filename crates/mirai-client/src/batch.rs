@@ -74,11 +74,9 @@ where
     let mut running = tokio::task::JoinSet::new();
 
     for (index, Planned { node, turn, req }) in plan.into_iter().enumerate() {
-        let permits = permits.clone();
         // `subscribe` is synchronous by contract, so the whole query lives in one task and
         // the permit is held for exactly as long as the query.
-        let sub = permits
-            .clone()
+        let sub = Arc::clone(&permits)
             .acquire_owned()
             .await
             .map(|permit| (permit, engine.subscribe(req)));

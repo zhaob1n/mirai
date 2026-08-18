@@ -6,8 +6,8 @@
 //! emits a handful of custom signals for structural changes. Widgets never reach into each
 //! other; they read `AppState` and listen to its signals.
 
-use std::cell::{Cell, Ref, RefCell, RefMut};
-use std::path::PathBuf;
+use std::cell::{Cell, OnceCell, Ref, RefCell, RefMut};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
@@ -114,12 +114,13 @@ mod imp {
         /// The configuration as this window loaded it, so a save can tell which keys this
         /// window actually changed and leave another window's edits alone.
         pub config_base: RefCell<Config>,
-        pub config_path: RefCell<PathBuf>,
+        pub config_path: OnceCell<PathBuf>,
         pub engine: RefCell<Option<Arc<dyn Engine>>>,
-        /// The application-wide engines, shared with every other window.
-        pub pool: RefCell<Rc<EnginePool>>,
+        /// The application-wide engines, shared with every other window. Installed when
+        /// the window is built and never replaced.
+        pub pool: OnceCell<Rc<EnginePool>>,
         pub engine_state: RefCell<EngineState>,
-        pub runtime: RefCell<Option<tokio::runtime::Handle>>,
+        pub runtime: OnceCell<tokio::runtime::Handle>,
         pub report: RefCell<Option<Arc<Report>>>,
         /// The live-analysis pump. Aborting it drops the `Subscription`, which terminates
         /// the KataGo query — that is the whole cancellation mechanism.
@@ -131,8 +132,11 @@ mod imp {
         pub activation_task: RefCell<Option<glib::JoinHandle<()>>>,
         /// Bumped on every analysis restart so a stale pump can tell it has been superseded.
         pub generation: Cell<u64>,
+        /// This window's one `Change` dispatcher (INV-7). The cell *is* the invariant: a
+        /// second installation cannot silently win, and `changed` borrows nothing while the
+        /// dispatcher runs back through this state.
+        pub change_hook: OnceCell<ChangeHook>,
         /// Visits-per-second meter for the search that is running now; `None` when none is.
-        pub change_hook: RefCell<Option<ChangeHook>>,
         pub speed: Cell<Option<SpeedMeter>>,
     }
 
@@ -158,16 +162,16 @@ mod imp {
                 engine_state: RefCell::new(EngineState::None),
                 config: RefCell::new(Config::default()),
                 config_base: RefCell::new(Config::default()),
-                config_path: RefCell::new(PathBuf::new()),
+                config_path: OnceCell::new(),
                 engine: RefCell::new(None),
-                pool: RefCell::new(Rc::new(EnginePool::default())),
-                runtime: RefCell::new(None),
+                pool: OnceCell::new(),
+                runtime: OnceCell::new(),
                 report: RefCell::new(None),
                 pump: RefCell::new(None),
                 activation: Cell::new(0),
                 activation_task: RefCell::new(None),
                 generation: Cell::new(0),
-                change_hook: RefCell::new(None),
+                change_hook: OnceCell::new(),
                 speed: Cell::new(None),
             }
         }
@@ -240,24 +244,34 @@ impl AppState {
         this.set_policy_overlay(config.ui.policy_overlay);
         *imp.config_base.borrow_mut() = config.clone();
         *imp.config.borrow_mut() = config;
-        *imp.config_path.borrow_mut() = config_path;
-        *imp.runtime.borrow_mut() = Some(runtime);
-        *imp.pool.borrow_mut() = pool;
+        // Write-once cells on an object nobody else has seen yet, so `set` cannot fail.
+        let _ = imp.config_path.set(config_path);
+        let _ = imp.runtime.set(runtime);
+        let _ = imp.pool.set(pool);
         this
     }
+
     pub fn set_change_hook(&self, hook: impl Fn(Change) + 'static) {
-        let old = self.imp().change_hook.borrow_mut().replace(Box::new(hook));
-        assert!(old.is_none(), "AppState change dispatcher installed twice");
+        let installed = self.imp().change_hook.set(Box::new(hook)).is_ok();
+        assert!(installed, "AppState change dispatcher installed twice");
     }
 
+    /// Runs the window's dispatcher. Nothing is held across the call: handlers re-enter
+    /// this state freely, and an open borrow here would be a panic waiting for the first
+    /// one that also reaches for the hook.
     pub fn changed(&self, change: Change) {
-        if let Some(hook) = self.imp().change_hook.borrow().as_ref() {
+        if let Some(hook) = self.imp().change_hook.get() {
             hook(change);
         }
     }
 
     pub fn pool(&self) -> Rc<EnginePool> {
-        self.imp().pool.borrow().clone()
+        Rc::clone(
+            self.imp()
+                .pool
+                .get()
+                .expect("AppState was built without an engine pool"),
+        )
     }
 
     // -- configuration ------------------------------------------------------------------
@@ -270,8 +284,14 @@ impl AppState {
         self.imp().config.borrow_mut()
     }
 
-    pub fn config_path(&self) -> PathBuf {
-        self.imp().config_path.borrow().clone()
+    /// Borrowed: the path is fixed for the window's lifetime, so saving need not allocate
+    /// a copy of it.
+    pub fn config_path(&self) -> &Path {
+        self.imp()
+            .config_path
+            .get()
+            .map(PathBuf::as_path)
+            .expect("AppState was built without a configuration path")
     }
 
     /// Mirrors the current display toggles into the config and writes it out.
@@ -290,7 +310,7 @@ impl AppState {
         let path = self.config_path();
         let result = {
             let cfg = self.imp().config.borrow();
-            cfg.save_merged(&self.imp().config_base.borrow(), &path)
+            cfg.save_merged(&self.imp().config_base.borrow(), path)
         };
         match result {
             // What this window holds is now the baseline for its next save.
@@ -305,9 +325,9 @@ impl AppState {
     pub fn runtime(&self) -> tokio::runtime::Handle {
         self.imp()
             .runtime
-            .borrow()
-            .clone()
+            .get()
             .expect("AppState was built without a tokio runtime")
+            .clone()
     }
 
     // -- tree and cursor ----------------------------------------------------------------
@@ -705,15 +725,19 @@ impl AppState {
     pub fn set_report(&self, report: Arc<Report>) {
         let cursor = self.cursor();
         let max = self.config().analysis.stored_suggestion_limit();
-        self.imp().report.replace(Some(report.clone()));
         if let Some(mut meter) = self.imp().speed.get() {
             meter.sample(report.root.visits, Instant::now());
             self.imp().speed.set(Some(meter));
         }
-        {
-            let mut tree = self.imp().tree.borrow_mut();
-            tree.set_analysis(cursor, Some(crate::util::analysis_of(&report, max)));
-        }
+        // Everything above only reads the report, so the analysis is built before the tree
+        // is borrowed and the `Arc` moves into the cell last instead of being cloned into
+        // it. The dispatcher below is the first thing that can observe either.
+        let analysis = crate::util::analysis_of(&report, max);
+        self.imp()
+            .tree
+            .borrow_mut()
+            .set_analysis(cursor, Some(analysis));
+        self.imp().report.replace(Some(report));
         self.changed(Change::Report);
     }
 

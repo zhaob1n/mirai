@@ -506,9 +506,7 @@ fn connect_scale(ui: &Ui) {
             }
             let want = scale.value().round().max(0.0) as usize;
             let cursor = ui.state.cursor();
-            let target = ui
-                .state
-                .with_tree_cached(|t| current_line(t, cursor).get(want).copied());
+            let target = ui.state.with_tree_cached(|t| line_node(t, cursor, want));
             if let Some(id) = target {
                 ui.state.set_cursor(id);
             }
@@ -547,24 +545,54 @@ fn install_autosave(ui: &Ui) {
 
 // -- refreshers -------------------------------------------------------------------------
 
-/// The line through the cursor: root → cursor, then main-line continuations.
-fn current_line(tree: &GameTree, cursor: NodeId) -> Vec<NodeId> {
-    let mut line = tree.path_to(cursor);
+/// How many moves back the root is — which is also the cursor's index on its own line.
+fn node_depth(tree: &GameTree, id: NodeId) -> usize {
+    let mut depth = 0;
+    let mut cur = id;
+    while let Some(parent) = tree.parent(cur) {
+        depth += 1;
+        cur = parent;
+    }
+    depth
+}
+
+/// The node at index `want` along the line through the cursor: root → cursor, then main-line
+/// continuations. `None` past either end.
+///
+/// Walked rather than materialised: the slider hands over one index per motion event, and
+/// only ever wanted the one node.
+fn line_node(tree: &GameTree, cursor: NodeId, want: usize) -> Option<NodeId> {
+    let depth = node_depth(tree, cursor);
+    let mut id = cursor;
+    if want <= depth {
+        for _ in 0..depth - want {
+            id = tree.parent(id)?;
+        }
+        return Some(id);
+    }
+    for _ in 0..want - depth {
+        id = *tree.children(id).first()?;
+    }
+    Some(id)
+}
+
+/// The last index on the line through the cursor, and the cursor's own index on it — the
+/// move slider's range and value. Counted, not collected: this runs on every navigation step
+/// and the `Vec` it used to build was read for its length alone.
+fn line_extent(tree: &GameTree, cursor: NodeId) -> (usize, usize) {
+    let index = node_depth(tree, cursor);
+    let mut last = index;
     let mut id = cursor;
     while let Some(&child) = tree.children(id).first() {
-        line.push(child);
+        last += 1;
         id = child;
     }
-    line
+    (last, index)
 }
 
 fn update_scale(ui: &Ui) {
     let cursor = ui.state.cursor();
-    let (upper, index) = ui.state.with_tree_cached(|t| {
-        let line = current_line(t, cursor);
-        let index = line.iter().position(|&n| n == cursor).unwrap_or(0);
-        (line.len().saturating_sub(1), index)
-    });
+    let (upper, index) = ui.state.with_tree_cached(|t| line_extent(t, cursor));
     ui.scale_guard.set(true);
     ui.move_scale.set_range(0.0, upper.max(1) as f64);
     ui.move_scale.set_value(index as f64);
@@ -1594,7 +1622,7 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
 #[cfg(test)]
 mod tests {
 
-    use super::{blank_tree, record_label, tree_has_content};
+    use super::{blank_tree, line_extent, line_node, record_label, tree_has_content};
     use mirai_core::{Color, GameInfo, GameTree, MarkKind, Point, RuleSet, Size};
 
     fn empty_tree() -> GameTree {
@@ -1704,5 +1732,39 @@ mod tests {
             "a cleared board is a new untitled record"
         );
         assert!(!tree_has_content(&blank));
+    }
+
+    /// The move slider's contract: its range is the whole line through the cursor — the moves
+    /// behind it plus the main-line continuation ahead of it — and dragging to an index lands
+    /// on that node. Both used to be read off a materialised `Vec` of the line, so the index
+    /// arithmetic that replaced it is worth pinning.
+    #[test]
+    fn the_move_slider_spans_the_line_through_the_cursor() {
+        let size = Size::square(19);
+        let mut tree = empty_tree();
+        let mut line = vec![tree.root()];
+        for i in 0..6u8 {
+            let colour = if i % 2 == 0 {
+                Color::Black
+            } else {
+                Color::White
+            };
+            let at = *line.last().expect("the line starts at the root");
+            line.push(tree.play(at, colour, size.point(i, 0)).expect("legal"));
+        }
+        // A variation must not lengthen the line: only `children[0]` continues it.
+        tree.play(line[2], Color::Black, size.point(10, 10))
+            .expect("legal");
+
+        let cursor = line[3];
+        assert_eq!(
+            line_extent(&tree, cursor),
+            (6, 3),
+            "three moves behind the cursor, three ahead"
+        );
+        for (i, &id) in line.iter().enumerate() {
+            assert_eq!(line_node(&tree, cursor, i), Some(id), "index {i}");
+        }
+        assert_eq!(line_node(&tree, cursor, line.len()), None, "past the end");
     }
 }
