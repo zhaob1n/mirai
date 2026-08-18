@@ -165,13 +165,13 @@ moves. Either way each snapshot is new. A new `cell` makes every label a brand-n
 text node — the same miss §3 named, just not a path. Stones-only stays smooth (quads); a
 live report stutters the fold.
 
-Blobs stay (`fill_disc`). Labels paint only on a snapshot whose whole allocation matches
-the previous one, not on `cell` alone: even a recentre rebuilds the snapshot. The first
-paint, and any redraw at a stable size (cursor, a new report), still has numbers. A
-changed allocation queues one idle redraw; the next snapshot at that size brings the text
-back. There is no timeout: libadwaita's split-view animation is not a fixed duration, and
-`show-sidebar` flips when F9 is pressed, not when the pixels settle. The allocation *is*
-the signal.
+Blobs stay (`fill_disc`). Labels paint on the first snapshot, and on any later snapshot
+that was not preceded by `size_allocate`. Comparing consecutive layouts is not enough:
+width is an integer, and an ease-out or spring can sit on the same pixel for two frames,
+which would dump every glyph mid-fold. A fold allocates every frame; the idle redraw
+after the last allocate does not. There is no timeout: libadwaita's split-view animation
+is not a fixed duration, and `show-sidebar` flips when F9 is pressed, not when the pixels
+settle. The allocate *is* the signal.
 
 ## 7. Keeping it
 

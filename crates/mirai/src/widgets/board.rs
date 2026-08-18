@@ -272,14 +272,14 @@ mod imp {
         pub dead: RefCell<Option<DeadSet>>,
         pub territory: RefCell<Option<Box<[Option<Color>]>>>,
         pub(super) projection: RefCell<Option<BoardProjection>>,
-        /// Last allocation we snapshotted. Labels paint only when this matches the current
-        /// layout. A sidebar fold changes the board's width every frame; `cell` tracks that
-        /// width only while it is the tighter constraint, otherwise only `origin_x` moves.
-        /// Either way the snapshot is new, and pango at a new size is a fresh GSK text node.
-        pub labeled: Cell<Option<Layout>>,
+        /// Set by `size_allocate`, consumed by `snapshot`. Animation frames always
+        /// allocate; the idle redraw after the last one does not.
+        pub allocated: Cell<bool>,
         /// Coalesces the idle redraw that follows a skipped-label snapshot.
         pub idle_draw: Cell<bool>,
         pub defer_labels: Cell<bool>,
+        /// False until the first snapshot, so the initial paint still has numbers.
+        pub seen_snapshot: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -446,6 +446,7 @@ mod imp {
         fn size_allocate(&self, width: i32, height: i32, _baseline: i32) {
             let size = self.board_size();
             let layout = Layout::compute(width, height, size, self.show_coords());
+            self.allocated.set(true);
             if self.layout.replace(layout) != layout {
                 self.static_layer.borrow_mut().take();
             }
@@ -460,13 +461,14 @@ mod imp {
             if l.cell < 3.0 {
                 return;
             }
-            // First paint, or a repeat at the same allocation: draw numbers. A changed
-            // allocation is the sidebar animation (or a live resize) — blobs only, then
-            // one idle snapshot at this size brings the text back.
-            let paint_labels = match self.labeled.replace(Some(l)) {
-                None => true,
-                Some(prev) => prev == l,
-            };
+            // Paint numbers on the first snapshot, and on any snapshot that was not
+            // preceded by `size_allocate`. A sidebar fold allocates every frame — even
+            // when easing holds the same integer width for two ticks — so comparing
+            // layouts would flash the glyphs mid-animation. The idle redraw after the
+            // last allocate is the one that does not allocate.
+            let first = !self.seen_snapshot.replace(true);
+            let resized = self.allocated.replace(false);
+            let paint_labels = first || !resized;
             self.defer_labels.set(!paint_labels);
             if !paint_labels {
                 self.queue_stable_redraw();
