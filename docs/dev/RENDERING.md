@@ -157,17 +157,21 @@ outside the board the only differing pixels are header text that depends on run 
 ## 6. Candidate labels
 
 The probe above ran with no engine, so the quad rewrite never saw analysis numbers. Those
-are pango glyphs whose size tracks `Layout::cell`. Folding the sidebar still reallocates
-the board every frame; each new `cell` makes every label a brand-new GSK text node — the
-same miss §3 named, just not a path. Stones-only stays smooth (quads); a live report
-stutters the fold.
+are pango glyphs whose size tracks `Layout::cell`. Folding the sidebar (when it is not an
+overlay) still changes the board's **width** every frame. `cell` is
+`min(width/units_x, height/units_y)`, so it follows the width only while the board is
+width-limited; once height is tighter, `cell` freezes and only the horizontal origin
+moves. Either way each snapshot is new. A new `cell` makes every label a brand-new GSK
+text node — the same miss §3 named, just not a path. Stones-only stays smooth (quads); a
+live report stutters the fold.
 
-Blobs stay (`fill_disc`). Labels paint only on a snapshot whose allocation matches the
-previous one. The first paint, and any redraw at a stable size (cursor, a new report),
-still has numbers. A changed allocation queues one idle redraw; the next snapshot at that
-size brings the text back. There is no timeout: libadwaita's split-view animation is not
-a fixed duration, and `show-sidebar` flips when F9 is pressed, not when the pixels settle.
-The allocation *is* the signal.
+Blobs stay (`fill_disc`). Labels paint only on a snapshot whose whole allocation matches
+the previous one, not on `cell` alone: even a recentre rebuilds the snapshot. The first
+paint, and any redraw at a stable size (cursor, a new report), still has numbers. A
+changed allocation queues one idle redraw; the next snapshot at that size brings the text
+back. There is no timeout: libadwaita's split-view animation is not a fixed duration, and
+`show-sidebar` flips when F9 is pressed, not when the pixels settle. The allocation *is*
+the signal.
 
 ## 7. Keeping it
 

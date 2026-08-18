@@ -273,8 +273,9 @@ mod imp {
         pub territory: RefCell<Option<Box<[Option<Color>]>>>,
         pub(super) projection: RefCell<Option<BoardProjection>>,
         /// Last allocation we snapshotted. Labels paint only when this matches the current
-        /// layout: a sidebar animation changes `cell` every frame, and pango glyphs sized
-        /// to `cell` are new GSK text nodes — the miss the quad rewrite fixed for stones.
+        /// layout. A sidebar fold changes the board's width every frame; `cell` tracks that
+        /// width only while it is the tighter constraint, otherwise only `origin_x` moves.
+        /// Either way the snapshot is new, and pango at a new size is a fresh GSK text node.
         pub labeled: Cell<Option<Layout>>,
         /// Coalesces the idle redraw that follows a skipped-label snapshot.
         pub idle_draw: Cell<bool>,
