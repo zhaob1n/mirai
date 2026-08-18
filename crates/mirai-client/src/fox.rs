@@ -155,7 +155,15 @@ fn urlencoding(s: &str) -> String {
     out
 }
 
-/// Fox SGF dialect: drop backslashes outside property values, and scale huge KM.
+/// Fox SGF dialect: expand its C-style escapes, and scale huge KM.
+///
+/// Fox writes `\r`, `\n` and `\t` both between properties and *inside* text values. Outside
+/// a value, dropping only the backslash leaves a literal `rn`, which is not whitespace, so a
+/// following variation stops being recognised as a sibling tree. Inside a value the damage is
+/// quieter but worse: SGF's own rule is that `\` escapes the next character, so `C[a\nb]`
+/// parses as the comment `anb` — every line break in a Fox comment turned into the letter
+/// `n`. Both cases become real whitespace here, and every other escape is passed through
+/// untouched so the SGF parser still sees `\]` and `\\`.
 pub fn normalize_fox_sgf(raw: &str) -> String {
     let text = raw.strip_prefix('\u{feff}').unwrap_or(raw);
     let bytes = text.as_bytes();
@@ -164,46 +172,38 @@ pub fn normalize_fox_sgf(raw: &str) -> String {
     let mut in_value = false;
     while i < bytes.len() {
         let c = bytes[i];
+        if c == b'\\' && i + 1 < bytes.len() {
+            let whitespace = match bytes[i + 1] {
+                b'r' => Some('\r'),
+                b'n' => Some('\n'),
+                b't' => Some('\t'),
+                _ => None,
+            };
+            if let Some(ch) = whitespace {
+                out.push(ch);
+                i += 2;
+                continue;
+            }
+            if !in_value {
+                // An escape Fox did not mean: outside a value there is nothing to escape.
+                i += 1;
+                continue;
+            }
+            // `\]`, `\\` and friends belong to the parser, not to us.
+            out.push('\\');
+            out.push(bytes[i + 1] as char);
+            i += 2;
+            continue;
+        }
         if !in_value && c == b'\\' {
             i += 1;
-            // Fox writes C-style `\r`/`\n`/`\t` between properties. Dropping only the
-            // backslash leaves a literal `rn` that is not whitespace, so a following
-            // variation is no longer recognised as a sibling tree.
-            if i < bytes.len() {
-                match bytes[i] {
-                    b'r' => {
-                        out.push('\r');
-                        i += 1;
-                    }
-                    b'n' => {
-                        out.push('\n');
-                        i += 1;
-                    }
-                    b't' => {
-                        out.push('\t');
-                        i += 1;
-                    }
-                    _ => {}
-                }
-            }
             continue;
         }
         if c == b'[' {
             in_value = true;
         } else if c == b']' && in_value {
-            // unescaped ]
-            let escaped = i > 0 && bytes[i - 1] == b'\\' && {
-                let mut slashes = 0;
-                let mut j = i;
-                while j > 0 && bytes[j - 1] == b'\\' {
-                    slashes += 1;
-                    j -= 1;
-                }
-                slashes % 2 == 1
-            };
-            if !escaped {
-                in_value = false;
-            }
+            // Every backslash pair above is consumed whole, so a `]` reached here is real.
+            in_value = false;
         }
         let n = match c {
             0x00..=0x7f => 1,
@@ -272,5 +272,20 @@ mod tests {
         let out = normalize_fox_sgf(raw);
         let trees = mirai_core::sgf::parse(out.as_bytes()).expect(out.as_str());
         assert_eq!(trees.len(), 1);
+    }
+
+    /// Fox writes its comments with C-style `\n`. SGF's own rule is that a backslash escapes
+    /// the next character, so leaving them alone turned every line break into the letter `n`.
+    #[test]
+    fn escaped_newlines_inside_a_comment_become_line_breaks() {
+        let raw = "(;GM[1]FF[4]SZ[19]C[黑中盘胜！\\n这盘棋右下角打劫\\n包括111的找劫也亏损];B[pd])";
+        let out = normalize_fox_sgf(raw);
+        assert!(out.contains("胜！\n这盘棋"), "{out}");
+
+        let trees = mirai_core::sgf::parse(out.as_bytes()).expect(out.as_str());
+        let tree = &trees[0];
+        let comment = &tree.node(tree.root()).comment;
+        assert_eq!(comment.lines().count(), 3, "{comment:?}");
+        assert!(!comment.contains("n这盘棋"), "{comment:?}");
     }
 }
