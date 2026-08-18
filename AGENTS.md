@@ -112,9 +112,11 @@ captures must be explicitly transient and own one teardown path.
 drawn with `gsk` in `snapshot()`. No `GtkDrawingArea`, no cairo. Tree-derived projections,
 heat-map textures and reusable render nodes are built outside `snapshot()`. Draw with quads —
 colour nodes, border nodes, rounded clips, the helpers in `widgets/paint.rs` — and never hand
-GSK a `fill` or `stroke` node for a shape they can draw: GSK rasterises each new path node
-once, and rebuilding board-sized paths every frame cost 30–120 ms a frame
-([`docs/dev/RENDERING.md`](docs/dev/RENDERING.md)).
+GSK a `fill` or `stroke` node for a shape they can draw: GSK keys its rasterisation cache on
+the path pointer, so a path rebuilt every frame always misses, and rebuilding board-sized paths
+cost 30–120 ms a frame. Text is cached per `PangoFont` instead, never per position, so board
+text may be deferred while `Layout::cell` moves — never merely because the widget was
+reallocated ([`docs/dev/RENDERING.md`](docs/dev/RENDERING.md)).
 
 **INV-10 — borrow and identity discipline.** Release every `RefCell` tree borrow before calling
 `changed`, `set_cursor`, `set_report` or `toast`; dispatcher code borrows the tree again.
@@ -184,6 +186,9 @@ defaults, or source text.
 - Refactor with no behaviour change → no new test; the existing suite is the check.
 - GUI change → drive it and look at it. Visual confirmation *is* the proof; see the harness
   recipes in [`docs/dev/TESTING.md`](docs/dev/TESTING.md).
+- Per-frame cost → a screenshot cannot prove it and the suite cannot see it. Measure with
+  `MIRAI_FRAMES=1` and `tools/perf/`, and quote the numbers
+  ([`docs/dev/RENDERING.md`](docs/dev/RENDERING.md)).
 
 ---
 
@@ -200,6 +205,9 @@ Each of these cost real debugging time. They are documented so they cost you non
 | A screen capture of the running app is black | Wayland. The XWayland root window is not composited. Use the built-in harness, which renders through the app's own GSK renderer. |
 | The empty-board win rate is ~35.6%, not ~50% | Correct for the bundled network. Settle such questions by running raw `katago analysis` with the identical query and comparing; do not tune our code toward an expectation. |
 | A "did not shut down cleanly" prompt after doing nothing | Guarded now by `tree_has_content`: an autosave with no move, setup stone or comment is neither written nor offered. |
+| A `size_allocate` override does not run on every animation frame | `gtk_widget_allocate` returns early when the pixel size, baseline and `alloc_needed` are all unchanged, so the vfunc goes quiet exactly on the plateau frames of a spring. Never use it as "something is still animating". |
+| A `queue_draw` from inside `snapshot()` is ignored | GTK clears `draw_needed` *after* the vfunc returns. Ask for the next frame with a tick callback, not a GLib idle — an idle runs between frames at a priority the frame clock outranks. |
+| Board text stutters an animation, but only in one direction | Glyphs are cached per `PangoFont`, so moving the board is free and resizing it is not. `Layout::cell` only tracks the sidebar while the board is width-limited ([`docs/dev/RENDERING.md`](docs/dev/RENDERING.md) §6). |
 
 ---
 

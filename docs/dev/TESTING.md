@@ -13,9 +13,12 @@ How to prove a change to mirai works.
 Section 5 is the reason this file exists: this is a GTK4 app on Wayland, where external
 screen capture returns black frames, so the application screenshots itself.
 
-Frame timings are a separate instrument: the `perf-probe` branch carries `render_probe.rs` and
-`tools/perf/`, and [`RENDERING.md`](RENDERING.md) is the report it produced. Reach for it when
-something stutters — the harness here proves *what* is drawn, not how fast.
+Frame timings are a separate instrument: `crates/mirai/src/render_probe.rs` and `tools/perf/`,
+with [`RENDERING.md`](RENDERING.md) as the report they produced. Reach for them when something
+stutters — the harness here proves *what* is drawn, not how fast. It cannot prove the second
+thing even in principle: a `shot:` capture re-enters `snapshot()`, so a widget that skips work
+while its geometry moves has already stopped skipping by the time the capture runs
+([`RENDERING.md`](RENDERING.md) §6).
 
 ## 1. Quick reference
 
@@ -625,6 +628,7 @@ cargo doc --workspace --no-deps            # catches broken intra-doc links
 | `mirai-engine` query or decode | `probe` locally, and diff a `[final]` block against raw `katago analysis` on the identical query |
 | `remote.rs` or `mirai-server` | `probe` in **both** modes on the same position, the subscription log check, and the cancellation measurement |
 | Anything drawn | At least one harness recipe, and actually look at the PNG. Recipe (b) for anything touching `Point`, ownership or policy |
+| Anything drawn *per frame* — a new pass in `snapshot()`, or text on the board | `MIRAI_FRAMES=1` over a sidebar fold with an engine running, and read `frame-stats.py`: no animation frame past the refresh interval ([`RENDERING.md`](RENDERING.md) §6, §7) |
 | Signals, properties, `Rc` capture, teardown | Recipe (e): `exit=0`, both files written, no orphaned `katago` |
 | A new `GAction` or accelerator | Drive it once through `action:` and confirm `-> ok`, not `MISSING` |
 | Engine config generation (`tuning.rs`, `engines.rs`) or the local-engine page in `prefs.rs` | Recipe (g) in both modes, and look at both PNGs: managed hides the file row and shows Batching and memory, custom does the opposite |

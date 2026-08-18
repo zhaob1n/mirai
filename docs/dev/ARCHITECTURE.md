@@ -207,9 +207,12 @@ Board, win-rate graph and move tree are `gtk::Widget` subclasses drawing in `sna
   are uploaded once per report as `gdk::MemoryTexture`s; the win-rate graph caches its base
   render node and redraws only the cursor marker while navigating. Widgets consume pushed
   projections, so `snapshot()` does not walk `AppState` or rebuild tree-derived data.
-- **Costs.** No cairo conveniences: circles are `gsk::PathBuilder` paths and text uses
-  `pango::Layout`. Projection and cache invalidation are explicit. The honest verification path
-  is the app's own renderer through `harness.rs`.
+- **Costs.** No cairo conveniences: a circle is a colour node inside a rounded clip
+  (`widgets/paint.rs`), and text is a `pango::Layout` per label. Projection and cache
+  invalidation are explicit. Text is deferred while the board is being resized, because GSK
+  caches a glyph per `PangoFont` — so moving the board is free and rescaling it is not
+  ([`RENDERING.md`](RENDERING.md) §6). The honest verification path is the app's own renderer
+  through `harness.rs`, plus `render_probe.rs` for anything per-frame.
 
 ---
 
@@ -306,6 +309,7 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 | `src/profile_editor.rs`, `src/profile_editor.blp` | Shared `MiraiProfileEditorPage` `CompositeTemplate`: navigation chrome, save action, error banner and content slot for both profile editors | `ProfileEditorPage` |
 | `src/prefs.rs` | preferences and profile editors; managed engine calibration is owned by one `CalibrationRun`, so completion and cancellation share one teardown path | `present`, `CalibrationRun`, `engine_menu_model`, `open_editor`, `local_editor`, `file_row`, `candidate_labels` |
 | `src/harness.rs` | debug-only scripted-UI harness; drives actions/dialog controls, waits on visible status, closes individual windows, and renders through the app's GSK renderer | `install`, `parse`, `activate`, `press`, `wait_status`, `shot` |
+| `src/render_probe.rs` | debug-only render-performance probe: frame-clock cadence and phase split, scoped pass timers, scene ablations ([`RENDERING.md`](RENDERING.md)) | `install`, `configure`, `Timer`, `trace`, `label_defer`, `dump_node` |
 
 Non-Rust in `crates/mirai`: `src/window.blp`, `src/new_game.blp`, `src/preferences.blp`,
 `src/profile_editor.blp`, `src/fox_picker.blp` and `src/panels/analysis.blp` (Blueprint
