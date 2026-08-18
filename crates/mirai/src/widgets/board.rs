@@ -609,6 +609,10 @@ mod imp {
             let obj = self.obj();
             let mut fd = obj.pango_context().font_description().unwrap_or_default();
             fd.set_weight(pango::Weight::Bold);
+            // One layout for the whole pass: creating a PangoLayout is a GObject construction
+            // plus a font-map lookup, and a numbered 200-move game would otherwise pay that
+            // once per stone per frame.
+            let layout = obj.create_pango_layout(None);
             for y in 0..size.h {
                 for x in 0..size.w {
                     let p = size.point(x, y);
@@ -625,7 +629,7 @@ mod imp {
                         _ => 0.26,
                     };
                     fd.set_absolute_size((l.cell * scale) as f64 * pango::SCALE as f64);
-                    let layout = obj.create_pango_layout(Some(&text));
+                    layout.set_text(&text);
                     layout.set_font_description(Some(&fd));
                     let fg = if highlight == Some(p) {
                         last_move_tint(color)
@@ -713,6 +717,7 @@ mod imp {
 
             let mut fd = obj.pango_context().font_description().unwrap_or_default();
             fd.set_weight(pango::Weight::Bold);
+            let layout = obj.create_pango_layout(None);
             for (p, text) in &marks.labels {
                 if !size.contains(*p) || text.is_empty() {
                     continue;
@@ -729,7 +734,7 @@ mod imp {
                     _ => 0.30,
                 };
                 fd.set_absolute_size((l.cell * scale) as f64 * pango::SCALE as f64);
-                let layout = obj.create_pango_layout(Some(text));
+                layout.set_text(text);
                 layout.set_font_description(Some(&fd));
                 draw_text(snapshot, &layout, cx, cy, &color_at(*p));
             }
@@ -752,6 +757,7 @@ mod imp {
             let best = report.best_visits().max(1) as f32;
             let obj = self.obj();
             let mut fd = obj.pango_context().font_description().unwrap_or_default();
+            let layout = obj.create_pango_layout(None);
 
             for info in report.moves.iter().take(max) {
                 if info.mv.is_pass() || !size.contains(info.mv) || board.at(info.mv).is_some() {
@@ -790,20 +796,25 @@ mod imp {
                     lines.push((crate::util::si_visits(info.visits), 0.17));
                 }
 
-                let mut laid: Vec<(pango::Layout, f32)> = Vec::with_capacity(lines.len());
+                // Measure, then draw, through one layout: the three lines have to be
+                // centred as a block, so the heights are needed before the first glyph.
+                let mut heights = [0.0f32; 3];
                 let mut total = 0.0f32;
-                for (text, scale) in &lines {
+                for (i, (text, scale)) in lines.iter().enumerate() {
                     fd.set_absolute_size((l.cell * scale) as f64 * pango::SCALE as f64);
-                    let layout = obj.create_pango_layout(Some(text));
+                    layout.set_text(text);
                     layout.set_font_description(Some(&fd));
                     let h = layout.pixel_size().1 as f32;
+                    heights[i] = h;
                     total += h;
-                    laid.push((layout, h));
                 }
                 let mut ty = cy - total * 0.5;
-                for (layout, h) in laid {
-                    draw_text(snapshot, &layout, cx, ty + h * 0.5, &fg);
-                    ty += h;
+                for (i, (text, scale)) in lines.iter().enumerate() {
+                    fd.set_absolute_size((l.cell * scale) as f64 * pango::SCALE as f64);
+                    layout.set_text(text);
+                    layout.set_font_description(Some(&fd));
+                    draw_text(snapshot, &layout, cx, ty + heights[i] * 0.5, &fg);
+                    ty += heights[i];
                 }
             }
         }

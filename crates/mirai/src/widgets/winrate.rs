@@ -465,23 +465,33 @@ impl WinrateGraph {
             .fold(0.0f32, |m, v| m.max(v.abs()));
         let range = max_lead.ceil().max(5.0);
 
-        // Axis labels.
         let font = pango::FontDescription::from_string("Sans 7");
-        self.label(snapshot, &font, "100", 2.0, geom.top - 1.0, &faint);
-        self.label(snapshot, &font, "50", 2.0, y50 - 6.0, &faint);
-        self.label(snapshot, &font, "0", 2.0, geom.bottom - 11.0, &faint);
+        let layout = self.create_pango_layout(None);
+        Self::label(snapshot, &layout, &font, "100", 2.0, geom.top - 1.0, &faint);
+        Self::label(snapshot, &layout, &font, "50", 2.0, y50 - 6.0, &faint);
+        Self::label(
+            snapshot,
+            &layout,
+            &font,
+            "0",
+            2.0,
+            geom.bottom - 11.0,
+            &faint,
+        );
         let hi = format!("+{}", range as i32);
         let lo = format!("-{}", range as i32);
-        self.label(
+        Self::label(
             snapshot,
+            &layout,
             &font,
             &hi,
             geom.right + 4.0,
             geom.top - 1.0,
             &with_alpha(accent, 0.75),
         );
-        self.label(
+        Self::label(
             snapshot,
+            &layout,
             &font,
             &lo,
             geom.right + 4.0,
@@ -575,24 +585,25 @@ impl WinrateGraph {
             let font = pango::FontDescription::from_string("Sans 7");
             let text = format!("{:.1}%", winrate * 100.0);
             let tx = (x + 5.0).min(geom.right - 28.0);
-            self.label(snapshot, &font, &text, tx, geom.top + 1.0, &curve);
+            let layout = self.create_pango_layout(None);
+            Self::label(snapshot, &layout, &font, &text, tx, geom.top + 1.0, &curve);
         }
     }
 
     fn label(
-        &self,
         snapshot: &gtk::Snapshot,
+        layout: &pango::Layout,
         font: &pango::FontDescription,
         text: &str,
         x: f32,
         y: f32,
         color: &gdk::RGBA,
     ) {
-        let layout = self.create_pango_layout(Some(text));
+        layout.set_text(text);
         layout.set_font_description(Some(font));
         snapshot.save();
         snapshot.translate(&graphene::Point::new(x, y));
-        snapshot.append_layout(&layout, color);
+        snapshot.append_layout(layout, color);
         snapshot.restore();
     }
 }

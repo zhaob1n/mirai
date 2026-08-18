@@ -72,6 +72,11 @@ fn provider() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::clone(&PROVIDER)
 }
 
+/// Shared QUIC tuning, built once. Keep-alives are short so a dead peer is noticed while
+/// a user is still looking at the board.
+static TRANSPORT: LazyLock<Arc<quinn::TransportConfig>> =
+    LazyLock::new(|| Arc::new(transport_config()));
+
 /// Shared QUIC tuning. Keep-alives are short so a dead peer is noticed while a user is
 /// still looking at the board.
 pub fn transport_config() -> quinn::TransportConfig {
@@ -170,7 +175,7 @@ pub fn server_endpoint(
     let quic = QuicServerConfig::try_from(crypto)
         .map_err(|e| TransportError::Cert(format!("no initial cipher suite: {e}")))?;
     let mut cfg = quinn::ServerConfig::with_crypto(Arc::new(quic));
-    cfg.transport_config(Arc::new(transport_config()));
+    cfg.transport_config(Arc::clone(&TRANSPORT));
     Ok(quinn::Endpoint::server(cfg, listen)?)
 }
 
@@ -187,7 +192,6 @@ pub fn server_endpoint(
 pub struct TofuVerifier {
     expected: Option<String>,
     observed: Arc<Mutex<Option<String>>>,
-    provider: Arc<rustls::crypto::CryptoProvider>,
 }
 
 impl TofuVerifier {
@@ -195,7 +199,6 @@ impl TofuVerifier {
         TofuVerifier {
             expected: expected.map(|s| s.trim().to_ascii_lowercase().replace(':', "")),
             observed,
-            provider: provider(),
         }
     }
 }
@@ -235,7 +238,7 @@ impl ServerCertVerifier for TofuVerifier {
             message,
             cert,
             dss,
-            &self.provider.signature_verification_algorithms,
+            &PROVIDER.signature_verification_algorithms,
         )
     }
 
@@ -249,12 +252,12 @@ impl ServerCertVerifier for TofuVerifier {
             message,
             cert,
             dss,
-            &self.provider.signature_verification_algorithms,
+            &PROVIDER.signature_verification_algorithms,
         )
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        self.provider
+        PROVIDER
             .signature_verification_algorithms
             .supported_schemes()
     }
@@ -276,7 +279,7 @@ pub fn client_endpoint(
     let quic = QuicClientConfig::try_from(crypto)
         .map_err(|e| TransportError::Cert(format!("no initial cipher suite: {e}")))?;
     let mut cfg = quinn::ClientConfig::new(Arc::new(quic));
-    cfg.transport_config(Arc::new(transport_config()));
+    cfg.transport_config(Arc::clone(&TRANSPORT));
 
     let mut ep = quinn::Endpoint::client((std::net::Ipv6Addr::UNSPECIFIED, 0).into())
         .or_else(|_| quinn::Endpoint::client((std::net::Ipv4Addr::UNSPECIFIED, 0).into()))?;
