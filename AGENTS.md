@@ -12,6 +12,31 @@ not a draft to rewrite.
 
 ---
 
+## Core principles
+
+Do not modify this section without explicit approval.
+
+### Documentation
+
+- [`docs/dev/`](docs/dev/) and this file are for developers and agents.
+- [`docs/user/`](docs/user/) and [`README.md`](README.md) are for users.
+- [`docs/archive/`](docs/archive/) is legacy. The code is authoritative.
+- Keep documentation short. When the project changes, update it: a new
+  reader should recover the decisions and the scars from these files, the
+  comments, and the Git history.
+- Prefer mermaid over ASCII diagrams.
+
+### Development
+
+- Git history follows [upstream Linux kernel conventions](https://www.kernel.org/doc/html/latest/process/submitting-patches.html):
+  focused, bisectable commits and a topic branch per independent change.
+  Subject line names the change; the body says why.
+- Follow Linus Torvalds' code taste.
+- Helper scripts and tools that paid for themselves stay in the tree so
+  the next task can reuse them.
+
+---
+
 ## 1. Where to look
 
 | You need | Read |
