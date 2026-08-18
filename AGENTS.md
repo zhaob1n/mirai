@@ -200,6 +200,9 @@ Each of these cost real debugging time. They are documented so they cost you non
 | A screen capture of the running app is black | Wayland. The XWayland root window is not composited. Use the built-in harness, which renders through the app's own GSK renderer. |
 | The empty-board win rate is ~35.6%, not ~50% | Correct for the bundled network. Settle such questions by running raw `katago analysis` with the identical query and comparing; do not tune our code toward an expectation. |
 | A "did not shut down cleanly" prompt after doing nothing | Guarded now by `tree_has_content`: an autosave with no move, setup stone or comment is neither written nor offered. |
+| A `size_allocate` override does not run on every animation frame | `gtk_widget_allocate` returns early when the pixel size, baseline and `alloc_needed` are all unchanged, so the vfunc goes quiet exactly on the plateau frames of a spring. Never use it as "something is still animating". |
+| A `queue_draw` from inside `snapshot()` is ignored | GTK clears `draw_needed` *after* the vfunc returns. Ask for the next frame with a tick callback, not a GLib idle — an idle runs between frames at a priority the frame clock outranks. |
+| Board text stutters an animation, but only in one direction | Glyphs are cached per `PangoFont`, so moving the board is free and resizing it is not. `Layout::cell` only tracks the sidebar while the board is width-limited ([`docs/dev/RENDERING.md`](docs/dev/RENDERING.md) §6). |
 
 ---
 

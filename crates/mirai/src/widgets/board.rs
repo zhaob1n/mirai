@@ -211,8 +211,8 @@ pub type ClickHook = Rc<dyn Fn(Point) -> bool + 'static>;
 
 /// The geometry and position a single `snapshot` pass draws against.
 ///
-/// Every `draw_*` layer needs the same four values, so they travel together rather than
-/// as four repeated parameters.
+/// Every `draw_*` layer needs the same values, so they travel together rather than as
+/// repeated parameters.
 #[derive(Clone, Copy)]
 pub struct Scene<'a> {
     /// The resolved geometry: cell size and board origin.
@@ -225,6 +225,9 @@ pub struct Scene<'a> {
     /// Whether the dark theme is active; layers that paint their own backing pick
     /// contrasting colours from it.
     pub dark: bool,
+    /// Whether this pass may emit text. False while `Layout::cell` is still moving, which
+    /// is the one thing that makes every glyph a fresh rasterisation; see `snapshot`.
+    pub labels: bool,
 }
 struct BoardProjection {
     size: Size,
@@ -272,14 +275,15 @@ mod imp {
         pub dead: RefCell<Option<DeadSet>>,
         pub territory: RefCell<Option<Box<[Option<Color>]>>>,
         pub(super) projection: RefCell<Option<BoardProjection>>,
-        /// Set by `size_allocate`, consumed by `snapshot`. Animation frames always
-        /// allocate; the idle redraw after the last one does not.
-        pub allocated: Cell<bool>,
-        /// Coalesces the idle redraw that follows a skipped-label snapshot.
-        pub idle_draw: Cell<bool>,
-        pub defer_labels: Cell<bool>,
-        /// False until the first snapshot, so the initial paint still has numbers.
-        pub seen_snapshot: Cell<bool>,
+        /// `Layout::cell` of the previous snapshot, and `None` before the first one.
+        ///
+        /// Labels are pango glyphs sized to `cell`, and GSK keys its glyph cache on the
+        /// `PangoFont` and the glyph — never on where the glyph lands. So a board that only
+        /// moves keeps its text for free, while a board whose `cell` changed re-rasterises
+        /// every digit. This is the only thing worth deferring on.
+        pub drawn_cell: Cell<Option<f32>>,
+        /// Set while the one-shot tick callback that repaints at a settled `cell` is queued.
+        pub label_tick: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -317,16 +321,23 @@ mod imp {
                 .is_some_and(|projection| projection.show_coordinates)
         }
 
-        fn queue_stable_redraw(&self) {
-            if self.idle_draw.replace(true) {
+        /// Queues exactly one redraw on the next frame.
+        ///
+        /// It cannot be a plain `queue_draw`: GTK clears `draw_needed` *after* the
+        /// `snapshot` vfunc returns (`gtk_widget_do_snapshot`), so a request made from
+        /// inside the vfunc is swallowed. A tick callback runs in the next frame's update
+        /// phase, ahead of layout and paint, so the redraw it asks for is served by that
+        /// same frame. A GLib idle would instead run between two frames at a priority the
+        /// frame clock outranks, which is how the previous version could land its repaint
+        /// in the middle of an animation.
+        fn redraw_next_frame(&self) {
+            if self.label_tick.replace(true) {
                 return;
             }
-            let weak = self.obj().downgrade();
-            glib::idle_add_local_once(move || {
-                if let Some(this) = weak.upgrade() {
-                    this.imp().idle_draw.set(false);
-                    this.queue_draw();
-                }
+            self.obj().add_tick_callback(|obj, _| {
+                obj.imp().label_tick.set(false);
+                obj.queue_draw();
+                glib::ControlFlow::Break
             });
         }
 
@@ -446,7 +457,6 @@ mod imp {
         fn size_allocate(&self, width: i32, height: i32, _baseline: i32) {
             let size = self.board_size();
             let layout = Layout::compute(width, height, size, self.show_coords());
-            self.allocated.set(true);
             if self.layout.replace(layout) != layout {
                 self.static_layer.borrow_mut().take();
             }
@@ -463,17 +473,20 @@ mod imp {
                 return;
             }
             crate::render_probe::trace("board-cell", l.cell);
-            // Paint numbers on the first snapshot, and on any snapshot that was not
-            // preceded by `size_allocate`. A sidebar fold allocates every frame — even
-            // when easing holds the same integer width for two ticks — so comparing
-            // layouts would flash the glyphs mid-animation. The idle redraw after the
-            // last allocate is the one that does not allocate.
-            let first = !self.seen_snapshot.replace(true);
-            let resized = self.allocated.replace(false);
-            let paint_labels = first || !resized;
-            self.defer_labels.set(!paint_labels);
-            if !paint_labels {
-                self.queue_stable_redraw();
+            // Text is deferred exactly while `cell` is moving. GSK caches a rasterised glyph
+            // under its `PangoFont`, so a board that only moves or recentres keeps every
+            // digit for free and a board whose `cell` changed pays for all of them again —
+            // measured at 0.5-1.9 ms against 11-17 ms on one fold (`RENDERING.md` §6).
+            // Deferring on the allocation instead was both too eager, suppressing the frames
+            // that were already cheap, and unsound: GTK skips `size_allocate` when the
+            // pixel size is unchanged, so the signal goes quiet exactly on the plateau
+            // frames of a spring.
+            let labels = match self.drawn_cell.replace(Some(l.cell)) {
+                Some(previous) => previous == l.cell,
+                None => true,
+            } || !crate::render_probe::label_defer();
+            if !labels {
+                self.redraw_next_frame();
             }
             let size = projection.size;
             let dark = is_dark();
@@ -527,6 +540,7 @@ mod imp {
                     size,
                     board: &board,
                     dark,
+                    labels,
                 };
                 self.draw_stones(snapshot, scene, None);
                 self.draw_numbers(snapshot, scene, &seq, None);
@@ -538,6 +552,7 @@ mod imp {
                 size,
                 board: &projection.position.board,
                 dark,
+                labels,
             };
             let dead = self.dead.borrow();
             self.draw_stones(snapshot, scene, dead.as_ref());
@@ -641,7 +656,7 @@ mod imp {
             nums: &[u16],
             highlight: Option<Point>,
         ) {
-            if self.defer_labels.get() {
+            if !scene.labels {
                 return;
             }
             let _t = crate::render_probe::Timer::new("board-numbers");
@@ -694,6 +709,7 @@ mod imp {
                 size,
                 board,
                 dark,
+                ..
             } = scene;
             let obj = self.obj();
             let r = l.stone_r;
@@ -757,7 +773,7 @@ mod imp {
                 }
             }
 
-            if !self.defer_labels.get() {
+            if scene.labels {
                 let mut fd = obj.pango_context().font_description().unwrap_or_default();
                 fd.set_weight(pango::Weight::Bold);
                 let layout = obj.create_pango_layout(None);
@@ -798,6 +814,7 @@ mod imp {
                 size,
                 board,
                 dark,
+                labels,
             } = scene;
             let best = report.best_visits().max(1) as f32;
             let obj = self.obj();
@@ -828,7 +845,7 @@ mod imp {
                 if share < LABEL_MIN_SHARE && info.order != 0 {
                     continue;
                 }
-                if self.defer_labels.get() {
+                if !labels {
                     continue;
                 }
 

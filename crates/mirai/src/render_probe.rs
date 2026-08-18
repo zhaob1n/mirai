@@ -22,6 +22,8 @@
 //! MIRAI_FRAMES=1     frame-dt, frame-phases and Timer lines
 //! MIRAI_COLLAPSED=1  force the split view collapsed, so the sidebar overlays the content
 //!                    instead of resizing it
+//! MIRAI_NO_LABEL_DEFER=1
+//!                    paint the board's text on every frame, however the allocation moved
 //! MIRAI_NO_BOARD=1   take BoardView out of the paned
 //! MIRAI_NO_GRAPH=1   take WinrateGraph out of the paned
 //! MIRAI_SPIN=1       redraw an unchanging scene every frame
@@ -90,6 +92,15 @@ pub fn trace(label: &'static str, value: f32) {
     if frames() {
         eprintln!("{label} {value:.3}");
     }
+}
+
+/// Whether `BoardView` may defer its labels while the board is being resized.
+///
+/// `MIRAI_NO_LABEL_DEFER=1` paints them on every frame instead, which is the ablation that
+/// measures what the deferral is worth (`RENDERING.md` §6).
+pub fn label_defer() -> bool {
+    static OFF: LazyLock<bool> = LazyLock::new(|| flag("MIRAI_NO_LABEL_DEFER"));
+    !(cfg!(debug_assertions) && *OFF)
 }
 
 /// Attaches the frame-clock probes and applies the window-level ablations.

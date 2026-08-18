@@ -41,8 +41,9 @@ branch, because it gets reused:
   `layout` (measure and allocate), `paint` (snapshot the widget tree, then GSK renders it).
   `Timer` brackets one drawing pass and `trace` records a scalar beside it. Everything is
   behind `cfg!(debug_assertions)`, so a release build folds the module away.
-- **Ablation flags** — `MIRAI_NO_BOARD`, `MIRAI_NO_GRAPH`, `MIRAI_COLLAPSED`, `MIRAI_SPIN`,
-  `MIRAI_DUMP_NODE` (writes the window's render node for `gtk4-rendernode-tool`).
+- **Ablation flags** — `MIRAI_NO_BOARD`, `MIRAI_NO_GRAPH`, `MIRAI_NO_LABEL_DEFER` (§6),
+  `MIRAI_COLLAPSED`, `MIRAI_SPIN`, `MIRAI_DUMP_NODE` (writes the window's render node for
+  `gtk4-rendernode-tool`).
 - **`tools/perf/frame-stats.py`** — aggregates the stderr into a per-action table.
 - **`tools/perf/dense-board.py`** — the 285-stone position used as the worst case.
 - **`tools/perf/numbered-game.py`** — 190 real moves, the worst case for move numbers;
@@ -165,33 +166,99 @@ outside the board the only differing pixels are header text that depends on run 
 
 ## 6. Candidate labels
 
-The probe above ran with no engine, so the quad rewrite never saw analysis numbers. Those
-are pango glyphs whose size tracks `Layout::cell`. Folding the sidebar (when it is not an
-overlay) still changes the board's **width** every frame. `cell` is
-`min(width/units_x, height/units_y)`, so it follows the width only while the board is
-width-limited; once height is tighter, `cell` freezes and only the horizontal origin
-moves. Either way each snapshot is new. A new `cell` makes every label a brand-new GSK
-text node — the same miss §3 named, just not a path. Stones-only stays smooth (quads); a
-live report stutters the fold.
+The probe above ran with no engine, so the quad rewrite never saw analysis numbers. Those are
+pango glyphs sized to `Layout::cell`, and they are not a fourth kind of path — GSK keeps a
+separate cache for them with a different key. Three caches, three keys, and the difference is
+the whole of this section:
 
-Blobs stay (`fill_disc`). Labels paint on the first snapshot, and on any later snapshot
-that was not preceded by `size_allocate`. Comparing consecutive layouts is not enough:
-width is an integer, and an ease-out or spring can sit on the same pixel for two frames,
-which would dump every glyph mid-fold. A fold allocates every frame; the idle redraw
-after the last allocate does not. There is no timeout: libadwaita's split-view animation
-is not a fixed duration, and `show-sidebar` flips when F9 is pressed, not when the pixels
-settle. The allocate *is* the signal.
+| node | cache key (GTK `gsk/gpu/`) | consequence for us |
+|---|---|---|
+| fill / stroke | `GskPath` pointer + scale + subpixel offset | a path rebuilt per frame always misses (§3) |
+| text | `PangoFont` + glyph + subpixel flags + render scale | **position is not in the key**; the font size is |
+| colour / border / rounded clip | none — one shader each | nothing to miss |
+
+So a board that only *moves* keeps every digit for free, and a board whose `cell` *changed*
+re-rasterises all of them. Measured on one fold, in the same run: the candidate pass costs
+**0.68 ms** on a frame whose `cell` was unchanged and **13.6 ms** (worst 27.8) on a frame whose
+`cell` moved.
+
+`cell` is `min(width/units_x, height/units_y)`, so it tracks the sidebar only while the board
+is width-limited. That makes the two directions of the same animation behave differently, which
+is why the first attempt at this looked fine and stuttered anyway:
+
+| fold, ~15 animation frames | frames where `cell` changed |
+|---|---|
+| hiding the sidebar (board grows, becomes height-limited) | 2–5 |
+| showing it (board shrinks, stays width-limited) | 11–13 |
+
+**The rule: defer text while `cell` is moving, and only then.** Blobs, stones and marks are
+quads and always paint.
+
+```mermaid
+flowchart LR
+    S["snapshot()"] --> Q{"cell == cell of<br/>previous snapshot?"}
+    Q -- yes --> P["paint text"]
+    Q -- no --> D["quads only"]
+    D --> T["one-shot tick callback"]
+    T --> S
+```
+
+Two GTK details decide the shape of that loop, and the first version of this fix got both
+wrong:
+
+- **The allocation is not the signal.** `gtk_widget_allocate` returns early when
+  `!alloc_needed && !size_changed && !baseline_changed`, so `size_allocate` goes quiet exactly
+  on the plateau frames of a spring — while a fold that leaves `cell` alone still allocates on
+  every frame. Keying on it therefore suppressed the frames that were already cheap and could
+  fall silent on the ones that were not.
+- **`queue_draw` inside `snapshot` is lost.** `gtk_widget_do_snapshot` clears `draw_needed`
+  *after* the vfunc returns. A GLib idle does get the redraw out, but it runs between frames at
+  a priority the frame clock outranks, so it can land its repaint in the middle of the
+  animation. A tick callback runs in the next frame's update phase, ahead of layout and paint.
+
+No timeout, in either version: libadwaita's split-view animation is a spring, not a duration,
+and `show-sidebar` flips when F9 is pressed rather than when the pixels settle.
+
+Measured with `tools/perf/dense-board.py`, live analysis on (20 candidates, 10 Hz), six folds
+per run, debug build, 6016×3384@60 Hz at scale 2. `over` counts animation frames past the
+16.7 ms deadline:
+
+| rule | text on … of 89–93 animation frames | frame median | over |
+|---|---|---|---|
+| never defer (`MIRAI_NO_LABEL_DEFER=1`) | 100 % | 7.4 ms | **29 %** |
+| defer whenever `size_allocate` ran | 12 % | 4.3 ms | 1 % |
+| defer while `cell` moves | **44 %** | 4.0 ms | 2 % |
+
+The deferral is worth having — 29 % of frames miss otherwise — and keying it on `cell` keeps
+the numbers on screen about four times as often for the same frame cost.
+
+One frame still pays: the first paint at a size never seen before has to rasterise the glyphs,
+measured at 16.5 ms once, against 2.6 ms when the size is already in the cache (folding back to
+a previous width). That is inherent, and it is one frame at the end of an animation.
+
+Verified with `tools/perf/numbered-game.py` and **no engine at all**, so that nothing but the
+tick callback could bring the text back: numbers vanish for the 5 frames where `cell` moves,
+then return on the very next frame. A `shot:` screenshot cannot see this — capturing re-enters
+`snapshot()` at the current `cell`, which by definition matches, so the capture always has its
+text. The frame timeline is the instrument here, not the screenshot.
+
+Not done, deliberately: quantising the font size so that a fold visits three sizes instead of
+twelve would keep the text up throughout, at the cost of type that steps while the board
+scales. The measured 2 % is not worth that. Coordinate labels live in the static layer and are
+rebuilt whenever the allocation changes; they were left alone because a board missing its
+letters mid-fold reads as broken, and at 0.68 ms for the whole text pass they are not the
+problem.
 
 ## 7. Keeping it
 
 - `paint.rs` is the only place these primitives are defined; use them.
 - If a new widget needs a path, keep the node's bounds small and its segment count low, then
-  measure it with the probe branch before assuming it is fine.
-- Pango on the board is sized to `cell`. Anything that reallocates every frame (sidebar
-  fold, a live window resize) must not emit those glyphs until the allocation repeats.
-  `BoardView` already does this; a new overlay that draws per-intersection text has to
-  do the same.
+  measure it with `MIRAI_FRAMES=1` before assuming it is fine.
+- Pango on the board is sized to `cell`. Text may be deferred while `cell` moves, never merely
+  because the widget was reallocated, and the redraw that brings it back belongs on a tick
+  callback. A new overlay that draws per-intersection text has to do the same.
 - `MIRAI_SPIN` on a dense board is the cheapest regression check: it should stay a
-  single-digit millisecond paint. There is deliberately no unit test — a headless test cannot
-  see a frame, and asserting on node types would pin the implementation rather than the
-  behaviour.
+  single-digit millisecond paint. `MIRAI_NO_LABEL_DEFER=1` is the check for §6 — with an engine
+  running, folding the sidebar should go from 0–2 % missed frames to about 30 %.
+- There is deliberately no unit test for any of this: a headless test cannot see a frame, and
+  asserting on node types would pin the implementation rather than the behaviour.
