@@ -45,7 +45,8 @@ Wayland, so the application measures itself. Branch `perf-probe` carries the ins
 - **`MIRAI_DUMP_NODE`** — writes the window's render node for `gtk4-rendernode-tool`.
 
 Runs use an isolated `XDG_CONFIG_HOME`/`XDG_DATA_HOME` and no engine, so nothing in the
-numbers is KataGo's. The window is whatever niri gives it, ~1486×1634; `niri msg action
+numbers is KataGo's — and, it later turned out, nothing in them is analysis labels either
+(§6). The window is whatever niri gives it, ~1486×1634; `niri msg action
 set-window-width/-height` was used for the size sweep.
 
 ```sh
@@ -153,11 +154,30 @@ with and without move numbers, and the move tree. Differences are confined to an
 the edges of stones and grid lines — at 8× magnification the two are indistinguishable, and
 outside the board the only differing pixels are header text that depends on run timing.
 
-## 6. Keeping it
+## 6. Candidate labels
+
+The probe above ran with no engine, so the quad rewrite never saw analysis numbers. Those
+are pango glyphs whose size tracks `Layout::cell`. Folding the sidebar still reallocates
+the board every frame; each new `cell` makes every label a brand-new GSK text node — the
+same miss §3 named, just not a path. Stones-only stays smooth (quads); a live report
+stutters the fold.
+
+Blobs stay (`fill_disc`). Labels paint only on a snapshot whose allocation matches the
+previous one. The first paint, and any redraw at a stable size (cursor, a new report),
+still has numbers. A changed allocation queues one idle redraw; the next snapshot at that
+size brings the text back. There is no timeout: libadwaita's split-view animation is not
+a fixed duration, and `show-sidebar` flips when F9 is pressed, not when the pixels settle.
+The allocation *is* the signal.
+
+## 7. Keeping it
 
 - `paint.rs` is the only place these primitives are defined; use them.
 - If a new widget needs a path, keep the node's bounds small and its segment count low, then
   measure it with the probe branch before assuming it is fine.
+- Pango on the board is sized to `cell`. Anything that reallocates every frame (sidebar
+  fold, a live window resize) must not emit those glyphs until the allocation repeats.
+  `BoardView` already does this; a new overlay that draws per-intersection text has to
+  do the same.
 - `MIRAI_SPIN` on a dense board is the cheapest regression check: it should stay a
   single-digit millisecond paint. There is deliberately no unit test — a headless test cannot
   see a frame, and asserting on node types would pin the implementation rather than the

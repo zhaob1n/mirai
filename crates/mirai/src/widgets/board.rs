@@ -272,6 +272,13 @@ mod imp {
         pub dead: RefCell<Option<DeadSet>>,
         pub territory: RefCell<Option<Box<[Option<Color>]>>>,
         pub(super) projection: RefCell<Option<BoardProjection>>,
+        /// Last allocation we snapshotted. Labels paint only when this matches the current
+        /// layout: a sidebar animation changes `cell` every frame, and pango glyphs sized
+        /// to `cell` are new GSK text nodes — the miss the quad rewrite fixed for stones.
+        pub labeled: Cell<Option<Layout>>,
+        /// Coalesces the idle redraw that follows a skipped-label snapshot.
+        pub idle_draw: Cell<bool>,
+        pub defer_labels: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -307,6 +314,19 @@ mod imp {
                 .borrow()
                 .as_ref()
                 .is_some_and(|projection| projection.show_coordinates)
+        }
+
+        fn queue_stable_redraw(&self) {
+            if self.idle_draw.replace(true) {
+                return;
+            }
+            let weak = self.obj().downgrade();
+            glib::idle_add_local_once(move || {
+                if let Some(this) = weak.upgrade() {
+                    this.imp().idle_draw.set(false);
+                    this.queue_draw();
+                }
+            });
         }
 
         /// Builds the wood, grid, star points and coordinate labels once.
@@ -438,6 +458,17 @@ mod imp {
             let l = self.layout.get();
             if l.cell < 3.0 {
                 return;
+            }
+            // First paint, or a repeat at the same allocation: draw numbers. A changed
+            // allocation is the sidebar animation (or a live resize) — blobs only, then
+            // one idle snapshot at this size brings the text back.
+            let paint_labels = match self.labeled.replace(Some(l)) {
+                None => true,
+                Some(prev) => prev == l,
+            };
+            self.defer_labels.set(!paint_labels);
+            if !paint_labels {
+                self.queue_stable_redraw();
             }
             let size = projection.size;
             let dark = is_dark();
@@ -605,6 +636,9 @@ mod imp {
             nums: &[u16],
             highlight: Option<Point>,
         ) {
+            if self.defer_labels.get() {
+                return;
+            }
             let Scene { l, size, board, .. } = scene;
             let obj = self.obj();
             let mut fd = obj.pango_context().font_description().unwrap_or_default();
@@ -715,28 +749,30 @@ mod imp {
                 }
             }
 
-            let mut fd = obj.pango_context().font_description().unwrap_or_default();
-            fd.set_weight(pango::Weight::Bold);
-            let layout = obj.create_pango_layout(None);
-            for (p, text) in &marks.labels {
-                if !size.contains(*p) || text.is_empty() {
-                    continue;
+            if !self.defer_labels.get() {
+                let mut fd = obj.pango_context().font_description().unwrap_or_default();
+                fd.set_weight(pango::Weight::Bold);
+                let layout = obj.create_pango_layout(None);
+                for (p, text) in &marks.labels {
+                    if !size.contains(*p) || text.is_empty() {
+                        continue;
+                    }
+                    let (x, y) = size.xy(*p);
+                    let (cx, cy) = l.xy(x, y);
+                    if board.at(*p).is_none() {
+                        // A wood disc keeps the label legible over the grid lines.
+                        fill_disc(snapshot, cx, cy, r * 0.85, &wood_color(dark));
+                    }
+                    let scale = match text.chars().count() {
+                        1 => 0.52,
+                        2 => 0.40,
+                        _ => 0.30,
+                    };
+                    fd.set_absolute_size((l.cell * scale) as f64 * pango::SCALE as f64);
+                    layout.set_text(text);
+                    layout.set_font_description(Some(&fd));
+                    draw_text(snapshot, &layout, cx, cy, &color_at(*p));
                 }
-                let (x, y) = size.xy(*p);
-                let (cx, cy) = l.xy(x, y);
-                if board.at(*p).is_none() {
-                    // A wood disc keeps the label legible over the grid lines.
-                    fill_disc(snapshot, cx, cy, r * 0.85, &wood_color(dark));
-                }
-                let scale = match text.chars().count() {
-                    1 => 0.52,
-                    2 => 0.40,
-                    _ => 0.30,
-                };
-                fd.set_absolute_size((l.cell * scale) as f64 * pango::SCALE as f64);
-                layout.set_text(text);
-                layout.set_font_description(Some(&fd));
-                draw_text(snapshot, &layout, cx, cy, &color_at(*p));
             }
         }
 
@@ -780,9 +816,10 @@ mod imp {
                     );
                 }
 
-                // A barely searched move is a hint, not a readout: its blob is nearly
-                // transparent, so numbers on it would be unreadable clutter.
                 if share < LABEL_MIN_SHARE && info.order != 0 {
+                    continue;
+                }
+                if self.defer_labels.get() {
                     continue;
                 }
 
