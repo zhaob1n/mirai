@@ -92,7 +92,5 @@ fn main() -> glib::ExitCode {
         harness::install(app.upcast_ref());
     });
 
-    let code = application.run();
-    application.shutdown_runtime();
-    code
+    application.run()
 }

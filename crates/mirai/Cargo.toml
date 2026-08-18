@@ -17,7 +17,8 @@ mirai-proto.workspace = true
 gtk.workspace = true
 adw.workspace = true
 glib.workspace = true
-tokio.workspace = true
+# `signal` for the SIGINT/SIGTERM/SIGHUP watcher in `application_shell.rs`.
+tokio = { workspace = true, features = ["signal"] }
 toml.workspace = true
 serde.workspace = true
 serde_json.workspace = true

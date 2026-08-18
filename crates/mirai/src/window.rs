@@ -128,7 +128,7 @@ pub struct Ui {
     scale_guard: Cell<bool>,
     pending_auto_analyse: Cell<bool>,
     tasks: WindowTasks,
-    autosave: Option<PathBuf>,
+    autosave: Option<AutosaveFile>,
 }
 
 impl Ui {
@@ -143,27 +143,37 @@ impl Ui {
     }
 }
 
-impl MiraiWindow {
-    /// Releases every per-window task and model exactly once.
-    pub(crate) fn shutdown(&self) {
-        if !self.begin_shutdown() {
-            return;
-        }
-        let Some(ui) = self.take_ui() else {
-            return;
-        };
+impl Drop for Ui {
+    /// Dropping the state *is* the release, so no exit path can forget it: the window's
+    /// `close-request`, its `dispose` and the application's `shutdown` all reduce to
+    /// [`MiraiWindow::take_ui`].
+    ///
+    /// Nothing here may reach back through `self.window`. A `Ui` is dropped from
+    /// `MiraiWindow::dispose`, where the weak reference may already be cleared, and it is
+    /// taken out of the window before it drops, so every [`AppState`] hook that tries to
+    /// re-enter finds no state and does nothing. Work that genuinely needs the widget tree
+    /// belongs at the call site, ahead of the drop.
+    fn drop(&mut self) {
+        // Ordering, not necessity: the slots would release themselves when `tasks` drops,
+        // but the timers must not fire while the tree is being flushed.
+        self.tasks.abort_all();
+        flush_comment(self);
+        self.batch.cancel();
+        self.play.stop();
+        self.state.cancel_tasks();
+        self.state.set_live_analysis(false);
+        self.state.save_config();
+        self.state.set_engine(None);
+        // `autosave` deletes its file as it drops, with the rest of the fields.
+    }
+}
 
-        flush_comment(&ui);
-        ui.tasks.abort_all();
-        if let Some(autosave) = ui.autosave.as_ref() {
-            let _ = std::fs::remove_file(autosave);
+impl MiraiWindow {
+    /// Releases this window's state exactly once. The release itself is [`Ui`]'s `Drop`.
+    pub(crate) fn shutdown(&self) {
+        if self.begin_shutdown() {
+            drop(self.take_ui());
         }
-        ui.batch.cancel();
-        ui.play.stop();
-        ui.state.cancel_tasks();
-        ui.state.set_live_analysis(false);
-        ui.state.save_config();
-        ui.state.set_engine(None);
     }
 }
 
@@ -332,7 +342,7 @@ pub fn present(
         scale_guard: Cell::new(false),
         pending_auto_analyse: Cell::new(false),
         tasks: WindowTasks::default(),
-        autosave: next_autosave_path(),
+        autosave: next_autosave_file(),
     });
     window.with_ui(|ui| {
         install_actions(ui);
@@ -1014,16 +1024,32 @@ fn do_save_as(ui: &Ui) {
 ///
 /// One file per window, not per process: windows used to share `autosave.sgf` and overwrite
 /// each other, and the companion `clean-exit` flag could not say *which* window had exited
-/// cleanly. Now a window deletes its own file as it closes, so whatever is left on disk is by
-/// definition what a crash left behind.
-fn next_autosave_path() -> Option<PathBuf> {
+/// cleanly. The path is owned by the window's [`Ui`] and the file is removed when that value
+/// drops, so "a window deletes its own file as it closes" holds for every exit path instead
+/// of only the one that remembers to. Whatever is left on disk is by definition what a crash
+/// left behind.
+struct AutosaveFile(PathBuf);
+
+impl AutosaveFile {
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for AutosaveFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn next_autosave_file() -> Option<AutosaveFile> {
     static NEXT: AtomicU32 = AtomicU32::new(0);
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    Some(
+    Some(AutosaveFile(
         Config::data_dir()
             .ok()?
             .join(format!("{}{n}.sgf", *AUTOSAVE_PREFIX)),
-    )
+    ))
 }
 
 /// Identifies this process's autosaves. The start time is in there because a pid alone is
@@ -1100,7 +1126,7 @@ fn tree_has_content(tree: &mirai_core::GameTree) -> bool {
 }
 
 fn write_autosave(ui: &Ui) {
-    let Some(autosave) = ui.autosave.as_ref() else {
+    let Some(autosave) = ui.autosave.as_ref().map(AutosaveFile::path) else {
         return;
     };
     if !tree_has_content(&ui.state.tree()) {
