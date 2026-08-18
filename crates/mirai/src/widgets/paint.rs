@@ -3,17 +3,18 @@
 //! Drawing primitives shared by the custom widgets, and the one rule they exist to enforce:
 //! **do not hand GSK a path for a shape a quad can draw.**
 //!
-//! GSK rasterises a `fill` or `stroke` node by evaluating the path's curves across the whole
-//! bounding box of the node, so cost grows as *area × segments* — and it is redone on every
-//! frame that damages the widget, because there is no rasterisation cache to hit. A board's
-//! grid (38 segments spanning the board) and its stones (one circle each) measured 30 ms a
-//! frame on an empty board and 120 ms on a full one, which is what made every animation and
-//! every step through a game record drop frames. Colour nodes, border nodes and rounded
-//! clips are quads the renderer batches; the same scenes now paint in 2–8 ms.
+//! GSK *does* cache a rasterised path — but `gskgpucachedfill.c` keys that cache on the
+//! `GskPath` **pointer**, plus the scale and the subpixel offset. A path rebuilt every
+//! `snapshot()` is therefore a new key every frame, and a miss rasterises the path through
+//! cairo across the node's whole bounding box, so the cost grows as *area × segments*. A
+//! board's grid (38 segments spanning the board) and its stones (one circle each) measured
+//! 30 ms a frame on an empty board and 120 ms on a full one, which is what made every
+//! animation and every step through a game record drop frames. Colour nodes, border nodes
+//! and rounded clips need no cache: the renderer has a shader for each and batches them.
 //!
-//! Paths are still right for genuinely curved or diagonal ink — the win-rate curve, the move
-//! tree's edges, the triangle and cross marks — as long as the node's bounds stay small or
-//! its segment count stays low. `docs/dev/RENDERING.md` carries the measurements.
+//! Paths are still right for genuinely curved or diagonal ink — the win-rate and score-lead
+//! curves, the triangle and cross marks — as long as the node's bounds stay small or its
+//! segment count stays low. `docs/dev/RENDERING.md` carries the measurements.
 
 use gtk::gdk;
 use gtk::graphene;

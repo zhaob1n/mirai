@@ -714,41 +714,43 @@ mod imp {
                     }
                     let (x, y) = size.xy(p);
                     let (cx, cy) = l.xy(x, y);
-                    if kind == MarkKind::Circle {
-                        stroke_disc(
-                            snapshot,
-                            cx,
-                            cy,
-                            r * 0.62,
-                            stroke.line_width(),
-                            &color_at(p),
-                        );
-                        continue;
-                    }
-                    // The other three are genuinely paths, and each covers one stone, so the
-                    // area GSK has to walk is a cell rather than the board.
-                    let pb = gsk::PathBuilder::new();
                     match kind {
+                        // An axis-aligned outline is a border node; only the diagonal and
+                        // curved marks have to be paths, and each of those covers one stone,
+                        // so the area GSK rasterises is a cell rather than the board.
+                        MarkKind::Circle => {
+                            stroke_disc(
+                                snapshot,
+                                cx,
+                                cy,
+                                r * 0.62,
+                                stroke.line_width(),
+                                &color_at(p),
+                            );
+                        }
+                        MarkKind::Square => {
+                            let h = r * 0.62;
+                            let rect = graphene::Rect::new(cx - h, cy - h, h * 2.0, h * 2.0);
+                            stroke_rect(snapshot, &rect, stroke.line_width(), &color_at(p));
+                        }
                         MarkKind::Triangle => {
+                            let pb = gsk::PathBuilder::new();
                             pb.move_to(cx, cy - r * 0.82);
                             pb.line_to(cx + r * 0.74, cy + r * 0.52);
                             pb.line_to(cx - r * 0.74, cy + r * 0.52);
                             pb.close();
-                        }
-                        MarkKind::Square => {
-                            let h = r * 0.62;
-                            pb.add_rect(&graphene::Rect::new(cx - h, cy - h, h * 2.0, h * 2.0));
+                            snapshot.append_stroke(&pb.to_path(), &stroke, &color_at(p));
                         }
                         MarkKind::Cross => {
                             let h = r * 0.6;
+                            let pb = gsk::PathBuilder::new();
                             pb.move_to(cx - h, cy - h);
                             pb.line_to(cx + h, cy + h);
                             pb.move_to(cx + h, cy - h);
                             pb.line_to(cx - h, cy + h);
+                            snapshot.append_stroke(&pb.to_path(), &stroke, &color_at(p));
                         }
-                        MarkKind::Circle => unreachable!("handled above"),
                     }
-                    snapshot.append_stroke(&pb.to_path(), &stroke, &color_at(p));
                 }
             }
 

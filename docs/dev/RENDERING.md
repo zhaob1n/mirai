@@ -99,15 +99,18 @@ frame:
 | empty board, same nodes re-rendered | **0.26 ms** | 16.7 ms |
 | 285 stones, nodes rebuilt each snapshot | **58.0 ms** | 68.1 ms |
 
-Re-rendering the *same* fill node is free, so GSK caches a path rasterisation and keys that
-cache on the node. Rebuilding the node is what costs: the stones are built fresh in every
-`snapshot()`, and the board's cached static layer is rebuilt whenever the allocation changes —
-which is exactly what a sidebar animation does, frame after frame. `gtk4-rendernode-tool
-benchmark` agrees from outside the process, and shows the same asymmetry, because it replays
-one identical node: 13 ms per render for the old full board against 4 ms for the new one.
+Re-rendering the *same* fill node is free, so GSK caches the rasterisation. Reading
+`gsk/gpu/gskgpucachedfill.c` in GTK confirms the key and explains why the cache never helped
+us: it is the `GskPath` **pointer**, the scale and the subpixel offset. A path built fresh in
+every `snapshot()` can only miss. Rebuilding the node is the whole cost: the stones are built
+fresh each snapshot, and the board's cached static layer is rebuilt whenever the allocation
+changes — which is exactly what a sidebar animation does, frame after frame.
+`gtk4-rendernode-tool benchmark` agrees from outside the process, and shows the same asymmetry
+because it replays one identical node: 13 ms per render for the old full board against 4 ms
+for the new one.
 
-That is the root cause: **GSK rasterises a fill or stroke node when it first sees it, and mirai
-handed it new ones every frame.**
+That is the root cause: **GSK rasterises a fill or stroke node the first time it sees that
+path, and mirai handed it a new one every frame.**
 
 ## 4. The fix
 
@@ -121,7 +124,7 @@ translucent ink. Then:
 | grid: one stroked path, 38 segments across the board | one colour-node rectangle per line |
 | board border: stroked rectangle path | border node |
 | star points, stones, shadows, last-move dot, candidate blobs, label discs, tree nodes | `fill_disc` |
-| stone rims, candidate ring, circle marks, territory outlines, tree outlines | `stroke_disc` / `stroke_rect` |
+| stone rims, candidate ring, circle and square marks, territory outlines, tree outlines | `stroke_disc` / `stroke_rect` |
 | move tree: one stroked path of right-angle elbows | one rectangle per run, one trunk per parent |
 | graph: horizontal guides as a stroked path | `hline` per guide |
 
@@ -134,8 +137,8 @@ Two details that keep the pixels honest:
   the single combined path they replaced.
 
 Still paths, deliberately: the win-rate and score-lead curves, the dashed 50 % line, and the
-triangle, square and cross marks. Curves are not quads, and the marks each cover one stone, so
-the bounds GSK has to rasterise are a cell rather than a board.
+triangle and cross marks. Curves are not quads, the dash pattern is not a rectangle, and the
+marks each cover one stone, so the bounds GSK has to rasterise are a cell rather than a board.
 
 ## 5. After
 
