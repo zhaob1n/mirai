@@ -89,23 +89,23 @@ impl Layout {
     }
 }
 
-/// Opacity floor and ceiling for a candidate blob, and the natural-log span between them.
+/// Opacity floor and ceiling for a candidate blob.
 ///
-/// Hue is the move's rank ([`crate::palette`]); depth is the other half of the story, and the
-/// only channel that says how much search a move actually got. A share five log units below the
-/// busiest move (≈0.7% of its visits) is drawn at the floor and no fainter. LizzieYzy computes
-/// the same thing as `minAlpha + (maxAlpha - minAlpha) * max(0, log(share) / 5 + 1)`.
+/// Hue is how much the move loses ([`crate::palette`]); opacity is how much search stands behind
+/// that reading, and it is the same confidence that caps the hue, so the two channels tell one
+/// story. It is deliberately *not* the move's share of the search, which LizzieYzy uses and this
+/// widget used to: a search left running puts nine tenths of its visits on the move it likes, and
+/// a share-scaled blob then draws the very move the reviewer opened the file for — a 132-visit
+/// blunder beside a 9 300-visit pick — at the floor, in a red nobody can see.
 ///
 /// The floor stays low on purpose. With 20 suggestions most of the board is the tail of the
-/// list, and the tail's job is to be *there* without competing with the five moves that carry
-/// numbers.
+/// list, and the tail's job is to be *there* without competing with the moves that carry numbers.
 const BLOB_ALPHA_MIN: f32 = 0.18;
 const BLOB_ALPHA_MAX: f32 = 0.85;
-const BLOB_ALPHA_DECAY: f32 = 5.0;
 
-/// Below this share the numbers are noise on a crowded board, and unreadable through a faint
-/// blob. The engine's own choice and the record's next move keep theirs whatever their share.
-const LABEL_MIN_SHARE: f32 = 0.02;
+/// Below this many visits the numbers are noise, and unreadable through a faint blob. The
+/// engine's own choice and the record's next move keep theirs whatever their search.
+const LABEL_MIN_VISITS: u32 = 10;
 
 /// How many times `Layout::cell` must repeat before the board draws text again.
 ///
@@ -117,13 +117,9 @@ const LABEL_MIN_SHARE: f32 = 0.02;
 /// eye cannot tell from a stop anyway.
 const CELL_SETTLED: u8 = 2;
 
-/// How opaque the blob for a candidate with this visit share is drawn.
-fn blob_alpha(share: f32) -> f32 {
-    let t = if share > 0.0 {
-        (share.ln() / BLOB_ALPHA_DECAY + 1.0).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
+/// How opaque the blob for a candidate with this much search behind it is drawn.
+fn blob_alpha(visits: u32) -> f32 {
+    let t = (visits as f32 / crate::palette::TRUSTED_VISITS).min(1.0);
     BLOB_ALPHA_MIN + (BLOB_ALPHA_MAX - BLOB_ALPHA_MIN) * t
 }
 
@@ -810,7 +806,12 @@ mod imp {
                 dark,
                 labels,
             } = scene;
-            let best = report.best_visits().max(1) as f32;
+            // Losses are measured against KataGo's own pick, so the pick is always the coolest
+            // blob on the board and a candidate that reads better than it clamps there too.
+            let pick = report
+                .moves
+                .first()
+                .map(|m| (m.winrate_for(to_play), m.score_lead_for(to_play)));
             let obj = self.obj();
             let mut fd = obj.pango_context().font_description().unwrap_or_default();
             let layout = obj.create_pango_layout(None);
@@ -822,9 +823,16 @@ mod imp {
                 }
                 let (x, y) = size.xy(info.mv);
                 let (cx, cy) = l.xy(x, y);
-                let share = info.visits as f32 / best;
-                let rgb = crate::palette::rank_rgb(rank as u32);
-                let blob = rgba8(rgb, blob_alpha(share));
+                let grade = match pick {
+                    Some((w, s)) => crate::palette::grade(
+                        w - info.winrate_for(to_play),
+                        s - info.score_lead_for(to_play),
+                        info.visits,
+                    ),
+                    None => 0.0,
+                };
+                let rgb = crate::palette::grade_rgb(grade);
+                let blob = rgba8(rgb, blob_alpha(info.visits));
                 fill_disc(snapshot, cx, cy, l.stone_r, &blob);
                 let played = next == Some(info.mv);
                 if played {
@@ -833,8 +841,8 @@ mod imp {
                 }
 
                 // The engine's pick and the record's move keep their numbers whatever their
-                // share: a played move the search dismissed is exactly the one to read.
-                if share < LABEL_MIN_SHARE && rank != 0 && !played {
+                // search: a played move the engine dismissed is exactly the one to read.
+                if info.visits < LABEL_MIN_VISITS && rank != 0 && !played {
                     continue;
                 }
                 if !labels {
@@ -1418,16 +1426,17 @@ mod tests {
     use super::*;
     use mirai_core::{GameInfo, RuleSet};
 
-    /// Depth is the channel that says how much search a move actually got, so it has to fall
-    /// with the visit share and stop at a floor rather than vanishing.
+    /// Opacity says how much search stands behind a blob's colour, so it rises with the visits
+    /// themselves — not with their share of a search that may have run for ten seconds — and it
+    /// tops out exactly where the palette stops discounting the grade.
     #[test]
     fn opacity_tracks_how_much_a_move_was_searched() {
-        assert!((blob_alpha(1.0) - BLOB_ALPHA_MAX).abs() < 1e-6);
-        assert_eq!(blob_alpha(0.0), BLOB_ALPHA_MIN);
-        assert_eq!(blob_alpha(0.001), BLOB_ALPHA_MIN);
-        assert_eq!(blob_alpha(f32::NAN), BLOB_ALPHA_MIN);
-        assert!(blob_alpha(0.5) > blob_alpha(0.05));
-        assert!(blob_alpha(0.05) > blob_alpha(0.005));
+        assert_eq!(blob_alpha(0), BLOB_ALPHA_MIN);
+        assert!(blob_alpha(5) > blob_alpha(1));
+        assert!(blob_alpha(15) > blob_alpha(5));
+        let full = crate::palette::TRUSTED_VISITS as u32;
+        assert!((blob_alpha(full) - BLOB_ALPHA_MAX).abs() < 1e-6);
+        assert_eq!(blob_alpha(50_000), blob_alpha(full));
     }
 
     /// The ring answers "where does the record go next?", so it has to read `children[0]` —
