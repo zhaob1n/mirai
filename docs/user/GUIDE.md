@@ -165,22 +165,42 @@ The search runs up to **Maximum visits** and the display refreshes every **Repor
 
 The lower two lines are dropped when the board is drawn too small for them. A move that received
 less than 2% as many visits as the busiest move is drawn without numbers: it is still visible,
-but it does not turn a crowded board into a wall of uncertain readouts.
+but it does not turn a crowded board into a wall of uncertain readouts. Two moves keep their
+numbers whatever their share — the engine's own first choice, and the one the record plays next.
 
-**Colour and depth are visit share**, not quality: this candidate's visits over the most-visited
-candidate's. The ramp runs **indigo → blue → teal → green → yellow → red**, and low-visit
-moves also fade into the board, so red and solid is where the search spent its time while faint
-indigo is a move it glanced at. **The engine's own choice is outlined in white** — usually the
-red one, but when two moves are close the visit counts and the final preference can disagree,
-and the white outline is the answer to *"what would KataGo play?"*.
+**Colour is the engine's ranking; how solid the blob is, is how much search went there.** The
+two are different questions and they get different channels. Rank 1 — the move KataGo would
+actually play — is **bright blue**, then cyan, mint, green, olive, and the tail of the list dries
+out into dusty amber, ochre and brick. Vivid means *worth reading*; dull means *the engine looked
+and moved on*, not *blunder*. A move with few visits also fades into the board, so a bright blob
+you can barely see is a good move the search has only started on, and a solid dusty one is a move
+it spent real time rejecting.
+
+The number in the coloured badge beside each row of the candidate list is that same rank, in that
+same colour, so a row and its blob are one thing seen twice. Everything from rank 8 down shares
+the last colour — past the eighth choice the exact order is noise, and the badge still carries the
+number.
+
+Rank is **not** "most visits". KataGo orders its moves by its own play-selection value, which
+includes a confidence-bound correction, so a move with 15% of the top move's visits can still be
+the one it would play. That is why the blue blob is not always the one with the biggest visit
+count, and why the list is in the engine's order rather than sorted by any single column.
+
+**The white outline marks the move the record plays next.** Standing on move 57, the outlined
+blob is move 58 — so *"did the game play the engine's move?"* is one glance: white on the blue
+blob means yes. If the record's move is not among the candidates at all — the search never went
+there, or it falls past **Suggestions shown** — the outline appears on a dim empty disc instead,
+which is itself the answer. At the end of the record there is nothing to mark and no outline
+appears.
 
 **Suggestions shown** controls how many blobs and list rows appear (10 by default). Choose
-**All** to keep every move the engine searched; visit-depth fading keeps the board readable.
+**All** to keep every move the engine searched; the fading keeps the board readable.
 
 ### The candidate list
 
 | Column | Meaning |
 |---|---|
+| **#** | the engine's own rank, in the colour its blob wears on the board |
 | **Move** | the point, in standard coordinates |
 | **Win** | win rate for the side to move, per cent |
 | **Score** | signed score lead for the side to move, in points |

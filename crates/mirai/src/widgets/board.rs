@@ -14,7 +14,9 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use mirai_core::{Board, COLUMNS, Color, DeadSet, MarkKind, Marks, Point, Position, Rules, Size};
+use mirai_core::{
+    Board, COLUMNS, Color, DeadSet, GameTree, MarkKind, Marks, NodeId, Point, Position, Rules, Size,
+};
 use mirai_proto::types::dq_policy;
 
 use crate::app::AppState;
@@ -87,31 +89,22 @@ impl Layout {
     }
 }
 
-/// The visit ramp: indigo (barely searched) through blue, teal, green and amber to red (the
-/// engine's choice). Seven stops rather than five because the low end is where the
-/// candidates crowd — KataGo spends most of its visits on one or two moves.
-const VISIT_RAMP: [(f32, [u8; 3]); 7] = [
-    (0.00, [0x3B, 0x2E, 0x8F]),
-    (0.18, [0x2B, 0x5F, 0xD9]),
-    (0.36, [0x18, 0x9E, 0xC0]),
-    (0.54, [0x2E, 0xB8, 0x62]),
-    (0.72, [0xC8, 0xCF, 0x2C]),
-    (0.88, [0xF0, 0xA4, 0x22]),
-    (1.00, [0xE2, 0x3D, 0x2E]),
-];
-
 /// Opacity floor and ceiling for a candidate blob, and the natural-log span between them.
 ///
-/// Depth is the second, blunter channel for the same quantity the hue carries: how much
-/// search a move actually got. A share five log units below the best move (≈0.7% of its
-/// visits) is drawn at the floor and no fainter. LizzieYzy computes the same thing as
-/// `minAlpha + (maxAlpha - minAlpha) * max(0, log(share) / 5 + 1)`.
+/// Hue is the move's rank ([`crate::palette`]); depth is the other half of the story, and the
+/// only channel that says how much search a move actually got. A share five log units below the
+/// busiest move (≈0.7% of its visits) is drawn at the floor and no fainter. LizzieYzy computes
+/// the same thing as `minAlpha + (maxAlpha - minAlpha) * max(0, log(share) / 5 + 1)`.
+///
+/// The floor stays low on purpose. With 20 suggestions most of the board is the tail of the
+/// list, and the tail's job is to be *there* without competing with the five moves that carry
+/// numbers.
 const BLOB_ALPHA_MIN: f32 = 0.18;
 const BLOB_ALPHA_MAX: f32 = 0.85;
 const BLOB_ALPHA_DECAY: f32 = 5.0;
 
 /// Below this share the numbers are noise on a crowded board, and unreadable through a faint
-/// blob. The engine's own choice keeps its numbers whatever its share.
+/// blob. The engine's own choice and the record's next move keep theirs whatever their share.
 const LABEL_MIN_SHARE: f32 = 0.02;
 
 /// How many times `Layout::cell` must repeat before the board draws text again.
@@ -123,40 +116,6 @@ const LABEL_MIN_SHARE: f32 = 0.02;
 /// dropped the text again on the next. A plateau long enough to fool two repeats is one the
 /// eye cannot tell from a stop anyway.
 const CELL_SETTLED: u8 = 2;
-
-#[inline]
-fn lerp8(a: u8, b: u8, t: f32) -> u8 {
-    (a as f32 + (b as f32 - a as f32) * t)
-        .round()
-        .clamp(0.0, 255.0) as u8
-}
-
-/// Colour for a candidate at ramp position `f` in `0..=1`.
-fn ramp_rgb(f: f32) -> [u8; 3] {
-    let f = if f.is_nan() { 0.0 } else { f.clamp(0.0, 1.0) };
-    let mut i = 0;
-    while i + 2 < VISIT_RAMP.len() && f > VISIT_RAMP[i + 1].0 {
-        i += 1;
-    }
-    let (f0, c0) = VISIT_RAMP[i];
-    let (f1, c1) = VISIT_RAMP[i + 1];
-    let t = if f1 > f0 { (f - f0) / (f1 - f0) } else { 0.0 };
-    [
-        lerp8(c0[0], c1[0], t),
-        lerp8(c0[1], c1[1], t),
-        lerp8(c0[2], c1[2], t),
-    ]
-}
-
-/// Where a visit share sits on the ramp.
-///
-/// The raw share leaves everything but the best move on the bottom stop, so it is
-/// square-rooted first — the same spread LizzieYzy applies with its default
-/// `suggestion-color-ratio = 2`.
-#[inline]
-fn ramp_position(share: f32) -> f32 {
-    share.max(0.0).sqrt()
-}
 
 /// How opaque the blob for a candidate with this visit share is drawn.
 fn blob_alpha(share: f32) -> f32 {
@@ -208,6 +167,22 @@ fn last_move_tint(color: Color) -> gdk::RGBA {
     }
 }
 
+/// The ring that marks the move the game record plays next, and its width in pixels.
+///
+/// This outline used to mark the engine's own choice, and handing it over is deliberate: the
+/// visit ramp already puts the busiest move — which is the engine's pick in all but the closest
+/// positions — at the top of the ramp in red, and the candidate list's first row *is* the pick,
+/// in the engine's own order. One ring is worth more on the move a reviewer is standing next to
+/// than on the one the colour already names. Everything else on the board is taken: the ramp
+/// spans indigo to red, the last move is red, and an inner ring cuts through the three lines of
+/// text a labelled blob carries.
+const RECORD_RING: gdk::RGBA = gdk::RGBA::new(1.0, 1.0, 1.0, 0.95);
+const RECORD_RING_W: f32 = 2.0;
+
+/// The disc under a record move the search never reached, so that [`RECORD_RING`] has
+/// something darker than wood to read against.
+const EMPTY_BLOB: gdk::RGBA = gdk::RGBA::new(0.0, 0.0, 0.0, 0.18);
+
 fn is_dark() -> bool {
     adw::StyleManager::default().is_dark()
 }
@@ -245,6 +220,9 @@ struct BoardProjection {
     position: Position,
     marks: Marks,
     last: Option<(Color, Point)>,
+    /// The move the record plays on from the cursor, when it is a real point on an empty
+    /// intersection; see [`record_next`].
+    next: Option<Point>,
     move_numbers: Option<Box<[u16]>>,
     report: Option<Arc<mirai_engine::Report>>,
     /// Resolved from `AnalysisSettings::suggestion_limit`, so `usize::MAX` means "all".
@@ -591,6 +569,7 @@ mod imp {
                     projection.position.to_play,
                     report,
                     projection.suggestion_limit,
+                    projection.next,
                 );
             }
         }
@@ -821,6 +800,7 @@ mod imp {
             to_play: Color,
             report: &mirai_engine::Report,
             max: usize,
+            next: Option<Point>,
         ) {
             let _t = crate::render_probe::Timer::new("board-candidates");
             let Scene {
@@ -834,29 +814,27 @@ mod imp {
             let obj = self.obj();
             let mut fd = obj.pango_context().font_description().unwrap_or_default();
             let layout = obj.create_pango_layout(None);
+            let mut ringed = false;
 
-            for info in report.moves.iter().take(max) {
+            for (rank, info) in report.moves.iter().take(max).enumerate() {
                 if info.mv.is_pass() || !size.contains(info.mv) || board.at(info.mv).is_some() {
                     continue;
                 }
                 let (x, y) = size.xy(info.mv);
                 let (cx, cy) = l.xy(x, y);
                 let share = info.visits as f32 / best;
-                let rgb = ramp_rgb(ramp_position(share));
+                let rgb = crate::palette::rank_rgb(rank as u32);
                 let blob = rgba8(rgb, blob_alpha(share));
                 fill_disc(snapshot, cx, cy, l.stone_r, &blob);
-                if info.order == 0 {
-                    stroke_disc(
-                        snapshot,
-                        cx,
-                        cy,
-                        l.stone_r,
-                        2.0,
-                        &gdk::RGBA::new(1.0, 1.0, 1.0, 0.95),
-                    );
+                let played = next == Some(info.mv);
+                if played {
+                    stroke_disc(snapshot, cx, cy, l.stone_r, RECORD_RING_W, &RECORD_RING);
+                    ringed = true;
                 }
 
-                if share < LABEL_MIN_SHARE && info.order != 0 {
+                // The engine's pick and the record's move keep their numbers whatever their
+                // share: a played move the search dismissed is exactly the one to read.
+                if share < LABEL_MIN_SHARE && rank != 0 && !played {
                     continue;
                 }
                 if !labels {
@@ -894,8 +872,35 @@ mod imp {
                     ty += heights[i];
                 }
             }
+
+            // The record can continue with a move that got no blob — one the engine never
+            // searched, or one past the suggestion limit — and that is precisely the case a
+            // reviewer is looking for. A white ring on bare wood is nearly invisible, so it
+            // gets a dim disc to sit on, which also reads as what it is: a move with no search
+            // behind it.
+            if let Some(p) = next
+                && !ringed
+            {
+                let (x, y) = size.xy(p);
+                let (cx, cy) = l.xy(x, y);
+                fill_disc(snapshot, cx, cy, l.stone_r, &EMPTY_BLOB);
+                stroke_disc(snapshot, cx, cy, l.stone_r, RECORD_RING_W, &RECORD_RING);
+            }
         }
     }
+}
+
+/// The move the game record plays on from `cursor`, when there is one to draw.
+///
+/// `children[0]` is the main line, which is exactly where [`AppState::go_next`] goes, so the
+/// ring on the board and the forward key can never point at different moves. The filters are
+/// ordered: [`Point::PASS`] is outside every board, and `Board::at` answers `None` for a point
+/// it does not contain, so a pass has to be rejected before either is asked about it.
+fn record_next(tree: &GameTree, cursor: NodeId, position: &Position) -> Option<Point> {
+    let &child = tree.children(cursor).first()?;
+    let (_, p) = tree.node(child).mv?;
+    let drawable = !p.is_pass() && tree.info.size.contains(p) && position.board.at(p).is_none();
+    drawable.then_some(p)
 }
 
 /// Uploads an RGBA8-premultiplied `w * h` buffer and stretches it over `rect`.
@@ -1141,7 +1146,7 @@ impl BoardView {
     fn rebuild_projection(&self, state: &AppState) {
         let cursor = state.cursor();
         let position = state.position();
-        let (size, rules, marks, last, move_numbers) = {
+        let (size, rules, marks, last, next, move_numbers) = {
             let tree = state.tree();
             let size = tree.info.size;
             let rules = tree.info.rules.rules();
@@ -1150,8 +1155,9 @@ impl BoardView {
             let last = node
                 .mv
                 .filter(|&(color, p)| !p.is_pass() && position.board.at(p) == Some(color));
+            let next = record_next(&tree, cursor, &position);
             let move_numbers = state.show_move_numbers().then(|| tree.move_numbers(cursor));
-            (size, rules, marks, last, move_numbers)
+            (size, rules, marks, last, next, move_numbers)
         };
         self.imp().projection.replace(Some(BoardProjection {
             size,
@@ -1159,6 +1165,7 @@ impl BoardView {
             position,
             marks,
             last,
+            next,
             move_numbers,
             report: state.last_report(),
             suggestion_limit: state.config().analysis.suggestion_limit(),
@@ -1409,25 +1416,7 @@ impl BoardView {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn visit_ramp_hits_its_control_points() {
-        for (position, colour) in VISIT_RAMP {
-            assert_eq!(ramp_rgb(position), colour, "at {position}");
-        }
-    }
-
-    #[test]
-    fn visit_ramp_interpolates_and_clamps() {
-        // Inside the first segment, #3B2E8F -> #2B5FD9: red falls, green and blue rise.
-        let mid = ramp_rgb(0.09);
-        assert!((0x2B..0x3B).contains(&mid[0]), "{mid:?}");
-        assert!((0x2E..0x5F).contains(&mid[1]), "{mid:?}");
-        assert!((0x8F..0xD9).contains(&mid[2]), "{mid:?}");
-        assert_eq!(ramp_rgb(-3.0), ramp_rgb(0.0));
-        assert_eq!(ramp_rgb(9.0), ramp_rgb(1.0));
-        assert_eq!(ramp_rgb(f32::NAN), ramp_rgb(0.0));
-    }
+    use mirai_core::{GameInfo, RuleSet};
 
     /// Depth is the channel that says how much search a move actually got, so it has to fall
     /// with the visit share and stop at a floor rather than vanishing.
@@ -1441,14 +1430,44 @@ mod tests {
         assert!(blob_alpha(0.05) > blob_alpha(0.005));
     }
 
-    /// The square root is the whole point: without it a 4%-visit move would sit on the
-    /// bottom stop with a 0.04% one.
+    /// The ring answers "where does the record go next?", so it has to read `children[0]` —
+    /// the main line the forward key walks — and it has to refuse everything it cannot draw a
+    /// ring on. A pass is the sharp case: [`Point::PASS`] is outside every board, so asking
+    /// the board about it first would index past the end.
     #[test]
-    fn ramp_position_spreads_the_crowded_low_end() {
-        assert_eq!(ramp_position(1.0), 1.0);
-        assert_eq!(ramp_position(0.25), 0.5);
-        assert_eq!(ramp_position(-1.0), 0.0);
-        assert!(ramp_position(0.04) > 0.04);
+    fn the_record_ring_follows_the_main_line_and_only_drawable_points() {
+        let size = Size::square(9);
+        let mut tree = GameTree::new(GameInfo::new(size, RuleSet::default()));
+        let root = tree.root();
+        let position = tree.position(root).clone();
+        assert_eq!(
+            record_next(&tree, root, &position),
+            None,
+            "a leaf has no next"
+        );
+
+        let d4 = size.point(3, 5);
+        let played = tree.play(root, Color::Black, d4).expect("legal");
+        // A variation added afterwards is `children[1]`, so the main line still wins.
+        tree.add_variation(root, Color::Black, size.point(5, 3))
+            .expect("legal");
+        assert_eq!(record_next(&tree, root, &position), Some(d4));
+
+        let after = tree.position(played).clone();
+        let passed = tree
+            .play(played, Color::White, Point::PASS)
+            .expect("a pass is always legal");
+        assert_eq!(
+            record_next(&tree, played, &after),
+            None,
+            "a pass is not a point"
+        );
+
+        // Only a loaded record can put a move on an occupied point; nothing may ring it.
+        let bogus = tree.add_child(passed);
+        tree.node_mut(bogus).mv = Some((Color::Black, d4));
+        let after_pass = tree.position(passed).clone();
+        assert_eq!(record_next(&tree, passed, &after_pass), None);
     }
 
     fn layout() -> Layout {
