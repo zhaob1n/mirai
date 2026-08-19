@@ -209,6 +209,7 @@ Each of these cost real debugging time. They are documented so they cost you non
 | Board text stutters an animation, but only in one direction | Glyphs are cached per `PangoFont`, so moving the board is free and resizing it is not. `Layout::cell` only tracks the sidebar while the board is width-limited ([`docs/dev/RENDERING.md`](docs/dev/RENDERING.md) §6). |
 | A geometry value repeating for one frame is not the animation ending | Width is an integer and a spring's last frames move under a pixel. Deciding "settled" on one repeat costs a wasted cold paint *and* a visible flicker; `BoardView` waits for two ([`docs/dev/RENDERING.md`](docs/dev/RENDERING.md) §6). |
 | A frame-timing bug that reproduces only on an idle machine | Load coarsens animations — 13–16 frames per fold instead of 22–31 — and a coarse animation never lands on a repeated value. Check `/proc/loadavg` before trusting a clean run. |
+| Frames drop while the engine is searching, and the GPU sits at 99 % | Not the GPU: another process pinning the same card costs this one nothing. It was the candidate list replacing its whole model per report — a `GtkColumnView` handed new objects rebuilds every row widget, which is a full window relayout (7–17 ms) and also what made a hovered row flicker. Mutate list objects in place and bind cells with expressions ([`docs/dev/RENDERING.md`](docs/dev/RENDERING.md) §7). |
 
 ---
 

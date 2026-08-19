@@ -9,6 +9,7 @@
 //! PV preview on the board while the engine keeps thinking.
 
 use std::cell::{Cell, OnceCell, RefCell};
+use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::pango;
@@ -46,6 +47,10 @@ mod candidate_imp {
         /// The principal variation, already rendered.
         #[property(get, set)]
         pub pv: RefCell<String>,
+        /// KataGo's own rank for this move, 1-based — the badge in the list and the blob on the
+        /// board take their colour from it.
+        #[property(get, set)]
+        pub rank: Cell<u32>,
 
         /// Not a GObject property: the plain point behind `mv`.
         pub point: Cell<u16>,
@@ -89,6 +94,8 @@ impl CandidateObject {
 
 /// The numbers one candidate contributes, already in the side-to-move's perspective.
 struct Row {
+    /// Position in KataGo's own ordering, 1-based — the badge's number and its colour.
+    rank: u32,
     point: Point,
     pv_first: Point,
     winrate: f32,
@@ -99,17 +106,42 @@ struct Row {
 }
 
 impl Row {
-    fn into_object(self, size: mirai_core::Size) -> CandidateObject {
-        let obj = CandidateObject::default();
-        obj.set_mv(gtp(size, self.point));
-        obj.set_winrate(self.winrate as f64);
-        obj.set_score(self.score as f64);
-        obj.set_visits(self.visits);
-        obj.set_prior(self.prior as f64);
-        obj.set_pv(self.pv);
-        obj.imp().point.set(self.point.0);
-        obj.imp().pv_first.set(self.pv_first.0);
-        obj
+    fn to_object(&self, size: mirai_core::Size) -> CandidateObject {
+        let object = CandidateObject::default();
+        self.apply(&object, size);
+        object
+    }
+
+    /// Writes this row's numbers onto an existing object, touching only what moved.
+    ///
+    /// The derive-generated setters notify unconditionally, and every notify re-evaluates a
+    /// column expression and re-measures a label; a report that leaves a value alone should
+    /// cost nothing. `mv` and `pv` are compared before the string is even built.
+    fn apply(&self, object: &CandidateObject, size: mirai_core::Size) {
+        if object.rank() != self.rank {
+            object.set_rank(self.rank);
+        }
+        let mv = gtp(size, self.point);
+        if object.mv() != mv {
+            object.set_mv(mv);
+        }
+        if object.winrate() != self.winrate as f64 {
+            object.set_winrate(self.winrate as f64);
+        }
+        if object.score() != self.score as f64 {
+            object.set_score(self.score as f64);
+        }
+        if object.visits() != self.visits {
+            object.set_visits(self.visits);
+        }
+        if object.prior() != self.prior as f64 {
+            object.set_prior(self.prior as f64);
+        }
+        if object.pv() != self.pv {
+            object.set_pv(self.pv.as_str());
+        }
+        object.imp().point.set(self.point.0);
+        object.imp().pv_first.set(self.pv_first.0);
     }
 }
 
@@ -155,9 +187,6 @@ mod imp {
         pub blunder_nodes: RefCell<Vec<NodeRef>>,
         /// The selection index last reported to the PV hooks.
         pub last_pv: Cell<u32>,
-        /// Set while the model is being spliced, so the selection churn a splice causes
-        /// does not reach the hooks.
-        pub splicing: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -235,38 +264,71 @@ impl AnalysisPanel {
             .build();
         selection.set_selected(gtk::INVALID_LIST_POSITION);
         columns.set_model(Some(&selection));
-        columns.append_column(&text_column("Move", 0.0, false, None, |candidate| {
-            candidate.mv()
-        }));
-        columns.append_column(&text_column("Win", 1.0, false, None, |candidate| {
-            format!("{}%", pct1(candidate.winrate() as f32))
-        }));
-        columns.append_column(&text_column("Score", 1.0, false, None, |candidate| {
-            signed1(candidate.score() as f32)
-        }));
-        columns.append_column(&text_column("Visits", 1.0, false, None, |candidate| {
-            si_visits(candidate.visits())
-        }));
-        columns.append_column(&text_column("Prior", 1.0, false, None, |candidate| {
-            format!("{}%", pct1(candidate.prior() as f32))
-        }));
-        columns.append_column(&text_column(
-            "PV",
-            0.0,
-            true,
-            Some("mirai-pv-label"),
-            |candidate| candidate.pv(),
+        columns.append_column(&rank_column());
+        columns.append_column(&column(
+            Col {
+                title: "Move",
+                property: "mv",
+                xalign: 0.0,
+                width_chars: 4,
+                ..Col::default()
+            },
+            |mv: String| mv,
+        ));
+        columns.append_column(&column(
+            Col {
+                title: "Win",
+                property: "winrate",
+                width_chars: 6,
+                ..Col::default()
+            },
+            |winrate: f64| format!("{}%", pct1(winrate as f32)),
+        ));
+        columns.append_column(&column(
+            Col {
+                title: "Score",
+                property: "score",
+                width_chars: 6,
+                ..Col::default()
+            },
+            |score: f64| signed1(score as f32),
+        ));
+        columns.append_column(&column(
+            Col {
+                title: "Visits",
+                property: "visits",
+                width_chars: 5,
+                ..Col::default()
+            },
+            |visits: u32| si_visits(visits),
+        ));
+        columns.append_column(&column(
+            Col {
+                title: "Prior",
+                property: "prior",
+                width_chars: 6,
+                ..Col::default()
+            },
+            |prior: f64| format!("{}%", pct1(prior as f32)),
+        ));
+        columns.append_column(&column(
+            Col {
+                title: "PV",
+                property: "pv",
+                xalign: 0.0,
+                expand: true,
+                css: Some("mirai-pv-label"),
+                ..Col::default()
+            },
+            |pv: String| pv,
         ));
 
-        // Selecting a row pins the PV preview; activating it plays the move.
+        // Selecting a row pins the PV preview; activating it plays the move. The model is
+        // never replaced, so a selection change is always the user's.
         selection.connect_selected_notify(clone!(
             #[weak(rename_to = panel)]
             self,
-            move |_| {
-                if !panel.imp().splicing.get() {
-                    panel.sync_pv();
-                }
-            }
+            move |_| panel.sync_pv()
         ));
         columns.connect_activate(clone!(
             #[weak(rename_to = panel)]
@@ -333,11 +395,15 @@ impl AnalysisPanel {
                     // Only a live search has a speed; the cached branch below never does.
                     speed: state.analysis_speed(),
                 };
+                // `Report::moves` is already sorted by KataGo's `order`, so the position in this
+                // list *is* the rank the board colours a blob by.
                 let rows = report
                     .moves
                     .iter()
                     .take(limit)
-                    .map(|m| Row {
+                    .enumerate()
+                    .map(|(i, m)| Row {
+                        rank: i as u32 + 1,
                         point: m.mv,
                         pv_first: m.pv.first().copied().unwrap_or(m.mv),
                         winrate: m.winrate_for(mover),
@@ -368,7 +434,9 @@ impl AnalysisPanel {
                             .candidates
                             .iter()
                             .take(limit)
-                            .map(|c| Row {
+                            .enumerate()
+                            .map(|(i, c)| Row {
+                                rank: i as u32 + 1,
                                 point: c.mv,
                                 pv_first: c.pv.first().copied().unwrap_or(c.mv),
                                 winrate: perspective(c.winrate, to_play),
@@ -419,17 +487,30 @@ impl AnalysisPanel {
             }
         }
 
-        let objects: Vec<CandidateObject> = rows.into_iter().map(|r| r.into_object(size)).collect();
-        let previous = inner.selection.selected();
-        self.imp().splicing.set(true);
-        inner.store.splice(0, inner.store.n_items(), &objects);
-        // A splice clears the selection; put it back so a pinned PV survives the next
-        // report. The candidate at that rank may have changed, which is the intent — the
-        // preview follows the rank, not the move.
-        if previous != gtk::INVALID_LIST_POSITION && (previous as usize) < objects.len() {
-            inner.selection.set_selected(previous);
+        // Update the rows in place. `GtkColumnView` re-creates every row widget when the model
+        // hands it different objects, which costs a full list re-layout — measured at 7–17 ms
+        // per report, ten times a second, and it is also what made a hovered row flicker. The
+        // objects therefore live as long as the list is that long: only the tail moves.
+        let store = &inner.store;
+        let had = store.n_items() as usize;
+        for (i, row) in rows.iter().take(had).enumerate() {
+            let object = store
+                .item(i as u32)
+                .and_downcast::<CandidateObject>()
+                .expect("the candidate store holds only CandidateObjects");
+            row.apply(&object, size);
         }
-        self.imp().splicing.set(false);
+        if rows.len() > had {
+            let extra: Vec<CandidateObject> =
+                rows[had..].iter().map(|r| r.to_object(size)).collect();
+            store.extend_from_slice(&extra);
+        } else if rows.len() < had {
+            store.splice(
+                rows.len() as u32,
+                (had - rows.len()) as u32,
+                &[] as &[CandidateObject],
+            );
+        }
         self.sync_pv();
     }
 
@@ -545,45 +626,131 @@ fn clear_list(list: &gtk::ListBox) {
     }
 }
 
-/// A single-label column whose text is derived from the row object.
-fn text_column(
-    title: &str,
+/// One column of the candidate list: where its text comes from, and how wide it sits.
+#[derive(Clone, Copy)]
+struct Col {
+    title: &'static str,
+    /// The [`CandidateObject`] property the cell follows.
+    property: &'static str,
     xalign: f32,
+    /// Natural width in characters, GTK's own `-1` for "as wide as the text".
+    ///
+    /// Pinning it is what keeps a column from re-measuring when `1.4k` becomes `12.7k`: the
+    /// cell's size request stops depending on the digits, so ten reports a second cost the
+    /// list nothing but new glyphs. It is in characters rather than pixels so it still tracks
+    /// the font.
+    width_chars: i32,
+    /// Only the PV column takes the leftover width.
     expand: bool,
     css: Option<&'static str>,
-    text: impl Fn(&CandidateObject) -> String + 'static,
-) -> gtk::ColumnViewColumn {
+}
+
+impl Default for Col {
+    fn default() -> Col {
+        Col {
+            title: "",
+            property: "",
+            xalign: 1.0,
+            width_chars: -1,
+            expand: false,
+            css: None,
+        }
+    }
+}
+
+/// A single-label column whose text follows one property of the row object.
+///
+/// The label is bound once, at `setup`, through a `gtk::Expression` chain: the list item's
+/// `item` property, then `property` on the row object, then a formatter. GTK re-evaluates that
+/// chain on `notify`, so a row that changes its numbers **in place** updates its labels and
+/// nothing else. Formatting from a `bind` handler instead would only be re-run when the model
+/// handed the view a different object — which is what used to force a splice per report, and a
+/// splice re-creates every row widget: a full re-layout of the list, and the row under the
+/// pointer loses its hover for a frame, ten times a second.
+fn column<T>(col: Col, text: impl Fn(T) -> String + 'static) -> gtk::ColumnViewColumn
+where
+    T: for<'a> glib::value::FromValue<'a> + 'static,
+{
+    let text = Rc::new(text);
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
         let label = gtk::Label::builder()
-            .xalign(xalign)
+            .xalign(col.xalign)
+            // Both bounds, not just the minimum: a cell whose *natural* width still tracked
+            // its digits would go on re-measuring the column, and would also take width the
+            // elastic PV column wants.
+            .width_chars(col.width_chars)
+            .max_width_chars(col.width_chars)
             .single_line_mode(true)
             .ellipsize(pango::EllipsizeMode::End)
             .build();
-        if let Some(class) = css {
+        if let Some(class) = col.css {
             label.add_css_class(class);
         }
         item.set_child(Some(&label));
+        let text = text.clone();
+        gtk::ListItem::this_expression("item")
+            .chain_property::<CandidateObject>(col.property)
+            .chain_closure_with_callback(move |values| {
+                let value = values[1]
+                    .get::<T>()
+                    .expect("a column's formatter takes its own property's type");
+                text(value)
+            })
+            .bind(&label, "label", Some(item));
     });
-    factory.connect_bind(move |_, item| {
+    gtk::ColumnViewColumn::builder()
+        .title(col.title)
+        .factory(&factory)
+        .expand(col.expand)
+        .resizable(true)
+        .build()
+}
+
+/// The rank badge: a pill carrying KataGo's own ranking, in the colour the board gives that
+/// move's blob ([`crate::palette`]).
+///
+/// Numeral and colour are two bindings on the one property. `css-classes` is an ordinary widget
+/// property, so the class that carries the colour rides the `notify::rank` GTK already watches —
+/// no bind/unbind bookkeeping, and nothing to forget when a row is recycled onto another rank.
+fn rank_column() -> gtk::ColumnViewColumn {
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_setup(|_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let (Some(row), Some(label)) = (
-            item.item().and_downcast::<CandidateObject>(),
-            item.child().and_downcast::<gtk::Label>(),
-        ) else {
-            return;
-        };
-        label.set_label(&text(&row));
+        let label = gtk::Label::builder()
+            .width_chars(2)
+            .single_line_mode(true)
+            .build();
+        item.set_child(Some(&label));
+        let this = gtk::ListItem::this_expression("item");
+        this.chain_property::<CandidateObject>("rank")
+            .chain_closure_with_callback(|values| {
+                let rank = values[1].get::<u32>().unwrap_or_default();
+                if rank == 0 {
+                    String::new()
+                } else {
+                    rank.to_string()
+                }
+            })
+            .bind(&label, "label", Some(item));
+        this.chain_property::<CandidateObject>("rank")
+            .chain_closure_with_callback(|values| {
+                let rank = values[1].get::<u32>().unwrap_or(1).max(1);
+                glib::StrV::from(vec![
+                    glib::GString::from("mirai-rank"),
+                    glib::GString::from(crate::palette::rank_class(rank - 1)),
+                ])
+            })
+            .bind(&label, "css-classes", Some(item));
     });
     gtk::ColumnViewColumn::builder()
-        .title(title)
+        .title("#")
         .factory(&factory)
-        .expand(expand)
-        .resizable(true)
+        .resizable(false)
         .build()
 }

@@ -13,6 +13,7 @@ mod fox_picker;
 #[cfg(debug_assertions)]
 mod harness;
 mod new_game;
+mod palette;
 mod panels;
 mod play;
 mod preferences_shell;
@@ -57,14 +58,21 @@ fn main() -> glib::ExitCode {
                 .add_resource_path(&format!("{RESOURCE_PREFIX}/icons/hicolor"));
             gtk::Window::set_default_icon_name(APP_ID);
         }
+        // Two sheets: the static one from the resource bundle, then the rank badge colours
+        // generated from `palette::RANK_RAMP`, so a badge and its blob on the board cannot drift
+        // apart.
         let provider = gtk::CssProvider::new();
         provider.load_from_resource(&format!("{RESOURCE_PREFIX}/style.css"));
+        let badges = gtk::CssProvider::new();
+        badges.load_from_string(&palette::rank_css());
         if let Some(display) = gtk::gdk::Display::default() {
-            gtk::style_context_add_provider_for_display(
-                &display,
-                &provider,
-                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-            );
+            for provider in [&provider, &badges] {
+                gtk::style_context_add_provider_for_display(
+                    &display,
+                    provider,
+                    gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+                );
+            }
         }
     });
 
