@@ -134,7 +134,7 @@ translucent ink. Then:
 | grid: one stroked path, 38 segments across the board | one colour-node rectangle per line |
 | board border: stroked rectangle path | border node |
 | star points, stones, shadows, last-move dot, candidate blobs, label discs, tree nodes | `fill_disc` |
-| stone rims, candidate ring, circle and square marks, territory outlines, tree outlines | `stroke_disc` / `stroke_rect` |
+| stone rims, candidate rings, circle and square marks, territory outlines, tree outlines | `stroke_disc` / `stroke_rect` |
 | move tree: one stroked path of right-angle elbows | one rectangle per run, one trunk per parent |
 | graph: horizontal guides as a stroked path | `hline` per guide |
 
@@ -283,7 +283,53 @@ rebuilt whenever the allocation changes; they were left alone because a board mi
 letters mid-fold reads as broken, and at 0.68 ms for the whole text pass they are not the
 problem.
 
-## 7. Keeping it
+## 7. A report cost a layout, and it was never the GPU
+
+Folding the sidebar during a search missed frames. KataGo has the GPU at 99 % while it thinks,
+which makes "the GPU is saturated" the obvious reading. It was the wrong one.
+
+Same dense board (285 stones, 20 candidates), same ~1486×1634 window, six folds per run, debug
+build. `over` counts frames past the 16.7 ms deadline in the 900 ms after each toggle; `layout`
+is the frame clock's layout→paint span, which is GTK measuring and allocating the window:
+
+| condition | GPU | reports | frames per fold | over | layout max |
+|---|---|---|---|---|---|
+| engine searching (3 runs) | 99 % | 10 Hz | 42–57 | **25–31 %** | 15.7–17.6 ms |
+| its search finished, same scene (2 runs) | 7 % | — | 60–62 | 2 % | 0.74 ms |
+| **another process** pinning the GPU, own search finished | **99 %** | — | 61–62 | **1 %** | 1.55 ms |
+| engine searching, `report_interval_ms = 1000` | 99 % | 1 Hz | 57–60 | 5 % | 16.0 ms |
+
+Row three settles the GPU question: a second mirai hammering the same card costs this one
+nothing. Row four says the cost scaled with the report *rate*. Nor was it CPU starvation —
+KataGo sat at ~2.2 of 16 cores and `/proc/loadavg` read 4 in every run above, the smooth ones
+included.
+
+It was the candidate list. `AnalysisPanel::refresh` replaced the whole model on every report
+(`store.splice(0, n, &objects)`), and a `GtkColumnView` handed different objects rebuilds every
+row widget: one full window measure-and-allocate, 7–17 ms, once per report. Ablating that single
+call — everything else untouched — took the folds from 26–29 % over and 8–10 layouts past 5 ms
+down to 2–10 % and **zero**. The wrong first guess is instructive: removing the board and the
+graph (`MIRAI_NO_BOARD=1 MIRAI_NO_GRAPH=1`) and hiding the sidebar left the cost in place, which
+looked like proof that the bottom-bar readout was to blame. A hidden `AdwOverlaySplitView` child
+is still in the tree, and its splice still relayouts the window.
+
+The same churn was visible without any instrument: a row under the pointer lost its `:hover`
+shading ten times a second, because the widget carrying that state was thrown away and rebuilt.
+
+The fix is the GTK list pattern rather than a throttle: **stable objects, mutated in place.**
+`Row::apply` writes only the properties that moved, cells are bound with
+`gtk::ListItem::this_expression("item").chain_property::<CandidateObject>(…)` so a `notify`
+updates one label, and `width_chars`/`max_width_chars` pin each numeric cell so changing digits
+cannot re-measure its column. Row widgets are now created once — 120 for 20 rows × 6 columns,
+counted over ~100 reports — the selection survives without being restored by hand, and a fold
+during a search sits at 2–7 % over with no layout past 5 ms, which is the engine-idle baseline.
+
+What remains is worth knowing: **the animation was never the bug.** 22 % of frames missed in
+*steady state*, with nothing animating; a fold is simply the one interaction that needs fifty
+frames in a row, so a hitch every 100 ms is where the eye catches it. Anything else that wants to
+update at report rate — a new sidebar list, a new readout — has to follow the same rule.
+
+## 8. Keeping it
 
 - `paint.rs` is the only place these primitives are defined; use them.
 - If a new widget needs a path, keep the node's bounds small and its segment count low, then
@@ -295,5 +341,8 @@ problem.
 - `MIRAI_SPIN` on a dense board is the cheapest regression check: it should stay a
   single-digit millisecond paint. `MIRAI_NO_LABEL_DEFER=1` is the check for §6 — with an engine
   running, folding the sidebar should go from 0–2 % missed frames to about 30 %.
+- Measure a *drawing* change with the search **finished**, not running: §7 shows a fold during
+  a search missing 25–31 % of its frames on the report's own layout, which swamps anything a
+  new pass in `snapshot()` can do. Cap `live_max_visits` low, let the search end, then fold.
 - There is deliberately no unit test for any of this: a headless test cannot see a frame, and
   asserting on node types would pin the implementation rather than the behaviour.

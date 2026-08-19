@@ -50,6 +50,26 @@
   font-size: 0.9em;
 }
 
+/* The candidate list's rank badge. Its colour is not here: `palette::rank_css` generates one
+   rule per rank from the same table the board colours its blobs with, so the badge for a move
+   and its blob cannot disagree. */
+.mirai-rank {
+  font-size: 0.78em;
+  font-weight: bold;
+  border-radius: 999px;
+  padding: 2px 0;
+  margin: 3px 2px;
+  min-width: 20px;
+}
+
+/* The candidate table is six numeric columns and a variation in a sidebar; GTK's default cell
+   padding spends the width the variation needs. */
+.mirai-candidates > listview > row > cell,
+.mirai-candidates > header > button {
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
 .mirai-status-dim {
   opacity: 0.6;
 }
