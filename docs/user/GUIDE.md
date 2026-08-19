@@ -163,27 +163,35 @@ The search runs up to **Maximum visits** and the display refreshes every **Repor
    ╰───────╯
 ```
 
-The lower two lines are dropped when the board is drawn too small for them. A move that received
-less than 2% as many visits as the busiest move is drawn without numbers: it is still visible,
-but it does not turn a crowded board into a wall of uncertain readouts. Two moves keep their
-numbers whatever their share — the engine's own first choice, and the one the record plays next.
+The lower two lines are dropped when the board is drawn too small for them. A move with fewer
+than ten visits behind it is drawn without numbers: it is still visible, but it does not turn a
+crowded board into a wall of readouts nobody should trust. Two moves keep their numbers whatever
+their search — the engine's own first choice, and the one the record plays next.
 
-**Colour is the engine's ranking; how solid the blob is, is how much search went there.** The
-two are different questions and they get different channels. Rank 1 — the move KataGo would
-actually play — is **bright blue**, then cyan, mint, green, olive, and the tail of the list dries
-out into dusty amber, ochre and brick. Vivid means *worth reading*; dull means *the engine looked
-and moved on*, not *blunder*. A move with few visits also fades into the board, so a bright blob
-you can barely see is a good move the search has only started on, and a solid dusty one is a move
-it spent real time rejecting.
+**Colour is how much the move loses; how solid the blob is, is how much search stands behind
+that reading.** The engine's own pick is always the coolest blob — **cyan** — and a candidate
+walks through mint and green into yellow, orange and red as it gets worse, in the same three warm
+colours the win-rate graph marks a blunder with.
 
-The number in the coloured badge beside each row of the candidate list is that same rank, in that
-same colour, so a row and its blob are one thing seen twice. Everything from rank 8 down shares
-the last colour — past the eighth choice the exact order is noise, and the badge still carries the
-number.
+"Worse" is measured two ways against the pick, and the more alarming reading wins. In **points**:
+a move within three quarters of a point stays cool, and one that throws away a komi — 7.5 points
+— is red whatever the win rate says, which is what keeps a decided endgame readable when every
+candidate reads 0.0 %. In **win rate**: one point can be the whole game in a close endgame, so a
+move costing 10 % is yellow and one costing 30 % is red however small the score difference. A
+candidate that reads *better* than the engine's pick on one channel — it happens; the two
+disagree — is simply cool.
+
+**Red has to be earned.** A move the search barely touched has a loss estimate worth nothing, so
+its colour is capped by the search behind it: with no visits at all a candidate shows no warmer
+than green, and the whole ramp opens up at twenty visits. Opacity says the same thing, which is
+why a faint green disc means *nobody looked here*, not *this is fine*.
+
+The number in the badge beside each row of the candidate list is the engine's rank; the badge's
+colour is that move's grade, the same colour its blob wears on the board.
 
 Rank is **not** "most visits". KataGo orders its moves by its own play-selection value, which
 includes a confidence-bound correction, so a move with 15% of the top move's visits can still be
-the one it would play. That is why the blue blob is not always the one with the biggest visit
+the one it would play. That is why the cyan blob is not always the one with the biggest visit
 count, and why the list is in the engine's order rather than sorted by any single column.
 
 **The white outline marks the move the record plays next.** Standing on move 57, the outlined
@@ -200,7 +208,7 @@ appears.
 
 | Column | Meaning |
 |---|---|
-| **#** | the engine's own rank, in the colour its blob wears on the board |
+| **#** | the engine's own rank; the badge's colour is what the move loses, as on the board |
 | **Move** | the point, in standard coordinates |
 | **Win** | win rate for the side to move, per cent |
 | **Score** | signed score lead for the side to move, in points |

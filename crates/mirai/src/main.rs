@@ -58,13 +58,13 @@ fn main() -> glib::ExitCode {
                 .add_resource_path(&format!("{RESOURCE_PREFIX}/icons/hicolor"));
             gtk::Window::set_default_icon_name(APP_ID);
         }
-        // Two sheets: the static one from the resource bundle, then the rank badge colours
-        // generated from `palette::RANK_RAMP`, so a badge and its blob on the board cannot drift
+        // Two sheets: the static one from the resource bundle, then the badge colours generated
+        // from `palette::GRADE_RAMP`, so a badge and its blob on the board cannot drift
         // apart.
         let provider = gtk::CssProvider::new();
         provider.load_from_resource(&format!("{RESOURCE_PREFIX}/style.css"));
         let badges = gtk::CssProvider::new();
-        badges.load_from_string(&palette::rank_css());
+        badges.load_from_string(&palette::grade_css());
         if let Some(display) = gtk::gdk::Display::default() {
             for provider in [&provider, &badges] {
                 gtk::style_context_add_provider_for_display(

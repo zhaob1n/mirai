@@ -47,10 +47,13 @@ mod candidate_imp {
         /// The principal variation, already rendered.
         #[property(get, set)]
         pub pv: RefCell<String>,
-        /// KataGo's own rank for this move, 1-based — the badge in the list and the blob on the
-        /// board take their colour from it.
+        /// KataGo's own rank for this move, 1-based — the number in the badge.
         #[property(get, set)]
         pub rank: Cell<u32>,
+        /// Which [`crate::palette`] stop this move's loss falls on — the badge's colour, and
+        /// the colour of its blob on the board.
+        #[property(get, set)]
+        pub grade: Cell<u32>,
 
         /// Not a GObject property: the plain point behind `mv`.
         pub point: Cell<u16>,
@@ -94,8 +97,10 @@ impl CandidateObject {
 
 /// The numbers one candidate contributes, already in the side-to-move's perspective.
 struct Row {
-    /// Position in KataGo's own ordering, 1-based — the badge's number and its colour.
+    /// Position in KataGo's own ordering, 1-based — the badge's number.
     rank: u32,
+    /// The nearest [`crate::palette`] stop to this move's loss — the badge's colour.
+    grade: u32,
     point: Point,
     pv_first: Point,
     winrate: f32,
@@ -121,6 +126,9 @@ impl Row {
         if object.rank() != self.rank {
             object.set_rank(self.rank);
         }
+        if object.grade() != self.grade {
+            object.set_grade(self.grade);
+        }
         let mv = gtp(size, self.point);
         if object.mv() != mv {
             object.set_mv(mv);
@@ -142,6 +150,17 @@ impl Row {
         }
         object.imp().point.set(self.point.0);
         object.imp().pv_first.set(self.pv_first.0);
+    }
+}
+
+/// Grades every row by how much it loses against the first one — KataGo's pick — which is the
+/// same reading the board gives that move's blob ([`crate::palette::grade`]).
+fn grade_rows(rows: &mut [Row]) {
+    let Some(pick) = rows.first() else { return };
+    let (winrate, score) = (pick.winrate, pick.score);
+    for row in rows.iter_mut() {
+        let grade = crate::palette::grade(winrate - row.winrate, score - row.score, row.visits);
+        row.grade = crate::palette::grade_stop(grade);
     }
 }
 
@@ -383,7 +402,7 @@ impl AnalysisPanel {
         let to_play = state.to_play();
         let limit = state.config().analysis.suggestion_limit();
 
-        let (headline, rows) = match state.last_report() {
+        let (headline, mut rows) = match state.last_report() {
             Some(report) => {
                 let mover = report.root.current_player;
                 let head = Headline {
@@ -396,7 +415,7 @@ impl AnalysisPanel {
                     speed: state.analysis_speed(),
                 };
                 // `Report::moves` is already sorted by KataGo's `order`, so the position in this
-                // list *is* the rank the board colours a blob by.
+                // list *is* the rank, and `moves[0]` is the pick every loss is measured against.
                 let rows = report
                     .moves
                     .iter()
@@ -404,6 +423,7 @@ impl AnalysisPanel {
                     .enumerate()
                     .map(|(i, m)| Row {
                         rank: i as u32 + 1,
+                        grade: 0,
                         point: m.mv,
                         pv_first: m.pv.first().copied().unwrap_or(m.mv),
                         winrate: m.winrate_for(mover),
@@ -437,6 +457,7 @@ impl AnalysisPanel {
                             .enumerate()
                             .map(|(i, c)| Row {
                                 rank: i as u32 + 1,
+                                grade: 0,
                                 point: c.mv,
                                 pv_first: c.pv.first().copied().unwrap_or(c.mv),
                                 winrate: perspective(c.winrate, to_play),
@@ -452,6 +473,7 @@ impl AnalysisPanel {
                 }
             }
         };
+        grade_rows(&mut rows);
 
         let inner = self.inner();
         match headline {
@@ -711,11 +733,11 @@ where
 }
 
 /// The rank badge: a pill carrying KataGo's own ranking, in the colour the board gives that
-/// move's blob ([`crate::palette`]).
+/// move's blob ([`crate::palette`]) — the number is the rank, the colour is what the move loses.
 ///
-/// Numeral and colour are two bindings on the one property. `css-classes` is an ordinary widget
-/// property, so the class that carries the colour rides the `notify::rank` GTK already watches —
-/// no bind/unbind bookkeeping, and nothing to forget when a row is recycled onto another rank.
+/// Two bindings on two properties of the same label. `css-classes` is an ordinary widget
+/// property, so the class that carries the colour rides the `notify::grade` GTK already watches —
+/// no bind/unbind bookkeeping, and nothing to forget when a row is recycled onto another move.
 fn rank_column() -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(|_, item| {
@@ -738,12 +760,12 @@ fn rank_column() -> gtk::ColumnViewColumn {
                 }
             })
             .bind(&label, "label", Some(item));
-        this.chain_property::<CandidateObject>("rank")
+        this.chain_property::<CandidateObject>("grade")
             .chain_closure_with_callback(|values| {
-                let rank = values[1].get::<u32>().unwrap_or(1).max(1);
+                let grade = values[1].get::<u32>().unwrap_or_default();
                 glib::StrV::from(vec![
                     glib::GString::from("mirai-rank"),
-                    glib::GString::from(crate::palette::rank_class(rank - 1)),
+                    glib::GString::from(crate::palette::grade_class(grade)),
                 ])
             })
             .bind(&label, "css-classes", Some(item));
