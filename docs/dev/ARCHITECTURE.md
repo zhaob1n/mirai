@@ -259,6 +259,7 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 | `src/calibrate.rs` | explicit two-stage measurement of search width and concurrent positions against the real local model | `calibrate`, `CalibrationConfig`, `CalibrationProgress`, `CalibrationResult`, `CalibrationSample`, private `measure_candidate`, `select_search_threads`, `select_analysis_threads` |
 | `src/remote.rs` | MRP/1 client: one background task owns the connection, control stream and subscription table | `RemoteEngine::connect`, `RemoteStatus`, `TofuStore`, private `run`, `serve`, `handle_cmd`, `handle_int`, `control_reader`, `uni_acceptor`, `sub_reader`, `reconnect`, `backoff` |
 | `examples/probe.rs` | CLI that drives either backend through the same trait and prints every report — the local-vs-remote comparison harness | `--katago/--model/--config` or `--remote/--token` |
+| `examples/sweep.rs` | CLI that grades a whole record: every n-th main-line position at a fixed visit cap, one CSV row per candidate with both losses against the engine's pick — the material the candidate colour ramp is fitted on ([`TESTING.md`](TESTING.md) §4) | `--katago/--model/--visits/--every/--until/--label` |
 
 ### `mirai-client` — shared application layer
 

@@ -42,3 +42,8 @@ tokio = { workspace = true, features = ["signal"] }
 name = "probe"
 path = "examples/probe.rs"
 required-features = ["local", "remote"]
+
+[[example]]
+name = "sweep"
+path = "examples/sweep.rs"
+required-features = ["local"]

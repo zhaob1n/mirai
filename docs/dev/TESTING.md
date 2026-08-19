@@ -164,6 +164,26 @@ Run both modes with identical arguments and diff the `[final]` block: candidate 
 visits must match, values must agree to within the quantisation tolerance from section 2.
 Anything larger is a defect in the remote path, not noise.
 
+### Sweeping a whole record
+
+`crates/mirai-engine/examples/sweep.rs` is the same driver pointed at an SGF: it analyses every
+n-th position of the main line and prints one CSV row per candidate — rank, visits, win rate,
+score lead, and both losses against the engine's own pick. It exists because the candidate
+colour ramp (`crates/mirai/src/palette.rs`) is a set of numbers that has to be fitted to real
+games rather than guessed.
+
+```sh
+cargo run -p mirai-engine --example sweep -- \
+    --katago "$KATA" --model "$MODEL" --visits 1000 --every 4 game.sgf > sweep.csv
+```
+
+`--config` is optional; without it the built-in tuning writes one into the temporary directory.
+What the shipped ramp was fitted on, for whoever moves a breakpoint next: a 197-move Fox game at
+1 000 and 5 000 root visits, a 29-move engine self-play record, a decided 9x9 endgame and a 9x9
+opening. Two readings decided its shape — a 1-visit candidate's score loss moves by 3.5 points
+(90th percentile) between 1 000 and 5 000 root visits against 0.97 for a 20-visit one, and a
+point is worth about 13 % of win rate in a close position against 0.02 % in a decided one.
+
 ### Telling a defect from a model difference
 
 The empty-board win rate with the bundled net is **~35.6 %**, not the 45–55 % one might
