@@ -109,11 +109,8 @@ pub fn analysis_of(report: &Report, max_candidates: usize) -> NodeAnalysis {
 ///
 /// KataGo reports no timing of its own — a report carries a visit count and nothing else —
 /// so the rate is measured here from the visit delta between consecutive reports over the
-/// wall time between them. The first report only sets that baseline: treating it as a rate
-/// from dispatch would charge every visit already sitting in the snapshot — a cache-hot
-/// resume after Space, or the tail of the previous search — to a few milliseconds.
-/// Reports arrive at ~10 Hz and a single interval is noisy, so later samples are
-/// exponentially smoothed; the readout would otherwise be unreadable.
+/// wall time between them. Reports arrive at ~10 Hz and a single interval is noisy, so the
+/// samples are exponentially smoothed; the readout would otherwise be unreadable.
 #[derive(Clone, Copy)]
 pub struct SpeedMeter {
     mark: Instant,
@@ -135,30 +132,27 @@ impl SpeedMeter {
         }
     }
 
-    /// The smoothed rate, or `None` until two reports have shown progress.
+    /// The smoothed rate, or `None` before any report showed progress.
     pub fn rate(&self) -> Option<f32> {
         (self.rate > 0.0).then_some(self.rate)
     }
 
     /// Folds in a report of `visits` total visits observed at `now`.
     ///
-    /// The first report that shows progress only records the visit count and time. A
-    /// report with no new visits is ignored rather than counted as a zero-rate sample:
-    /// the final report is echoed as `Done`, and a search that has hit its visit cap
-    /// would otherwise decay its own last reading towards zero.
+    /// A report with no new visits is ignored rather than counted as a zero-rate sample:
+    /// the final report is echoed as `Done`, and a search that has hit its visit cap would
+    /// otherwise decay its own last reading towards zero.
     pub fn sample(&mut self, visits: u32, now: Instant) {
-        if visits <= self.visits {
+        let dt = now.saturating_duration_since(self.mark).as_secs_f32();
+        if visits <= self.visits || dt < 0.001 {
             return;
         }
-        let dt = now.saturating_duration_since(self.mark).as_secs_f32();
-        if self.visits > 0 && dt >= 0.001 {
-            let sample = (visits - self.visits) as f32 / dt;
-            self.rate = if self.rate > 0.0 {
-                self.rate + SPEED_SMOOTHING * (sample - self.rate)
-            } else {
-                sample
-            };
-        }
+        let sample = (visits - self.visits) as f32 / dt;
+        self.rate = if self.rate > 0.0 {
+            self.rate + SPEED_SMOOTHING * (sample - self.rate)
+        } else {
+            sample
+        };
         self.mark = now;
         self.visits = visits;
     }
@@ -272,19 +266,15 @@ mod tests {
         let mut m = SpeedMeter::started(t0);
         assert_eq!(m.rate(), None, "nothing has been reported yet");
 
-        // First report only marks the baseline; a rate needs two snapshots.
+        // 600 visits in 0.5 s, counting from dispatch.
         m.sample(600, t0 + Duration::from_millis(500));
-        assert_eq!(m.rate(), None, "one report is not an interval");
-
-        // 120 visits in 0.1 s after that.
-        m.sample(720, t0 + Duration::from_millis(600));
         assert!((m.rate().unwrap() - 1200.0).abs() < 1.0, "{:?}", m.rate());
 
         // A steady 1200/s must stay at 1200/s however it is smoothed.
         for i in 1..=10 {
             m.sample(
-                720 + i * 120,
-                t0 + Duration::from_millis(600 + i as u64 * 100),
+                600 + i * 120,
+                t0 + Duration::from_millis(500 + i as u64 * 100),
             );
         }
         assert!((m.rate().unwrap() - 1200.0).abs() < 1.0, "{:?}", m.rate());
@@ -295,25 +285,11 @@ mod tests {
         let t0 = Instant::now();
         let mut m = SpeedMeter::started(t0);
         m.sample(1000, t0 + Duration::from_millis(500));
-        m.sample(1200, t0 + Duration::from_millis(600));
         let running = m.rate().unwrap();
 
         // The engine echoes its last report as `Done`: same visit count, later arrival.
-        m.sample(1200, t0 + Duration::from_millis(900));
+        m.sample(1000, t0 + Duration::from_millis(900));
         assert_eq!(m.rate(), Some(running));
-    }
-
-    #[test]
-    fn a_cache_hot_first_report_is_not_a_rate() {
-        let t0 = Instant::now();
-        let mut m = SpeedMeter::started(t0);
-        // Resume after Space: first snapshot lands in 10 ms with thousands of visits
-        // already in the tree. That is a baseline, not 1.2M visits/s.
-        m.sample(12_000, t0 + Duration::from_millis(10));
-        assert_eq!(m.rate(), None);
-
-        m.sample(12_200, t0 + Duration::from_millis(110));
-        assert!((m.rate().unwrap() - 2000.0).abs() < 1.0, "{:?}", m.rate());
     }
 
     #[test]
