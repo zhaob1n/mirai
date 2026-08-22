@@ -30,7 +30,11 @@ Do not modify this section without explicit approval.
 
 - Git history follows [upstream Linux kernel conventions](https://www.kernel.org/doc/html/latest/process/submitting-patches.html):
   focused, bisectable commits and a topic branch per independent change.
-  Subject line names the change; the body says why.
+  Subject line names the change; the body says why. That includes merge
+  commits: `--no-ff` only when the branch carries a series worth summarising
+  or when it genuinely diverged, and then the merge body *is* that summary.
+  A topic branch holding one commit off the current tip fast-forwards — an
+  empty `Merge branch 'x'` carries no information and should not exist.
 - Follow Linus Torvalds' code taste.
 - Helper scripts and tools that paid for themselves stay in the tree so
   the next task can reuse them.
