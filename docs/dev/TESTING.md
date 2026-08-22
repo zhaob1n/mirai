@@ -57,7 +57,7 @@ the rest defend the surrounding behaviour and are named so you can find them.
 | `tree.rs` | Positional and situational superko really differ; simple ko stays in `Board`; passes never enter the superko set; edits keep `NodeId`s valid; handicap flips the first player | **`positional_superko_rejects_what_situational_allows`**, **`incremental_stepping_matches_a_cold_replay`** (the proof that fast navigation equals a cold replay) |
 | `score.rs` | Each side scores territory **plus the prisoners it holds** — the margin alone is not enough, both totals must read as a human scorer would write them; per-chain dead toggling; seeding dead stones from ownership needs a confident majority | **`endgame_area_and_territory`** (one 9×9 endgame under both rule families), `handicap_compensation_variants`, `from_ownership_needs_a_confident_majority` |
 | `handicap.rs`, `clock.rs` | Conventional stone placement; time allocation never spends over half the main time and mostly consumes a byo-yomi period | `nine_stones_on_19x19_are_the_star_points`, `main_time_branch_spends_a_twentieth_and_never_over_half` |
-| `sgf.rs` | Escaping, soft line breaks, `SZ[w:h]`, multi-game collections, branches; a corrupt or future `MRAI[…]` blob is ignored rather than fatal | **`lizzieyzy_file_parses_replays_and_preserves_unknown_properties`** — a real 25 765-byte file whose `DZ`/`LZOP`/`LZ` properties survive parse → write → parse unchanged; the only test defending data we did not author |
+| `sgf.rs` | Escaping, soft line breaks, `SZ[w:h]`, multi-game collections, branches; a corrupt or future `MRAI[…]` blob is ignored rather than fatal | Two records, two jobs. **`engine_record_parses_replays_and_keeps_its_analysis`** — 17 862 bytes mirai wrote itself out of a real KataGo search; 25 moves replay legally, the three continuations at its end survive, and every node's evaluation returns unchanged through the one root `MRAI` blob. **`lizzieyzy_file_parses_replays_and_preserves_unknown_properties`** — 25 765 bytes *another program* wrote, which is the only input that can catch a parser agreeing with mirai's own writer: `KM` before `SZ`, empty `PB[]`, `PL[B]`, CJK comments with real newlines, and `DZ`/`LZOP`/`LZ` blobs that must survive parse → write → parse byte for byte. **`unmodelled_properties_survive_a_round_trip`** adds the shapes neither file happens to contain — a multi-value unknown property and an escaped `]` inside one |
 | **mirai-proto** | | |
 | `types.rs` | INV-6 quantisation and INV-2 perspective; `Want` stays one byte; side to move is derived, never stored | **`quantisation_round_trips_within_tolerance`** (fails on any `*_SCALE` edit), **`perspective_conversion_flips_for_white`** |
 | `frame.rs` | EOF is not an error; the DoS length cap is enforced *before* allocating; `FrameBuf` is reused | `oversized_length_is_rejected_without_reading_the_body` |
@@ -131,9 +131,18 @@ are `--katago/--model/--config` (local), `--remote/--token/--engine/--fingerprin
 and `--visits/--size/--moves/--komi/--rules/--report-every-ms` (the position).
 
 ```sh
-export KATA=/home/ykpcx/2026-04-26-linux64.with-katago/Lizzieyzy/engines/katago/linux-x64/katago
-export MODEL=/home/ykpcx/2026-04-26-linux64.with-katago/Lizzieyzy/weights/default.bin.gz
-export CFG=/home/ykpcx/2026-04-26-linux64.with-katago/Lizzieyzy/engines/katago/configs/analysis.cfg
+# KataGo on `PATH`, a network from any of the discovery directories, and the analysis config
+# mirai generated for itself — the same three the application runs with.
+#
+# b10 and b11 are the current transformer networks and the strongest available; b10 is the
+# cheaper of the two, which is what a fixture or a convention check wants. `a4-s16-b64-c20`
+# in the config name *is* `EngineTuning::default()` — 4 analysis threads, 16 search threads,
+# batch 64, cache 2^20. Change anything in Preferences → Engines and mirai writes a
+# differently named file beside it; that one is then yours, not the default. `sweep` and the
+# fixture generator write the default themselves when `--config` is omitted.
+export KATA=katago
+export MODEL=~/.katago/models/b10c512h8nbt3tflrs-fson-silu-rsnh.bin.gz
+export CFG=~/.local/share/mirai/katago-logs/katago-analysis-a4-s16-b64-c20.cfg
 
 # local
 cargo run -p mirai-engine --example probe -- \
@@ -184,20 +193,58 @@ opening. Two readings decided its shape — a 1-visit candidate's score loss mov
 (90th percentile) between 1 000 and 5 000 root visits against 0.97 for a 20-visit one, and a
 point is worth about 13 % of win rate in a close position against 0.02 % in a decided one.
 
+### The two SGF fixtures
+
+`tests/data/` holds one record from each side of the writer, because they fail differently.
+
+| Fixture | Defends | Regenerable |
+|---|---|---|
+| `katago-selfplay.sgf` | mirai's own round trip on real search output: 26 evaluations packed into one root `MRAI` blob keyed by document order, so any drift in that keying shows up | yes, see below |
+| `lizzieyzy-autoGame1.sgf` | tolerance of bytes mirai did not write. Same engine behind the numbers — it is KataGo self-play too, `PB[]`/`PW[]`, nobody's game — but serialised by LizzieYzy Next, so it carries a property order, empty values, embedded newlines and foreign analysis blobs mirai's writer cannot produce | no: vendored, and the program that wrote it is not in this tree |
+
+`crates/mirai-client/examples/selfplay.rs` produces the first one: KataGo plays itself at a
+fixed visit cap, each position's evaluation is attached to its node, and the last position
+fans out into the engine's top continuations so the record ends in a real branch point. It
+goes through `request_for_node` → engine → `analysis_of` → `sgf::write`, which is exactly the
+path the GUI saves on — a fixture assembled any other way only proves the test agrees with
+itself.
+
+```sh
+cargo run -p mirai-client --example selfplay -- \
+    --katago "$KATA" --model "$MODEL" --moves 25 --visits 1000 \
+    --out crates/mirai-core/tests/data/katago-selfplay.sgf
+```
+
+The search is not reproducible, so a rerun yields a different game. The test asserts
+structure and legality rather than which moves were chosen, but its byte length, node count
+and candidate count come from the file — take the new ones from what the run prints.
+
+A replacement for the second one has to come from some *other* program's writer. Do not
+reach for a downloaded human game record: it is somebody's property, `docs/dev/FOX_KIFU_API_SPEC.md`
+§11 says as much, and the Fox dialect it would exercise is already covered by the tests in
+`mirai-client/src/fox.rs` — which run before `sgf::parse` ever sees those bytes.
+
 ### Telling a defect from a model difference
 
-The empty-board win rate with the bundled net is **~35.6 %**, not the 45–55 % one might
-assume. That number is correct. The procedure for settling any such question:
+The empty-board win rate is the network's, not a bug: with the one above it is **~36.0 %**
+for Black, not the 45–55 % one might assume, and another net moves it. The procedure for
+settling any such question:
 
 | Step | Command | Expected |
 |---|---|---|
-| 1. Get ground truth outside mirai | pipe the identical query into `katago analysis` (below) | `rootInfo.winrate = 0.353740327` — mirai reproduces it exactly |
-| 2. Confirm the perspective convention | komi sweep, `--komi 0 / 7.5 / 30` | 94.3 % → 35.4 % → 0.1 %, monotonically decreasing. Only possible if the value is Black's (INV-2) |
+| 1. Get ground truth outside mirai | pipe the identical query into `katago analysis` (below) | `rootInfo.winrate` ≈ **0.3597**, against probe's **35.97 %**. Two 200-visit runs differed by 0.13 % here, so "agrees" means inside that spread, not to the last digit |
+| 2. Confirm the perspective convention | komi sweep, `--komi 0 / 7.5 / 30` | 95.2 % → 36.0 % → 0.1 %, monotonically decreasing. Only possible if the value is Black's (INV-2) |
 | 3. Confirm index order | probe an asymmetric position and read the ownership ends | `ownership[0]` = A19 top-left = Black, `ownership[360]` = T1 bottom-right = White (INV-1) |
 
+`reportAnalysisWinratesAs` is a **config** key, not a query field. KataGo answers a query
+carrying it with `Unexpected or unused field` and then reports side-to-move win rates, which
+reads exactly like an INV-2 violation that is not there. mirai forces the key on the command
+line, so a hand-run cross-check has to as well:
+
 ```sh
-printf '%s\n' '{"id":"gt","boardXSize":19,"boardYSize":19,"rules":"chinese","komi":7.5,"moves":[],"maxVisits":200,"reportAnalysisWinratesAs":"BLACK"}' \
-  | "$KATA" analysis -model "$MODEL" -config "$CFG" | head -1
+printf '%s\n' '{"id":"gt","boardXSize":19,"boardYSize":19,"rules":"chinese","komi":7.5,"moves":[],"maxVisits":200}' \
+  | "$KATA" analysis -model "$MODEL" -config "$CFG" \
+      -override-config reportAnalysisWinratesAs=BLACK | jq -c '.rootInfo'
 ```
 
 | Observation | Verdict |
@@ -343,7 +390,7 @@ which is why each first `wait:` is generous; toggling analysis before it is read
 because `AppState::set_engine` calls `restart_analysis` when the engine lands.
 
 ```sh
-export SGF=$PWD/crates/mirai-core/tests/data/lizzieyzy-autoGame1.sgf   # the 30-node fixture
+export SGF=$PWD/crates/mirai-core/tests/data/katago-selfplay.sgf   # the 29-node fixture
 export RUST_LOG=info,mirai=debug
 ```
 

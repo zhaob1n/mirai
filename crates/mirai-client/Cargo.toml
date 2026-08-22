@@ -13,3 +13,11 @@ tokio.workspace = true
 tracing.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+clap.workspace = true
+# `examples/selfplay.rs` regenerates the SGF fixture, so it needs a real KataGo. The
+# library above still builds none of that machinery: `local` is enabled for test and
+# example targets only, which is why it is here and not in `[dependencies]`.
+mirai-engine = { workspace = true, features = ["local"] }

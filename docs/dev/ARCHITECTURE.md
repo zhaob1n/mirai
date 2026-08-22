@@ -272,6 +272,7 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 | `src/session.rs` | TOFU policy in front of `RemoteEngine`; `Engine` impl that refuses until trusted | `Session`, `SessionConfig`, `SessionState`, `Peer`, `RemoteConnector` |
 | `src/play.rs` | clocks, resignation, move sampling, scoring; no UI | `Play`, `PlayState`, `GameSetup`, `Strength`, `select_move_index`, `resign_check` |
 | `src/fox.rs` | Fox lookup / list / SGF normalisation; HTTP behind `Fetch` | `Fetch`, `lookup_user`, `list_games`, `fetch_sgf`, `normalize_fox_sgf` |
+| `examples/selfplay.rs` | CLI that plays KataGo against itself down the *same* path the GUI saves a record on, and writes the SGF — how `mirai-core/tests/data/katago-selfplay.sgf` is regenerated ([`TESTING.md`](TESTING.md) §4). It takes `mirai-engine` with `local` as a dev-dependency only | `--katago/--model/--visits/--moves/--variations/--out` |
 
 ### `mirai-server` — headless host
 

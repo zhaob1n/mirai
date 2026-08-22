@@ -1107,6 +1107,8 @@ dependencies = [
 name = "mirai-client"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "clap",
  "mirai-core",
  "mirai-engine",
  "serde_json",

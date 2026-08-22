@@ -706,7 +706,14 @@ mod tests {
     use crate::board::Board;
     use crate::tree::Candidate;
 
-    const REAL_SGF: &[u8] = include_bytes!("../tests/data/lizzieyzy-autoGame1.sgf");
+    /// A record mirai wrote itself, out of a real KataGo search.
+    const OWN_SGF: &[u8] = include_bytes!("../tests/data/katago-selfplay.sgf");
+
+    /// A record *another program* wrote — KataGo self-play serialised by LizzieYzy Next.
+    /// Same engine behind the numbers, different bytes: property orders, empty values and
+    /// analysis blobs mirai's own writer never emits. Foreign input is the only thing that
+    /// catches a writer which merely agrees with its own parser.
+    const FOREIGN_SGF: &[u8] = include_bytes!("../tests/data/lizzieyzy-autoGame1.sgf");
 
     /// Raw (still escaped) value of the first occurrence of a property.
     fn raw_value(text: &str, name: &str) -> String {
@@ -723,6 +730,33 @@ mod tests {
             from = at + key.len();
         }
         panic!("property {name} not found");
+    }
+
+    /// Replays a record's main line, panicking on the first illegal move; returns the
+    /// number of moves played.
+    fn replay_main_line(t: &GameTree) -> usize {
+        let rules = t.info.rules.rules();
+        let mut board = Board::new(t.info.size);
+        let mut moves = 0;
+        for id in t.main_line() {
+            let node = t.node(id);
+            for &p in &node.setup.add_black {
+                board.set(p, Some(Color::Black));
+            }
+            for &p in &node.setup.add_white {
+                board.set(p, Some(Color::White));
+            }
+            for &p in &node.setup.add_empty {
+                board.set(p, None);
+            }
+            if let Some((color, p)) = node.mv {
+                board
+                    .play(color, p, &rules)
+                    .unwrap_or_else(|e| panic!("illegal move {p:?} at {id:?}: {e}"));
+                moves += 1;
+            }
+        }
+        moves
     }
 
     #[test]
@@ -892,9 +926,66 @@ mod tests {
         assert!(decode_analysis(&blob).is_none());
     }
 
+    /// A record mirai itself saved out of a real KataGo search: `examples/selfplay.rs` in
+    /// `mirai-client` regenerates it. Nothing here is hand-built, so this is where a
+    /// writer that only round-trips its own idea of a tree gets caught.
+    #[test]
+    fn engine_record_parses_replays_and_keeps_its_analysis() {
+        let bytes = OWN_SGF;
+        assert_eq!(bytes.len(), 17862);
+        let games = parse(bytes).expect("parse");
+        assert_eq!(games.len(), 1);
+        let t = &games[0];
+        assert_eq!(t.info.size, Size::square(19));
+        assert_eq!(t.info.komi, 7.5);
+        assert_eq!(t.info.rules, RuleSet::Chinese);
+        assert_eq!(t.info.players[0].name, "KataGo");
+        assert_eq!(t.len(), 29);
+
+        // The main line must be a legal game: 25 played moves, then the first of the three
+        // continuations the engine offered at the final position.
+        let line = t.main_line();
+        assert_eq!(replay_main_line(t), 26);
+        assert_eq!(line.len(), 27);
+        assert_eq!(t.children(line[25]).len(), 3);
+
+        // One evaluation per played position, and every one of them survives
+        // parse -> write -> parse. They all ride on a single root `MRAI` blob keyed by
+        // document order, so a mismatch anywhere is a mismatch in that keying.
+        let analysed = line.iter().filter(|&&id| t.node(id).analysis.is_some());
+        assert_eq!(analysed.count(), 26, "the continuations carry none");
+        let root = t.node(t.root()).analysis.as_ref().expect("root analysis");
+        assert_eq!(root.candidates.len(), 8);
+        assert_eq!(root.ownership.as_ref().map(|o| o.len()), Some(361));
+
+        let written = write(t, true);
+        let back = &parse_str(&written).unwrap()[0];
+        assert_eq!(back.len(), t.len());
+        let back_line = back.main_line();
+        assert_eq!(back_line.len(), line.len());
+        for (&a, &b) in line.iter().zip(&back_line) {
+            assert_eq!(
+                back.node(b).analysis,
+                t.node(a).analysis,
+                "analysis changed at move {}",
+                t.move_number(a)
+            );
+        }
+
+        // Saving without analysis costs the record the blob and nothing else.
+        let plain = write(t, false);
+        assert!(!plain.contains("MRAI["));
+        let plain = &parse_str(&plain).unwrap()[0];
+        assert_eq!(plain.len(), t.len());
+        assert!(plain.node(plain.root()).analysis.is_none());
+    }
+
+    /// The same writer, judged by bytes it did not produce. Everything asserted before the
+    /// blobs is a shape mirai never emits: `KM` ahead of `SZ`, an empty `PB[]`, a `PL[B]`
+    /// it only writes when a tree carries an override.
     #[test]
     fn lizzieyzy_file_parses_replays_and_preserves_unknown_properties() {
-        let bytes = REAL_SGF;
+        let bytes = FOREIGN_SGF;
         assert_eq!(bytes.len(), 25765);
         let games = parse(bytes).expect("parse");
         assert_eq!(games.len(), 1);
@@ -903,36 +994,14 @@ mod tests {
         assert_eq!(t.info.komi, 7.5);
         assert_eq!(t.len(), 30);
         assert_eq!(t.node(t.root()).to_play_override, Some(Color::Black));
+        // Empty is not absent.
+        assert_eq!(t.info.players[0].name, "");
+        assert_eq!(t.info.result, "");
 
-        // The main line must be a legal game.
-        let rules = t.info.rules.rules();
-        let mut board = Board::new(t.info.size);
-        let mut moves = 0;
-        for id in t.main_line() {
-            let node = t.node(id);
-            for &p in &node.setup.add_black {
-                board.set(p, Some(Color::Black));
-            }
-            for &p in &node.setup.add_white {
-                board.set(p, Some(Color::White));
-            }
-            for &p in &node.setup.add_empty {
-                board.set(p, None);
-            }
-            if let Some((color, p)) = node.mv {
-                board
-                    .play(color, p, &rules)
-                    .unwrap_or_else(|e| panic!("illegal move {p:?} at {id:?}: {e}"));
-                moves += 1;
-            }
-        }
         // 25 recorded moves, then the main line dives into the first of three variations.
-        assert_eq!(moves, 26);
+        assert_eq!(replay_main_line(t), 26);
         assert_eq!(t.main_line().len(), 27);
-
-        // The three variations off the end of the recorded game survived.
-        let branch = t.main_line()[25];
-        assert_eq!(t.children(branch).len(), 3);
+        assert_eq!(t.children(t.main_line()[25]).len(), 3);
 
         // Unknown-property preservation, against real data.
         let text = std::str::from_utf8(bytes).unwrap();
@@ -950,6 +1019,41 @@ mod tests {
         assert_eq!(reparsed.len(), t.len());
         assert_eq!(
             reparsed.node(reparsed.root()).unknown_props,
+            t.node(t.root()).unknown_props
+        );
+    }
+
+    /// Why this crate parses SGF by hand: a property mirai does not model has to come back
+    /// byte-identical, or saving a record silently destroys what another program wrote into
+    /// it — another engine's analysis blobs, a server's own bookkeeping.
+    #[test]
+    fn unmodelled_properties_survive_a_round_trip() {
+        let text = concat!(
+            "(;FF[4]SZ[19]KM[7.5]DZ[G]LZOP[net 64.0 668]VENDOR[a\\]b][second]",
+            ";B[pd]LZ[net 35.7 507 pv D4 Q3]",
+            "(;W[dd]OB[3]C[note])",
+            "(;W[dp]))"
+        );
+        let t = &parse_str(text).unwrap()[0];
+        let written = write(t, false);
+
+        for name in ["DZ", "LZOP", "VENDOR", "LZ", "OB"] {
+            assert_eq!(
+                raw_value(&written, name),
+                raw_value(text, name),
+                "{name} changed"
+            );
+        }
+        // Multi-value properties keep every value, and an escaped `]` stays escaped.
+        assert!(
+            written.contains("VENDOR[a\\]b][second]"),
+            "value list lost: {written}"
+        );
+        // A second save must not shed what the first one kept.
+        let again = &parse_str(&written).unwrap()[0];
+        assert_eq!(again.len(), t.len());
+        assert_eq!(
+            again.node(again.root()).unknown_props,
             t.node(t.root()).unknown_props
         );
     }
