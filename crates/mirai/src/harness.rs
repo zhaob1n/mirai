@@ -16,7 +16,8 @@
 //! Steps run in order: `wait:<ms>`, `wait-status:<text>`, `action:<prefix.name>`,
 //! `action:<prefix.name>=<string arg>`, `press:<button text>`, `page:<preferences page>`,
 //! `select:<row title>=<index>`, `set:<row title>=<number>`,
-//! `fill:<entry placeholder>=<text>`, `shot:<path.png>`, `close-window`, `quit`.
+//! `fill:<entry placeholder>=<text>`, `shot:<path.png>`, `shot:<path.png>=<widget id>`,
+//! `close-window`, `quit`.
 
 use std::time::Duration;
 
@@ -41,7 +42,9 @@ enum Step {
     Set(String, f64),
     /// Fill the first visible SearchEntry whose placeholder contains this text.
     Fill(String, String),
-    Shot(String),
+    /// Write a PNG of the whole window, or of the one widget whose Blueprint id is given —
+    /// a 300x100 strip of the list you changed instead of a 1500x1600 window.
+    Shot(String, Option<String>),
     CloseWindow,
     Quit,
 }
@@ -58,7 +61,10 @@ fn parse(script: &str) -> Vec<Step> {
             match kind {
                 "wait" => rest.parse().ok().map(Step::Wait),
                 "wait-status" => Some(Step::WaitStatus(rest.to_string())),
-                "shot" => Some(Step::Shot(rest.to_string())),
+                "shot" => Some(match rest.rsplit_once('=') {
+                    Some((path, region)) => Step::Shot(path.to_string(), Some(region.to_string())),
+                    None => Step::Shot(rest.to_string(), None),
+                }),
                 "close-window" => Some(Step::CloseWindow),
                 "quit" => Some(Step::Quit),
                 "press" => Some(Step::Press(rest.to_string())),
@@ -193,7 +199,7 @@ pub fn install(app: &adw::Application) {
                     );
                     glib::timeout_future(Duration::from_millis(120)).await;
                 }
-                Step::Shot(path) => {
+                Step::Shot(path, region) => {
                     // `WidgetPaintable::snapshot` yields nothing if the window has not
                     // drawn since the last change, so nudge it and retry a few frames.
                     let mut result = Err("not attempted".to_string());
@@ -202,7 +208,7 @@ pub fn install(app: &adw::Application) {
                             w.queue_draw();
                         }
                         glib::timeout_future(Duration::from_millis(120)).await;
-                        result = shot(&app, &path);
+                        result = shot(&app, &path, region.as_deref());
                         if result.is_ok() {
                             break;
                         }
@@ -467,13 +473,34 @@ fn menu_text(button: &gtk::MenuButton) -> Option<String> {
         .or_else(|| button.tooltip_text().map(|t| t.to_string()))
 }
 
-/// Renders the active window through its live `gsk` renderer and writes a PNG.
-fn shot(app: &adw::Application, path: &str) -> Result<(), String> {
+/// Renders the active window through its live `gsk` renderer and writes a PNG, optionally
+/// cropped to one widget.
+///
+/// `region` is a widget id — Blueprint's, or `GtkWidget:name`. The window is always the node
+/// that gets rendered and the region only narrows the *viewport*: a `WidgetPaintable` of the
+/// widget alone draws no ancestor background, so a list came out as dark text on transparent
+/// black. Cropping to one widget is not a nicety — reviewing a list row otherwise means
+/// cutting it out of a 1486x1634 window PNG by hand every time.
+fn shot(app: &adw::Application, path: &str, region: Option<&str>) -> Result<(), String> {
     let window = app.active_window().ok_or("no active window")?;
     let (w, h) = (window.width(), window.height());
     if w <= 0 || h <= 0 {
         return Err(format!("window is not mapped yet ({w}x{h})"));
     }
+    let viewport = match region {
+        Some(name) => {
+            let target =
+                find_named(window.upcast_ref(), name).ok_or(format!("no widget id {name:?}"))?;
+            let bounds = target
+                .compute_bounds(&window)
+                .ok_or(format!("{name:?} has no bounds in the window"))?;
+            if bounds.width() < 1.0 || bounds.height() < 1.0 {
+                return Err(format!("{name:?} is not mapped yet"));
+            }
+            Some(bounds)
+        }
+        None => None,
+    };
 
     let paintable = gtk::WidgetPaintable::new(Some(&window));
     let snapshot = gtk::Snapshot::new();
@@ -484,10 +511,26 @@ fn shot(app: &adw::Application, path: &str) -> Result<(), String> {
         .native()
         .and_then(|n| n.renderer())
         .ok_or("the window has no renderer")?;
-    let texture = renderer.render_texture(&node, None);
+    let texture = renderer.render_texture(&node, viewport.as_ref());
     texture
         .save_to_png(path)
         .map_err(|e| format!("{path}: {e}"))
+}
+
+/// The first widget whose Blueprint id — or `GtkWidget:name`, which is what CSS `#id` matches
+/// — is exactly `name`.
+fn find_named(widget: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
+    if widget.widget_name() == name || widget.buildable_id().is_some_and(|id| id == name) {
+        return Some(widget.clone());
+    }
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        if let Some(found) = find_named(&current, name) {
+            return Some(found);
+        }
+        child = current.next_sibling();
+    }
+    None
 }
 
 #[cfg(test)]
@@ -497,9 +540,9 @@ mod tests {
     #[test]
     fn script_parsing_covers_every_step_kind() {
         let steps = parse(
-            "wait:250, wait-status:Ready, action:win.toggle-analysis, action:win.set-engine=local, page:Analysis, select:Model=2, set:Suggestions Shown=0, fill:Exact nickname=柯洁, shot:/tmp/x.png, close-window, quit",
+            "wait:250, wait-status:Ready, action:win.toggle-analysis, action:win.set-engine=local, page:Analysis, select:Model=2, set:Suggestions Shown=0, fill:Exact nickname=柯洁, shot:/tmp/x.png, shot:/tmp/y.png=blunder_expander, close-window, quit",
         );
-        assert_eq!(steps.len(), 11);
+        assert_eq!(steps.len(), 12);
         assert!(matches!(steps[0], Step::Wait(250)));
         assert!(matches!(&steps[1], Step::WaitStatus(text) if text == "Ready"));
         match &steps[2] {
@@ -521,9 +564,12 @@ mod tests {
         assert!(
             matches!(&steps[7], Step::Fill(field, text) if field == "Exact nickname" && text == "柯洁")
         );
-        assert!(matches!(&steps[8], Step::Shot(p) if p == "/tmp/x.png"));
-        assert!(matches!(steps[9], Step::CloseWindow));
-        assert!(matches!(steps[10], Step::Quit));
+        assert!(matches!(&steps[8], Step::Shot(p, None) if p == "/tmp/x.png"));
+        assert!(
+            matches!(&steps[9], Step::Shot(p, Some(region)) if p == "/tmp/y.png" && region == "blunder_expander")
+        );
+        assert!(matches!(steps[10], Step::CloseWindow));
+        assert!(matches!(steps[11], Step::Quit));
     }
 
     #[test]

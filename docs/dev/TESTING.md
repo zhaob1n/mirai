@@ -295,6 +295,7 @@ Four traps:
 | `select:<row title substring>=<index>` | Set the first visible matching `adw::ComboRow`; index 0 is its prompt/default entry | 250 ms |
 | `fill:<entry placeholder substring>=<text>` | Fill the first visible `gtk::SearchEntry` whose placeholder matches | 120 ms |
 | `shot:<path.png>` | Render the active window to PNG | see below |
+| `shot:<path.png>=<widget id>` | Same render, cropped to one widget — the ids are Blueprint's (`blunder_expander`, `nav`, …) | see below |
 | `close-window` | Close only the active window through its normal shutdown path | 250 ms |
 | `quit` | `app.quit()`, ending the script | — |
 
@@ -319,6 +320,16 @@ drawn since the last change, so `shot` `queue_draw()`s and retries twelve times 
 before giving up. A `shot:` step therefore costs 120 ms at best and ~1.4 s at worst.
 `screenshot failed: nothing was drawn` after all twelve means the window genuinely never
 mapped — usually a too-short preceding `wait:`, or a modal that grabbed before `present()`.
+
+**Cropping to one widget.** `shot:/tmp/x.png=blunder_expander` renders the *window* and passes
+the widget's bounds as the renderer's viewport. A 347x76 PNG of the list you changed beats
+cropping it out of a 1486x1634 window capture by hand, and a review that reads one strip
+notices a wrong glyph. It is the window's node either way on purpose: a `WidgetPaintable` of
+the widget alone draws no ancestor background, which came out as dark text on transparent
+black. Ids resolve by `GtkWidget:name` or buildable id, so both Blueprint template children
+and hand-named widgets work; `no widget id "x"` means the id is wrong, `"x" is not mapped yet`
+means the widget is hidden — the blunder expander, for one, is invisible until a sweep finds
+something.
 
 ### Recipes
 
@@ -433,13 +444,18 @@ analysed to `analysis.batch_visits` (100 by default) with concurrency scaled to 
 `numAnalysisThreads`.
 
 ```sh
-MIRAI_HARNESS="wait:2000,action:win.analyse-game,wait:90000,shot:/tmp/mirai-batch.png,quit" \
+MIRAI_HARNESS="wait:2000,action:win.analyse-game,wait:90000,shot:/tmp/mirai-batch.png,shot:/tmp/mirai-blunders.png=blunder_expander,quit" \
   cargo run -p mirai -- "$SGF"
 ```
 
 Expect the win-rate graph filled end to end rather than a single point, blunder markers on
 the worst moves, and the Analysis sidebar listing blunder rows. If the progress indicator is
 still running in the PNG, raise the wait.
+
+The second capture is the blunder list alone. A game whose blunders are *known* is worth more
+here than a real one: a record where one side answers a corner with `A19` produces rows of
+both colours and all three severities within ten moves, which is how the row layout gets
+reviewed without waiting 90 s for a 300-move sweep.
 
 **(e) Clean shutdown, proving teardown ran.** Use the harness's `close-window` step, which calls
 `gtk::Window::close` on the active window and exercises the same path as the title-bar close
