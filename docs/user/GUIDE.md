@@ -111,8 +111,8 @@ disk.
 │              └─────────────────┘             │ D4   53.9   +1.6   2.4k   22%  D4  │
 │                                              │ …                                  │
 │──────────────────────────────────────────────│ ▾ Blunders (4)                     │
-│  ╭──────────────────────────────────────╮    │  38 · White  −14.2% · played R7    │
-│  │  win-rate + score-lead curves        │    │  57 · Black   −8.1% · played C11   │
+│  ╭──────────────────────────────────────╮    │  ⚫ 38 · −14.2% · played R7        │
+│  │  win-rate + score-lead curves        │    │  ⚪ 57 · −8.1% · played C11        │
 │  │  ▁▁▂▃▅▅▄▆▇▇   ← blunder strip below  │    │                                    │
 │  ╰──────────────────────────────────────╯    │                                    │
 ├──────────────────────────────────────────────┴────────────────────────────────────┤
@@ -304,12 +304,12 @@ or edit a comment, and follows the record if the tree changes:
 
 ```
 ▾ Blunders (4)
-   38 · White      −14.2% · played R7 · best D18
-   57 · Black       −8.1% · played C11 · best Q3
+   ⚫ 38 · −14.2% · played R7 · best D18
+   ⚪ 57 · −8.1% · played C11 · best Q3
 ```
 
-Move number, who played it, win rate lost, played move, engine's move. **Click a row to jump
-there.** Needs a running engine.
+One line each: the stone the mover played, the move number, the win rate it lost, the move
+played, the engine's move. **Click a row to jump there.** Needs a running engine.
 
 **Variations and the move tree.** Playing anywhere other than the end of the line creates a
 variation; the original continuation is untouched. The Moves page draws every node: filled

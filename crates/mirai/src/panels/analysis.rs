@@ -561,7 +561,7 @@ impl AnalysisPanel {
 
         let mut nodes = Vec::with_capacity(rows.len());
         for b in &rows {
-            let subtitle = match b.best {
+            let detail = match b.best {
                 Some(best) => format!(
                     "−{}% · played {} · best {}",
                     pct1(b.drop),
@@ -570,12 +570,22 @@ impl AnalysisPanel {
                 ),
                 None => format!("−{}% · played {}", pct1(b.drop), gtp(size, b.played)),
             };
+            // One line: stone, move number, what it cost. A move number on a line of its own
+            // spent a row's height saying nothing the eye had to read.
             let row = adw::ActionRow::builder()
-                .title(format!("{} · {}", b.move_number, color_name(b.player)))
-                .subtitle(subtitle)
+                .title(format!("{} {} · {detail}", stone(b.player), b.move_number))
                 .activatable(true)
                 .build();
             row.add_css_class(severity_class(b.drop));
+            // The stone is a picture; a screen reader sees "black circle" at best, so the row
+            // carries the word. `AdwActionRow` is not declared `Accessible` in the bindings,
+            // its widget is.
+            row.upcast_ref::<gtk::Widget>()
+                .update_property(&[gtk::accessible::Property::Label(&format!(
+                    "Move {} · {} · {detail}",
+                    b.move_number,
+                    color_name(b.player)
+                ))]);
             inner.blunder_list.append(&row);
             nodes.push(b.node);
         }
@@ -618,6 +628,21 @@ fn color_name(c: Color) -> &'static str {
     match c {
         Color::Black => "Black",
         Color::White => "White",
+    }
+}
+
+/// The mover of a blunder, as the stone they played.
+///
+/// A reviewer reading the list is looking at a board, where the player *is* a colour, so
+/// "Black"/"White" made them translate a word back into the thing in front of them.
+///
+/// These two are `Emoji_Presentation=Yes`, so Pango renders them from the colour emoji font
+/// and they keep their own black and white — which matters here, because the row carries a
+/// `severity_class` that sets `color`, and a monochrome `●`/`○` would come out red.
+fn stone(color: Color) -> &'static str {
+    match color {
+        Color::Black => "⚫",
+        Color::White => "⚪",
     }
 }
 
