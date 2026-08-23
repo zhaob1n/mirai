@@ -2,8 +2,13 @@
 // Copyright (C) 2026 Huang Zhaobin
 //! `MoveTreeView` — the branch graph. Step 10.
 //!
-//! Nodes sit on a fixed grid: the column is the node's depth from the root and the row is
-//! a *lane* handed out by a depth-first walk that keeps the main line on lane 0. The layout
+//! Nodes sit on a fixed grid: the row is the node's depth from the root and the column is
+//! a *lane* handed out by a depth-first walk that keeps the main line on lane 0.
+//!
+//! Depth runs *down*. The widget lives in the sidebar — 340-520 px wide and as tall as the
+//! window — so the axis a 250-move record is 5000 px long on has to be the panel's long
+//! axis, and the wheel then scrolls it without a modifier. Lanes run across instead, where
+//! a handful of variations fit in the width. The layout
 //! is cached and only recomputed when [`GameTree::structure_revision`] moves, because it is
 //! the one part of the widget that is O(tree) rather than O(visible). Deliberately *not*
 //! `GameTree::revision`: that counts a stored analysis as a change too, so a running engine
@@ -22,7 +27,8 @@ use mirai_core::{Color, GameTree, NodeId};
 use crate::app::AppState;
 use crate::widgets::paint::{fill_disc, hline, stroke_disc, vline, with_alpha};
 
-/// Grid geometry. Cells are square-ish so long games stay scannable.
+/// Grid geometry: `CELL_W` spaces the lanes across, `CELL_H` the depths down. Equal, so a
+/// branch elbow is a right angle and long games stay scannable.
 const CELL_W: f32 = 20.0;
 const CELL_H: f32 = 20.0;
 const MARGIN: f32 = 10.0;
@@ -32,9 +38,9 @@ const RADIUS: f32 = 6.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Placed {
     pub id: NodeId,
-    /// Depth from the root; the root is column 0.
-    pub col: u32,
-    /// Branch lane; the main line is lane 0.
+    /// Depth from the root; the root is row 0.
+    pub depth: u32,
+    /// Branch lane; the main line is lane 0 and later variations sit to its right.
     pub lane: u32,
     /// Index into [`TreeLayout::nodes`] of this node's parent.
     pub parent: Option<usize>,
@@ -46,7 +52,9 @@ pub(crate) struct Placed {
 pub(crate) struct TreeLayout {
     pub nodes: Vec<Placed>,
     pub index: HashMap<NodeId, usize>,
-    pub cols: u32,
+    /// Depth of the deepest node — the last row.
+    pub depth: u32,
+    /// Highest lane in use — the last column.
     pub lanes: u32,
 }
 
@@ -54,51 +62,51 @@ pub(crate) struct TreeLayout {
 ///
 /// The walk is depth-first in child order, and `children[0]` is the main line, so lane 0
 /// is claimed by the main line before any variation can ask for it. A branch takes the
-/// lowest lane at or below its parent's that is still free from its column onwards, which
+/// lowest lane at or right of its parent's that is still free from its depth onwards, which
 /// lets a short variation share a lane with a later, disjoint one.
 pub(crate) fn lay_out(tree: &GameTree) -> TreeLayout {
     let mut layout = TreeLayout::default();
-    // `free[l]` is the first column in lane `l` that nothing occupies yet.
+    // `free[l]` is the first depth in lane `l` that nothing occupies yet.
     let mut free: Vec<u32> = Vec::new();
-    // (node, column, parent lane, parent slot)
+    // (node, depth, parent lane, parent slot)
     let mut stack: Vec<(NodeId, u32, u32, Option<usize>)> = vec![(tree.root(), 0, 0, None)];
 
-    while let Some((id, col, parent_lane, parent)) = stack.pop() {
+    while let Some((id, depth, parent_lane, parent)) = stack.pop() {
         let mut lane = parent_lane;
-        while (lane as usize) < free.len() && free[lane as usize] > col {
+        while (lane as usize) < free.len() && free[lane as usize] > depth {
             lane += 1;
         }
         while free.len() <= lane as usize {
             free.push(0);
         }
-        free[lane as usize] = col + 1;
+        free[lane as usize] = depth + 1;
 
         let slot = layout.nodes.len();
         layout.nodes.push(Placed {
             id,
-            col,
+            depth,
             lane,
             parent,
             mv: tree.node(id).mv,
         });
         layout.index.insert(id, slot);
-        layout.cols = layout.cols.max(col);
+        layout.depth = layout.depth.max(depth);
         layout.lanes = layout.lanes.max(lane);
 
         // Reversed, so `children[0]` is popped first and keeps the parent's lane.
         for &child in tree.children(id).iter().rev() {
-            stack.push((child, col + 1, lane, Some(slot)));
+            stack.push((child, depth + 1, lane, Some(slot)));
         }
     }
     layout
 }
 
-/// Centre of a grid cell in widget coordinates.
+/// Centre of a grid cell in widget coordinates: lanes across, depth down.
 #[inline]
-fn cell_xy(col: u32, lane: u32) -> (f32, f32) {
+fn cell_xy(depth: u32, lane: u32) -> (f32, f32) {
     (
-        MARGIN + RADIUS + col as f32 * CELL_W,
-        MARGIN + RADIUS + lane as f32 * CELL_H,
+        MARGIN + RADIUS + lane as f32 * CELL_W,
+        MARGIN + RADIUS + depth as f32 * CELL_H,
     )
 }
 
@@ -193,8 +201,8 @@ impl MoveTreeView {
             return;
         }
         let layout = lay_out(&state.tree());
-        let w = (MARGIN * 2.0 + RADIUS * 2.0 + layout.cols as f32 * CELL_W).ceil() as i32;
-        let h = (MARGIN * 2.0 + RADIUS * 2.0 + layout.lanes as f32 * CELL_H).ceil() as i32;
+        let w = (MARGIN * 2.0 + RADIUS * 2.0 + layout.lanes as f32 * CELL_W).ceil() as i32;
+        let h = (MARGIN * 2.0 + RADIUS * 2.0 + layout.depth as f32 * CELL_H).ceil() as i32;
         *self.imp().layout.borrow_mut() = layout;
         self.imp().structure.set(Some(structure));
         // The ScrolledWindow pans over this; we never implement gtk::Scrollable.
@@ -207,7 +215,7 @@ impl MoveTreeView {
         self.ensure_layout();
         let layout = self.imp().layout.borrow();
         let hit = layout.nodes.iter().find(|n| {
-            let (cx, cy) = cell_xy(n.col, n.lane);
+            let (cx, cy) = cell_xy(n.depth, n.lane);
             (cx - x).abs() <= CELL_W * 0.5 && (cy - y).abs() <= CELL_H * 0.5
         });
         let Some(&hit) = hit else { return };
@@ -231,7 +239,7 @@ impl MoveTreeView {
         };
         let node = layout.nodes[slot];
         drop(layout);
-        let (cx, cy) = cell_xy(node.col, node.lane);
+        let (cx, cy) = cell_xy(node.depth, node.lane);
 
         for (adj, pos, pad) in [
             (scroller.hadjustment(), cx, CELL_W * 1.5),
@@ -272,34 +280,35 @@ impl MoveTreeView {
         let black = gdk::RGBA::new(0.09, 0.09, 0.11, 1.0);
         let white = gdk::RGBA::new(0.94, 0.94, 0.95, 1.0);
 
-        // Edges first: right-angle elbows, vertical at the parent then across. Every segment
-        // is axis-aligned, so they are rectangles rather than a stroked path — and one
-        // vertical per parent rather than one per child, because the ink is translucent and
-        // overlapping rectangles would blend twice where two children share a trunk.
+        // Edges first: right-angle elbows, across at the parent then down. Every segment is
+        // axis-aligned, so they are rectangles rather than a stroked path — and one horizontal
+        // per parent rather than one per child, because the ink is translucent and overlapping
+        // rectangles would blend twice where two children share a trunk. The drops are one per
+        // child and never overlap: siblings always land in different lanes.
         let mut trunk: Vec<Option<(f32, f32)>> = vec![None; layout.nodes.len()];
         for node in &layout.nodes {
             let Some(parent) = node.parent else { continue };
             let p = layout.nodes[parent];
-            let (px, py) = cell_xy(p.col, p.lane);
-            let (cx, cy) = cell_xy(node.col, node.lane);
-            let span = trunk[parent].get_or_insert((py, py));
-            span.0 = span.0.min(cy);
-            span.1 = span.1.max(cy);
-            hline(snapshot, px, cx, cy, 1.5, &edge_color);
+            let (px, py) = cell_xy(p.depth, p.lane);
+            let (cx, cy) = cell_xy(node.depth, node.lane);
+            let span = trunk[parent].get_or_insert((px, px));
+            span.0 = span.0.min(cx);
+            span.1 = span.1.max(cx);
+            vline(snapshot, cx, py, cy, 1.5, &edge_color);
         }
         for (index, span) in trunk.iter().enumerate() {
-            let Some((top, bottom)) = *span else { continue };
-            if bottom - top < 0.01 {
+            let Some((left, right)) = *span else { continue };
+            if right - left < 0.01 {
                 continue;
             }
             let p = layout.nodes[index];
-            let (px, _) = cell_xy(p.col, p.lane);
-            vline(snapshot, px, top, bottom, 1.5, &edge_color);
+            let (_, py) = cell_xy(p.depth, p.lane);
+            hline(snapshot, left, right, py, 1.5, &edge_color);
         }
 
         // Nodes.
         for node in &layout.nodes {
-            let (cx, cy) = cell_xy(node.col, node.lane);
+            let (cx, cy) = cell_xy(node.depth, node.lane);
 
             match node.mv {
                 Some((color, mv)) => {
@@ -381,11 +390,11 @@ mod tests {
         assert_eq!(lane(&layout, v2), Some(1));
         assert_eq!(lane(&layout, w1), Some(2));
         assert_eq!(layout.lanes, 2);
-        assert_eq!(layout.cols, 5);
+        assert_eq!(layout.depth, 5);
     }
 
     #[test]
-    fn columns_follow_depth_and_parents_are_linked() {
+    fn rows_follow_depth_and_parents_are_linked() {
         let (mut tree, size) = tree19();
         let root = tree.root();
         let a = tree.play(root, Color::Black, size.point(3, 3)).unwrap();
@@ -393,9 +402,9 @@ mod tests {
 
         let layout = lay_out(&tree);
         let slot = |id: NodeId| layout.nodes[layout.index[&id]];
-        assert_eq!(slot(root).col, 0);
-        assert_eq!(slot(a).col, 1);
-        assert_eq!(slot(b).col, 2);
+        assert_eq!(slot(root).depth, 0);
+        assert_eq!(slot(a).depth, 1);
+        assert_eq!(slot(b).depth, 2);
         assert_eq!(slot(root).parent, None);
         assert_eq!(layout.nodes[slot(b).parent.unwrap()].id, a);
     }
@@ -437,8 +446,25 @@ mod tests {
         let _ = size;
         let layout = lay_out(&tree);
         assert_eq!(layout.nodes.len(), 2001);
-        assert_eq!(layout.cols, 2000);
+        assert_eq!(layout.depth, 2000);
         assert_eq!(layout.lanes, 0);
         assert_eq!(lane(&layout, cur), Some(0));
+    }
+
+    /// The panel is tall and narrow, so depth runs *down* the widget and lanes run across it.
+    /// A transposed grid is the one bug in here that still draws a plausible-looking tree.
+    #[test]
+    fn depth_runs_down_and_lanes_run_across() {
+        let origin = cell_xy(0, 0);
+        assert_eq!(
+            cell_xy(1, 0),
+            (origin.0, origin.1 + CELL_H),
+            "one move deeper is one row down"
+        );
+        assert_eq!(
+            cell_xy(0, 1),
+            (origin.0 + CELL_W, origin.1),
+            "the next lane is one column across"
+        );
     }
 }

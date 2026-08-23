@@ -440,8 +440,9 @@ MIRAI_HARNESS="wait:2000,action:win.next10,action:win.next10,action:win.toggle-a
 
 Expect `harness: 7 steps`, three `-> ok` lines, `wrote /tmp/mirai-a.png`. The PNG shows the
 board at move 20, a populated win-rate graph, blue candidate overlays with win-rate and visit
-labels, and the sidebar on its default **Analysis** page. Insert `stack:Moves` to see the
-branch graph instead, with the cursor 20 nodes along the main line.
+labels, and the sidebar on its default **Analysis** page. Insert `stack:Moves` to get the
+branch graph instead: the main line runs *down* the panel from the root, variations elbow off
+to the right, and the cursor — 20 nodes down — wears an accent ring.
 
 **(b) Ownership overlay — the INV-1 canary.** Live analysis always requests
 `Want::OWNERSHIP`, so `win.toggle-ownership` only switches the drawing on.
