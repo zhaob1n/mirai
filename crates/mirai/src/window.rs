@@ -411,7 +411,7 @@ pub fn present(
 
     window.with_ui(|ui| {
         if let Some(path) = path {
-            load_sgf(ui, &path, true);
+            load_sgf(ui, &path, Origin::File);
         } else if let Some(autosave) = stale_autosave {
             offer_restore(ui, autosave);
         }
@@ -820,7 +820,17 @@ fn maybe_auto_analyse(ui: &Ui) {
     }
 }
 
-fn load_sgf(ui: &Ui, path: &Path, remember: bool) {
+/// Where a record being loaded came from.
+///
+/// An autosave is not the user's file: it has no Save target, and it must stay dirty until
+/// Save As, or the title claims a recovered record is safely on disk when nothing holds it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Origin {
+    File,
+    Recovered,
+}
+
+fn load_sgf(ui: &Ui, path: &Path, origin: Origin) {
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
         Err(e) => {
@@ -835,17 +845,23 @@ fn load_sgf(ui: &Ui, path: &Path, remember: bool) {
             return;
         }
     };
-    let remembered = remember.then(|| path.to_path_buf());
+    let remembered = (origin == Origin::File).then(|| path.to_path_buf());
+    let recovered = origin == Origin::Recovered;
     match trees.len() {
         0 => ui.state.toast("That file holds no game records"),
         1 => {
             let tree = trees.into_iter().next().expect("length checked");
             let moves = tree.main_line().len().saturating_sub(1);
-            adopt(ui, tree, remembered, false);
-            ui.state
-                .toast(format!("Opened {} ({moves} moves)", file_label(path)));
+            adopt(ui, tree, remembered, recovered);
+            let label = file_label(path);
+            ui.state.toast(match origin {
+                Origin::File => format!("Opened {label} ({moves} moves)"),
+                Origin::Recovered => {
+                    format!("Restored {moves} moves — use Save As to keep them")
+                }
+            });
         }
-        _ => choose_game(ui, trees, remembered, file_label(path)),
+        _ => choose_game(ui, trees, remembered, recovered, file_label(path)),
     }
 }
 
@@ -886,7 +902,13 @@ fn game_row(tree: &GameTree) -> adw::ActionRow {
         .build()
 }
 
-fn choose_game(ui: &Ui, trees: Vec<GameTree>, path: Option<PathBuf>, label: String) {
+fn choose_game(
+    ui: &Ui,
+    trees: Vec<GameTree>,
+    path: Option<PathBuf>,
+    recovered: bool,
+    label: String,
+) {
     let list = gtk::ListBox::new();
     list.set_selection_mode(gtk::SelectionMode::Single);
     list.add_css_class("boxed-list");
@@ -925,7 +947,7 @@ fn choose_game(ui: &Ui, trees: Vec<GameTree>, path: Option<PathBuf>, label: Stri
         if index < trees.len() {
             let tree = trees.remove(index);
             drop(trees);
-            with_window_ui(&weak, |ui| adopt(ui, tree, path.clone(), false));
+            with_window_ui(&weak, |ui| adopt(ui, tree, path.clone(), recovered));
         }
     });
     dialog.present(ui.window().as_ref());
@@ -942,7 +964,7 @@ fn do_open(ui: &Ui) {
     glib::spawn_future_local(async move {
         match future.await {
             Ok(file) => match file.path() {
-                Some(path) => with_window_ui(&weak, |ui| load_sgf(ui, &path, true)),
+                Some(path) => with_window_ui(&weak, |ui| load_sgf(ui, &path, Origin::File)),
                 None => with_window_ui(&weak, |ui| {
                     ui.state.toast("That location is not a local file");
                 }),
@@ -1174,7 +1196,7 @@ fn offer_restore(ui: &Ui, autosave: PathBuf) {
     let weak = ui.weak_window();
     dialog.connect_response(None, move |_, response| {
         if response == "restore" {
-            with_window_ui(&weak, |ui| load_sgf(ui, &autosave, false));
+            with_window_ui(&weak, |ui| load_sgf(ui, &autosave, Origin::Recovered));
         }
         let _ = std::fs::remove_file(&autosave);
     });
