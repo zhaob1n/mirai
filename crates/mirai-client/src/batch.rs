@@ -15,7 +15,6 @@ use std::sync::Arc;
 
 use mirai_core::{Color, GameTree, NodeId, Point};
 use mirai_engine::{AnalyzeReq, Engine, EngineError, Report, Want};
-use tokio::sync::Semaphore;
 
 use crate::analysis;
 
@@ -81,33 +80,33 @@ where
     P: FnMut(&Analysed, usize, usize) -> Flow,
 {
     let total = plan.len();
-    // Zero would deadlock; one is the honest meaning of "no concurrency".
-    let permits = Arc::new(Semaphore::new(concurrency.max(1)));
+    // Zero would starve the sweep; one is the honest meaning of "no concurrency".
+    let concurrency = concurrency.max(1);
+    let mut queue = plan.into_iter().enumerate();
     let mut running = tokio::task::JoinSet::new();
-
-    for (index, Planned { node, turn, req }) in plan.into_iter().enumerate() {
-        // `subscribe` is synchronous by contract, so the whole query lives in one task and
-        // the permit is held for exactly as long as the query.
-        let sub = Arc::clone(&permits)
-            .acquire_owned()
-            .await
-            .map(|permit| (permit, engine.subscribe(req)));
-        running.spawn(async move {
-            let result = match sub {
-                Ok((permit, sub)) => {
-                    let outcome = sub.finish().await;
-                    drop(permit);
-                    outcome
-                }
-                Err(_) => Err(EngineError::Other("analysis was shut down".into())),
-            };
-            (index, Analysed { node, turn, result })
-        });
-    }
-
     let mut done: Vec<Option<Analysed>> = (0..total).map(|_| None).collect();
     let mut finished = 0;
-    while let Some(joined) = running.join_next().await {
+
+    loop {
+        // Refill before every await, never in a loop of its own. Dispatching the whole plan
+        // first and only then joining is what a semaphore invites, and it defers the first
+        // sink call until all but `concurrency` positions are done: the caller's progress
+        // counter sits at zero and then jumps to the total.
+        while running.len() < concurrency {
+            let Some((index, Planned { node, turn, req })) = queue.next() else {
+                break;
+            };
+            // `subscribe` is synchronous by contract, so the whole query lives in one task
+            // and its slot is held for exactly as long as the query.
+            let sub = engine.subscribe(req);
+            running.spawn(async move {
+                let result = sub.finish().await;
+                (index, Analysed { node, turn, result })
+            });
+        }
+        let Some(joined) = running.join_next().await else {
+            break;
+        };
         // A panicking analysis task would be a bug in this crate, not a server fault.
         let (index, analysed) = joined.expect("analysis task panicked");
         let slot = done[index].insert(analysed);
@@ -334,6 +333,31 @@ mod tests {
             let report = analysed.result.as_ref().expect("analysis failed");
             assert_eq!(report.root.visits, 250);
         }
+    }
+
+    /// The sink drives a progress banner and a win-rate graph, so it must hear about each
+    /// result while the rest of the plan is still queued. A sweep that dispatches everything
+    /// before joining anything reports nothing until all but `concurrency` positions are
+    /// done, which reads as 0/N for the whole search and then N/N at the end.
+    #[tokio::test]
+    async fn a_sweep_reports_a_result_before_dispatching_the_rest() {
+        let engine = Counting::new(u32::MAX);
+        let mut tree = game(31);
+        let plan = plan_mainline(&mut tree, Want::empty(), 10);
+        assert_eq!(plan.len(), 32);
+
+        let tally = engine.clone();
+        let out = sweep(&engine, plan, 4, move |_, finished, total| {
+            let dispatched = tally.served.load(Ordering::SeqCst);
+            assert!(
+                dispatched <= finished + 4,
+                "dispatched {dispatched} of {total} positions having reported {finished}"
+            );
+            Flow::Continue
+        })
+        .await;
+
+        assert_eq!(out.len(), 32);
     }
 
     /// The cap is the point: it is one server stream and one search slot per request.
