@@ -281,16 +281,13 @@ impl MoveInfo {
     /// Win rate as seen by `to_play` (the UI convention).
     #[inline]
     pub fn winrate_for(&self, to_play: Color) -> f32 {
-        match to_play {
-            Color::Black => self.winrate_f32(),
-            Color::White => 1.0 - self.winrate_f32(),
-        }
+        to_play.winrate_for(self.winrate_f32())
     }
 
     /// Score lead as seen by `to_play`, in points.
     #[inline]
     pub fn score_lead_for(&self, to_play: Color) -> f32 {
-        self.score_lead_f32() * to_play.sign()
+        to_play.score_lead_for(self.score_lead_f32())
     }
 }
 
@@ -333,14 +330,11 @@ impl RootInfo {
     }
     #[inline]
     pub fn winrate_for(&self, to_play: Color) -> f32 {
-        match to_play {
-            Color::Black => self.winrate_f32(),
-            Color::White => 1.0 - self.winrate_f32(),
-        }
+        to_play.winrate_for(self.winrate_f32())
     }
     #[inline]
     pub fn score_lead_for(&self, to_play: Color) -> f32 {
-        self.score_lead_f32() * to_play.sign()
+        to_play.score_lead_for(self.score_lead_f32())
     }
 }
 

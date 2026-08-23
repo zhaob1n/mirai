@@ -309,6 +309,33 @@ impl Color {
         }
     }
 
+    /// The player's English name, for labels and result phrases.
+    #[inline]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Color::Black => "Black",
+            Color::White => "White",
+        }
+    }
+
+    /// The Black-perspective win rate `black_winrate` as this colour sees it (INV-2).
+    ///
+    /// Everything stored and transmitted is Black-perspective; this is the one conversion
+    /// to side-to-move, and doing it twice is nearly invisible on screen.
+    #[inline]
+    pub const fn winrate_for(self, black_winrate: f32) -> f32 {
+        match self {
+            Color::Black => black_winrate,
+            Color::White => 1.0 - black_winrate,
+        }
+    }
+
+    /// The Black-perspective score lead `black_lead` as this colour sees it (INV-2).
+    #[inline]
+    pub const fn score_lead_for(self, black_lead: f32) -> f32 {
+        black_lead * self.sign()
+    }
+
     pub fn from_letter(s: &str) -> Option<Color> {
         match s.trim() {
             "b" | "B" => Some(Color::Black),
