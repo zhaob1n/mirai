@@ -91,11 +91,11 @@ impl Layout {
 
 /// Opacity floor and ceiling for a candidate blob.
 ///
-/// Hue is how much the move loses ([`crate::palette`]); opacity is how much search stands behind
-/// that reading, and it is the same confidence that caps the hue, so the two channels tell one
-/// story. It is deliberately *not* the move's share of the search, which LizzieYzy uses and this
-/// widget used to: a search left running puts nine tenths of its visits on the move it likes, and
-/// a share-scaled blob then draws the very move the reviewer opened the file for — a 132-visit
+/// Hue is how much the move loses ([`crate::palette`]), or grey when there is not enough search
+/// for that loss to mean anything. Opacity is how much search stands behind the reading. It is
+/// deliberately *not* the move's share of the search, which LizzieYzy uses and this widget used
+/// to: a search left running puts nine tenths of its visits on the move it likes, and a
+/// share-scaled blob then draws the very move the reviewer opened the file for — a 132-visit
 /// blunder beside a 9 300-visit pick — at the floor, in a red nobody can see.
 ///
 /// The floor stays low on purpose. With 20 suggestions most of the board is the tail of the
@@ -104,8 +104,10 @@ const BLOB_ALPHA_MIN: f32 = 0.18;
 const BLOB_ALPHA_MAX: f32 = 0.85;
 
 /// Below this many visits the numbers are noise, and unreadable through a faint blob. The
-/// engine's own choice and the record's next move keep theirs whatever their search.
-const LABEL_MIN_VISITS: u32 = 10;
+/// engine's own choice and the record's next move keep theirs whatever their search. Same
+/// floor as [`crate::palette::UNKNOWN_VISITS`]: an estimate not worth printing is not a
+/// colour either.
+const LABEL_MIN_VISITS: u32 = crate::palette::UNKNOWN_VISITS;
 
 /// How many times `Layout::cell` must repeat before the board draws text again.
 ///
@@ -795,12 +797,9 @@ mod imp {
                 dark,
                 labels,
             } = scene;
-            // Losses are measured against KataGo's own pick, so the pick is always the coolest
-            // blob on the board and a candidate that reads better than it clamps there too.
-            let pick = report
-                .moves
-                .first()
-                .map(|m| (m.winrate_for(to_play), m.score_lead_for(to_play)));
+            // Losses are pick.utility − candidate.utility, so the pick is always the coolest
+            // blob and a candidate that reads better than it clamps there too.
+            let pick_utility = report.moves.first().map(|m| m.utility_for(to_play));
             let obj = self.obj();
             let mut fd = obj.pango_context().font_description().unwrap_or_default();
             let layout = obj.create_pango_layout(None);
@@ -812,15 +811,14 @@ mod imp {
                 }
                 let (x, y) = size.xy(info.mv);
                 let (cx, cy) = l.xy(x, y);
-                let grade = match pick {
-                    Some((w, s)) => crate::palette::grade(
-                        w - info.winrate_for(to_play),
-                        s - info.score_lead_for(to_play),
+                let rgb = match pick_utility {
+                    Some(p) => crate::palette::colour(
+                        crate::palette::grade(p - info.utility_for(to_play)),
+                        rank,
                         info.visits,
                     ),
-                    None => 0.0,
+                    None => crate::palette::GRADE_RAMP[0],
                 };
-                let rgb = crate::palette::grade_rgb(grade);
                 let blob = rgba8(rgb, blob_alpha(info.visits));
                 fill_disc(snapshot, cx, cy, l.stone_r, &blob);
                 let played = next == Some(info.mv);
@@ -1416,7 +1414,7 @@ mod tests {
 
     /// Opacity says how much search stands behind a blob's colour, so it rises with the visits
     /// themselves — not with their share of a search that may have run for ten seconds — and it
-    /// tops out exactly where the palette stops discounting the grade.
+    /// tops out at [`crate::palette::TRUSTED_VISITS`].
     #[test]
     fn opacity_tracks_how_much_a_move_was_searched() {
         assert_eq!(blob_alpha(0), BLOB_ALPHA_MIN);

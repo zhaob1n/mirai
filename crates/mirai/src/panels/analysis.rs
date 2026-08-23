@@ -52,7 +52,8 @@ mod candidate_imp {
         #[property(get, set)]
         pub rank: Cell<u32>,
         /// Which [`crate::palette`] stop this move's loss falls on — the badge's colour, and
-        /// the colour of its blob on the board.
+        /// the colour of its blob on the board. [`crate::palette::UNKNOWN_STOP`] when the
+        /// search behind it is not enough for the loss to mean anything.
         #[property(get, set)]
         pub grade: Cell<u32>,
 
@@ -106,6 +107,8 @@ struct Row {
     pv_first: Point,
     winrate: f32,
     score: f32,
+    /// Side-to-move KataGo utility. `None` on MRAI v1 cache, which falls back to the means.
+    utility: Option<f32>,
     visits: u32,
     prior: f32,
     pv: String,
@@ -155,13 +158,17 @@ impl Row {
 }
 
 /// Grades every row by how much it loses against the first one — KataGo's pick — which is the
-/// same reading the board gives that move's blob ([`crate::palette::grade`]).
+/// same reading the board gives that move's blob ([`crate::palette::colour_stop`]). The pick
+/// itself is never unknown grey.
 fn grade_rows(rows: &mut [Row]) {
     let Some(pick) = rows.first() else { return };
-    let (winrate, score) = (pick.winrate, pick.score);
-    for row in rows.iter_mut() {
-        let grade = crate::palette::grade(winrate - row.winrate, score - row.score, row.visits);
-        row.grade = crate::palette::grade_stop(grade);
+    let (winrate, score, utility) = (pick.winrate, pick.score, pick.utility);
+    for (i, row) in rows.iter_mut().enumerate() {
+        let g = match (utility, row.utility) {
+            (Some(p), Some(c)) => crate::palette::grade(p - c),
+            _ => crate::palette::grade_means(winrate - row.winrate, score - row.score),
+        };
+        row.grade = crate::palette::colour_stop(g, i, row.visits);
     }
 }
 
@@ -428,6 +435,7 @@ impl AnalysisPanel {
                         pv_first: m.pv.first().copied().unwrap_or(m.mv),
                         winrate: m.winrate_for(mover),
                         score: m.score_lead_for(mover),
+                        utility: Some(m.utility_for(mover)),
                         visits: m.visits,
                         prior: m.prior_f32(),
                         pv: pv_text(size, &m.pv),
@@ -462,6 +470,7 @@ impl AnalysisPanel {
                                 pv_first: c.pv.first().copied().unwrap_or(c.mv),
                                 winrate: to_play.winrate_for(c.winrate),
                                 score: c.score_lead * to_play.sign(),
+                                utility: c.utility.map(|u| to_play.utility_for(u)),
                                 visits: c.visits,
                                 prior: c.prior,
                                 pv: pv_text(size, &c.pv),
@@ -747,7 +756,8 @@ where
 }
 
 /// The rank badge: a pill carrying KataGo's own ranking, in the colour the board gives that
-/// move's blob ([`crate::palette`]) — the number is the rank, the colour is what the move loses.
+/// move's blob ([`crate::palette`]) — the number is the rank, the colour is what the move loses
+/// (or unknown grey, when it has not been searched enough for that loss to mean anything).
 ///
 /// Two bindings on two properties of the same label. `css-classes` is an ordinary widget
 /// property, so the class that carries the colour rides the `notify::grade` GTK already watches —

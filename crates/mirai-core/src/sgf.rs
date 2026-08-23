@@ -7,14 +7,16 @@
 //! record does not destroy its `LZ` / `LZOP` / `DZ` analysis blobs.
 //!
 //! mirai's own cached analysis rides on a single root property, `MRAI`:
-//! `base64(zstd(0x01 ++ postcard(Vec<(u32, NodeAnalysis)>)))`, where the `u32` is the
+//! `base64(zstd(version ++ postcard(Vec<(u32, NodeAnalysis)>)))`, where the `u32` is the
 //! node's index in document order — which is exactly the [`NodeId`] a reload assigns.
+//! Version `0x01` is the layout before per-candidate utility; `0x02` is current. An
+//! unknown version is ignored, same as a corrupt blob.
 
 use base64::prelude::{BASE64_STANDARD, Engine as _};
 
 use crate::point::{Color, Point, Size};
 use crate::rules::RuleSet;
-use crate::tree::{GameInfo, GameTree, MarkKind, NodeAnalysis, NodeId, Setup};
+use crate::tree::{Candidate, GameInfo, GameTree, MarkKind, NodeAnalysis, NodeId, Setup};
 
 /// Guards against stack exhaustion on pathologically nested (or hostile) files.
 const MAX_DEPTH: u32 = 256;
@@ -29,7 +31,9 @@ const MAX_ANALYSIS_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ANALYSIS_BLOB_BYTES: usize = 24 * 1024 * 1024;
 
 /// Version byte in front of the postcard payload of the `MRAI` property.
-const MRAI_VERSION: u8 = 0x01;
+const MRAI_VERSION: u8 = 0x02;
+/// Layout before [`crate::tree::Candidate`] grew utility fields. Still decoded.
+const MRAI_VERSION_V1: u8 = 0x01;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SgfError {
@@ -479,10 +483,61 @@ fn decode_analysis(blob: &str) -> Option<Vec<(u32, NodeAnalysis)>> {
     )
     .ok()?;
     let (&version, rest) = plain.split_first()?;
-    if version != MRAI_VERSION {
-        return None;
+    match version {
+        MRAI_VERSION => postcard::from_bytes(rest).ok(),
+        MRAI_VERSION_V1 => postcard::from_bytes::<Vec<(u32, NodeAnalysisV1)>>(rest)
+            .ok()
+            .map(|entries| entries.into_iter().map(|(i, a)| (i, a.into())).collect()),
+        _ => None,
     }
-    postcard::from_bytes(rest).ok()
+}
+
+/// Postcard shape of [`NodeAnalysis`] at MRAI v1. Field order is load-bearing.
+#[derive(serde::Deserialize)]
+struct NodeAnalysisV1 {
+    visits: u32,
+    winrate: f32,
+    score_lead: f32,
+    score_stdev: f32,
+    candidates: Vec<CandidateV1>,
+    ownership: Option<Box<[i8]>>,
+}
+
+#[derive(serde::Deserialize)]
+struct CandidateV1 {
+    mv: Point,
+    visits: u32,
+    winrate: f32,
+    score_lead: f32,
+    prior: f32,
+    pv: Vec<Point>,
+}
+
+impl From<NodeAnalysisV1> for NodeAnalysis {
+    fn from(a: NodeAnalysisV1) -> NodeAnalysis {
+        NodeAnalysis {
+            visits: a.visits,
+            winrate: a.winrate,
+            score_lead: a.score_lead,
+            score_stdev: a.score_stdev,
+            candidates: a.candidates.into_iter().map(Candidate::from).collect(),
+            ownership: a.ownership,
+        }
+    }
+}
+
+impl From<CandidateV1> for Candidate {
+    fn from(c: CandidateV1) -> Candidate {
+        Candidate {
+            mv: c.mv,
+            visits: c.visits,
+            winrate: c.winrate,
+            score_lead: c.score_lead,
+            prior: c.prior,
+            pv: c.pv,
+            utility: None,
+        }
+    }
 }
 
 fn encode_analysis(entries: &[(u32, NodeAnalysis)]) -> Option<String> {
@@ -687,7 +742,6 @@ fn escape(out: &mut String, value: &str, compose: bool) {
 mod tests {
     use super::*;
     use crate::board::Board;
-    use crate::tree::Candidate;
 
     /// A record mirai wrote itself, out of a real KataGo search.
     const OWN_SGF: &[u8] = include_bytes!("../tests/data/katago-selfplay.sgf");
@@ -827,6 +881,7 @@ mod tests {
                 score_lead: 0.25,
                 prior: 0.125,
                 pv: vec![size.point(15, 3), Point::PASS],
+                utility: Some(0.05),
             }],
             ownership: Some(vec![0i8; size.points()].into_boxed_slice()),
         };
@@ -884,7 +939,7 @@ mod tests {
 
     #[test]
     fn analysis_blob_is_skipped_when_the_version_byte_is_wrong() {
-        let plain = [0x02u8, 0, 0, 0];
+        let plain = [0x03u8, 0, 0, 0];
         let packed = zstd::stream::encode_all(&plain[..], 3).unwrap();
         let sgf = format!("(;SZ[19]MRAI[{}];B[aa])", BASE64_STANDARD.encode(&packed));
         let t = &parse_str(&sgf).unwrap()[0];
@@ -940,6 +995,9 @@ mod tests {
         let root = t.node(t.root()).analysis.as_ref().expect("root analysis");
         assert_eq!(root.candidates.len(), 8);
         assert_eq!(root.ownership.as_ref().map(|o| o.len()), Some(361));
+        // Packed as MRAI v1. A v2 writer that cannot still read v1 fails here rather than
+        // after a user reloads an old save.
+        assert!(root.candidates.iter().all(|c| c.utility.is_none()));
 
         let written = write(t, true);
         let back = &parse_str(&written).unwrap()[0];
