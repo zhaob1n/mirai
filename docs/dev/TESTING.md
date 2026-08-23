@@ -349,6 +349,7 @@ Five traps:
 | `press:<label substring>` | Click the first visible matching button | 250 ms |
 | `select:<row title substring>=<index>` | Set the first visible matching `adw::ComboRow`; index 0 is its prompt/default entry | 250 ms |
 | `stack:<view stack page title>` | Show that `adw::ViewStack` page — `stack:Moves` for the sidebar's branch graph | 250 ms |
+| `sort:<column title substring>` | Sort the first `gtk::ColumnView` by that column, and flip the direction if it is already the primary one. A column header is a `GtkColumnViewTitle`, not a `GtkButton`, so `press:` cannot reach it | 250 ms |
 | `fill:<entry placeholder substring>=<text>` | Fill the first visible `gtk::SearchEntry` whose placeholder matches | 120 ms |
 | `shot:<path.png>` | Render the active window to PNG | see below |
 | `shot:<path.png>=<widget id>` | Same render, cropped to one widget — the ids are Blueprint's (`blunder_expander`, `nav`, …) | see below |
