@@ -49,16 +49,6 @@ pub fn signed1(v: f32) -> String {
     format!("{v:+.1}")
 }
 
-/// Formats a clock as `M:SS` or `H:MM:SS`.
-pub fn clock_text(seconds: f32) -> String {
-    let s = seconds.max(0.0).round() as u32;
-    if s >= 3600 {
-        format!("{}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60)
-    } else {
-        format!("{}:{:02}", s / 60, s % 60)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

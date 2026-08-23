@@ -1338,8 +1338,7 @@ impl BoardView {
             return;
         }
         let state = self.state();
-        let color = state.to_play();
-        if let Err(error) = state.play_move(color, p) {
+        if let Err(error) = state.play_move(p) {
             state.toast_illegal_move(error);
         }
     }

@@ -781,19 +781,21 @@ fn sgf_text(ui: &Ui) -> String {
     sgf::write(&tree, include)
 }
 
-/// Installs `tree` as the current game. `path` is remembered for plain Save.
-fn adopt(ui: &Ui, tree: GameTree, path: Option<PathBuf>) {
+/// Installs `tree` as the current game. `path` is remembered for plain Save; `unsaved`
+/// marks a record nothing on disk holds — a paste or a download — which must go through
+/// Save As and is dirty from the start.
+fn adopt(ui: &Ui, tree: GameTree, path: Option<PathBuf>, unsaved: bool) {
     ui.play.stop();
     // Batch workers hold node IDs from this tree; stop them before replacing its arena.
     ui.batch.cancel();
     ui.comment_node.set(None);
     *ui.file.borrow_mut() = path.clone();
-    ui.state.set_file_path(
-        path.as_ref()
-            .map(|p| p.display().to_string())
-            .unwrap_or_default(),
-    );
-    ui.state.set_tree(tree, None);
+    if unsaved {
+        ui.state.adopt_unsaved(tree);
+    } else {
+        ui.state
+            .adopt_record(tree, path.as_ref().map(|p| p.display().to_string()));
+    }
     load_comment(ui);
     update_scale(ui);
     update_readout(ui);
@@ -839,7 +841,7 @@ fn load_sgf(ui: &Ui, path: &Path, remember: bool) {
         1 => {
             let tree = trees.into_iter().next().expect("length checked");
             let moves = tree.main_line().len().saturating_sub(1);
-            adopt(ui, tree, remembered);
+            adopt(ui, tree, remembered, false);
             ui.state
                 .toast(format!("Opened {} ({moves} moves)", file_label(path)));
         }
@@ -923,7 +925,7 @@ fn choose_game(ui: &Ui, trees: Vec<GameTree>, path: Option<PathBuf>, label: Stri
         if index < trees.len() {
             let tree = trees.remove(index);
             drop(trees);
-            with_window_ui(&weak, |ui| adopt(ui, tree, path.clone()));
+            with_window_ui(&weak, |ui| adopt(ui, tree, path.clone(), false));
         }
     });
     dialog.present(ui.window().as_ref());
@@ -962,8 +964,7 @@ fn do_download_fox(ui: &Ui) {
     crate::fox::present(&window, &ui.fox_picker, move |download| {
         with_window_ui(&weak, |ui| {
             let moves = download.tree.main_line().len().saturating_sub(1);
-            adopt(ui, download.tree, None);
-            ui.state.set_modified(true);
+            adopt(ui, download.tree, None, true);
             update_title(ui);
             ui.state
                 .toast(format!("Downloaded {} ({moves} moves)", download.label));
@@ -980,7 +981,7 @@ fn blank_tree(tree: &GameTree) -> GameTree {
 
 fn do_clear_board(ui: &Ui) {
     let tree = blank_tree(&ui.state.tree());
-    adopt(ui, tree, None);
+    adopt(ui, tree, None, false);
     // This is a new blank record, not an opened one.
     ui.pending_auto_analyse.set(false);
 }
@@ -990,8 +991,7 @@ fn write_to(ui: &Ui, path: &Path) {
     match std::fs::write(path, text) {
         Ok(()) => {
             *ui.file.borrow_mut() = Some(path.to_path_buf());
-            ui.state.set_file_path(path.display().to_string());
-            ui.state.set_modified(false);
+            ui.state.saved_to(path.display().to_string());
             update_title(ui);
             ui.state.toast(format!("Saved {}", file_label(path)));
         }
@@ -1122,7 +1122,7 @@ fn stale_autosaves() -> &'static Mutex<Vec<PathBuf>> {
                 .ok()
                 .and_then(|bytes| sgf::parse(&bytes).ok())
             {
-                Some(games) => games.iter().any(tree_has_content),
+                Some(games) => games.iter().any(GameTree::has_content),
                 None => {
                     let _ = std::fs::remove_file(path);
                     false
@@ -1135,26 +1135,14 @@ fn stale_autosaves() -> &'static Mutex<Vec<PathBuf>> {
     &STALE
 }
 
-/// A game record is only worth autosaving if it holds something the user would miss: a
-/// move, a setup stone, or a comment. Restoring a blank board is pure noise, and it is
-/// exactly what a session where the user did nothing would otherwise leave behind.
-fn tree_has_content(tree: &mirai_core::GameTree) -> bool {
-    let mut stack = vec![tree.root()];
-    while let Some(id) = stack.pop() {
-        let node = tree.node(id);
-        if node.mv.is_some() || !node.setup.is_empty() || !node.comment.trim().is_empty() {
-            return true;
-        }
-        stack.extend_from_slice(tree.children(id));
-    }
-    false
-}
-
 fn write_autosave(ui: &Ui) {
     let Some(autosave) = ui.autosave.as_ref().map(AutosaveFile::path) else {
         return;
     };
-    if !tree_has_content(&ui.state.tree()) {
+    // A record is only worth autosaving if it holds something the user would miss.
+    // Restoring a blank board is pure noise, and it is exactly what a session where the
+    // user did nothing would otherwise leave behind.
+    if !ui.state.tree().has_content() {
         // Leave no bait for the restore prompt.
         let _ = std::fs::remove_file(autosave);
         return;
@@ -1467,8 +1455,7 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
                 ui.play.pass();
                 return;
             }
-            let to_play = ui.state.to_play();
-            if let Err(error) = ui.state.play_move(to_play, Point::PASS) {
+            if let Err(error) = ui.state.play_move(Point::PASS) {
                 ui.state.toast_illegal_move(error);
             }
         }),
@@ -1535,9 +1522,8 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
                     Ok(mut trees) if !trees.is_empty() => {
                         let tree = trees.remove(0);
                         let moves = tree.main_line().len().saturating_sub(1);
-                        adopt(ui, tree, None);
                         // Nothing on disk holds this record: it is unsaved from the start.
-                        ui.state.set_modified(true);
+                        adopt(ui, tree, None, true);
                         ui.state.toast(format!("Pasted a game of {moves} moves"));
                     }
                     Ok(_) => ui.state.toast("The clipboard holds no game record"),
@@ -1559,7 +1545,6 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
                     ui.batch.cancel();
                     ui.comment_node.set(None);
                     *ui.file.borrow_mut() = None;
-                    ui.state.set_file_path(String::new());
                     ui.play.start(setup);
                 });
             });
@@ -1635,76 +1620,11 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
 #[cfg(test)]
 mod tests {
 
-    use super::{blank_tree, line_extent, line_node, record_label, tree_has_content};
-    use mirai_core::{Color, GameInfo, GameTree, MarkKind, Point, RuleSet, Size};
+    use super::{blank_tree, line_extent, line_node, record_label};
+    use mirai_core::{Color, GameInfo, GameTree, RuleSet, Size};
 
     fn empty_tree() -> GameTree {
         GameTree::new(GameInfo::new(Size::square(19), RuleSet::Chinese))
-    }
-
-    #[test]
-    fn a_blank_record_is_not_worth_autosaving() {
-        // This is the case that used to greet users with "mirai did not shut down
-        // cleanly" after a session in which they did nothing at all.
-        assert!(!tree_has_content(&empty_tree()));
-    }
-
-    #[test]
-    fn a_single_move_makes_a_record_worth_saving() {
-        let mut tree = empty_tree();
-        let root = tree.root();
-        tree.play(root, Color::Black, Size::square(19).point(3, 3))
-            .expect("D16 is legal on an empty board");
-        assert!(tree_has_content(&tree));
-    }
-
-    #[test]
-    fn a_pass_still_counts_as_a_move() {
-        let mut tree = empty_tree();
-        let root = tree.root();
-        tree.play(root, Color::Black, Point::PASS).expect("pass");
-        assert!(tree_has_content(&tree));
-    }
-
-    #[test]
-    fn a_comment_or_setup_stone_alone_is_enough() {
-        let mut commented = empty_tree();
-        let root = commented.root();
-        commented.set_comment(root, "  ");
-        assert!(
-            !tree_has_content(&commented),
-            "whitespace is not real content"
-        );
-        commented.set_comment(root, "study this");
-        assert!(tree_has_content(&commented));
-
-        let mut setup = empty_tree();
-        let root = setup.root();
-        setup.set_setup_stone(root, Size::square(19).point(3, 3), Some(Color::Black));
-        assert!(tree_has_content(&setup));
-    }
-
-    #[test]
-    fn content_deep_in_a_variation_is_found() {
-        let mut tree = empty_tree();
-        let root = tree.root();
-        // An empty node chain with a move only at the very end.
-        let a = tree.add_child(root);
-        let b = tree.add_child(a);
-        assert!(!tree_has_content(&tree));
-        tree.play(b, Color::White, Size::square(19).point(15, 15))
-            .expect("Q4 is legal");
-        assert!(tree_has_content(&tree));
-    }
-
-    #[test]
-    fn marks_alone_do_not_arm_the_restore_prompt() {
-        // Marks are review annotations on an otherwise blank board; they are not worth
-        // interrupting the next launch for.
-        let mut tree = empty_tree();
-        let root = tree.root();
-        tree.toggle_mark(root, MarkKind::Triangle, Size::square(19).point(3, 3));
-        assert!(!tree_has_content(&tree));
     }
 
     #[test]
@@ -1744,7 +1664,7 @@ mod tests {
             blank.info.players[0].name.is_empty(),
             "a cleared board is a new untitled record"
         );
-        assert!(!tree_has_content(&blank));
+        assert!(!blank.has_content());
     }
 
     /// The move slider's contract: its range is the whole line through the cursor — the moves
