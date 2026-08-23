@@ -173,26 +173,32 @@ that reading.** The engine's own pick is always the coolest blob — **cyan** �
 walks through mint and green into yellow, orange and red as it gets worse, in the same three warm
 colours the win-rate graph marks a blunder with.
 
-"Worse" is measured two ways against the pick, and the more alarming reading wins. In **points**:
-a move within three quarters of a point stays cool, and one that throws away a komi — 7.5 points
-— is red whatever the win rate says, which is what keeps a decided endgame readable when every
-candidate reads 0.0 %. In **win rate**: one point can be the whole game in a close endgame, so a
-move costing 10 % is yellow and one costing 30 % is red however small the score difference. A
-candidate that reads *better* than the engine's pick on one channel — it happens; the two
-disagree — is simply cool.
+"Worse" is the drop in KataGo's own **utility** against the pick — one number in which the
+engine has already blended win rate and score the way it weighs them itself, so a move that
+is a shade behind on the win rate but two points behind on the board is graded on both at
+once. A gap the search treats as noise stays cool; a gap as large as not having looked at the
+move is yellow; half a win of utility is red. A candidate that reads *better* than the pick is
+simply cool. The win-rate and score columns still show what they always did; the colour is the
+one reading that puts them together.
 
-**Red has to be earned.** A move the search barely touched has a loss estimate worth nothing, so
-its colour is capped by the search behind it: with no visits at all a candidate shows no warmer
-than green, and the whole ramp opens up at twenty visits. Opacity says the same thing, which is
-why a faint green disc means *nobody looked here*, not *this is fine*.
+A move the search barely touched — fewer than ten visits — is **grey**, not a cool colour and
+not a warm one. The mean is a rumour: grey means *unknown*, which is why a faint grey disc is
+not a blunder and not a good move. Opacity still rises with visits and is fully solid at twenty.
+The engine's pick is never grey: it is the reference every other loss is measured against, and
+it stays cyan.
 
 The number in the badge beside each row of the candidate list is the engine's rank; the badge's
 colour is that move's grade, the same colour its blob wears on the board.
 
-Rank is **not** "most visits". KataGo orders its moves by its own play-selection value, which
-includes a confidence-bound correction, so a move with 15% of the top move's visits can still be
-the one it would play. That is why the cyan blob is not always the one with the biggest visit
-count, and why the list is in the engine's order rather than sorted by any single column.
+Rank is **not** "most visits", and the badge colour is **not** the rank. KataGo orders its
+moves by play-selection value — how much search the move *deserved*, which is its visit count
+trimmed back to what the policy prior and the exploration formula would have spent on it — so
+a move with 15% of the top move's visits can still be the one it would play, and a lower-ranked
+move can be ahead on the win rate, the score *and* the visits and still sit below one the
+engine liked from the start. The number is the menu; the colour is what the move loses. That is
+why the cyan blob is not always the one with the biggest visit count, why a green badge can sit
+under a yellow one, and why the list is in the engine's order rather than sorted by any
+single column.
 
 **The white outline marks the move the record plays next.** Standing on move 57, the outlined
 blob is move 58 — so *"did the game play the engine's move?"* is one glance: white on the blue
