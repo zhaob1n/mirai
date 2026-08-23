@@ -52,21 +52,33 @@ pub fn plan_mainline(tree: &mut GameTree, want: Want, visits: u32) -> Vec<Planne
         .collect()
 }
 
-/// Runs `plan` through `engine`, at most `concurrency` at a time, calling `progress` after
-/// each result with the number finished so far and the total.
+/// What a sweep sink wants next.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Flow {
+    Continue,
+    Stop,
+}
+
+/// Runs `plan` through `engine`, at most `concurrency` at a time, handing each result to
+/// `sink` as it lands along with the number finished so far and the total.
 ///
-/// Results come back in plan order regardless of completion order, so a caller can index
-/// them by move number. A failed position is reported, not fatal: one dead search must not
-/// discard the rest of the game.
+/// A failed position is reported, not fatal: one dead search must not discard the rest of
+/// the game, so it is the sink that decides. Returning [`Flow::Stop`] abandons the rest —
+/// the outstanding tasks are dropped, which drops their subscriptions and so cancels the
+/// queries (INV-3).
+///
+/// The results come back in plan order regardless of completion order, so a caller can
+/// index them by move number. A stopped sweep returns only what already finished, which
+/// may be shorter than `plan`.
 pub async fn sweep<E, P>(
     engine: &E,
     plan: Vec<Planned>,
     concurrency: usize,
-    mut progress: P,
+    mut sink: P,
 ) -> Vec<Analysed>
 where
     E: Engine + ?Sized,
-    P: FnMut(usize, usize),
+    P: FnMut(&Analysed, usize, usize) -> Flow,
 {
     let total = plan.len();
     // Zero would deadlock; one is the honest meaning of "no concurrency".
@@ -98,14 +110,14 @@ where
     while let Some(joined) = running.join_next().await {
         // A panicking analysis task would be a bug in this crate, not a server fault.
         let (index, analysed) = joined.expect("analysis task panicked");
-        done[index] = Some(analysed);
+        let slot = done[index].insert(analysed);
         finished += 1;
-        progress(finished, total);
+        if sink(slot, finished, total) == Flow::Stop {
+            break;
+        }
     }
 
-    done.into_iter()
-        .map(|slot| slot.expect("every planned position must report"))
-        .collect()
+    done.into_iter().flatten().collect()
 }
 
 /// Smallest drop that is still noise. The blunder list and the win-rate strip share this
@@ -155,7 +167,7 @@ pub fn blunders(tree: &GameTree) -> Vec<Blunder> {
         else {
             continue;
         };
-        let drop = winrate_for(before.winrate, player) - winrate_for(after.winrate, player);
+        let drop = player.winrate_for(before.winrate) - player.winrate_for(after.winrate);
         if !is_blunder_drop(drop) {
             continue;
         }
@@ -173,14 +185,6 @@ pub fn blunders(tree: &GameTree) -> Vec<Blunder> {
         });
     }
     out
-}
-
-#[inline]
-fn winrate_for(black_winrate: f32, c: Color) -> f32 {
-    match c {
-        Color::Black => black_winrate,
-        Color::White => 1.0 - black_winrate,
-    }
 }
 
 #[cfg(test)]
@@ -312,9 +316,10 @@ mod tests {
 
         let seen = Arc::new(AtomicUsize::new(0));
         let counter = seen.clone();
-        let out = sweep(&engine, plan, 4, move |done, total| {
+        let out = sweep(&engine, plan, 4, move |_, done, total| {
             assert!(done <= total);
             counter.store(done, Ordering::SeqCst);
+            Flow::Continue
         })
         .await;
 
@@ -338,7 +343,7 @@ mod tests {
         let mut tree = game(40);
         let plan = plan_mainline(&mut tree, Want::empty(), 10);
 
-        let out = sweep(&engine, plan, 8, |_, _| {}).await;
+        let out = sweep(&engine, plan, 8, |_, _, _| Flow::Continue).await;
 
         assert_eq!(out.len(), 41);
         assert_eq!(engine.served.load(Ordering::SeqCst), 41);
@@ -357,7 +362,7 @@ mod tests {
         let mut tree = game(4);
 
         let failing = plan_mainline(&mut tree, Want::empty(), 77);
-        let out = sweep(&engine, failing, 3, |_, _| {}).await;
+        let out = sweep(&engine, failing, 3, |_, _, _| Flow::Continue).await;
         assert_eq!(out.len(), 5);
         assert!(
             out.iter().all(|a| a.result.is_err()),
@@ -365,7 +370,7 @@ mod tests {
         );
 
         let working = plan_mainline(&mut tree, Want::empty(), 78);
-        let out = sweep(&engine, working, 3, |_, _| {}).await;
+        let out = sweep(&engine, working, 3, |_, _, _| Flow::Continue).await;
         assert_eq!(out.len(), 5);
         assert!(out.iter().all(|a| a.result.is_ok()));
     }
@@ -376,7 +381,7 @@ mod tests {
         let mut tree = game(3);
         let plan = plan_mainline(&mut tree, Want::empty(), 5);
 
-        let out = sweep(&engine, plan, 0, |_, _| {}).await;
+        let out = sweep(&engine, plan, 0, |_, _, _| Flow::Continue).await;
 
         assert_eq!(out.len(), 4, "zero must behave as one, not deadlock");
         assert_eq!(engine.peak.load(Ordering::SeqCst), 1);

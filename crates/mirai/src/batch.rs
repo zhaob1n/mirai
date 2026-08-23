@@ -2,21 +2,25 @@
 // Copyright (C) 2026 Huang Zhaobin
 //! Whole-game analysis. Step 12.
 //!
-//! The sweep is a bounded-concurrency queue: `min(analysis_threads * 2, 16)` positions are
-//! kept in flight, because KataGo batches its neural-net evaluations across concurrent
-//! queries and one query at a time leaves most of the GPU idle. Every worker is a
-//! `glib::JoinHandle`; aborting one drops its `Subscription`, which terminates the query
-//! inside the engine. That is the only cancellation mechanism there is.
+//! The sweep itself is `mirai_client::batch::sweep`: `min(analysis_threads * 2, 16)`
+//! positions are kept in flight, because KataGo batches its neural-net evaluations across
+//! concurrent queries and one query at a time leaves most of the GPU idle. What lives here
+//! is the GTK half — the banner, the progress toasts, and writing each result onto the tree
+//! as it lands so a cancelled sweep keeps what it already found.
+//!
+//! Cancelling drops [`RuntimeTask`], which aborts the tokio task, which drops the sweep's
+//! `JoinSet` and with it every live `Subscription`. That is the only cancellation mechanism
+//! there is (INV-3).
 
 use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
 use std::sync::Arc;
 
 use adw::prelude::*;
 use gtk::glib;
 
+use mirai_client::batch::Flow;
 use mirai_core::{Color, GameTree, NodeId, Point};
-use mirai_engine::{AnalyzeReq, Engine, Want};
+use mirai_engine::{Engine, Want};
 
 use crate::app::{AppState, Change, NodeRef, TreeEpoch};
 use crate::window_shell::MiraiWindow;
@@ -53,7 +57,7 @@ pub fn blunders(tree: &GameTree, epoch: TreeEpoch) -> Vec<Blunder> {
 }
 
 enum BatchMessage {
-    Item(NodeRef, Result<Arc<mirai_engine::Report>, String>),
+    Item(NodeId, Result<Arc<mirai_engine::Report>, String>),
     Finished,
 }
 
@@ -73,6 +77,9 @@ pub struct BatchAnalysis {
     banner: adw::Banner,
     running: Cell<bool>,
     task: RefCell<Option<glib::JoinHandle<()>>>,
+    /// The tree the running sweep was planned against; a result that arrives after the
+    /// record was replaced must not land on the new one.
+    epoch: Cell<TreeEpoch>,
     total: Cell<u32>,
     done: Cell<u32>,
     analysed: Cell<u32>,
@@ -90,6 +97,7 @@ impl BatchAnalysis {
             banner,
             running: Cell::new(false),
             task: RefCell::new(None),
+            epoch: Cell::new(state.tree_epoch()),
             total: Cell::new(0),
             done: Cell::new(0),
             analysed: Cell::new(0),
@@ -117,18 +125,6 @@ impl BatchAnalysis {
                 .toast("No engine — start one in Preferences first");
             return;
         };
-        let nodes: Vec<_> = self
-            .state
-            .tree()
-            .main_line()
-            .into_iter()
-            .map(|id| self.state.node_ref(id))
-            .collect();
-        if nodes.len() < 2 {
-            self.state.toast("Nothing to analyse yet");
-            return;
-        }
-
         let (visits, max_candidates) = {
             let cfg = self.state.config();
             (
@@ -136,24 +132,27 @@ impl BatchAnalysis {
                 cfg.analysis.stored_suggestion_limit(),
             )
         };
-        let workers = in_flight(engine.describe().analysis_threads).min(nodes.len());
-        let requests: VecDeque<_> = nodes
-            .into_iter()
-            .filter_map(|node| {
-                let id = self.state.resolve_node(node)?;
-                let mut req = self
-                    .state
-                    .request_for_node(id, Some(visits), Want::OWNERSHIP);
-                req.report_every_ms = None;
-                req.priority = 0;
-                Some((node, req))
-            })
-            .collect();
+        let epoch = self.state.tree_epoch();
+        let mut plan = self
+            .state
+            .with_tree_cached(|t| mirai_client::batch::plan_mainline(t, Want::OWNERSHIP, visits));
+        if plan.len() < 2 {
+            self.state.toast("Nothing to analyse yet");
+            return;
+        }
+        // A sweep is background work: it must not preempt the live search the user is
+        // watching, and nobody reads its intermediate reports.
+        for planned in &mut plan {
+            planned.req.report_every_ms = None;
+            planned.req.priority = 0;
+        }
+        let workers = in_flight(engine.describe().analysis_threads).min(plan.len());
 
         self.running.set(true);
+        self.epoch.set(epoch);
         self.done.set(0);
         self.analysed.set(0);
-        self.total.set(requests.len() as u32);
+        self.total.set(plan.len() as u32);
         self.update_banner();
         self.banner.set_revealed(true);
         self.state.set_busy(true);
@@ -163,10 +162,24 @@ impl BatchAnalysis {
             old.abort();
         }
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let runtime_task = self
-            .state
-            .runtime()
-            .spawn(run_batch(engine, requests, workers, tx));
+        let runtime_task = self.state.runtime().spawn(async move {
+            let mut failed = false;
+            mirai_client::batch::sweep(engine.as_ref(), plan, workers, |analysed, _, _| {
+                let item = analysed.result.clone().map_err(|e| e.to_string());
+                failed |= item.is_err();
+                // One dead search stops the sweep here: the desktop reports it on the
+                // banner rather than leaving a silent hole in the graph.
+                if tx.send(BatchMessage::Item(analysed.node, item)).is_err() || failed {
+                    Flow::Stop
+                } else {
+                    Flow::Continue
+                }
+            })
+            .await;
+            if !failed {
+                let _ = tx.send(BatchMessage::Finished);
+            }
+        });
         let runtime_task = RuntimeTask(runtime_task);
         let weak = self.window.clone();
         let handle = glib::spawn_future_local(async move {
@@ -210,7 +223,10 @@ impl BatchAnalysis {
         }
         match message {
             BatchMessage::Item(node, Ok(report)) => {
-                let id = self.state.resolve_node(node);
+                let id = self.state.resolve_node(NodeRef {
+                    epoch: self.epoch.get(),
+                    id: node,
+                });
                 if let Some(id) = id {
                     let analysis = crate::util::analysis_of(&report, max_candidates);
                     self.state
@@ -283,61 +299,6 @@ impl Drop for BatchAnalysis {
     }
 }
 
-async fn run_batch(
-    engine: Arc<dyn Engine>,
-    mut queue: VecDeque<(NodeRef, AnalyzeReq)>,
-    workers: usize,
-    tx: tokio::sync::mpsc::UnboundedSender<BatchMessage>,
-) {
-    let mut in_flight = tokio::task::JoinSet::new();
-    for _ in 0..workers {
-        let Some((node, req)) = queue.pop_front() else {
-            break;
-        };
-        let engine = Arc::clone(&engine);
-        in_flight.spawn(async move {
-            let result = engine
-                .subscribe(req)
-                .finish()
-                .await
-                .map_err(|e| e.to_string());
-            (node, result)
-        });
-    }
-
-    while let Some(joined) = in_flight.join_next().await {
-        let (node, result) = match joined {
-            Ok(result) => result,
-            Err(e) => {
-                let _ = tx.send(BatchMessage::Item(
-                    NodeRef {
-                        epoch: TreeEpoch(u64::MAX),
-                        id: NodeId(0),
-                    },
-                    Err(e.to_string()),
-                ));
-                return;
-            }
-        };
-        let failed = result.is_err();
-        if tx.send(BatchMessage::Item(node, result)).is_err() || failed {
-            return;
-        }
-        if let Some((node, req)) = queue.pop_front() {
-            let engine = Arc::clone(&engine);
-            in_flight.spawn(async move {
-                let result = engine
-                    .subscribe(req)
-                    .finish()
-                    .await
-                    .map_err(|e| e.to_string());
-                (node, result)
-            });
-        }
-    }
-    let _ = tx.send(BatchMessage::Finished);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,55 +341,16 @@ mod tests {
         (tree, size, ids)
     }
 
+    /// `mirai_client::batch::blunders` is tested in its own crate; what the desktop wrapper
+    /// adds is the epoch stamp that keeps a stale node id from resolving after the tree is
+    /// replaced (INV-10).
     #[test]
-    fn white_blunder_is_measured_from_whites_perspective() {
+    fn every_blunder_carries_the_epoch_it_was_found_in() {
         let (mut tree, size, ids) = game();
         let best = size.from_gtp("D16").unwrap();
-        // Black 50 % before White's move, Black 90 % after it: White lost 40 points of
-        // win rate even though the stored (Black-perspective) number went *up*.
         tree.set_analysis(ids[1], Some(analysis(0.50, Some(best))));
         tree.set_analysis(ids[2], Some(analysis(0.90, None)));
 
-        let found = blunders(&tree, TreeEpoch(7));
-        assert_eq!(found.len(), 1, "{found:?}");
-        let b = found[0];
-        assert_eq!(
-            b.node,
-            NodeRef {
-                epoch: TreeEpoch(7),
-                id: ids[2]
-            }
-        );
-        assert_eq!(b.player, Color::White);
-        assert_eq!(b.move_number, 2);
-        assert_eq!(b.played, size.from_gtp("Q16").unwrap());
-        assert_eq!(b.best, Some(best));
-        assert!((b.drop - 0.40).abs() < 1e-6, "drop was {}", b.drop);
-    }
-
-    #[test]
-    fn a_move_that_improves_the_movers_winrate_is_not_a_blunder() {
-        let (mut tree, _size, ids) = game();
-        // Black 50 % before White's move, Black 20 % after: White improved.
-        tree.set_analysis(ids[1], Some(analysis(0.50, None)));
-        tree.set_analysis(ids[2], Some(analysis(0.20, None)));
-        assert!(blunders(&tree, TreeEpoch(0)).is_empty());
-        // And a drop below the noise floor is not a blunder either.
-        tree.set_analysis(ids[2], Some(analysis(0.51, None)));
-        assert!(blunders(&tree, TreeEpoch(0)).is_empty());
-    }
-
-    #[test]
-    fn nodes_without_analysis_are_skipped() {
-        let (mut tree, _size, ids) = game();
-        // Move 3 has an analysis but its parent (move 2) does not, so nothing on the line
-        // can be judged yet. Move 3 itself is a fine move for Black (0.90 → 0.95), so once
-        // move 2 is filled in only White's mistake shows up.
-        tree.set_analysis(ids[1], Some(analysis(0.50, None)));
-        tree.set_analysis(ids[3], Some(analysis(0.95, None)));
-        assert!(blunders(&tree, TreeEpoch(0)).is_empty());
-
-        tree.set_analysis(ids[2], Some(analysis(0.90, None)));
         let found = blunders(&tree, TreeEpoch(7));
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(
@@ -438,26 +360,7 @@ mod tests {
                 id: ids[2]
             }
         );
-    }
-
-    #[test]
-    fn best_is_none_when_the_engine_agreed_with_the_move_played() {
-        let (mut tree, size, ids) = game();
-        let played = size.from_gtp("Q16").unwrap();
-        tree.set_analysis(ids[1], Some(analysis(0.50, Some(played))));
-        tree.set_analysis(ids[2], Some(analysis(0.95, None)));
-        let found = blunders(&tree, TreeEpoch(0));
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].best, None);
-    }
-
-    #[test]
-    fn in_flight_scales_with_threads_and_saturates_at_sixteen() {
-        assert_eq!(in_flight(1), 2);
-        assert_eq!(in_flight(2), 4);
-        assert_eq!(in_flight(8), 16);
-        assert_eq!(in_flight(20), 16);
-        // A degenerate description still gets one worker's worth of work.
-        assert_eq!(in_flight(0), 2);
+        assert_eq!(found[0].player, Color::White);
+        assert_eq!(found[0].best, Some(best));
     }
 }

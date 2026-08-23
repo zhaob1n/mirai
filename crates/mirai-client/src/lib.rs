@@ -21,8 +21,8 @@ pub mod game;
 pub mod play;
 pub mod session;
 
-pub use analysis::{PV_LEN, SpeedMeter, analysis_of, request_for_node};
-pub use batch::{Analysed, Blunder, Planned, blunders, in_flight, plan_mainline, sweep};
+pub use analysis::{PV_LEN, SpeedMeter, analysis_of, dead_from_ownership, request_for_node};
+pub use batch::{Analysed, Blunder, Flow, Planned, blunders, in_flight, plan_mainline, sweep};
 pub use game::GameSession;
 pub use play::{GameSetup, Play, PlayState, Strength};
 pub use session::{Peer, RemoteConnector, Session, SessionConfig, SessionState};
