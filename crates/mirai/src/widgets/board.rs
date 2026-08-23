@@ -92,9 +92,15 @@ impl Layout {
 /// Opacity floor and ceiling for a candidate blob.
 ///
 /// Hue is how much the move loses ([`crate::palette`]), or grey when there is not enough search
-/// for that loss to mean anything. Opacity is how much search stands behind the reading. It is
-/// deliberately *not* the move's share of the search, which LizzieYzy uses and this widget used
-/// to: a search left running puts nine tenths of its visits on the move it likes, and a
+/// for that loss to mean anything. Opacity is how much search stands behind the reading, and it
+/// reaches the ceiling at [`crate::palette::TRUSTED_VISITS`] — the same visit where the blob
+/// stops being grey and starts carrying figures. So the fade only ever applies to a move that
+/// has no colour yet: once a candidate is worth a hue it is drawn at full strength, and how
+/// much search it actually got is then a number in the label and in the list's Visits column,
+/// not a shade the eye has to estimate.
+///
+/// It is deliberately *not* the move's share of the search, which LizzieYzy uses and this widget
+/// used to: a search left running puts nine tenths of its visits on the move it likes, and a
 /// share-scaled blob then draws the very move the reviewer opened the file for — a 132-visit
 /// blunder beside a 9 300-visit pick — at the floor, in a red nobody can see.
 ///
@@ -105,9 +111,9 @@ const BLOB_ALPHA_MAX: f32 = 0.85;
 
 /// Below this many visits the numbers are noise, and unreadable through a faint blob. The
 /// engine's own choice and the record's next move keep theirs whatever their search. Same
-/// floor as [`crate::palette::UNKNOWN_VISITS`]: an estimate not worth printing is not a
-/// colour either.
-const LABEL_MIN_VISITS: u32 = crate::palette::UNKNOWN_VISITS;
+/// floor as [`crate::palette::TRUSTED_VISITS`]: an estimate not worth printing is not a
+/// colour either, and not worth drawing at full strength.
+const LABEL_MIN_VISITS: u32 = crate::palette::TRUSTED_VISITS;
 
 /// How many times `Layout::cell` must repeat before the board draws text again.
 ///
@@ -121,7 +127,7 @@ const CELL_SETTLED: u8 = 2;
 
 /// How opaque the blob for a candidate with this much search behind it is drawn.
 fn blob_alpha(visits: u32) -> f32 {
-    let t = (visits as f32 / crate::palette::TRUSTED_VISITS).min(1.0);
+    let t = (visits as f32 / crate::palette::TRUSTED_VISITS as f32).min(1.0);
     BLOB_ALPHA_MIN + (BLOB_ALPHA_MAX - BLOB_ALPHA_MIN) * t
 }
 
@@ -1414,15 +1420,20 @@ mod tests {
 
     /// Opacity says how much search stands behind a blob's colour, so it rises with the visits
     /// themselves — not with their share of a search that may have run for ten seconds — and it
-    /// tops out at [`crate::palette::TRUSTED_VISITS`].
+    /// tops out at [`crate::palette::TRUSTED_VISITS`], the same visit at which the blob stops
+    /// being grey and starts carrying figures. One threshold: a faded blob is always a grey
+    /// one, and a coloured blob is always full strength.
     #[test]
     fn opacity_tracks_how_much_a_move_was_searched() {
         assert_eq!(blob_alpha(0), BLOB_ALPHA_MIN);
         assert!(blob_alpha(5) > blob_alpha(1));
-        assert!(blob_alpha(15) > blob_alpha(5));
-        let full = crate::palette::TRUSTED_VISITS as u32;
+        assert!(blob_alpha(9) > blob_alpha(5));
+        let full = crate::palette::TRUSTED_VISITS;
         assert!((blob_alpha(full) - BLOB_ALPHA_MAX).abs() < 1e-6);
         assert_eq!(blob_alpha(50_000), blob_alpha(full));
+        assert_eq!(LABEL_MIN_VISITS, full);
+        assert!(crate::palette::is_known(1, full) && !crate::palette::is_known(1, full - 1));
+        assert!(blob_alpha(full - 1) < BLOB_ALPHA_MAX);
     }
 
     /// The ring answers "where does the record go next?", so it has to read `children[0]` —

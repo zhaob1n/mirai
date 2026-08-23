@@ -23,7 +23,7 @@
 //! two-channel reading — worse of win-rate and score-lead loss — used only as that fallback.
 //!
 //! How much search a move actually got is the board's *opacity* channel, and the list's Visits
-//! column. Below [`UNKNOWN_VISITS`] the loss is not a colour at all — grey, not green and not
+//! column. Below [`TRUSTED_VISITS`] the loss is not a colour at all — grey, not green and not
 //! red — because a 1-visit mean is a rumour. The engine's pick is never unknown: it is the
 //! reference every other loss is measured against, and it is always the coolest stop.
 
@@ -75,19 +75,20 @@ pub const WINRATE_AT: [f32; GRADE_RAMP.len()] = [0.0, 0.02, 0.05, 0.10, 0.18, 0.
 /// A breakpoint moved here should be re-measured that way, not reasoned about.
 pub const UTILITY_AT: [f32; GRADE_RAMP.len()] = [0.0, 0.04, 0.10, 0.20, 0.35, 0.50];
 
-/// Visits at which a candidate blob is drawn at full opacity.
+/// Visits at which a candidate's reading is trusted, and the only search threshold there is.
 ///
-/// Twenty is where a score-lead reading is worth about a point (90th percentile, 1 000 against
-/// 5 000 root visits). Hue uses [`UNKNOWN_VISITS`], not this: opacity can still fade a
-/// well-coloured blob, but a 1-visit mean is not a colour.
-pub const TRUSTED_VISITS: f32 = 20.0;
-
-/// Below this many visits a candidate is grey, not a loss colour.
+/// One number does three things, and they are the same statement: below it a candidate is
+/// grey instead of a loss colour, the board omits its figures (`widgets/board.rs` —
+/// `LABEL_MIN_VISITS`), and its blob is drawn faded (`blob_alpha`). So a blob earns its
+/// colour, its numbers and its full opacity at the same visit, and fading only ever happens
+/// to grey — an estimate is either worth reading or it is not, and there is no third state to
+/// tune. The engine's pick is exempt: it is the reference, not a rumour.
 ///
-/// The same line the board uses to drop the numbers: if the estimate is not worth printing, it
-/// is not worth painting as a blunder or as a good move. The engine's pick is exempt — it is
-/// the reference, not a rumour.
-pub const UNKNOWN_VISITS: u32 = 10;
+/// Ten is where the numbers become worth printing at all. It used to be two constants, with
+/// opacity reaching full at twenty — that second one dated from the hue *cap* that
+/// `analysis/uncapped-grade` removed, and once grey said "unknown" outright, the extra fade
+/// window covered 4 % of a twenty-move list and said nothing the Visits column did not.
+pub const TRUSTED_VISITS: u32 = 10;
 
 /// Warm grey for an unsearched candidate, off the loss ramp so it cannot be read as cyan or as
 /// a blunder tick.
@@ -116,15 +117,15 @@ pub fn grade_means(winrate_loss: f32, points_loss: f32) -> f32 {
 ///
 /// `rank` is the move's place in KataGo's `order`, so rank 0 is the pick: the reference every
 /// other loss is measured against rather than an estimate of its own, cyan from the first
-/// report even before it has [`UNKNOWN_VISITS`] behind it. Every other move has to earn its
+/// report even before it has [`TRUSTED_VISITS`] behind it. Every other move has to earn its
 /// hue with search. The rule lives here and not in the two callers so that a third one cannot
 /// paint the pick grey.
 #[inline]
 pub fn is_known(rank: usize, visits: u32) -> bool {
-    rank == 0 || visits >= UNKNOWN_VISITS
+    rank == 0 || visits >= TRUSTED_VISITS
 }
 
-/// RGB the board and the list share: unknown grey below [`UNKNOWN_VISITS`], otherwise the
+/// RGB the board and the list share: unknown grey below [`TRUSTED_VISITS`], otherwise the
 /// loss ramp at `grade`.
 pub fn colour(grade: f32, rank: usize, visits: u32) -> [u8; 3] {
     if is_known(rank, visits) {
@@ -280,26 +281,26 @@ mod tests {
     fn search_depth_does_not_move_the_hue_of_a_searched_move() {
         let g = grade(0.12);
         assert_eq!(
-            colour(g, 1, UNKNOWN_VISITS),
+            colour(g, 1, TRUSTED_VISITS),
             colour(g, 2, 10_000),
             "the same loss painted two colours"
         );
     }
 
     /// The loss reading itself ignores visits; painting does not. A 1-visit last-stop loss is
-    /// grey, the same loss at [`UNKNOWN_VISITS`] is red.
+    /// grey, the same loss at [`TRUSTED_VISITS`] is red.
     #[test]
     fn a_grade_follows_the_loss_whatever_the_search() {
         let last = (GRADE_RAMP.len() - 1) as f32;
         assert_eq!(grade(0.9), last);
         assert_eq!(colour(last, 1, 0), UNKNOWN_RGB);
-        assert_eq!(colour(last, 1, UNKNOWN_VISITS - 1), UNKNOWN_RGB);
-        assert_eq!(colour(last, 1, UNKNOWN_VISITS), GRADE_RAMP[5]);
+        assert_eq!(colour(last, 1, TRUSTED_VISITS - 1), UNKNOWN_RGB);
+        assert_eq!(colour(last, 1, TRUSTED_VISITS), GRADE_RAMP[5]);
         assert_eq!(colour(0.0, 1, 100_000), GRADE_RAMP[0]);
         assert_eq!(colour_stop(last, 1, 1), UNKNOWN_STOP);
-        assert_eq!(colour_stop(last, 1, UNKNOWN_VISITS), 5);
+        assert_eq!(colour_stop(last, 1, TRUSTED_VISITS), 5);
         assert!(!is_known(1, 0));
-        assert!(is_known(1, UNKNOWN_VISITS));
+        assert!(is_known(1, TRUSTED_VISITS));
     }
 
     /// The pick is the reference, not an estimate: it is cyan from the first report, whatever

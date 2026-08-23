@@ -191,8 +191,8 @@ cargo run -p mirai-engine --example sweep -- \
 What the shipped ramp was fitted on, for whoever moves a breakpoint next: a 197-move Fox game at
 1 000 and 5 000 root visits, a 29-move engine self-play record, a decided 9x9 endgame and a 9x9
 opening. A point is worth about 13 % of win rate in a close position against 0.02 % in a decided
-one. Search depth below ten visits is not a colour (`UNKNOWN_VISITS`); opacity
-still reaches full at twenty (`TRUSTED_VISITS`). Live colour is `utility`
+one. Search depth below ten visits is not a colour, not a label and not full opacity
+(`TRUSTED_VISITS`, the only threshold). Live colour is `utility`
 loss against the pick (`UTILITY_AT`, in KataGo utility, not win-rate); what that table
 measures in the units the columns show, and why it is the mean and not `utilityLcb`, is
 [`CANDIDATE_COLOUR.md`](CANDIDATE_COLOUR.md) §6.

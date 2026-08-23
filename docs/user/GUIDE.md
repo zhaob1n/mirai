@@ -181,11 +181,11 @@ move is yellow; half a win of utility is red. A candidate that reads *better* th
 simply cool. The win-rate and score columns still show what they always did; the colour is the
 one reading that puts them together.
 
-A move the search barely touched — fewer than ten visits — is **grey**, not a cool colour and
-not a warm one. The mean is a rumour: grey means *unknown*, which is why a faint grey disc is
-not a blunder and not a good move. Opacity still rises with visits and is fully solid at twenty.
-The engine's pick is never grey: it is the reference every other loss is measured against, and
-it stays cyan.
+A move the search barely touched — fewer than ten visits — is **grey**, and faint, and carries
+no figures. All three say the same thing: the reading is a rumour, so grey means *unknown*
+rather than good or bad, and the fainter the disc the less there is behind it. At ten visits a
+candidate gets its colour, its numbers and its full strength together. The engine's pick is
+never grey: it is the reference every other loss is measured against, and it stays cyan.
 
 The number in the badge beside each row of the candidate list is the engine's rank; the badge's
 colour is that move's grade, the same colour its blob wears on the board.

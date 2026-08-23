@@ -34,7 +34,7 @@ Both `utility` and `utilityLcb` travel on MRP/1 (`crates/mirai-proto/src/types.r
 MRAI v2 caches `utility` on the tree, because that is the one the colour reads.
 
 Colour (`crates/mirai/src/palette.rs` — `colour`) is **loss of `utility`
-against `moves[0]`**, side-to-move — except below `UNKNOWN_VISITS` (10), where
+against `moves[0]`**, side-to-move — except below `TRUSTED_VISITS` (10), where
 it is grey. Rank is still not that: `order` is play-selection value, which
 reads neither the utility nor the means. So the badge number and the badge
 colour disagree by design, and §3 is what that looks like.
@@ -230,9 +230,16 @@ MRAI v2 stores `utility` on `Candidate`; v1 records still load and fall back to
 `grade_means`.
 
 Two channels, two jobs: **hue is how much the move loses, opacity is how much
-search stands behind that** (`TRUSTED_VISITS`, full at 20), and the Visits
-column says the same thing in figures. Uncertainty is not allowed into the hue —
-that is what `search_depth_does_not_move_the_hue_of_a_searched_move` pins.
+search stands behind that**, and uncertainty is not allowed into the hue — that
+is what `search_depth_does_not_move_the_hue_of_a_searched_move` pins.
+
+There is exactly one search threshold. `TRUSTED_VISITS` (10) decides grey
+against a colour, figures against no figures, and where the opacity ramp tops
+out, so a blob earns all three at the same visit and the fade only ever applies
+to a move that has no colour yet. The second constant this branch inherited —
+full opacity at twenty — belonged to the hue *cap* that came off; measured
+afterwards it separated 4 % of a twenty-move list and said nothing the Visits
+column did not.
 
 **Not shipped.** F (`utilityLcb`) — see §6. Do not mix D and C:
 unsearched-as-green is the reading this branch already rejected.
@@ -267,7 +274,7 @@ is `lcbStdevs * stdev / sqrt(ess)`, and it collapses fast: median 3.5 at one vis
 at 10-19 visits, +0.38 at 20-49, +0.14 at 200-999. The first coloured band is
 therefore the one to watch: **21 % of candidates at 10-19 visits paint orange or
 red under F, and none of them do on their means** — a move that has only just
-crossed `UNKNOWN_VISITS` can enter at the warm end on uncertainty alone and cool
+crossed `TRUSTED_VISITS` can enter at the warm end on uncertainty alone and cool
 as the search fills it in. At 20-49 visits that is 3 %, and by 50 it is gone.
 That is why the hue is the mean and not the bound. The warm end has to mean
 "this move loses", and under F a fifth of the first coloured band meant "nobody
