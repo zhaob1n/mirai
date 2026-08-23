@@ -417,6 +417,15 @@ Guaranteed tolerances, asserted by `mirai-proto/tests/wire_size.rs` —
 winrate ≤ 1e-4 (measured 7.644e-6) · score lead ≤ 0.02 points (measured 0.0125) ·
 ownership ≤ 0.005 (measured 0.00394).
 
+`utility_lcb` is the one field whose source routinely leaves that range. KataGo's lower
+confidence bound subtracts `lcbStdevs * stdev / sqrt(ess)` from the utility — 3.5 at one
+visit, and `2 * (winLoss + staticScore + dynamicScore) * lcbStdevs` = 14 for a child with no
+visits at all — so a policy-tail candidate arrives clipped at −3.99988 (18 % of candidates on
+a 42-position sweep at 5 000 visits, every one of them at one visit). This is not a defect to
+fix by rescaling: below a handful of visits the bound carries no information. Clipping only
+loosens it — a clipped value is still a lower bound — so a receiver MAY read one as
+"unsearched", but MUST NOT read it as a magnitude.
+
 ### 7.2.1 INV-2: Black perspective
 
 **Every winrate, score and utility on an MRP/1 wire is from Black's perspective.** There is no
@@ -426,7 +435,7 @@ per-message perspective flag and v1 MUST NOT add one.
 |---|---|
 | Servers report Black-perspective values. The reference server guarantees it by launching KataGo with `reportAnalysisWinratesAs = BLACK`. | MUST |
 | Clients MUST NOT assume side-to-move values. | MUST NOT |
-| Conversion is display-time and client-side: `winrate_for(to_play) = to_play == Black ? w : 1 - w`; `score_lead_for(to_play) = lead * (Black ? +1 : -1)` (`types.rs` — `MoveInfo::winrate_for` / `score_lead_for`, same pair on `RootInfo`). | — |
+| Conversion is display-time and client-side: `winrate_for(to_play) = to_play == Black ? w : 1 - w`; `score_lead_for(to_play) = lead * (Black ? +1 : -1)`; utility and `utilityLcb` use the score-lead rule, not `1 − u` (`types.rs` — `MoveInfo::winrate_for` / `score_lead_for` / `utility_for` / `utility_lcb_for`). | — |
 | `RootInfo.current_player` is the side to move, and the argument to those conversions. | — |
 
 Ownership shares the convention: `+1` fully Black, `-1` fully White (`Color::sign`).

@@ -336,6 +336,15 @@ impl Color {
         black_lead * self.sign()
     }
 
+    /// The Black-perspective KataGo utility `black_utility` as this colour sees it (INV-2).
+    ///
+    /// Utility is a signed quantity like score lead, not a probability: White's reading is
+    /// the negation, not `1 - u`.
+    #[inline]
+    pub const fn utility_for(self, black_utility: f32) -> f32 {
+        black_utility * self.sign()
+    }
+
     pub fn from_letter(s: &str) -> Option<Color> {
         match s.trim() {
             "b" | "B" => Some(Color::Black),
@@ -374,6 +383,14 @@ mod tests {
         assert_eq!(s.from_sgf(b"ss"), Some(Point(360)));
         assert_eq!(s.from_sgf(b""), Some(Point::PASS));
         assert_eq!(s.from_sgf(b"tt"), Some(Point::PASS));
+    }
+
+    #[test]
+    fn utility_flips_like_score_not_like_winrate() {
+        assert_eq!(Color::White.utility_for(0.12), -0.12);
+        assert_eq!(Color::Black.utility_for(0.12), 0.12);
+        assert_eq!(Color::White.winrate_for(0.75), 0.25);
+        assert_eq!(Color::White.score_lead_for(4.0), -4.0);
     }
 
     #[test]
