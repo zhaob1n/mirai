@@ -5,9 +5,9 @@
 //! The board colours a candidate by how much the move loses, and the breakpoints of that
 //! ramp (`crates/mirai/src/palette.rs`) have to be fitted to real games rather than
 //! guessed. This dumps the raw material: how far apart the engine's own top choices are in
-//! win rate *and* in score lead, how much a tail move with a handful of visits differs from
-//! the pick, and what a decided position looks like once the win rate has saturated but the
-//! score lead has not.
+//! win rate, in score lead *and* in the utility the ramp is actually keyed on, how much a
+//! tail move with a handful of visits differs from the pick, and what a decided position
+//! looks like once the win rate has saturated but the score lead has not.
 //!
 //! ```text
 //! cargo run -p mirai-engine --example sweep -- \
@@ -16,7 +16,9 @@
 //! ```
 //!
 //! Losses are relative to `moves[0]`, KataGo's own pick, and are in the mover's
-//! perspective, exactly as the GUI reads them.
+//! perspective, exactly as the GUI reads them. `dutil` is the mean-utility loss, `dlcb` the
+//! `utilityLcb` loss the live path paints with, and their difference is the extra confidence
+//! radius this candidate carries over the pick — the whole reason the two disagree.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -115,7 +117,9 @@ async fn run() -> Result<ExitCode> {
     let root_player = tree.position(root).to_play;
     let line = tree.main_line();
 
-    println!("game,move,to_play,root_visits,root_win,rank,gtp,visits,win,pts,dwin,dpts,played");
+    println!(
+        "game,move,to_play,root_visits,root_win,rank,gtp,visits,win,pts,dwin,dpts,dutil,dlcb,played"
+    );
     let mut moves: Vec<(Color, Point)> = Vec::new();
     for (i, &id) in line.iter().enumerate() {
         if let Some((c, p)) = tree.node(id).mv {
@@ -157,6 +161,7 @@ async fn run() -> Result<ExitCode> {
             continue;
         };
         let (bw, bp) = (best.winrate_for(to_play), best.score_lead_for(to_play));
+        let (bu, blcb) = (best.utility_for(to_play), best.utility_lcb_for(to_play));
         let root_win = report.root.winrate_f32();
         let root_win = if to_play == Color::Black {
             root_win
@@ -166,12 +171,14 @@ async fn run() -> Result<ExitCode> {
         for (rank, m) in report.moves.iter().enumerate() {
             let (w, p) = (m.winrate_for(to_play), m.score_lead_for(to_play));
             println!(
-                "{label},{i},{to_play:?},{},{root_win:.4},{rank},{},{},{w:.4},{p:.2},{:.4},{:.2},{}",
+                "{label},{i},{to_play:?},{},{root_win:.4},{rank},{},{},{w:.4},{p:.2},{:.4},{:.2},{:.4},{:.4},{}",
                 report.root.visits,
                 info.size.to_gtp(m.mv),
                 m.visits,
                 bw - w,
                 bp - p,
+                bu - m.utility_for(to_play),
+                blcb - m.utility_lcb_for(to_play),
                 u8::from(played == Some(m.mv)),
             );
         }
