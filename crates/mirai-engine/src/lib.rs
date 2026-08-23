@@ -30,7 +30,9 @@ pub use calibrate::{
 };
 #[cfg(feature = "local")]
 pub use local::{LOCAL_ENGINE_SHUTDOWN_GRACE, LocalEngine, LocalEngineConfig};
-pub use mirai_proto::types::{AnalyzeReq, AvoidSpec, EngineDesc, MoveInfo, Report, RootInfo, Want};
+pub use mirai_proto::types::{
+    AnalyzeReq, AvoidSpec, EngineDesc, MoveInfo, Report, RootInfo, Want, dq_own,
+};
 #[cfg(feature = "remote")]
 pub use remote::{RemoteEngine, TofuStore};
 #[cfg(feature = "local")]
