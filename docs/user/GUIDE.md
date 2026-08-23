@@ -106,9 +106,9 @@ disk.
 │              ┌─────────────────┐             │ 12k visits · 1.4k/s · ±6.4 points  │
 │              │                 │             │ · Black to play                    │
 │              │   the  board    │             │────────────────────────────────────│
-│              │                 │             │ Move  Win  Score Visits Prior  PV  │
-│              │                 │             │ Q16  54.2   +1.8   8.1k   31%  Q16 │
-│              └─────────────────┘             │ D4   53.9   +1.6   2.4k   22%  D4  │
+│              │                 │             │ # Move  Win Score Loss Visits Prior│
+│              │                 │             │ 1 Q16  54.2  +1.8 0.00   8.1k   31%│
+│              └─────────────────┘             │ 2 D4   53.9  +1.6 0.03   2.4k   22%│
 │                                              │ …                                  │
 │──────────────────────────────────────────────│ ▾ Blunders (4)                     │
 │  ╭──────────────────────────────────────╮    │  ⚫ 38 · −14.2% · played R7        │
@@ -219,8 +219,17 @@ appears.
 | **Win** | win rate for the side to move, per cent |
 | **Score** | signed score lead for the side to move, in points |
 | **Visits** | playouts spent on this move |
+| **Loss** | what the move gives away against the engine's pick, in KataGo's own utility — the number the colour is made of. `0.00` for the pick; `—` for a record saved before mirai kept it |
 | **Prior** | what the raw network thought of it *before* searching |
-| **PV** | the sequence the engine expects |
+
+**Click a heading to sort by that column**, and again to reverse it. The list opens in the
+engine's order and **#** puts it back. Sorting changes only the list: the badge numbers, the
+blobs on the board and the move the engine would actually play stay on KataGo's own ranking.
+So sorting by **Loss** answers "which of these reads best?" without losing the answer to
+"which one would it play?".
+
+Selecting a row previews that move's continuation on the board — which is where a sequence is
+worth reading — and double-clicking plays it.
 
 Above it: side to move, win rate, score lead, total visits, `±` the score uncertainty, and,
 while the engine is actually searching this position, **how fast it is searching** — `1.4k/s`

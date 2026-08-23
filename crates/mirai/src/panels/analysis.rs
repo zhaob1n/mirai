@@ -45,9 +45,12 @@ mod candidate_imp {
         /// Raw policy prior, `0.0..=1.0`.
         #[property(get, set)]
         pub prior: Cell<f64>,
-        /// The principal variation, already rendered.
-        #[property(get, set)]
-        pub pv: RefCell<String>,
+        /// How much this move loses against the pick, in KataGo utility — the number the
+        /// colour is made of. Infinite when the record predates MRAI v2 and has no utility,
+        /// which is why the pspec's range has to be widened: GLib validates a double against
+        /// its bounds, and the default upper bound is `f64::MAX`, so an infinity is rejected.
+        #[property(get, set, minimum = 0.0, maximum = f64::INFINITY)]
+        pub loss: Cell<f64>,
         /// KataGo's own rank for this move, 1-based — the number in the badge.
         #[property(get, set)]
         pub rank: Cell<u32>,
@@ -109,9 +112,10 @@ struct Row {
     score: f32,
     /// Side-to-move KataGo utility. `None` on MRAI v1 cache, which falls back to the means.
     utility: Option<f32>,
+    /// Utility lost against the pick; `f32::INFINITY` when this row has no utility.
+    loss: f32,
     visits: u32,
     prior: f32,
-    pv: String,
 }
 
 impl Row {
@@ -149,8 +153,8 @@ impl Row {
         if object.prior() != self.prior as f64 {
             object.set_prior(self.prior as f64);
         }
-        if object.pv() != self.pv {
-            object.set_pv(self.pv.as_str());
+        if object.loss() != self.loss as f64 {
+            object.set_loss(self.loss as f64);
         }
         object.imp().point.set(self.point.0);
         object.imp().pv_first.set(self.pv_first.0);
@@ -164,9 +168,13 @@ fn grade_rows(rows: &mut [Row]) {
     let Some(pick) = rows.first() else { return };
     let (winrate, score, utility) = (pick.winrate, pick.score, pick.utility);
     for (i, row) in rows.iter_mut().enumerate() {
-        let g = match (utility, row.utility) {
-            (Some(p), Some(c)) => crate::palette::grade(p - c),
-            _ => crate::palette::grade_means(winrate - row.winrate, score - row.score),
+        row.loss = match (utility, row.utility) {
+            (Some(p), Some(c)) => (p - c).max(0.0),
+            _ => f32::INFINITY,
+        };
+        let g = match row.loss.is_finite() {
+            true => crate::palette::grade(row.loss),
+            false => crate::palette::grade_means(winrate - row.winrate, score - row.score),
         };
         row.grade = crate::palette::colour_stop(g, i, row.visits);
     }
@@ -181,6 +189,7 @@ fn grade_rows(rows: &mut [Row]) {
 pub struct Inner {
     readout: gtk::Label,
     detail: gtk::Label,
+    columns: gtk::ColumnView,
     store: gio::ListStore,
     selection: gtk::SingleSelection,
     blunder_expander: gtk::Expander,
@@ -284,14 +293,19 @@ impl AnalysisPanel {
         let blunder_list = imp.blunder_list.get();
 
         let store = gio::ListStore::new::<CandidateObject>();
+        // The user's sort sits between the store and the selection, so the store stays in
+        // KataGo's `order` and everything that indexes into the engine's move list still can.
+        // With no column selected the sort model is a pass-through and the list is `order`.
+        let sorted = gtk::SortListModel::new(Some(store.clone()), columns.sorter());
         let selection = gtk::SingleSelection::builder()
-            .model(&store)
+            .model(&sorted)
             .autoselect(false)
             .can_unselect(true)
             .build();
         selection.set_selected(gtk::INVALID_LIST_POSITION);
         columns.set_model(Some(&selection));
         columns.append_column(&rank_column());
+        // The move itself is the one column with nothing to rank by, so its header is inert.
         columns.append_column(&column(
             Col {
                 title: "Move",
@@ -307,6 +321,7 @@ impl AnalysisPanel {
                 title: "Win",
                 property: "winrate",
                 width_chars: 6,
+                sortable: true,
                 ..Col::default()
             },
             |winrate: f64| format!("{}%", pct1(winrate as f32)),
@@ -316,15 +331,35 @@ impl AnalysisPanel {
                 title: "Score",
                 property: "score",
                 width_chars: 6,
+                sortable: true,
                 ..Col::default()
             },
             |score: f64| signed1(score as f32),
+        ));
+        // The loss against the pick is what the colour is made of. Raw utility is a reading of
+        // the position rather than of the move, so it is not useful on its own here.
+        columns.append_column(&column(
+            Col {
+                title: "Loss",
+                property: "loss",
+                width_chars: 5,
+                sortable: true,
+                ..Col::default()
+            },
+            |loss: f64| {
+                if loss.is_finite() {
+                    format!("{loss:.2}")
+                } else {
+                    "—".to_string()
+                }
+            },
         ));
         columns.append_column(&column(
             Col {
                 title: "Visits",
                 property: "visits",
                 width_chars: 5,
+                sortable: true,
                 ..Col::default()
             },
             |visits: u32| si_visits(visits),
@@ -334,20 +369,10 @@ impl AnalysisPanel {
                 title: "Prior",
                 property: "prior",
                 width_chars: 6,
+                sortable: true,
                 ..Col::default()
             },
             |prior: f64| format!("{}%", pct1(prior as f32)),
-        ));
-        columns.append_column(&column(
-            Col {
-                title: "PV",
-                property: "pv",
-                xalign: 0.0,
-                expand: true,
-                css: Some("mirai-pv-label"),
-                ..Col::default()
-            },
-            |pv: String| pv,
         ));
 
         // Selecting a row pins the PV preview; activating it plays the move. The model is
@@ -361,9 +386,10 @@ impl AnalysisPanel {
             #[weak(rename_to = panel)]
             self,
             #[weak]
-            store,
+            selection,
             move |_, position| {
-                let Some(row) = store.item(position).and_downcast::<CandidateObject>() else {
+                // The position is the view's, which is the sorted one.
+                let Some(row) = selection.item(position).and_downcast::<CandidateObject>() else {
                     return;
                 };
                 panel.play(row.pv_first());
@@ -387,6 +413,7 @@ impl AnalysisPanel {
         let _ = self.imp().inner.set(Inner {
             readout,
             detail,
+            columns,
             store,
             selection,
             blunder_expander,
@@ -436,9 +463,9 @@ impl AnalysisPanel {
                         winrate: m.winrate_for(mover),
                         score: m.score_lead_for(mover),
                         utility: Some(m.utility_for(mover)),
+                        loss: f32::INFINITY,
                         visits: m.visits,
                         prior: m.prior_f32(),
-                        pv: pv_text(size, &m.pv),
                     })
                     .collect::<Vec<_>>();
                 (Some(head), rows)
@@ -471,9 +498,9 @@ impl AnalysisPanel {
                                 winrate: to_play.winrate_for(c.winrate),
                                 score: c.score_lead * to_play.sign(),
                                 utility: c.utility.map(|u| to_play.utility_for(u)),
+                                loss: f32::INFINITY,
                                 visits: c.visits,
                                 prior: c.prior,
-                                pv: pv_text(size, &c.pv),
                             })
                             .collect::<Vec<_>>();
                         (Some(head), rows)
@@ -542,16 +569,49 @@ impl AnalysisPanel {
                 &[] as &[CandidateObject],
             );
         }
+        self.resort();
         self.sync_pv();
     }
 
-    /// Reports the current selection to the PV hooks, if it changed.
+    /// Tells the sort model that the numbers under it moved.
+    ///
+    /// The rows are mutated in place, and a `GtkSortListModel` re-sorts when its sorter says
+    /// so or when items are added and removed — never on a property it cannot know about. So
+    /// the panel says so: the sorter being poked is the one this panel built for that column,
+    /// which is what `gtk_sorter_changed` is for. Nothing happens while the list is in
+    /// KataGo's `order`, which is the default and has no primary column.
+    fn resort(&self) {
+        let Some(column) = self
+            .inner()
+            .columns
+            .sorter()
+            .and_downcast::<gtk::ColumnViewSorter>()
+            .and_then(|sorter| sorter.primary_sort_column())
+        else {
+            return;
+        };
+        if let Some(sorter) = column.sorter() {
+            sorter.changed(gtk::SorterChange::Different);
+        }
+    }
+
+    /// Reports the selected candidate to the PV hooks, if it changed.
+    ///
+    /// The hooks index into the engine's own move list, so this is the row's rank and not its
+    /// position: under a user sort the two are different, and the board previews the move the
+    /// user clicked either way.
     fn sync_pv(&self) {
-        let selected = self.inner().selection.selected();
-        if self.imp().last_pv.replace(selected) == selected {
+        let index = self
+            .inner()
+            .selection
+            .selected_item()
+            .and_downcast::<CandidateObject>()
+            .map(|row| row.rank().saturating_sub(1));
+        let reported = index.unwrap_or(gtk::INVALID_LIST_POSITION);
+        if self.imp().last_pv.replace(reported) == reported {
             return;
         }
-        let index = (selected != gtk::INVALID_LIST_POSITION).then_some(selected as usize);
+        let index = index.map(|i| i as usize);
         for hook in self.imp().pv_hooks.borrow().iter() {
             hook(index);
         }
@@ -654,17 +714,6 @@ fn severity_class(severity: Severity) -> Option<&'static str> {
     }
 }
 
-fn pv_text(size: mirai_core::Size, pv: &[Point]) -> String {
-    let mut out = String::with_capacity(pv.len() * 5);
-    for (i, &p) in pv.iter().enumerate() {
-        if i > 0 {
-            out.push(' ');
-        }
-        out.push_str(&size.to_gtp(p));
-    }
-    out
-}
-
 fn clear_list(list: &gtk::ListBox) {
     while let Some(child) = list.first_child() {
         list.remove(&child);
@@ -685,9 +734,9 @@ struct Col {
     /// list nothing but new glyphs. It is in characters rather than pixels so it still tracks
     /// the font.
     width_chars: i32,
-    /// Only the PV column takes the leftover width.
-    expand: bool,
-    css: Option<&'static str>,
+    /// Whether the header sorts the list. Every column but the move itself has something to
+    /// rank by.
+    sortable: bool,
 }
 
 impl Default for Col {
@@ -697,8 +746,7 @@ impl Default for Col {
             property: "",
             xalign: 1.0,
             width_chars: -1,
-            expand: false,
-            css: None,
+            sortable: false,
         }
     }
 }
@@ -725,16 +773,12 @@ where
         let label = gtk::Label::builder()
             .xalign(col.xalign)
             // Both bounds, not just the minimum: a cell whose *natural* width still tracked
-            // its digits would go on re-measuring the column, and would also take width the
-            // elastic PV column wants.
+            // its digits would go on re-measuring the column.
             .width_chars(col.width_chars)
             .max_width_chars(col.width_chars)
             .single_line_mode(true)
             .ellipsize(pango::EllipsizeMode::End)
             .build();
-        if let Some(class) = col.css {
-            label.add_css_class(class);
-        }
         item.set_child(Some(&label));
         let text = text.clone();
         gtk::ListItem::this_expression("item")
@@ -747,12 +791,22 @@ where
             })
             .bind(&label, "label", Some(item));
     });
-    gtk::ColumnViewColumn::builder()
+    let this = gtk::ColumnViewColumn::builder()
         .title(col.title)
         .factory(&factory)
-        .expand(col.expand)
         .resizable(true)
-        .build()
+        .build();
+    if col.sortable {
+        // One expression, two jobs: the header becomes a button with an arrow, and the
+        // `GtkSortListModel` behind the view has something to order by.
+        let expr = gtk::PropertyExpression::new(
+            CandidateObject::static_type(),
+            None::<gtk::Expression>,
+            col.property,
+        );
+        this.set_sorter(Some(&gtk::NumericSorter::new(Some(expr))));
+    }
+    this
 }
 
 /// The rank badge: a pill carrying KataGo's own ranking, in the colour the board gives that
@@ -794,11 +848,20 @@ fn rank_column() -> gtk::ColumnViewColumn {
             })
             .bind(&label, "css-classes", Some(item));
     });
-    gtk::ColumnViewColumn::builder()
+    let this = gtk::ColumnViewColumn::builder()
         .title("#")
         .factory(&factory)
         .resizable(false)
-        .build()
+        .build();
+    // Sortable so that there is a way back: this column *is* KataGo's order, so clicking it
+    // undoes whatever the user sorted by.
+    let expr = gtk::PropertyExpression::new(
+        CandidateObject::static_type(),
+        None::<gtk::Expression>,
+        "rank",
+    );
+    this.set_sorter(Some(&gtk::NumericSorter::new(Some(expr))));
+    this
 }
 
 #[cfg(test)]

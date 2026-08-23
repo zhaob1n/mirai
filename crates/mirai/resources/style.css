@@ -47,11 +47,6 @@
   color: @accent_color;
 }
 
-.mirai-pv-label {
-  font-family: monospace;
-  font-size: 0.9em;
-}
-
 /* The candidate list's rank badge. Its colour is not here: `palette::grade_css` generates one
    rule per stop of the same table the board colours its blobs with, so the badge for a move and
    its blob cannot disagree. */
