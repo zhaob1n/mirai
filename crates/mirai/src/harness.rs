@@ -15,7 +15,7 @@
 //!
 //! Steps run in order: `wait:<ms>`, `wait-status:<text>`, `action:<prefix.name>`,
 //! `action:<prefix.name>=<string arg>`, `press:<button text>`, `page:<preferences page>`,
-//! `select:<row title>=<index>`, `set:<row title>=<number>`,
+//! `stack:<view stack page>`, `select:<row title>=<index>`, `set:<row title>=<number>`,
 //! `fill:<entry placeholder>=<text>`, `shot:<path.png>`, `shot:<path.png>=<widget id>`,
 //! `close-window`, `quit`.
 
@@ -36,6 +36,8 @@ enum Step {
     Press(String),
     /// Open a PreferencesDialog page by title.
     Page(String),
+    /// Show an `adw::ViewStack` page by title — the sidebar's Analysis/Moves/Comment.
+    Stack(String),
     /// Set a ComboRow by title substring and raw model index.
     Select(String, u32),
     /// Set a SpinRow by title substring and value.
@@ -69,6 +71,7 @@ fn parse(script: &str) -> Vec<Step> {
                 "quit" => Some(Step::Quit),
                 "press" => Some(Step::Press(rest.to_string())),
                 "page" => Some(Step::Page(rest.to_string())),
+                "stack" => Some(Step::Stack(rest.to_string())),
                 "select" => rest.rsplit_once('=').and_then(|(title, index)| {
                     index
                         .parse()
@@ -171,6 +174,14 @@ pub fn install(app: &adw::Application) {
                     let done = show_page(&app, &title);
                     eprintln!(
                         "harness: page {title:?} -> {}",
+                        if done { "ok" } else { "NOT FOUND" }
+                    );
+                    glib::timeout_future(Duration::from_millis(250)).await;
+                }
+                Step::Stack(title) => {
+                    let done = show_stack_page(&app, &title);
+                    eprintln!(
+                        "harness: stack {title:?} -> {}",
                         if done { "ok" } else { "NOT FOUND" }
                     );
                     glib::timeout_future(Duration::from_millis(250)).await;
@@ -360,6 +371,41 @@ fn show_page(app: &adw::Application, needle: &str) -> bool {
     true
 }
 
+/// Shows the `adw::ViewStack` page whose title contains `needle` — the sidebar's
+/// Analysis / Moves / Comment.
+///
+/// `press:` cannot do this: a libadwaita 1.9 `Adw.ViewSwitcher` is a toggle group, and its
+/// toggles are not `GtkButton`s, so no label search reaches them. This enters through the
+/// stack, which is the only thing the switcher itself drives.
+fn show_stack_page(app: &adw::Application, needle: &str) -> bool {
+    fn walk(w: &gtk::Widget, needle: &str) -> bool {
+        if let Some(stack) = w.downcast_ref::<adw::ViewStack>() {
+            let pages = stack.pages();
+            for i in 0..pages.n_items() {
+                let Some(page) = pages.item(i).and_downcast::<adw::ViewStackPage>() else {
+                    continue;
+                };
+                if page.title().is_some_and(|title| title.contains(needle)) {
+                    stack.set_visible_child(&page.child());
+                    return true;
+                }
+            }
+        }
+        let mut child = w.first_child();
+        while let Some(c) = child {
+            if walk(&c, needle) {
+                return true;
+            }
+            child = c.next_sibling();
+        }
+        false
+    }
+    match app.active_window() {
+        Some(w) => walk(w.upcast_ref::<gtk::Widget>(), needle),
+        None => false,
+    }
+}
+
 /// Selects the first visible `adw::ComboRow` whose title contains `needle`.
 fn select(app: &adw::Application, needle: &str, index: u32) -> bool {
     fn walk(w: &gtk::Widget, needle: &str, index: u32) -> bool {
@@ -540,9 +586,9 @@ mod tests {
     #[test]
     fn script_parsing_covers_every_step_kind() {
         let steps = parse(
-            "wait:250, wait-status:Ready, action:win.toggle-analysis, action:win.set-engine=local, page:Analysis, select:Model=2, set:Suggestions Shown=0, fill:Exact nickname=柯洁, shot:/tmp/x.png, shot:/tmp/y.png=blunder_expander, close-window, quit",
+            "wait:250, wait-status:Ready, action:win.toggle-analysis, action:win.set-engine=local, page:Analysis, select:Model=2, set:Suggestions Shown=0, fill:Exact nickname=柯洁, shot:/tmp/x.png, shot:/tmp/y.png=blunder_expander, stack:Moves, close-window, quit",
         );
-        assert_eq!(steps.len(), 12);
+        assert_eq!(steps.len(), 13);
         assert!(matches!(steps[0], Step::Wait(250)));
         assert!(matches!(&steps[1], Step::WaitStatus(text) if text == "Ready"));
         match &steps[2] {
@@ -568,8 +614,9 @@ mod tests {
         assert!(
             matches!(&steps[9], Step::Shot(p, Some(region)) if p == "/tmp/y.png" && region == "blunder_expander")
         );
-        assert!(matches!(steps[10], Step::CloseWindow));
-        assert!(matches!(steps[11], Step::Quit));
+        assert!(matches!(&steps[10], Step::Stack(title) if title == "Moves"));
+        assert!(matches!(steps[11], Step::CloseWindow));
+        assert!(matches!(steps[12], Step::Quit));
     }
 
     #[test]

@@ -315,7 +315,7 @@ A presented `adw::Dialog` is a descendant of the window, so this reaches dialog 
 `harness::fill` similarly finds a visible `gtk::SearchEntry` by placeholder substring and sets
 its text, so network-backed search dialogs can be exercised without a test-only application
 path.
-Four traps:
+Five traps:
 
 - Mnemonic underscores are stripped before matching (`press:Save` matches `_Save`).
 - Substring match, depth-first from the window root: choose a needle unique to the intended
@@ -327,6 +327,10 @@ Four traps:
   are declared as response ids, not as buttons we construct. [INFERENCE] `press:Close` works
   only if libadwaita realises them as labelled buttons; unverified. End such recipes with
   `shot` then `quit` instead of dismissing the dialog.
+- The sidebar's `Adw.ViewSwitcher` is a toggle group in libadwaita 1.9, and a toggle there is
+  not a `GtkButton`, so `press:Moves` reports `NOT FOUND` — measured. Switch sidebar pages
+  with `stack:Moves`, which sets the `adw::ViewStack`'s visible child, exactly what the
+  switcher itself does.
 
 ### Step grammar
 
@@ -340,6 +344,7 @@ Four traps:
 | `action:<prefix.name>=<string>` | Activate with a string parameter (`action:win.set-engine=workstation`) | 120 ms |
 | `press:<label substring>` | Click the first visible matching button | 250 ms |
 | `select:<row title substring>=<index>` | Set the first visible matching `adw::ComboRow`; index 0 is its prompt/default entry | 250 ms |
+| `stack:<view stack page title>` | Show that `adw::ViewStack` page — `stack:Moves` for the sidebar's branch graph | 250 ms |
 | `fill:<entry placeholder substring>=<text>` | Fill the first visible `gtk::SearchEntry` whose placeholder matches | 120 ms |
 | `shot:<path.png>` | Render the active window to PNG | see below |
 | `shot:<path.png>=<widget id>` | Same render, cropped to one widget — the ids are Blueprint's (`blunder_expander`, `nav`, …) | see below |
@@ -434,8 +439,10 @@ MIRAI_HARNESS="wait:2000,action:win.next10,action:win.next10,action:win.toggle-a
 ```
 
 Expect `harness: 7 steps`, three `-> ok` lines, `wrote /tmp/mirai-a.png`. The PNG shows the
-board at move 20, the move tree with the cursor 20 nodes along the main line, a populated
-win-rate graph, and blue candidate overlays with win-rate and visit labels.
+board at move 20, a populated win-rate graph, blue candidate overlays with win-rate and visit
+labels, and the sidebar on its default **Analysis** page. Insert `stack:Moves` to get the
+branch graph instead: the main line runs *down* the panel from the root, variations elbow off
+to the right, and the cursor — 20 nodes down — wears an accent ring.
 
 **(b) Ownership overlay — the INV-1 canary.** Live analysis always requests
 `Want::OWNERSHIP`, so `win.toggle-ownership` only switches the drawing on.

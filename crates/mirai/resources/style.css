@@ -29,8 +29,10 @@
   min-height: 120px;
 }
 
+/* Depth runs down the move tree, so the lane axis — the one a tiny tree leaves empty — is the
+   width. */
 .mirai-movetree {
-  min-height: 90px;
+  min-width: 90px;
 }
 
 .mirai-blunder-major {

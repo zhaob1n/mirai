@@ -314,8 +314,9 @@ played, the engine's move. **Click a row to jump there.** Needs a running engine
 **Variations and the move tree.** Playing anywhere other than the end of the line creates a
 variation; the original continuation is untouched. The Moves page draws every node: filled
 dark = Black, filled light = White, hollow = the start or a setup position, a bar through the
-disc = a pass. The main line runs along the top row, each variation on its own row below, and
-the current node wears a coloured ring. Click any node to go there.
+disc = a pass, and the current node wears a coloured ring. The main line runs straight down
+the panel, each variation branching off into its own column to the right. Click any node to
+go there.
 
 | Operation | How |
 |---|---|
