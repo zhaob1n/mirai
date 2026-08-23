@@ -20,7 +20,8 @@ use mirai_client::batch::is_blunder_drop;
 use mirai_core::{Color, GameTree, NodeId};
 
 use crate::app::AppState;
-use crate::widgets::paint::{fill_disc, hline};
+use crate::palette;
+use crate::widgets::paint::{fill_disc, hline, rgba8, with_alpha};
 
 /// How badly a move hurt the player who played it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -37,12 +38,16 @@ pub(crate) enum Severity {
 
 impl Severity {
     /// `None` means "draw nothing", which is not the same as "draw transparent".
+    ///
+    /// The three warm stops of [`palette::GRADE_RAMP`] are these ticks: a candidate that
+    /// shows orange on the board is an orange tick here once it is played, and the ramp is
+    /// the only place those hexes live.
     pub(crate) fn color(self) -> Option<gdk::RGBA> {
         match self {
             Severity::None => None,
-            Severity::Minor => Some(gdk::RGBA::new(0.910, 0.784, 0.220, 0.85)),
-            Severity::Medium => Some(gdk::RGBA::new(0.910, 0.502, 0.173, 0.85)),
-            Severity::Major => Some(gdk::RGBA::new(0.910, 0.314, 0.220, 0.9)),
+            Severity::Minor => Some(rgba8(palette::GRADE_RAMP[3], 0.85)),
+            Severity::Medium => Some(rgba8(palette::GRADE_RAMP[4], 0.85)),
+            Severity::Major => Some(rgba8(palette::GRADE_RAMP[5], 0.9)),
         }
     }
 }
@@ -61,22 +66,13 @@ pub(crate) fn severity_of_drop(drop: f32) -> Severity {
     }
 }
 
-/// The win rate seen by `color`, given the Black-perspective value mirai stores.
-#[inline]
-pub(crate) fn winrate_for(color: Color, black_winrate: f32) -> f32 {
-    match color {
-        Color::Black => black_winrate,
-        Color::White => 1.0 - black_winrate,
-    }
-}
-
 /// How much the player who played the move lost by playing it.
 ///
 /// `before` is the Black-perspective win rate of the parent position, `after` that of the
 /// position the move created. A White blunder shows up as a rise in Black's win rate, so
 /// both are flipped into the mover's own perspective first.
 pub(crate) fn blunder_severity(mover: Color, before: f32, after: f32) -> Severity {
-    severity_of_drop(winrate_for(mover, before) - winrate_for(mover, after))
+    severity_of_drop(mover.winrate_for(before) - mover.winrate_for(after))
 }
 
 /// One main-line sample: everything the graph needs about a node.
@@ -207,10 +203,6 @@ fn node_at(projection: &GraphProjection, width: f32, height: f32, x: f32) -> Opt
     }
     let geom = Geom::new(width, height, projection.line.len());
     Some(projection.line[geom.index_at(x, projection.line.len())])
-}
-
-fn with_alpha(c: gdk::RGBA, a: f32) -> gdk::RGBA {
-    gdk::RGBA::new(c.red(), c.green(), c.blue(), a)
 }
 
 mod imp {

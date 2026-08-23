@@ -22,6 +22,8 @@ pub struct GameSession {
     cursor: NodeId,
     /// Bumped by anything the UI would have to redraw for.
     revision: u64,
+    /// Bumped only when the record is replaced wholesale.
+    epoch: u64,
     /// Where Save writes. `None` after New Game, after a paste, and after restoring an
     /// autosave — all of which must go through Save As.
     file_path: Option<String>,
@@ -36,6 +38,7 @@ impl GameSession {
             tree,
             cursor,
             revision: 1,
+            epoch: 0,
             file_path: None,
             modified: false,
         }
@@ -51,10 +54,15 @@ impl GameSession {
     }
 
     /// Mutable access for the cases a method here cannot express — game info edits, setup
-    /// stones, analysis write-back. Marks the record dirty, because the caller is about to
-    /// change it.
+    /// stones. Marks the record dirty, because the caller is about to change it.
     pub fn tree_mut(&mut self) -> &mut GameTree {
         self.touch();
+        &mut self.tree
+    }
+
+    /// `&mut GameTree` for work that changes nothing the user would save: filling the
+    /// replay cache, projecting a line. Neither dirties the record nor bumps the revision.
+    pub fn tree_cached_mut(&mut self) -> &mut GameTree {
         &mut self.tree
     }
 
@@ -64,6 +72,12 @@ impl GameSession {
 
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    /// Bumped only when the record is replaced wholesale, so a frontend can invalidate
+    /// node ids it kept across the swap.
+    pub fn epoch(&self) -> u64 {
+        self.epoch
     }
 
     pub fn modified(&self) -> bool {
@@ -240,6 +254,7 @@ impl GameSession {
         self.file_path = path;
         self.modified = false;
         self.revision += 1;
+        self.epoch += 1;
     }
 
     /// Replaces the record from crash-recovery data.
@@ -265,16 +280,20 @@ impl GameSession {
     /// True when the record holds anything worth autosaving: a move, a setup stone or a
     /// comment. A blank tree must not leave a file behind for the crash-recovery prompt.
     pub fn has_content(&self) -> bool {
-        (0..self.tree.len() as u32).any(|i| {
-            self.tree.get(NodeId(i)).is_some_and(|n| {
-                n.mv.is_some() || !n.setup.is_empty() || !n.comment.trim().is_empty()
-            })
-        })
+        self.tree.has_content()
     }
 
     // -----------------------------------------------------------------------------------
     // Analysis
     // -----------------------------------------------------------------------------------
+
+    /// Writes an engine evaluation onto a node. Not a record edit: it bumps the revision so
+    /// the UI redraws, but leaves the dirty flag alone — pondering must never make a saved
+    /// file look unsaved.
+    pub fn set_analysis(&mut self, id: NodeId, analysis: Option<mirai_core::NodeAnalysis>) {
+        self.tree.set_analysis(id, analysis);
+        self.moved();
+    }
 
     /// The request for one node of this record.
     pub fn request_for(&mut self, id: NodeId, want: Want, max_visits: u32) -> AnalyzeReq {

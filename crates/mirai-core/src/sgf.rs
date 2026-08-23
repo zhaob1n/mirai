@@ -10,8 +10,6 @@
 //! `base64(zstd(0x01 ++ postcard(Vec<(u32, NodeAnalysis)>)))`, where the `u32` is the
 //! node's index in document order — which is exactly the [`NodeId`] a reload assigns.
 
-use std::io::{self, Write};
-
 use base64::prelude::{BASE64_STANDARD, Engine as _};
 
 use crate::point::{Color, Point, Size};
@@ -468,25 +466,6 @@ fn build(arena: &[RawNode]) -> Result<GameTree, SgfError> {
     Ok(tree)
 }
 
-struct BoundedAnalysis<'a>(&'a mut Vec<u8>);
-
-impl Write for BoundedAnalysis<'_> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if self.0.len() + buf.len() > MAX_ANALYSIS_BYTES {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "decompressed analysis exceeds the analysis limit",
-            ));
-        }
-        self.0.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
 fn decode_analysis(blob: &str) -> Option<Vec<(u32, NodeAnalysis)>> {
     let blob = blob.trim();
     if blob.len() > MAX_ANALYSIS_BLOB_BYTES {
@@ -494,7 +473,11 @@ fn decode_analysis(blob: &str) -> Option<Vec<(u32, NodeAnalysis)>> {
     }
     let raw = BASE64_STANDARD.decode(blob.as_bytes()).ok()?;
     let mut plain = Vec::new();
-    zstd::stream::copy_decode(&raw[..], BoundedAnalysis(&mut plain)).ok()?;
+    zstd::stream::copy_decode(
+        &raw[..],
+        crate::BoundedWriter::new(&mut plain, MAX_ANALYSIS_BYTES, "analysis"),
+    )
+    .ok()?;
     let (&version, rest) = plain.split_first()?;
     if version != MRAI_VERSION {
         return None;

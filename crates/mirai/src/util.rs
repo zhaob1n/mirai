@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Huang Zhaobin
 //! Small shared helpers.
 
-use mirai_core::{NodeAnalysis, Point, Size};
+use mirai_core::NodeAnalysis;
 use mirai_engine::Report;
 
 /// Converts a wire [`Report`] into the dequantised, Black-perspective [`NodeAnalysis`]
@@ -49,21 +49,6 @@ pub fn signed1(v: f32) -> String {
     format!("{v:+.1}")
 }
 
-/// Formats a clock as `M:SS` or `H:MM:SS`.
-pub fn clock_text(seconds: f32) -> String {
-    let s = seconds.max(0.0).round() as u32;
-    if s >= 3600 {
-        format!("{}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60)
-    } else {
-        format!("{}:{:02}", s / 60, s % 60)
-    }
-}
-
-/// The GTP name of a point, for labels and lists.
-pub fn gtp(size: Size, p: Point) -> String {
-    size.to_gtp(p).to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -84,15 +69,6 @@ mod tests {
         assert_eq!(visits_per_second(839.6), "840/s");
         assert_eq!(visits_per_second(1240.0), "1.2k/s");
         assert_eq!(visits_per_second(-3.0), "0/s");
-    }
-
-    #[test]
-    fn clock_text_switches_to_hours() {
-        assert_eq!(clock_text(0.0), "0:00");
-        assert_eq!(clock_text(59.4), "0:59");
-        assert_eq!(clock_text(600.0), "10:00");
-        assert_eq!(clock_text(3661.0), "1:01:01");
-        assert_eq!(clock_text(-5.0), "0:00");
     }
 
     #[test]

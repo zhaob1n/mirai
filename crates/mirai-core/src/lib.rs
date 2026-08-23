@@ -19,7 +19,7 @@ pub mod sgf;
 pub mod tree;
 
 pub use board::{Board, Captured, IllegalMove};
-pub use clock::{TimeControl, think_budget};
+pub use clock::{TimeControl, clock_text, think_budget};
 pub use handicap::fixed_handicap;
 pub use point::{COLUMNS, Color, MAX_DIM, MIN_DIM, Point, Size};
 pub use rules::{Ko, RuleSet, Rules, Scoring, Tax, Whb};
@@ -54,5 +54,37 @@ impl SplitMix64 {
     #[inline]
     pub fn next_f64(&mut self) -> f64 {
         (self.next_u64() >> 11) as f64 * (1.0 / (1u64 << 53) as f64)
+    }
+}
+
+/// A `std::io::Write` sink that refuses to grow a `Vec` past `limit` — the
+/// decompression-bomb guard both the SGF analysis blob and the MRP/1 frame codec need.
+pub struct BoundedWriter<'a> {
+    out: &'a mut Vec<u8>,
+    limit: usize,
+    /// Names the payload in the error, e.g. `"frame"` or `"analysis"`.
+    what: &'static str,
+}
+
+impl<'a> BoundedWriter<'a> {
+    pub fn new(out: &'a mut Vec<u8>, limit: usize, what: &'static str) -> BoundedWriter<'a> {
+        BoundedWriter { out, limit, what }
+    }
+}
+
+impl std::io::Write for BoundedWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.out.len() + buf.len() > self.limit {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("decompressed {} exceeds the {} limit", self.what, self.what),
+            ));
+        }
+        self.out.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }

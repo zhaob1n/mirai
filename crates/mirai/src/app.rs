@@ -16,8 +16,8 @@ use gtk::glib;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 
-use mirai_client::SpeedMeter;
-use mirai_core::{Color, GameInfo, GameTree, IllegalMove, NodeId, Point, Position, RuleSet, Size};
+use mirai_client::{GameSession, SpeedMeter};
+use mirai_core::{Color, GameTree, IllegalMove, NodeAnalysis, NodeId, Point, Position};
 use mirai_engine::{AnalyzeReq, Engine, EngineDesc, EngineError, Report, SubEvent, Want};
 
 use crate::config::Config;
@@ -107,9 +107,9 @@ mod imp {
         #[property(get, set)]
         pub modified: Cell<bool>,
 
-        pub tree: RefCell<GameTree>,
-        pub cursor: Cell<NodeId>,
-        pub tree_epoch: Cell<TreeEpoch>,
+        /// The record the user is editing: tree, cursor, dirty flag and Save target.
+        /// `AppState` adds the observability around it, not a second copy of it.
+        pub session: RefCell<GameSession>,
         pub config: RefCell<Config>,
         /// The configuration as this window loaded it, so a save can tell which keys this
         /// window actually changed and leave another window's edits alone.
@@ -142,9 +142,6 @@ mod imp {
 
     impl Default for AppState {
         fn default() -> Self {
-            let info = GameInfo::new(Size::square(19), RuleSet::Chinese);
-            let tree = GameTree::new(info);
-            let root = tree.root();
             AppState {
                 live_analysis: Cell::new(false),
                 show_coordinates: Cell::new(true),
@@ -156,9 +153,7 @@ mod imp {
                 busy: Cell::new(false),
                 file_path: RefCell::new(String::new()),
                 modified: Cell::new(false),
-                tree: RefCell::new(tree),
-                cursor: Cell::new(root),
-                tree_epoch: Cell::new(TreeEpoch(0)),
+                session: RefCell::new(GameSession::blank()),
                 engine_state: RefCell::new(EngineState::None),
                 config: RefCell::new(Config::default()),
                 config_base: RefCell::new(Config::default()),
@@ -330,56 +325,125 @@ impl AppState {
             .clone()
     }
 
-    // -- tree and cursor ----------------------------------------------------------------
+    // -- the record ---------------------------------------------------------------------
+    //
+    // `GameSession` owns the tree, the cursor and the dirty bookkeeping; everything here
+    // adds is the observability a window needs. Every borrow is released before `changed`
+    // runs, because the dispatcher borrows the tree again (INV-10).
 
     pub fn tree(&self) -> Ref<'_, GameTree> {
-        self.imp().tree.borrow()
+        Ref::map(self.imp().session.borrow(), GameSession::tree)
     }
 
     /// Mutable access for a single edit; emits `tree-changed` afterwards.
     pub fn with_tree_mut<R>(&self, f: impl FnOnce(&mut GameTree) -> R) -> R {
-        let out = f(&mut self.imp().tree.borrow_mut());
-        self.set_modified(true);
+        let out = f(self.imp().session.borrow_mut().tree_mut());
+        self.sync_record_flags();
         self.changed(Change::Tree);
         out
     }
 
     /// Read-only access that still needs `&mut GameTree` (e.g. `position`, which caches).
     pub fn with_tree_cached<R>(&self, f: impl FnOnce(&mut GameTree) -> R) -> R {
-        f(&mut self.imp().tree.borrow_mut())
+        f(self.imp().session.borrow_mut().tree_cached_mut())
     }
 
-    pub fn set_tree(&self, tree: GameTree, cursor: Option<NodeId>) {
-        let root = tree.root();
+    /// Writes an engine evaluation onto a node. Pondering is not an edit, so this leaves
+    /// the dirty flag alone; the caller emits [`Change::Tree`] when it wants a redraw.
+    pub fn set_analysis(&self, id: NodeId, analysis: Option<NodeAnalysis>) {
+        self.imp().session.borrow_mut().set_analysis(id, analysis);
+    }
+
+    /// Mirrors the record's own dirty flag and Save target onto the GObject properties the
+    /// title bar and the close handler are bound to.
+    fn sync_record_flags(&self) {
+        let (path, modified) = {
+            let session = self.imp().session.borrow();
+            (
+                session.file_path().unwrap_or_default().to_string(),
+                session.modified(),
+            )
+        };
+        if self.file_path() != path {
+            self.set_file_path(path);
+        }
+        if self.modified() != modified {
+            self.set_modified(modified);
+        }
+    }
+
+    /// Runs `f` against the record, then tells the window whatever changed.
+    ///
+    /// [`mirai_client::Play`] drives the record directly — turns, clocks, scoring and undo
+    /// are its rules, not the window's — so this is the one door it goes through and a play
+    /// action cannot forget to dispatch. The borrow is always released first (INV-10).
+    pub fn with_session_mut<R>(&self, f: impl FnOnce(&mut GameSession) -> R) -> R {
+        let (out, changed) = {
+            let mut session = self.imp().session.borrow_mut();
+            let before = (session.cursor(), session.revision());
+            let out = f(&mut session);
+            (out, before != (session.cursor(), session.revision()))
+        };
+        if changed {
+            self.imp().report.replace(None);
+            self.sync_record_flags();
+            self.changed(Change::Tree);
+            self.moved_cursor();
+        }
+        out
+    }
+
+    /// Replaces the record. `path` is the file Save writes to, or `None` for a record that
+    /// must go through Save As.
+    pub fn adopt_record(&self, tree: GameTree, path: Option<String>) {
         {
             let imp = self.imp();
-            *imp.tree.borrow_mut() = tree;
-            imp.tree_epoch
-                .set(TreeEpoch(imp.tree_epoch.get().0.wrapping_add(1)));
-            imp.cursor.set(cursor.unwrap_or(root));
+            imp.session.borrow_mut().adopt(tree, path);
             // A report belongs to one exact position; after replacing the game it may not
             // even have the same board size.
             imp.report.replace(None);
         }
-        self.set_modified(false);
+        self.sync_record_flags();
         self.changed(Change::Tree);
         self.changed(Change::Cursor);
         self.restart_analysis();
     }
 
-    pub fn cursor(&self) -> NodeId {
-        self.imp().cursor.get()
+    /// Replaces the record with one nothing on disk holds — a paste, a download, or
+    /// crash-recovery data. No Save target, and dirty from the start.
+    pub fn adopt_unsaved(&self, tree: GameTree) {
+        {
+            let imp = self.imp();
+            imp.session.borrow_mut().restore(tree);
+            imp.report.replace(None);
+        }
+        self.sync_record_flags();
+        self.changed(Change::Tree);
+        self.changed(Change::Cursor);
+        self.restart_analysis();
     }
 
+    /// Records that the tree was written to `path`.
+    pub fn saved_to(&self, path: String) {
+        self.imp().session.borrow_mut().saved_to(path);
+        self.sync_record_flags();
+    }
+
+    pub fn cursor(&self) -> NodeId {
+        self.imp().session.borrow().cursor()
+    }
+
+    /// The generation of the record the node ids in flight belong to. Bumped only when the
+    /// whole record is replaced, which is exactly when an id stops meaning anything.
     #[inline]
     pub fn tree_epoch(&self) -> TreeEpoch {
-        self.imp().tree_epoch.get()
+        TreeEpoch(self.imp().session.borrow().epoch())
     }
 
     #[inline]
     pub fn node_ref(&self, id: NodeId) -> NodeRef {
         NodeRef {
-            epoch: self.imp().tree_epoch.get(),
+            epoch: self.tree_epoch(),
             id,
         }
     }
@@ -391,16 +455,28 @@ impl AppState {
 
     #[inline]
     pub fn resolve_node(&self, node: NodeRef) -> Option<NodeId> {
-        (node.epoch == self.imp().tree_epoch.get() && self.tree().contains(node.id))
-            .then_some(node.id)
+        (node.epoch == self.tree_epoch() && self.tree().contains(node.id)).then_some(node.id)
     }
 
     pub fn set_cursor(&self, id: NodeId) {
-        if self.imp().cursor.get() == id {
-            return;
+        {
+            let imp = self.imp();
+            let mut session = imp.session.borrow_mut();
+            if session.cursor() == id {
+                return;
+            }
+            session.go_to(id);
+            if session.cursor() != id {
+                // `go_to` refuses an id this tree does not hold.
+                return;
+            }
+            imp.report.replace(None);
         }
-        self.imp().cursor.set(id);
-        self.imp().report.replace(None);
+        self.moved_cursor();
+    }
+
+    /// Everything a cursor move has to tell the window, once the borrow is gone.
+    fn moved_cursor(&self) {
         self.changed(Change::Cursor);
         self.changed(Change::Report);
         self.restart_analysis();
@@ -408,42 +484,53 @@ impl AppState {
 
     /// The board position at the cursor.
     pub fn position(&self) -> Position {
-        let cursor = self.cursor();
-        self.with_tree_cached(|t| t.position(cursor).clone())
+        self.imp().session.borrow_mut().position().clone()
     }
 
     pub fn to_play(&self) -> Color {
-        let cursor = self.cursor();
-        self.with_tree_cached(|t| t.position(cursor).to_play)
+        self.imp().session.borrow_mut().to_play()
     }
 
-    /// Plays a move at the cursor and moves the cursor onto it.
-    pub fn play_move(&self, color: Color, p: Point) -> Result<NodeId, IllegalMove> {
-        let cursor = self.cursor();
-        let id = self.with_tree_mut(|t| t.play(cursor, color, p))?;
-        self.imp().cursor.set(id);
-        self.imp().report.replace(None);
-        self.changed(Change::Cursor);
-        self.changed(Change::Report);
-        self.restart_analysis();
+    /// Plays a move for the side to move at the cursor, and moves the cursor onto it.
+    pub fn play_move(&self, p: Point) -> Result<NodeId, IllegalMove> {
+        let id = {
+            let imp = self.imp();
+            let id = imp.session.borrow_mut().play(p)?;
+            imp.report.replace(None);
+            id
+        };
+        self.sync_record_flags();
+        self.changed(Change::Tree);
+        self.moved_cursor();
         Ok(id)
     }
 
     // -- navigation ---------------------------------------------------------------------
+    //
+    // Each of these walks the record through `GameSession` and then tells the window,
+    // because the dispatcher borrows the tree again (INV-10).
+
+    /// Runs `walk` over the record and dispatches if it actually moved the cursor.
+    fn navigate(&self, walk: impl FnOnce(&mut GameSession)) {
+        {
+            let imp = self.imp();
+            let mut session = imp.session.borrow_mut();
+            let before = session.cursor();
+            walk(&mut session);
+            if session.cursor() == before {
+                return;
+            }
+            imp.report.replace(None);
+        }
+        self.moved_cursor();
+    }
 
     pub fn go_first(&self) {
-        let root = self.tree().root();
-        self.set_cursor(root);
+        self.navigate(GameSession::go_first);
     }
 
     pub fn go_last(&self) {
-        let mut id = self.cursor();
-        let tree = self.tree();
-        while let Some(&next) = tree.children(id).first() {
-            id = next;
-        }
-        drop(tree);
-        self.set_cursor(id);
+        self.navigate(GameSession::go_last);
     }
 
     pub fn go_prev(&self) {
@@ -455,52 +542,17 @@ impl AppState {
     }
 
     pub fn go_back(&self, n: usize) {
-        let mut id = self.cursor();
-        {
-            let tree = self.tree();
-            for _ in 0..n {
-                match tree.parent(id) {
-                    Some(p) => id = p,
-                    None => break,
-                }
-            }
-        }
-        self.set_cursor(id);
+        self.navigate(|s| s.go_back(n));
     }
 
     pub fn go_forward(&self, n: usize) {
-        let mut id = self.cursor();
-        {
-            let tree = self.tree();
-            for _ in 0..n {
-                match tree.children(id).first() {
-                    Some(&c) => id = c,
-                    None => break,
-                }
-            }
-        }
-        self.set_cursor(id);
+        self.navigate(|s| s.go_forward(n));
     }
 
-    /// Moves to the previous/next sibling of the current node.
+    /// Moves to the previous/next sibling of the current node, wrapping around at the ends
+    /// so one key cycles a node's variations.
     pub fn go_sibling(&self, delta: i32) {
-        let id = self.cursor();
-        let target = {
-            let tree = self.tree();
-            let Some(parent) = tree.parent(id) else {
-                return;
-            };
-            let sibs = tree.children(parent);
-            let Some(pos) = sibs.iter().position(|&c| c == id) else {
-                return;
-            };
-            let next = pos as i32 + delta;
-            if next < 0 || next as usize >= sibs.len() {
-                return;
-            }
-            sibs[next as usize]
-        };
-        self.set_cursor(target);
+        self.navigate(|s| s.go_sibling(delta));
     }
 
     // -- engine -------------------------------------------------------------------------
@@ -736,10 +788,15 @@ impl AppState {
         // it. The dispatcher below is the first thing that can observe either.
         let analysis = crate::util::analysis_of(&report, max);
         {
-            let mut tree = self.imp().tree.borrow_mut();
-            let existing = tree.node(cursor).analysis.as_ref().map(|a| a.visits);
+            let mut session = self.imp().session.borrow_mut();
+            let existing = session
+                .tree()
+                .node(cursor)
+                .analysis
+                .as_ref()
+                .map(|a| a.visits);
             if crate::util::replaces_stored_analysis(existing, analysis.visits) {
-                tree.set_analysis(cursor, Some(analysis));
+                session.set_analysis(cursor, Some(analysis));
             }
         }
         self.imp().report.replace(Some(report));

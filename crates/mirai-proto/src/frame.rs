@@ -11,8 +11,9 @@
 //! any future TCP fallback. Both directions reuse a per-connection [`FrameBuf`], so
 //! steady-state framing does not allocate.
 
-use std::io::{self, Write};
+use std::io;
 
+use mirai_core::BoundedWriter;
 use serde::{Serialize, de::DeserializeOwned};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -57,23 +58,9 @@ impl FrameBuf {
     }
 }
 
-/// A `Write` sink that refuses to grow a `Vec` past `MAX_FRAME` — decompression-bomb guard.
-struct Bounded<'a>(&'a mut Vec<u8>);
-
-impl Write for Bounded<'_> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if self.0.len() + buf.len() > MAX_FRAME {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "decompressed frame exceeds the frame limit",
-            ));
-        }
-        self.0.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
+/// The decompression-bomb guard: nothing may inflate past [`MAX_FRAME`].
+fn bounded(out: &mut Vec<u8>) -> BoundedWriter<'_> {
+    BoundedWriter::new(out, MAX_FRAME, "frame")
 }
 
 /// Encodes `msg` into `buf.wire` as a complete frame and returns it.
@@ -87,7 +74,7 @@ pub fn encode<'b, T: Serialize + ?Sized>(
     buf.wire.clear();
     buf.wire.extend_from_slice(&[0; 5]);
     let flags = if buf.plain.len() > COMPRESS_THRESHOLD {
-        zstd::stream::copy_encode(&buf.plain[..], Bounded(&mut buf.wire), ZSTD_LEVEL)?;
+        zstd::stream::copy_encode(&buf.plain[..], bounded(&mut buf.wire), ZSTD_LEVEL)?;
         FLAG_ZSTD
     } else {
         buf.wire.extend_from_slice(&buf.plain);
@@ -130,7 +117,7 @@ fn decode_payload<T: DeserializeOwned>(
     }
     let bytes: &[u8] = if flags & FLAG_ZSTD != 0 {
         buf.plain.clear();
-        zstd::stream::copy_decode(payload, Bounded(&mut buf.plain))?;
+        zstd::stream::copy_decode(payload, bounded(&mut buf.plain))?;
         &buf.plain
     } else {
         payload

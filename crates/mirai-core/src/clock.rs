@@ -49,6 +49,16 @@ pub fn think_budget(tc: &TimeControl, remaining_main_s: f32, byo_periods_left: u
     }
 }
 
+/// Formats a clock as `M:SS`, or `H:MM:SS` once past an hour.
+pub fn clock_text(seconds: f32) -> String {
+    let s = seconds.max(0.0).round() as u32;
+    if s >= 3600 {
+        format!("{}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60)
+    } else {
+        format!("{}:{:02}", s / 60, s % 60)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -57,6 +67,15 @@ mod tests {
     fn unlimited_has_no_budget() {
         assert_eq!(think_budget(&TimeControl::UNLIMITED, 0.0, 0), None);
         assert!(TimeControl::UNLIMITED.is_unlimited());
+    }
+
+    #[test]
+    fn clock_text_switches_to_hours() {
+        assert_eq!(clock_text(0.0), "0:00");
+        assert_eq!(clock_text(59.4), "0:59");
+        assert_eq!(clock_text(600.0), "10:00");
+        assert_eq!(clock_text(3661.0), "1:01:01");
+        assert_eq!(clock_text(-5.0), "0:00");
     }
 
     #[test]

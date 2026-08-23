@@ -1111,6 +1111,7 @@ dependencies = [
  "clap",
  "mirai-core",
  "mirai-engine",
+ "serde",
  "serde_json",
  "thiserror",
  "tokio",

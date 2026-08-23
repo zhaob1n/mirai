@@ -8,12 +8,27 @@
 
 use std::time::Instant;
 
-use mirai_core::{Candidate, Color, GameTree, NodeAnalysis, NodeId, Point};
-use mirai_engine::{AnalyzeReq, Report, Want};
+use mirai_core::{Board, Candidate, Color, DeadSet, GameTree, NodeAnalysis, NodeId, Point};
+use mirai_engine::{AnalyzeReq, Report, Want, dq_own};
 
 /// How many principal-variation moves to ask for. Long enough to read a sequence out on the
 /// board, short enough that the reports stay small at 10 Hz.
 pub const PV_LEN: u8 = 15;
+
+/// Ownership magnitude above which a stone counts as dead, matching KataGo's own default.
+const DEAD_OWNERSHIP_THRESHOLD: f32 = 0.4;
+
+/// The dead set KataGo's quantised ownership map implies for `board`.
+///
+/// A map of the wrong length is a report for another position; it marks nothing dead
+/// rather than indexing off the end of the board.
+pub fn dead_from_ownership(board: &Board, ownership: &[i8]) -> DeadSet {
+    if ownership.len() != board.size.points() {
+        return DeadSet::empty(board.size);
+    }
+    let owner: Vec<f32> = ownership.iter().copied().map(dq_own).collect();
+    DeadSet::from_ownership(board, &owner, DEAD_OWNERSHIP_THRESHOLD)
+}
 
 /// Builds the analysis request for one node of `tree`.
 ///

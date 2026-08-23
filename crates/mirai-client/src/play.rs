@@ -9,12 +9,12 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use mirai_core::{
-    Color, DeadSet, GameInfo, GameTree, NodeId, Point, SplitMix64, TimeControl, fixed_handicap,
-    score, think_budget,
+    Color, DeadSet, GameInfo, GameTree, NodeId, Point, SplitMix64, TimeControl, clock_text,
+    fixed_handicap, score, think_budget,
 };
 use mirai_engine::{AnalyzeReq, MoveInfo, Report, Want};
 
-use crate::GameSession;
+use crate::{GameSession, dead_from_ownership};
 
 pub const DEFAULT_HUMAN_PROFILE: &str = "rank_5k";
 
@@ -86,11 +86,15 @@ pub struct PlaySession {
     pub resign_streak: u8,
     pub state: PlayState,
     pub dead: DeadSet,
+    /// Last-counted territory, for a board overlay. Empty until the first rescore.
+    territory: Box<[Option<Color>]>,
     in_byo: [bool; 2],
     clocks: HashMap<NodeId, ClockSnap>,
     pub reason: String,
     pub forced_result: Option<String>,
     pub summary: String,
+    /// Last SGF result (`"B+R"`, `"W+3.5"`, `"0"`), written by [`Play::rescore`].
+    result: String,
 }
 
 impl PlaySession {
@@ -197,13 +201,6 @@ fn seed_from_clock() -> u64 {
         .unwrap_or(0x5EED)
 }
 
-pub fn side_name(c: Color) -> &'static str {
-    match c {
-        Color::Black => "Black",
-        Color::White => "White",
-    }
-}
-
 pub fn result_phrase(result: &str) -> String {
     if result.is_empty() {
         return "No result".to_string();
@@ -216,7 +213,7 @@ pub fn result_phrase(result: &str) -> String {
         None => return result.to_string(),
     };
     let who = match Color::from_letter(winner) {
-        Some(c) => side_name(c),
+        Some(c) => c.name(),
         None => return result.to_string(),
     };
     match margin {
@@ -224,15 +221,6 @@ pub fn result_phrase(result: &str) -> String {
         "T" | "t" => format!("{who} wins on time"),
         "F" | "f" => format!("{who} wins by forfeit"),
         m => format!("{who} wins by {m}"),
-    }
-}
-
-fn clock_text(seconds: f32) -> String {
-    let s = seconds.max(0.0).round() as u32;
-    if s >= 3600 {
-        format!("{}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60)
-    } else {
-        format!("{}:{:02}", s / 60, s % 60)
     }
 }
 
@@ -273,6 +261,25 @@ impl Play {
 
     pub fn ai(&self) -> Option<Color> {
         self.session.as_ref().and_then(PlaySession::ai)
+    }
+
+    pub fn dead(&self) -> Option<&DeadSet> {
+        self.session.as_ref().map(|s| &s.dead)
+    }
+
+    pub fn territory(&self) -> Option<&[Option<Color>]> {
+        self.session.as_ref().map(|s| s.territory.as_ref())
+    }
+
+    /// The result as English prose, e.g. "Black wins by resignation". `None` before the
+    /// game has been counted at all.
+    pub fn result_phrase(&self) -> Option<String> {
+        let s = self.session.as_ref()?;
+        (!s.result.is_empty()).then(|| result_phrase(&s.result))
+    }
+
+    pub fn human(&self) -> Option<Color> {
+        self.session.as_ref().and_then(|s| s.human)
     }
 
     pub fn summary(&self) -> String {
@@ -345,11 +352,13 @@ impl Play {
             resign_streak: 0,
             state: PlayState::HumanTurn,
             dead: DeadSet::empty(setup.size),
+            territory: vec![None; setup.size.points()].into_boxed_slice(),
             in_byo: [in_byo; 2],
             clocks: HashMap::new(),
             reason: String::new(),
             forced_result: None,
             summary: String::new(),
+            result: String::new(),
         });
         self.rng = SplitMix64::new(seed_from_clock());
         self.snapshot_clock(game.cursor());
@@ -448,7 +457,7 @@ impl Play {
         self.end_game(
             game,
             Some(format!("{}+R", loser.other().katago())),
-            format!("{} resigned.", side_name(loser)),
+            format!("{} resigned.", loser.name()),
         );
     }
 
@@ -485,6 +494,7 @@ impl Play {
             s.forced_result = None;
             s.reason.clear();
             s.summary.clear();
+            s.result.clear();
             s.state = PlayState::HumanTurn;
         }
         game.tree_mut().info.result.clear();
@@ -544,7 +554,7 @@ impl Play {
             self.end_game(
                 game,
                 Some(format!("{}+R", ai.other().katago())),
-                format!("{} resigned.", side_name(ai)),
+                format!("{} resigned.", ai.name()),
             );
             return;
         }
@@ -585,7 +595,7 @@ impl Play {
         self.end_game(
             game,
             Some(format!("{}+T", loser.other().katago())),
-            format!("{} lost on time.", side_name(loser)),
+            format!("{} lost on time.", loser.name()),
         );
     }
 
@@ -614,10 +624,7 @@ impl Play {
     pub fn apply_ownership(&mut self, game: &mut GameSession, ownership: Option<&[i8]>) {
         let board = game.position().board.clone();
         let dead = match ownership {
-            Some(raw) => {
-                let f: Vec<f32> = raw.iter().map(|&v| v as f32 / 127.0).collect();
-                DeadSet::from_ownership(&board, &f, 0.4)
-            }
+            Some(raw) => dead_from_ownership(&board, raw),
             None => DeadSet::empty(board.size),
         };
         if let Some(s) = self.session.as_mut() {
@@ -656,6 +663,7 @@ impl Play {
             return;
         };
         let counted = score(&position.board, &rules.rules(), komi, handicap, &s.dead);
+        s.territory = counted.territory.clone();
         let counted_str = counted.result_string();
         s.summary = match &s.forced_result {
             Some(forced) => format!(
@@ -685,6 +693,7 @@ impl Play {
             ),
         };
         let result = s.forced_result.clone().unwrap_or(counted_str);
+        s.result = result.clone();
         game.tree_mut().info.result = result;
     }
 
@@ -771,6 +780,31 @@ mod tests {
         }
         assert_eq!(streak, 3);
         assert!(!resign);
+    }
+
+    #[test]
+    fn one_good_report_clears_the_streak() {
+        let (streak, _) = resign_check(0.01, 0.05, 2, 3, 200, 361);
+        assert_eq!(streak, 3);
+        let (streak, resign) = resign_check(0.40, 0.05, 2, 3, 200, 361);
+        assert_eq!(streak, 0);
+        assert!(!resign);
+    }
+
+    #[test]
+    fn absolute_time_without_periods_flags_immediately() {
+        let tc = TimeControl {
+            main_s: 60,
+            byo_periods: 0,
+            byo_period_s: 0,
+            increment_s: 0,
+        };
+        let (mut remaining, mut byo_left, mut in_byo) = (0.5f32, 0u8, false);
+        assert_eq!(
+            tick_clock(&tc, &mut remaining, &mut byo_left, &mut in_byo, 1.0),
+            Tick::Flag
+        );
+        assert!(!in_byo);
     }
 
     #[test]
