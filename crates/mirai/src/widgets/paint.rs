@@ -36,6 +36,23 @@ pub fn over(fg: gdk::RGBA, bg: gdk::RGBA) -> gdk::RGBA {
     )
 }
 
+/// The same colour at a different alpha.
+#[inline]
+pub fn with_alpha(c: gdk::RGBA, a: f32) -> gdk::RGBA {
+    gdk::RGBA::new(c.red(), c.green(), c.blue(), a)
+}
+
+/// A [`crate::palette`] byte triple as a `gdk::RGBA`.
+#[inline]
+pub fn rgba8(c: [u8; 3], alpha: f32) -> gdk::RGBA {
+    gdk::RGBA::new(
+        c[0] as f32 / 255.0,
+        c[1] as f32 / 255.0,
+        c[2] as f32 / 255.0,
+        alpha,
+    )
+}
+
 /// A filled disc of radius `r`, as a colour node inside a rounded clip.
 #[inline]
 pub fn fill_disc(snapshot: &gtk::Snapshot, cx: f32, cy: f32, r: f32, color: &gdk::RGBA) {

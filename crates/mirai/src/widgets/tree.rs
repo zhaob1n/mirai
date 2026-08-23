@@ -20,7 +20,7 @@ use gtk::subclass::prelude::*;
 use mirai_core::{Color, GameTree, NodeId};
 
 use crate::app::AppState;
-use crate::widgets::paint::{fill_disc, hline, stroke_disc, vline};
+use crate::widgets::paint::{fill_disc, hline, stroke_disc, vline, with_alpha};
 
 /// Grid geometry. Cells are square-ish so long games stay scannable.
 const CELL_W: f32 = 20.0;
@@ -100,10 +100,6 @@ fn cell_xy(col: u32, lane: u32) -> (f32, f32) {
         MARGIN + RADIUS + col as f32 * CELL_W,
         MARGIN + RADIUS + lane as f32 * CELL_H,
     )
-}
-
-fn with_alpha(c: gdk::RGBA, a: f32) -> gdk::RGBA {
-    gdk::RGBA::new(c.red(), c.green(), c.blue(), a)
 }
 
 mod imp {

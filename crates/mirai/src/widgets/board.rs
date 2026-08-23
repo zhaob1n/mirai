@@ -20,7 +20,7 @@ use mirai_core::{
 use mirai_proto::types::dq_policy;
 
 use crate::app::AppState;
-use crate::widgets::paint::{fill_disc, hline, over, stroke_disc, stroke_rect, vline};
+use crate::widgets::paint::{fill_disc, hline, over, rgba8, stroke_disc, stroke_rect, vline};
 
 /// Wood beyond the outermost grid line, in cells.
 const EDGE_PAD: f32 = 0.6;
@@ -123,21 +123,10 @@ fn blob_alpha(visits: u32) -> f32 {
     BLOB_ALPHA_MIN + (BLOB_ALPHA_MAX - BLOB_ALPHA_MIN) * t
 }
 
-#[inline]
-fn rgba8(c: [u8; 3], alpha: f32) -> gdk::RGBA {
-    gdk::RGBA::new(
-        c[0] as f32 / 255.0,
-        c[1] as f32 / 255.0,
-        c[2] as f32 / 255.0,
-        alpha,
-    )
-}
-
 /// Black or white text, whichever reads better on `bg` — the blob already composited over
 /// the board, because a faint blob is mostly wood.
 fn text_on(bg: gdk::RGBA) -> gdk::RGBA {
-    let lum = 0.299 * bg.red() + 0.587 * bg.green() + 0.114 * bg.blue();
-    if lum > 0.58 {
+    if crate::palette::is_light(bg.red(), bg.green(), bg.blue()) {
         gdk::RGBA::new(0.04, 0.04, 0.04, 1.0)
     } else {
         gdk::RGBA::new(1.0, 1.0, 1.0, 1.0)

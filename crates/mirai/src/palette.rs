@@ -138,6 +138,14 @@ pub fn grade_class(stop: u32) -> String {
     )
 }
 
+/// Whether black ink reads better than white on this background.
+///
+/// Rec. 601 luma against the crossover where white text stops being legible. Channels are
+/// `0.0..=1.0`; the board pre-composites its blob over the wood before asking.
+pub fn is_light(r: f32, g: f32, b: f32) -> bool {
+    0.299 * r + 0.587 * g + 0.114 * b > 0.58
+}
+
 /// The stylesheet for the list's badges, generated from [`GRADE_RAMP`] so the badge and the blob
 /// for one move can never drift apart.
 ///
@@ -146,8 +154,8 @@ pub fn grade_class(stop: u32) -> String {
 pub fn grade_css() -> String {
     let mut css = String::with_capacity(GRADE_RAMP.len() * 96);
     for (i, [r, g, b]) in GRADE_RAMP.iter().enumerate() {
-        let lum = 0.299 * *r as f32 + 0.587 * *g as f32 + 0.114 * *b as f32;
-        let ink = if lum > 148.0 { "#1c1c1c" } else { "#ffffff" };
+        let light = is_light(*r as f32 / 255.0, *g as f32 / 255.0, *b as f32 / 255.0);
+        let ink = if light { "#1c1c1c" } else { "#ffffff" };
         css.push_str(&format!(
             ".mirai-grade-{} {{ background-color: #{r:02x}{g:02x}{b:02x}; color: {ink}; }}\n",
             i + 1

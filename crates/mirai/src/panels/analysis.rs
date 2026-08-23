@@ -20,7 +20,8 @@ use mirai_core::{Color, Point};
 
 use crate::app::{AppState, EngineState, NodeRef};
 use crate::batch::Blunder;
-use crate::util::{gtp, pct1, si_visits, signed1, visits_per_second};
+use crate::util::{pct1, si_visits, signed1, visits_per_second};
+use crate::widgets::winrate::{Severity, severity_of_drop};
 
 // -- the row model ----------------------------------------------------------------------
 
@@ -129,9 +130,9 @@ impl Row {
         if object.grade() != self.grade {
             object.set_grade(self.grade);
         }
-        let mv = gtp(size, self.point);
-        if object.mv() != mv {
-            object.set_mv(mv);
+        let mv = size.to_gtp(self.point);
+        if object.mv() != mv.as_str() {
+            object.set_mv(mv.as_str());
         }
         if object.winrate() != self.winrate as f64 {
             object.set_winrate(self.winrate as f64);
@@ -445,7 +446,7 @@ impl AnalysisPanel {
                         let head = Headline {
                             color: to_play,
                             visits: a.visits,
-                            winrate: perspective(a.winrate, to_play),
+                            winrate: to_play.winrate_for(a.winrate),
                             score: a.score_lead * to_play.sign(),
                             stdev: a.score_stdev,
                             speed: None,
@@ -460,7 +461,7 @@ impl AnalysisPanel {
                                 grade: 0,
                                 point: c.mv,
                                 pv_first: c.pv.first().copied().unwrap_or(c.mv),
-                                winrate: perspective(c.winrate, to_play),
+                                winrate: to_play.winrate_for(c.winrate),
                                 score: c.score_lead * to_play.sign(),
                                 visits: c.visits,
                                 prior: c.prior,
@@ -492,7 +493,7 @@ impl AnalysisPanel {
                     "{} visits{speed} · ±{:.1} points · {} to play",
                     si_visits(h.visits),
                     h.stdev,
-                    color_name(h.color)
+                    h.color.name()
                 ));
             }
             None => {
@@ -565,10 +566,10 @@ impl AnalysisPanel {
                 Some(best) => format!(
                     "−{}% · played {} · best {}",
                     pct1(b.drop),
-                    gtp(size, b.played),
-                    gtp(size, best)
+                    size.to_gtp(b.played),
+                    size.to_gtp(best)
                 ),
-                None => format!("−{}% · played {}", pct1(b.drop), gtp(size, b.played)),
+                None => format!("−{}% · played {}", pct1(b.drop), size.to_gtp(b.played)),
             };
             // One line: stone, move number, what it cost. A move number on a line of its own
             // spent a row's height saying nothing the eye had to read.
@@ -576,7 +577,9 @@ impl AnalysisPanel {
                 .title(format!("{} {} · {detail}", stone(b.player), b.move_number))
                 .activatable(true)
                 .build();
-            row.add_css_class(severity_class(b.drop));
+            if let Some(class) = severity_class(severity_of_drop(b.drop)) {
+                row.add_css_class(class);
+            }
             // The stone is a picture; a screen reader sees "black circle" at best, so the row
             // carries the word. `AdwActionRow` is not declared `Accessible` in the bindings,
             // its widget is.
@@ -584,7 +587,7 @@ impl AnalysisPanel {
                 .update_property(&[gtk::accessible::Property::Label(&format!(
                     "Move {} · {} · {detail}",
                     b.move_number,
-                    color_name(b.player)
+                    b.player.name()
                 ))]);
             inner.blunder_list.append(&row);
             nodes.push(b.node);
@@ -617,20 +620,6 @@ struct Headline {
     speed: Option<f32>,
 }
 
-fn perspective(black_value: f32, c: Color) -> f32 {
-    match c {
-        Color::Black => black_value,
-        Color::White => 1.0 - black_value,
-    }
-}
-
-fn color_name(c: Color) -> &'static str {
-    match c {
-        Color::Black => "Black",
-        Color::White => "White",
-    }
-}
-
 /// The mover of a blunder, as the stone they played.
 ///
 /// A reviewer reading the list is looking at a board, where the player *is* a colour, so
@@ -646,13 +635,14 @@ fn stone(color: Color) -> &'static str {
     }
 }
 
-fn severity_class(drop: f32) -> &'static str {
-    if drop >= 0.10 {
-        "mirai-blunder-major"
-    } else if drop >= 0.05 {
-        "mirai-blunder-medium"
-    } else {
-        "mirai-blunder-minor"
+/// The CSS class for a blunder's severity, or `None` when the drop is below the noise
+/// floor and the row must not be tinted at all.
+fn severity_class(severity: Severity) -> Option<&'static str> {
+    match severity {
+        Severity::None => None,
+        Severity::Minor => Some("mirai-blunder-minor"),
+        Severity::Medium => Some("mirai-blunder-medium"),
+        Severity::Major => Some("mirai-blunder-major"),
     }
 }
 
@@ -800,4 +790,30 @@ fn rank_column() -> gtk::ColumnViewColumn {
         .factory(&factory)
         .resizable(false)
         .build()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The list and the win-rate strip must agree on what counts as a blunder at all.
+    /// `severity_class` used to re-derive its own thresholds with no noise floor, so a
+    /// 1 % drop came back tinted as a minor blunder.
+    #[test]
+    fn a_drop_below_the_noise_floor_gets_no_class() {
+        assert_eq!(severity_class(severity_of_drop(0.01)), None);
+        assert_eq!(severity_class(severity_of_drop(f32::NAN)), None);
+        assert_eq!(
+            severity_class(severity_of_drop(0.03)),
+            Some("mirai-blunder-minor")
+        );
+        assert_eq!(
+            severity_class(severity_of_drop(0.07)),
+            Some("mirai-blunder-medium")
+        );
+        assert_eq!(
+            severity_class(severity_of_drop(0.12)),
+            Some("mirai-blunder-major")
+        );
+    }
 }
