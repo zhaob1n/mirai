@@ -271,6 +271,18 @@ impl GameTree {
         self.get(id).is_some()
     }
 
+    /// True when the record holds anything a user would miss: a move, a setup stone or a
+    /// comment. A blank tree must leave nothing behind for a crash-recovery prompt.
+    ///
+    /// Walks the arena rather than `0..len()`: [`GameTree::len`] counts live nodes, and a
+    /// tombstone left by [`GameTree::delete_branch`] makes the two disagree.
+    pub fn has_content(&self) -> bool {
+        self.nodes
+            .iter()
+            .flatten()
+            .any(|n| n.mv.is_some() || !n.setup.is_empty() || !n.comment.trim().is_empty())
+    }
+
     #[inline]
     pub fn children(&self, id: NodeId) -> &[NodeId] {
         &self.node(id).children
@@ -647,6 +659,76 @@ mod tests {
             t.set_setup_stone(root, s.point(x, y), Some(Color::White));
         }
         (p, q)
+    }
+
+    fn empty_19() -> GameTree {
+        GameTree::new(GameInfo::new(Size::square(19), RuleSet::Chinese))
+    }
+
+    #[test]
+    fn a_blank_record_has_no_content() {
+        // This is the case that used to greet users with "mirai did not shut down
+        // cleanly" after a session in which they did nothing at all.
+        assert!(!empty_19().has_content());
+    }
+
+    #[test]
+    fn a_single_move_or_a_pass_is_content() {
+        let mut t = empty_19();
+        let root = t.root();
+        t.play(root, Color::Black, Size::square(19).point(3, 3))
+            .expect("D16 is legal on an empty board");
+        assert!(t.has_content());
+
+        let mut passed = empty_19();
+        let root = passed.root();
+        passed.play(root, Color::Black, Point::PASS).expect("pass");
+        assert!(passed.has_content());
+    }
+
+    #[test]
+    fn a_comment_or_setup_stone_alone_is_enough() {
+        let mut commented = empty_19();
+        let root = commented.root();
+        commented.set_comment(root, "  ");
+        assert!(!commented.has_content(), "whitespace is not real content");
+        commented.set_comment(root, "study this");
+        assert!(commented.has_content());
+
+        let mut setup = empty_19();
+        let root = setup.root();
+        setup.set_setup_stone(root, Size::square(19).point(3, 3), Some(Color::Black));
+        assert!(setup.has_content());
+    }
+
+    #[test]
+    fn marks_alone_are_not_content() {
+        // Marks are review annotations on an otherwise blank board; they are not worth
+        // interrupting the next launch for.
+        let mut t = empty_19();
+        let root = t.root();
+        t.toggle_mark(root, MarkKind::Triangle, Size::square(19).point(3, 3));
+        assert!(!t.has_content());
+    }
+
+    /// The arena is tombstoned, so a scan bounded by `len()` — the *live* count — would
+    /// stop short of a node that outlived a deleted branch.
+    #[test]
+    fn content_is_found_past_a_deleted_branch() {
+        let mut t = empty_19();
+        let size = Size::square(19);
+        let root = t.root();
+        let doomed = t.play(root, Color::Black, size.point(3, 3)).expect("D16");
+        let kept = t.add_child(root);
+        let deep = t.add_child(kept);
+        t.delete_branch(doomed);
+        assert!(!t.has_content(), "empty nodes are not content");
+
+        t.play(deep, Color::White, size.point(15, 15)).expect("Q4");
+        assert!(
+            t.has_content(),
+            "a live node above the live count must still be seen"
+        );
     }
 
     #[test]
