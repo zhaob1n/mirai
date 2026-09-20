@@ -8,25 +8,26 @@
 //! (`widgets/winrate.rs`) as it gets worse. Rank is not the colour: `order` says which move the
 //! engine would play, not by how much, and the list already carries the number in the badge.
 //!
-//! **Two channels, whichever is more alarming.** Win-rate loss alone collapses in a decided
-//! position — a measured 9x9 endgame reads 0.0 % for every candidate while the score lead spreads
-//! over six points — and score loss alone goes quiet in a close endgame, where a single point is
-//! the whole game (measured: about 13 % of win rate per point with the root inside 50 % ± 15,
-//! against 0.02 % per point once it is decided). So each channel has its own breakpoints,
-//! [`POINTS_AT`] and [`WINRATE_AT`], and a move takes the worse of the two readings.
+//! **Loss is the drop in KataGo's `utility`**, side-to-move, pick minus candidate. Win rate and
+//! score are already blended inside that one number, the way the engine itself blends them, so
+//! the live path does not consult either. The pick compared to itself is zero, so it stays
+//! cyan. Absolute utility is not the colour: in a lost position every move including the pick
+//! would be red.
 //!
-//! **Red is earned by search.** A move with a handful of visits has a loss estimate worth
-//! nothing: sweeping a real game at 1 000 and 5 000 root visits moved the score loss of a
-//! 1-visit candidate by 3.5 points at the 90th percentile, against 0.97 for a 20-visit one. So
-//! the grade is *capped* rather than scaled: with no search behind it a move can show no warmer
-//! than the last cool stop, and the cap opens to the full ramp at [`TRUSTED_VISITS`]. Capping
-//! leaves a well-searched move's colour alone — scaling it by the visit share dragged legible
-//! losses back to cyan, which reads as "the engine likes this" about a move it never examined.
+//! It is the *mean*, not `utilityLcb`. The lower bound was measured and rejected: it warms a
+//! move for being thin as well as for being bad, which the grey floor below already says
+//! better and without pretending to know by how much
+//! (`docs/dev/CANDIDATE_COLOUR.md` §6).
+//!
+//! Records saved before MRAI v2 have no utility on the tree. [`grade_means`] is the old
+//! two-channel reading — worse of win-rate and score-lead loss — used only as that fallback.
 //!
 //! How much search a move actually got is the board's *opacity* channel, and the list's Visits
-//! column; neither is hue's job.
+//! column. Below [`TRUSTED_VISITS`] the loss is not a colour at all — grey, not green and not
+//! red — because a 1-visit mean is a rumour. The engine's pick is never unknown: it is the
+//! reference every other loss is measured against, and it is always the coolest stop.
 
-/// Colour stops, from KataGo's own pick to a move that loses a komi.
+/// Colour stops, from KataGo's own pick to a move that loses half a win of utility.
 ///
 /// The cool end is LizzieYzy's best-move cyan family; the three warm stops are the exact hexes
 /// `Severity` paints a blunder tick with (`widgets/winrate.rs`), so a candidate that shows orange
@@ -40,13 +41,15 @@ pub const GRADE_RAMP: [[u8; 3]; 6] = [
     [0xE8, 0x50, 0x38],
 ];
 
-/// Score-lead loss, in points, that puts a move on each stop.
+/// Score-lead loss, in points, that puts a move on each stop — [`grade_means`] only.
 ///
 /// The user-visible anchors: everything inside three quarters of a point of the pick stays cool,
-/// and a move that throws away a komi is red whatever the win rate says.
+/// and a move that throws away a komi is red whatever the win rate says. Fitted on real games
+/// (`docs/dev/TESTING.md` §4) and now reached only by an MRAI v1 record, whose candidates have
+/// no utility; [`UTILITY_AT`] is the live table.
 pub const POINTS_AT: [f32; GRADE_RAMP.len()] = [0.0, 0.25, 0.75, 2.0, 4.5, 7.5];
 
-/// Win-rate loss, as a fraction, that puts a move on each stop.
+/// Win-rate loss, as a fraction, that puts a move on each stop — [`grade_means`] only.
 ///
 /// Read against `severity_of_drop` (`widgets/winrate.rs`), which grades a move somebody actually
 /// played: a candidate stays cool exactly while playing it would be at most a *Minor* blunder
@@ -57,26 +60,88 @@ pub const POINTS_AT: [f32; GRADE_RAMP.len()] = [0.0, 0.25, 0.75, 2.0, 4.5, 7.5];
 /// positions, against 11 % here.
 pub const WINRATE_AT: [f32; GRADE_RAMP.len()] = [0.0, 0.02, 0.05, 0.10, 0.18, 0.30];
 
-/// Visits at which a candidate may show the whole ramp.
+/// Utility loss that puts a move on each stop.
 ///
-/// At twenty visits a score-lead loss is worth about a point (90th percentile, 1 000 against
-/// 5 000 root visits on a real game), and no error of a point turns a 7.5-point blunder into an
-/// ordinary move.
-pub const TRUSTED_VISITS: f32 = 20.0;
-
-/// The hottest grade a move with no search at all may show: index 2, the last cool stop.
-const UNSEARCHED_CEILING: f32 = 2.0;
-
-/// How much a candidate loses, as a position along [`GRADE_RAMP`].
+/// Anchored on KataGo's own utility scale, not on a win-rate table: `0.04` is analysis
+/// `wideRootNoise` (the per-visit noise the root explores with), `0.20` is
+/// `fpuReductionMax` (a gap as large as not having looked), `0.50` is half a win on the
+/// win/loss term (`winLossUtilityFactor = 1`). Score is already inside utility, so a
+/// decided endgame where every win rate reads 0.0 % still moves along this table.
 ///
-/// Both losses are relative to the engine's pick and in the side-to-move's perspective, so a
-/// candidate that reads *better* than the pick — which happens, the two channels disagree —
-/// clamps to the coolest stop rather than going negative.
-pub fn grade(winrate_loss: f32, points_loss: f32, visits: u32) -> f32 {
-    let t = along(points_loss, &POINTS_AT).max(along(winrate_loss, &WINRATE_AT));
-    let last = (GRADE_RAMP.len() - 1) as f32;
-    let confidence = (visits as f32 / TRUSTED_VISITS).min(1.0);
-    t.min(UNSEARCHED_CEILING + (last - UNSEARCHED_CEILING) * confidence)
+/// Those constants also land where the two fitted tables above already were. Swept over
+/// 42 positions at 5 000 visits (`examples/sweep.rs`, `dutil` column), a candidate losing
+/// 0.25 points measures 0.034 utility, 0.75 points 0.09, 2 points and 10 % win rate both
+/// 0.20 — mint, green and yellow, the same stops [`POINTS_AT`] and [`WINRATE_AT`] give them.
+/// A breakpoint moved here should be re-measured that way, not reasoned about.
+pub const UTILITY_AT: [f32; GRADE_RAMP.len()] = [0.0, 0.04, 0.10, 0.20, 0.35, 0.50];
+
+/// Visits at which a candidate's reading is trusted, and the only search threshold there is.
+///
+/// One number does three things, and they are the same statement: below it a candidate is
+/// grey instead of a loss colour, the board omits its figures (`widgets/board.rs` —
+/// `LABEL_MIN_VISITS`), and its blob is drawn faded (`blob_alpha`). So a blob earns its
+/// colour, its numbers and its full opacity at the same visit, and fading only ever happens
+/// to grey — an estimate is either worth reading or it is not, and there is no third state to
+/// tune. The engine's pick is exempt: it is the reference, not a rumour.
+///
+/// Ten is where the numbers become worth printing at all. It used to be two constants, with
+/// opacity reaching full at twenty — that second one dated from the hue *cap* that
+/// `analysis/uncapped-grade` removed, and once grey said "unknown" outright, the extra fade
+/// window covered 4 % of a twenty-move list and said nothing the Visits column did not.
+pub const TRUSTED_VISITS: u32 = 10;
+
+/// Warm grey for an unsearched candidate, off the loss ramp so it cannot be read as cyan or as
+/// a blunder tick.
+pub const UNKNOWN_RGB: [u8; 3] = [0x9E, 0x98, 0x8C];
+
+/// Sentinel [`colour_stop`] returns for an unsearched candidate. Not an index into
+/// [`GRADE_RAMP`].
+pub const UNKNOWN_STOP: u32 = u32::MAX;
+
+/// How much a candidate loses in KataGo `utility`, as a position along [`GRADE_RAMP`].
+///
+/// `loss` is pick minus candidate, side-to-move. A candidate that reads *better* than the
+/// pick clamps to the coolest stop rather than going negative.
+pub fn grade(utility_loss: f32) -> f32 {
+    along(utility_loss, &UTILITY_AT)
+}
+
+/// The pre-v2 reading: worse of win-rate loss and score-lead loss against the pick.
+///
+/// Kept for tree nodes whose [`mirai_core::Candidate`] has no utility (MRAI v1).
+pub fn grade_means(winrate_loss: f32, points_loss: f32) -> f32 {
+    along(points_loss, &POINTS_AT).max(along(winrate_loss, &WINRATE_AT))
+}
+
+/// True when a candidate's loss is worth a colour at all.
+///
+/// `rank` is the move's place in KataGo's `order`, so rank 0 is the pick: the reference every
+/// other loss is measured against rather than an estimate of its own, cyan from the first
+/// report even before it has [`TRUSTED_VISITS`] behind it. Every other move has to earn its
+/// hue with search. The rule lives here and not in the two callers so that a third one cannot
+/// paint the pick grey.
+#[inline]
+pub fn is_known(rank: usize, visits: u32) -> bool {
+    rank == 0 || visits >= TRUSTED_VISITS
+}
+
+/// RGB the board and the list share: unknown grey below [`TRUSTED_VISITS`], otherwise the
+/// loss ramp at `grade`.
+pub fn colour(grade: f32, rank: usize, visits: u32) -> [u8; 3] {
+    if is_known(rank, visits) {
+        grade_rgb(grade)
+    } else {
+        UNKNOWN_RGB
+    }
+}
+
+/// Badge stop for the same reading as [`colour`]. [`UNKNOWN_STOP`] when unsearched.
+pub fn colour_stop(grade: f32, rank: usize, visits: u32) -> u32 {
+    if is_known(rank, visits) {
+        grade_stop(grade)
+    } else {
+        UNKNOWN_STOP
+    }
 }
 
 /// Where `loss` falls on a breakpoint table, in stops.
@@ -130,12 +195,16 @@ pub fn grade_stop(grade: f32) -> u32 {
     ((grade + 0.5) as u32).min(last)
 }
 
-/// The badge class for a stop: `mirai-grade-1` … `mirai-grade-6`.
+/// The badge class for a stop: `mirai-grade-1` … `mirai-grade-6`, or `mirai-grade-unknown`.
 pub fn grade_class(stop: u32) -> String {
-    format!(
-        "mirai-grade-{}",
-        (stop as usize).min(GRADE_RAMP.len() - 1) + 1
-    )
+    if stop == UNKNOWN_STOP {
+        "mirai-grade-unknown".to_string()
+    } else {
+        format!(
+            "mirai-grade-{}",
+            (stop as usize).min(GRADE_RAMP.len() - 1) + 1
+        )
+    }
 }
 
 /// Whether black ink reads better than white on this background.
@@ -152,16 +221,20 @@ pub fn is_light(r: f32, g: f32, b: f32) -> bool {
 /// The numeral's colour is picked here too, by the same luminance rule the board uses for the
 /// text on a blob.
 pub fn grade_css() -> String {
-    let mut css = String::with_capacity(GRADE_RAMP.len() * 96);
-    for (i, [r, g, b]) in GRADE_RAMP.iter().enumerate() {
-        let light = is_light(*r as f32 / 255.0, *g as f32 / 255.0, *b as f32 / 255.0);
-        let ink = if light { "#1c1c1c" } else { "#ffffff" };
-        css.push_str(&format!(
-            ".mirai-grade-{} {{ background-color: #{r:02x}{g:02x}{b:02x}; color: {ink}; }}\n",
-            i + 1
-        ));
+    let mut css = String::with_capacity((GRADE_RAMP.len() + 1) * 96);
+    for (i, rgb) in GRADE_RAMP.iter().enumerate() {
+        push_grade_rule(&mut css, &format!("{}", i + 1), *rgb);
     }
+    push_grade_rule(&mut css, "unknown", UNKNOWN_RGB);
     css
+}
+
+fn push_grade_rule(css: &mut String, name: &str, [r, g, b]: [u8; 3]) {
+    let light = is_light(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+    let ink = if light { "#1c1c1c" } else { "#ffffff" };
+    css.push_str(&format!(
+        ".mirai-grade-{name} {{ background-color: #{r:02x}{g:02x}{b:02x}; color: {ink}; }}\n"
+    ));
 }
 
 #[cfg(test)]
@@ -172,38 +245,72 @@ mod tests {
     /// reads better than the pick does not wrap around.
     #[test]
     fn the_pick_is_always_the_coolest_stop() {
-        assert_eq!(grade(0.0, 0.0, 1), 0.0);
-        assert_eq!(grade(0.0, 0.0, 100_000), 0.0);
-        assert_eq!(grade(-0.07, -1.4, 500), 0.0);
-        assert_eq!(grade_rgb(grade(0.0, 0.0, 4)), GRADE_RAMP[0]);
+        assert_eq!(grade(0.0), 0.0);
+        assert_eq!(grade(-0.07), 0.0);
+        assert_eq!(grade_rgb(grade(0.0)), GRADE_RAMP[0]);
     }
 
-    /// Each channel reaches the last stop on its own: the decided endgame where every win rate
-    /// reads the same, and the close endgame where a point is the game.
+    /// The utility table hits its own stops, and a better reading than the pick does not
+    /// wrap around.
     #[test]
-    fn either_channel_can_carry_the_grade() {
+    fn a_utility_loss_walks_the_ramp() {
         let last = (GRADE_RAMP.len() - 1) as f32;
-        let deep = 10 * TRUSTED_VISITS as u32;
-        assert_eq!(grade(0.0, POINTS_AT[5], deep), last);
-        assert_eq!(grade(WINRATE_AT[5], 0.0, deep), last);
-        // The worse reading wins, and a mild reading on the other channel cannot cool it down.
-        assert_eq!(grade(WINRATE_AT[4], POINTS_AT[1], deep), 4.0);
-        assert_eq!(grade(WINRATE_AT[1], POINTS_AT[4], deep), 4.0);
+        assert_eq!(grade(UTILITY_AT[5]), last);
+        assert_eq!(grade(UTILITY_AT[4]), 4.0);
+        assert_eq!(grade(UTILITY_AT[1]), 1.0);
+        assert_eq!(grade(UTILITY_AT[3]), 3.0);
+        // wideRootNoise sits on the first step; FPU sits on yellow.
+        assert!((grade(0.04) - 1.0).abs() < 1e-6);
+        assert!((grade(0.20) - 3.0).abs() < 1e-6);
     }
 
-    /// A blunder with two visits behind it is a rumour: it may show green, never red. The same
-    /// loss with a real search behind it is the whole ramp.
+    /// The v1 fallback still lets either mean channel carry the grade.
     #[test]
-    fn a_grade_is_only_as_hot_as_the_search_behind_it() {
-        let huge = grade(0.9, 40.0, 1);
-        assert!(
-            huge <= UNSEARCHED_CEILING + 0.2,
-            "one visit reached {huge}, past the cool end"
+    fn either_mean_channel_can_carry_the_fallback() {
+        let last = (GRADE_RAMP.len() - 1) as f32;
+        assert_eq!(grade_means(0.0, POINTS_AT[5]), last);
+        assert_eq!(grade_means(WINRATE_AT[5], 0.0), last);
+        assert_eq!(grade_means(WINRATE_AT[4], POINTS_AT[1]), 4.0);
+        assert_eq!(grade_means(WINRATE_AT[1], POINTS_AT[4]), 4.0);
+    }
+
+    /// Among searched moves the hue is the loss and nothing else: two candidates that lose the
+    /// same amount are the same colour however differently they were searched. Confidence is
+    /// the grey floor and the blob's opacity, and it is not allowed back into the hue.
+    #[test]
+    fn search_depth_does_not_move_the_hue_of_a_searched_move() {
+        let g = grade(0.12);
+        assert_eq!(
+            colour(g, 1, TRUSTED_VISITS),
+            colour(g, 2, 10_000),
+            "the same loss painted two colours"
         );
-        assert!(grade(0.9, 40.0, TRUSTED_VISITS as u32) >= (GRADE_RAMP.len() - 1) as f32);
-        // Small losses are unaffected by the cap: it is a ceiling, not a scale.
-        let small = grade(0.0, POINTS_AT[1], 1);
-        assert!((small - 1.0).abs() < 1e-6, "a quarter point graded {small}");
+    }
+
+    /// The loss reading itself ignores visits; painting does not. A 1-visit last-stop loss is
+    /// grey, the same loss at [`TRUSTED_VISITS`] is red.
+    #[test]
+    fn a_grade_follows_the_loss_whatever_the_search() {
+        let last = (GRADE_RAMP.len() - 1) as f32;
+        assert_eq!(grade(0.9), last);
+        assert_eq!(colour(last, 1, 0), UNKNOWN_RGB);
+        assert_eq!(colour(last, 1, TRUSTED_VISITS - 1), UNKNOWN_RGB);
+        assert_eq!(colour(last, 1, TRUSTED_VISITS), GRADE_RAMP[5]);
+        assert_eq!(colour(0.0, 1, 100_000), GRADE_RAMP[0]);
+        assert_eq!(colour_stop(last, 1, 1), UNKNOWN_STOP);
+        assert_eq!(colour_stop(last, 1, TRUSTED_VISITS), 5);
+        assert!(!is_known(1, 0));
+        assert!(is_known(1, TRUSTED_VISITS));
+    }
+
+    /// The pick is the reference, not an estimate: it is cyan from the first report, whatever
+    /// search stands behind it, and every other move that thin is grey.
+    #[test]
+    fn the_pick_is_never_unknown() {
+        assert!(is_known(0, 0));
+        assert_eq!(colour(0.0, 0, 0), GRADE_RAMP[0]);
+        assert_eq!(colour_stop(0.0, 0, 1), 0);
+        assert_eq!(colour_stop(0.0, 1, 1), UNKNOWN_STOP);
     }
 
     /// The ramp hands back its own table at the stops and stays between neighbours in between.
@@ -230,7 +337,7 @@ mod tests {
     #[test]
     fn badges_cover_every_stop_and_snap_to_the_nearest() {
         let css = grade_css();
-        assert_eq!(css.lines().count(), GRADE_RAMP.len());
+        assert_eq!(css.lines().count(), GRADE_RAMP.len() + 1);
         for (i, [r, g, b]) in GRADE_RAMP.iter().enumerate() {
             let fill = format!(
                 ".mirai-grade-{} {{ background-color: #{r:02x}{g:02x}{b:02x};",
@@ -240,6 +347,10 @@ mod tests {
             assert_eq!(grade_stop(i as f32), i as u32);
             assert_eq!(grade_class(i as u32), format!("mirai-grade-{}", i + 1));
         }
+        let [r, g, b] = UNKNOWN_RGB;
+        let unknown = format!(".mirai-grade-unknown {{ background-color: #{r:02x}{g:02x}{b:02x};");
+        assert!(css.contains(&unknown), "missing {unknown}");
+        assert_eq!(grade_class(UNKNOWN_STOP), "mirai-grade-unknown");
         assert_eq!(grade_stop(1.4), 1);
         assert_eq!(grade_stop(1.6), 2);
         assert_eq!(grade_stop(-3.0), 0);

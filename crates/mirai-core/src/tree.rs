@@ -112,6 +112,9 @@ pub struct Candidate {
     pub score_lead: f32,
     pub prior: f32,
     pub pv: Vec<Point>,
+    /// Black-perspective KataGo utility — the blend of win rate and score the GUI colours a
+    /// candidate by. `None` on records saved before MRAI v2, which fall back to the means.
+    pub utility: Option<f32>,
 }
 
 /// Cached engine evaluation of a node's position. Black's perspective throughout.

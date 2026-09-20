@@ -7,7 +7,7 @@
 //! * Points are KataGo-ordered: `index = y * width + x`, `y = 0` is the **top** row
 //!   (see [`point`]). This matches the ordering of KataGo's `ownership` / `policy` arrays.
 //! * Every engine-derived value is stored from **Black's** perspective; the UI converts to
-//!   side-to-move at display time.
+//!   side-to-move at display time. Utility and `utilityLcb` flip by sign, like score lead.
 
 pub mod board;
 pub mod clock;

@@ -229,6 +229,13 @@ pub struct MoveInfo {
     /// `qs(utility, UTILITY_SCALE)`.
     pub utility: i16,
     /// `qs(utilityLcb, UTILITY_SCALE)`.
+    ///
+    /// Unlike every other quantised field this one **saturates in normal use**: KataGo's LCB
+    /// carries a confidence radius of `lcbStdevs * stdev / sqrt(ess)`, which is 3.5 utility at
+    /// one visit and `2 * utilityRange * lcbStdevs` (−14 at the analysis defaults) at none, so
+    /// a barely-searched child clips to ±3.99988. Measured on a 42-position sweep at 5 000
+    /// visits, 18 % of candidates clip — every one of them a one-visit policy-tail move. A
+    /// consumer may read a clipped value as "not searched"; it must not read it as a magnitude.
     pub utility_lcb: i16,
     /// `qs(scoreLead, SCORE_SCALE)`, Black's perspective, points.
     pub score_lead: i16,
@@ -288,6 +295,18 @@ impl MoveInfo {
     #[inline]
     pub fn score_lead_for(&self, to_play: Color) -> f32 {
         to_play.score_lead_for(self.score_lead_f32())
+    }
+
+    /// KataGo utility as seen by `to_play`.
+    #[inline]
+    pub fn utility_for(&self, to_play: Color) -> f32 {
+        to_play.utility_for(self.utility_f32())
+    }
+
+    /// Lower confidence bound on utility as seen by `to_play`.
+    #[inline]
+    pub fn utility_lcb_for(&self, to_play: Color) -> f32 {
+        to_play.utility_for(self.utility_lcb_f32())
     }
 }
 
@@ -465,6 +484,10 @@ mod tests {
         assert!((m.winrate_for(Color::Black) - 0.75).abs() < 1e-4);
         assert!((m.winrate_for(Color::White) - 0.25).abs() < 1e-4);
         assert!((m.score_lead_for(Color::White) + 4.0).abs() < 0.02);
+        m.utility = qs(0.12, UTILITY_SCALE);
+        m.utility_lcb = qs(0.08, UTILITY_SCALE);
+        assert!((m.utility_for(Color::Black) - 0.12).abs() < 2e-4);
+        assert!((m.utility_lcb_for(Color::White) + 0.08).abs() < 2e-4);
         m.winrate = q16(0.25);
         assert!((m.winrate_for(Color::White) - 0.75).abs() < 1e-4);
     }

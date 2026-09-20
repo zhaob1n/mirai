@@ -111,6 +111,7 @@ pub fn analysis_of(report: &Report, max_candidates: usize) -> NodeAnalysis {
                 score_lead: m.score_lead_f32(),
                 prior: m.prior_f32(),
                 pv: m.pv.clone(),
+                utility: Some(m.utility_f32()),
             })
             .collect(),
         ownership: report

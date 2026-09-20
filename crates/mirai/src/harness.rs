@@ -38,6 +38,8 @@ enum Step {
     Page(String),
     /// Show an `adw::ViewStack` page by title — the sidebar's Analysis/Moves/Comment.
     Stack(String),
+    /// Sort a `GtkColumnView` by the column whose title contains this text.
+    Sort(String),
     /// Set a ComboRow by title substring and raw model index.
     Select(String, u32),
     /// Set a SpinRow by title substring and value.
@@ -72,6 +74,7 @@ fn parse(script: &str) -> Vec<Step> {
                 "press" => Some(Step::Press(rest.to_string())),
                 "page" => Some(Step::Page(rest.to_string())),
                 "stack" => Some(Step::Stack(rest.to_string())),
+                "sort" => Some(Step::Sort(rest.to_string())),
                 "select" => rest.rsplit_once('=').and_then(|(title, index)| {
                     index
                         .parse()
@@ -182,6 +185,14 @@ pub fn install(app: &adw::Application) {
                     let done = show_stack_page(&app, &title);
                     eprintln!(
                         "harness: stack {title:?} -> {}",
+                        if done { "ok" } else { "NOT FOUND" }
+                    );
+                    glib::timeout_future(Duration::from_millis(250)).await;
+                }
+                Step::Sort(title) => {
+                    let done = sort_by_column(&app, &title);
+                    eprintln!(
+                        "harness: sort {title:?} -> {}",
                         if done { "ok" } else { "NOT FOUND" }
                     );
                     glib::timeout_future(Duration::from_millis(250)).await;
@@ -389,6 +400,58 @@ fn show_stack_page(app: &adw::Application, needle: &str) -> bool {
                     stack.set_visible_child(&page.child());
                     return true;
                 }
+            }
+        }
+        let mut child = w.first_child();
+        while let Some(c) = child {
+            if walk(&c, needle) {
+                return true;
+            }
+            child = c.next_sibling();
+        }
+        false
+    }
+    match app.active_window() {
+        Some(w) => walk(w.upcast_ref::<gtk::Widget>(), needle),
+        None => false,
+    }
+}
+
+/// Sorts the first `gtk::ColumnView` by the column whose title contains `needle`, which is
+/// exactly what clicking that header does.
+///
+/// `press:` cannot: a column header is a `GtkColumnViewTitle` with a click gesture, not a
+/// `GtkButton`, so no label search reaches it. `sort_by_column` is the same call the title
+/// widget makes. Repeating the step flips the direction, as a second click would.
+fn sort_by_column(app: &adw::Application, needle: &str) -> bool {
+    fn walk(w: &gtk::Widget, needle: &str) -> bool {
+        if let Some(view) = w.downcast_ref::<gtk::ColumnView>() {
+            let columns = view.columns();
+            for i in 0..columns.n_items() {
+                let Some(column) = columns.item(i).and_downcast::<gtk::ColumnViewColumn>() else {
+                    continue;
+                };
+                if column.sorter().is_none()
+                    || !column.title().is_some_and(|title| title.contains(needle))
+                {
+                    continue;
+                }
+                let ascending = view
+                    .sorter()
+                    .and_downcast::<gtk::ColumnViewSorter>()
+                    .is_some_and(|sorter| {
+                        sorter.primary_sort_column().as_ref() == Some(&column)
+                            && sorter.primary_sort_order() == gtk::SortType::Ascending
+                    });
+                view.sort_by_column(
+                    Some(&column),
+                    if ascending {
+                        gtk::SortType::Descending
+                    } else {
+                        gtk::SortType::Ascending
+                    },
+                );
+                return true;
             }
         }
         let mut child = w.first_child();

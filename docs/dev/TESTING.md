@@ -177,9 +177,10 @@ Anything larger is a defect in the remote path, not noise.
 
 `crates/mirai-engine/examples/sweep.rs` is the same driver pointed at an SGF: it analyses every
 n-th position of the main line and prints one CSV row per candidate — rank, visits, win rate,
-score lead, and both losses against the engine's own pick. It exists because the candidate
-colour ramp (`crates/mirai/src/palette.rs`) is a set of numbers that has to be fitted to real
-games rather than guessed.
+score lead, and all four losses against the engine's own pick: `dwin`, `dpts`, `dutil` (mean
+utility, the one the live colour is keyed on) and `dlcb` (its lower bound). It exists because the
+candidate colour ramp (`crates/mirai/src/palette.rs`) is a set of numbers that has to be
+fitted to real games rather than guessed.
 
 ```sh
 cargo run -p mirai-engine --example sweep -- \
@@ -189,9 +190,12 @@ cargo run -p mirai-engine --example sweep -- \
 `--config` is optional; without it the built-in tuning writes one into the temporary directory.
 What the shipped ramp was fitted on, for whoever moves a breakpoint next: a 197-move Fox game at
 1 000 and 5 000 root visits, a 29-move engine self-play record, a decided 9x9 endgame and a 9x9
-opening. Two readings decided its shape — a 1-visit candidate's score loss moves by 3.5 points
-(90th percentile) between 1 000 and 5 000 root visits against 0.97 for a 20-visit one, and a
-point is worth about 13 % of win rate in a close position against 0.02 % in a decided one.
+opening. A point is worth about 13 % of win rate in a close position against 0.02 % in a decided
+one. Search depth below ten visits is not a colour, not a label and not full opacity
+(`TRUSTED_VISITS`, the only threshold). Live colour is `utility`
+loss against the pick (`UTILITY_AT`, in KataGo utility, not win-rate); what that table
+measures in the units the columns show, and why it is the mean and not `utilityLcb`, is
+[`CANDIDATE_COLOUR.md`](CANDIDATE_COLOUR.md) §6.
 
 ### The two SGF fixtures
 
@@ -345,6 +349,7 @@ Five traps:
 | `press:<label substring>` | Click the first visible matching button | 250 ms |
 | `select:<row title substring>=<index>` | Set the first visible matching `adw::ComboRow`; index 0 is its prompt/default entry | 250 ms |
 | `stack:<view stack page title>` | Show that `adw::ViewStack` page — `stack:Moves` for the sidebar's branch graph | 250 ms |
+| `sort:<column title substring>` | Sort the first `gtk::ColumnView` by that column, and flip the direction if it is already the primary one. A column header is a `GtkColumnViewTitle`, not a `GtkButton`, so `press:` cannot reach it | 250 ms |
 | `fill:<entry placeholder substring>=<text>` | Fill the first visible `gtk::SearchEntry` whose placeholder matches | 120 ms |
 | `shot:<path.png>` | Render the active window to PNG | see below |
 | `shot:<path.png>=<widget id>` | Same render, cropped to one widget — the ids are Blueprint's (`blunder_expander`, `nav`, …) | see below |

@@ -425,6 +425,7 @@ mod tests {
                     score_lead: 0.0,
                     prior: 0.5,
                     pv: vec![mv],
+                    utility: None,
                 })
                 .into_iter()
                 .collect(),
