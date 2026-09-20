@@ -8,7 +8,9 @@
 
 use std::time::Instant;
 
-use mirai_core::{Board, Candidate, Color, DeadSet, GameTree, NodeAnalysis, NodeId, Point};
+use mirai_core::{
+    Board, Candidate, Color, DeadSet, GameTree, NodeAnalysis, NodeId, Point, Scoring,
+};
 use mirai_engine::{AnalyzeReq, Report, Want, dq_own};
 
 /// How many principal-variation moves to ask for. Long enough to read a sequence out on the
@@ -34,6 +36,12 @@ pub fn dead_from_ownership(board: &Board, ownership: &[i8]) -> DeadSet {
 ///
 /// Takes `&mut GameTree` because resolving the position populates the tree's position cache;
 /// a shared borrow would replay the whole line on every keystroke.
+///
+/// The last setup or `PL` node on the path is a reconstruction boundary: the request
+/// snapshots that board as unique row-major `initial_stones` and only sends real moves
+/// after it. Territory scoring folds the boundary's prisoner counts into `komi_x2` so
+/// KataGo, which would otherwise start from zero captures, matches the record. Area
+/// scoring and ordinary move-only games keep an unadjusted move list.
 pub fn request_for_node(
     tree: &mut GameTree,
     id: NodeId,
@@ -42,49 +50,47 @@ pub fn request_for_node(
 ) -> AnalyzeReq {
     let mut req = AnalyzeReq::new(tree.info.size, tree.info.rules, tree.info.komi);
 
-    // Setup stones become `initialStones` only when they precede every move, which is what
-    // real SGFs do. Anything later cannot be expressed as initial stones plus a move list,
-    // so that case falls back to the replayed board.
-    let mut setup: Vec<(Color, Point)> = Vec::new();
-    let mut moves: Vec<(Color, Point)> = Vec::new();
-    let mut late_setup = false;
-    for nid in tree.path_to(id) {
+    let path = tree.path_to(id);
+    let boundary = path.iter().rev().copied().find(|&nid| {
         let node = tree.node(nid);
-        if !node.setup.is_empty() {
-            if moves.is_empty() {
-                for &p in &node.setup.add_black {
-                    setup.push((Color::Black, p));
-                }
-                for &p in &node.setup.add_white {
-                    setup.push((Color::White, p));
-                }
-                setup.retain(|(_, p)| !node.setup.add_empty.contains(p));
-            } else {
-                late_setup = true;
+        !node.setup.is_empty() || node.to_play_override.is_some()
+    });
+
+    if let Some(boundary) = boundary {
+        let (to_play, stones, captures) = {
+            let pos = tree.position(boundary);
+            let stones = pos
+                .board
+                .stones()
+                .iter()
+                .enumerate()
+                .filter_map(|(i, s)| s.map(|c| (c, Point(i as u16))))
+                .collect::<Vec<_>>();
+            (pos.to_play, stones, pos.board.captures)
+        };
+        req.initial_player = Some(to_play);
+        req.initial_stones = stones;
+        if tree.info.rules.rules().scoring == Scoring::Territory && captures != [0, 0] {
+            let black_captures = captures[Color::Black.index()];
+            let white_captures = captures[Color::White.index()];
+            let adjusted = i32::from(req.komi_x2)
+                + 2 * (i32::from(white_captures) - i32::from(black_captures));
+            req.komi_x2 = adjusted.clamp(i16::MIN.into(), i16::MAX.into()) as i16;
+        }
+        for &nid in path.iter().skip_while(|&&nid| nid != boundary).skip(1) {
+            if let Some(mv) = tree.node(nid).mv {
+                req.moves.push(mv);
             }
         }
-        if let Some((c, p)) = node.mv {
-            moves.push((c, p));
-        }
-    }
-
-    if late_setup {
-        // Correct, just without move history.
-        let pos = tree.position(id);
-        req.initial_player = Some(pos.to_play);
-        req.initial_stones = pos
-            .board
-            .stones()
-            .iter()
-            .enumerate()
-            .filter_map(|(i, s)| s.map(|c| (c, Point(i as u16))))
-            .collect();
     } else {
-        req.initial_stones = setup;
-        if moves.is_empty() {
+        for nid in path {
+            if let Some(mv) = tree.node(nid).mv {
+                req.moves.push(mv);
+            }
+        }
+        if req.moves.is_empty() {
             req.initial_player = Some(tree.position(id).to_play);
         }
-        req.moves = moves;
     }
 
     req.want = want;
@@ -226,6 +232,7 @@ mod tests {
         // With no moves the request must say whose turn it is, because the wire format
         // cannot infer it from an empty move list.
         assert_eq!(req.initial_player, Some(Color::Black));
+        assert_eq!(req.komi(), 6.5, "a capture-free setup must not touch komi");
     }
 
     #[test]
@@ -241,21 +248,135 @@ mod tests {
         assert_eq!(req.initial_stones, vec![(Color::Black, p(19, 3, 3))]);
     }
 
-    /// Setup after a move cannot be expressed as initial stones plus a move list, so the
-    /// request must carry the replayed board instead — correct, just without history.
+    /// A mid-game setup is a reconstruction boundary: earlier stones become the
+    /// snapshot, and real moves after it stay in the move list so ko history survives.
     #[test]
-    fn setup_after_a_move_falls_back_to_the_whole_board() {
+    fn setup_after_a_move_keeps_later_moves() {
         let mut t = tree(9);
         let root = t.root();
         let first = t.play(root, Color::Black, p(9, 2, 2)).expect("legal");
         let second = t.play(first, Color::White, p(9, 6, 6)).expect("legal");
-        t.node_mut(second).setup.add_black.push(p(9, 4, 4));
+        let setup = t.add_child(second);
+        t.node_mut(setup).setup.add_black.push(p(9, 4, 4));
+        t.node_mut(setup).setup.add_white.push(p(9, 0, 0));
+        let later = t.play(setup, Color::Black, p(9, 3, 3)).expect("legal");
 
-        let req = request_for_node(&mut t, second, Want::empty(), 50);
+        let at_setup = request_for_node(&mut t, setup, Want::empty(), 50);
+        assert!(
+            at_setup.moves.is_empty(),
+            "pre-boundary history is the snapshot"
+        );
+        assert_eq!(at_setup.initial_player, Some(Color::Black));
+        assert_eq!(
+            at_setup.initial_stones,
+            vec![
+                (Color::White, p(9, 0, 0)),
+                (Color::Black, p(9, 2, 2)),
+                (Color::Black, p(9, 4, 4)),
+                (Color::White, p(9, 6, 6)),
+            ]
+        );
 
-        assert!(req.moves.is_empty(), "history must not be sent as moves");
-        assert_eq!(req.initial_stones.len(), 3);
+        let req = request_for_node(&mut t, later, Want::empty(), 50);
+        assert_eq!(req.initial_stones, at_setup.initial_stones);
         assert_eq!(req.initial_player, Some(Color::Black));
+        assert_eq!(req.moves, vec![(Color::Black, p(9, 3, 3))]);
+        assert_eq!(req.to_play(), Color::White);
+        assert_eq!(req.max_visits, Some(50));
+        assert_eq!(req.pv_len, Some(PV_LEN));
+    }
+
+    /// B[D4]; PL[B]; B[C3] — same-colour consecutive moves, no fabricated pass.
+    #[test]
+    fn pl_after_a_move_then_a_real_move_keeps_post_boundary_history() {
+        let mut t = tree(9);
+        let root = t.root();
+        let d4 = p(9, 3, 3);
+        let c3 = p(9, 2, 2);
+        let first = t.play(root, Color::Black, d4).expect("legal");
+        let pl = t.add_child(first);
+        t.node_mut(pl).to_play_override = Some(Color::Black);
+        let third = t.play(pl, Color::Black, c3).expect("legal");
+
+        let at_pl = request_for_node(&mut t, pl, Want::empty(), 50);
+        assert_eq!(at_pl.initial_player, Some(Color::Black));
+        assert!(at_pl.moves.is_empty());
+        assert_eq!(at_pl.initial_stones, vec![(Color::Black, d4)]);
+        assert_eq!(at_pl.to_play(), Color::Black);
+
+        let req = request_for_node(&mut t, third, Want::empty(), 50);
+        assert_eq!(req.initial_player, Some(Color::Black));
+        assert_eq!(req.initial_stones, vec![(Color::Black, d4)]);
+        assert_eq!(req.moves, vec![(Color::Black, c3)]);
+        assert!(
+            req.moves.iter().all(|&(_, pt)| !pt.is_pass()),
+            "a PL switch must not invent a pass"
+        );
+        assert_eq!(req.to_play(), Color::White);
+
+        let pos = t.position(third);
+        assert_eq!(pos.to_play, Color::White);
+        assert_eq!(pos.board.at(d4), Some(Color::Black));
+        assert_eq!(pos.board.at(c3), Some(Color::Black));
+    }
+
+    /// `(;SZ[9]AB[aa];AW[aa][bb];AE[bb];B[cc])` — last setup wins, no duplicate stones.
+    #[test]
+    fn cumulative_setup_overwrites_and_erases_before_the_move_list() {
+        let mut t = tree(9);
+        let root = t.root();
+        let aa = p(9, 0, 0);
+        let bb = p(9, 1, 1);
+        let cc = p(9, 2, 2);
+        t.node_mut(root).setup.add_black.push(aa);
+        let aw = t.add_child(root);
+        t.node_mut(aw).setup.add_white.extend([aa, bb]);
+        let ae = t.add_child(aw);
+        t.node_mut(ae).setup.add_empty.push(bb);
+        let mv = t.play(ae, Color::Black, cc).expect("legal");
+
+        let req = request_for_node(&mut t, mv, Want::empty(), 50);
+        assert_eq!(req.initial_stones, vec![(Color::White, aa)]);
+        assert_eq!(req.moves, vec![(Color::Black, cc)]);
+        assert_eq!(req.initial_player, Some(Color::Black));
+    }
+
+    #[test]
+    fn territory_komi_uses_boundary_captures_not_the_target() {
+        let mut t = tree(9);
+        let root = t.root();
+        let b1 = t.play(root, Color::Black, p(9, 1, 0)).expect("legal");
+        let w1 = t.play(b1, Color::White, p(9, 0, 0)).expect("legal");
+        let cap = t.play(w1, Color::Black, p(9, 0, 1)).expect("legal");
+        let pl = t.add_child(cap);
+        t.node_mut(pl).to_play_override = Some(Color::White);
+        let w2 = t.play(pl, Color::White, p(9, 8, 7)).expect("legal");
+        let b2 = t.play(w2, Color::Black, p(9, 8, 8)).expect("legal");
+        let later = t.play(b2, Color::White, p(9, 7, 8)).expect("legal");
+
+        assert_eq!(t.position(pl).board.captures, [1, 0]);
+        assert_eq!(t.position(later).board.captures, [1, 1]);
+
+        let before = request_for_node(&mut t, cap, Want::empty(), 50);
+        assert!(before.initial_stones.is_empty());
+        assert_eq!(before.moves.len(), 3);
+        assert_eq!(before.komi_x2, 13, "a move list already has the captures");
+
+        let at_pl = request_for_node(&mut t, pl, Want::empty(), 50);
+        let at_later = request_for_node(&mut t, later, Want::empty(), 50);
+        // KM 6.5 → 13; boundary prisoners are Black 1, White 0 → komi_x2 11.
+        assert_eq!(at_pl.komi_x2, 11);
+        assert_eq!(
+            at_later.komi_x2, 11,
+            "post-boundary captures must not enter komi"
+        );
+        assert_eq!(t.info.komi, 6.5, "the record's KM must not be rewritten");
+
+        let mut area = t.clone();
+        area.info.rules = RuleSet::Chinese;
+        let area_req = request_for_node(&mut area, later, Want::empty(), 50);
+        assert_eq!(area_req.komi_x2, 13);
+        assert_eq!(area_req.moves, at_later.moves);
     }
 
     #[test]

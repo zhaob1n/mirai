@@ -17,6 +17,7 @@
 //! `action:<prefix.name>=<string arg>`, `press:<button text>`, `page:<preferences page>`,
 //! `stack:<view stack page>`, `select:<row title>=<index>`, `set:<row title>=<number>`,
 //! `fill:<entry placeholder>=<text>`, `shot:<path.png>`, `shot:<path.png>=<widget id>`,
+//! `board:<primary|secondary|menu>:<GTP>` enters the board's production hit-test path.
 //! `close-window`, `quit`.
 
 use std::time::Duration;
@@ -31,8 +32,8 @@ enum Step {
     Wait(u64),
     WaitStatus(String),
     Action(String, Option<String>),
-    /// Activate the first button whose label contains this text, anywhere in the window's
-    /// widget tree — including inside a presented `adw::Dialog`.
+    Board(String, String),
+    /// Activate a matching button or enabled menu item in the active window.
     Press(String),
     /// Open a PreferencesDialog page by title.
     Page(String),
@@ -44,7 +45,7 @@ enum Step {
     Select(String, u32),
     /// Set a SpinRow by title substring and value.
     Set(String, f64),
-    /// Fill the first visible SearchEntry whose placeholder contains this text.
+    /// Fill the first visible Entry or SearchEntry whose placeholder contains this text.
     Fill(String, String),
     /// Write a PNG of the whole window, or of the one widget whose Blueprint id is given —
     /// a 300x100 strip of the list you changed instead of a 1500x1600 window.
@@ -65,6 +66,13 @@ fn parse(script: &str) -> Vec<Step> {
             match kind {
                 "wait" => rest.parse().ok().map(Step::Wait),
                 "wait-status" => Some(Step::WaitStatus(rest.to_string())),
+                "board" => match rest.split_once(':') {
+                    Some((button, point)) => Some(Step::Board(button.into(), point.into())),
+                    None => {
+                        eprintln!("harness: board {rest:?} -> FAILED: expected button:GTP");
+                        None
+                    }
+                },
                 "shot" => Some(match rest.rsplit_once('=') {
                     Some((path, region)) => Step::Shot(path.to_string(), Some(region.to_string())),
                     None => Step::Shot(rest.to_string(), None),
@@ -163,6 +171,15 @@ pub fn install(app: &adw::Application) {
                         if done { "ok" } else { "MISSING" }
                     );
                     // Let the action's effects reach the frame clock.
+                    glib::timeout_future(Duration::from_millis(120)).await;
+                }
+                Step::Board(button, point) => {
+                    match board_click(&app, &button, &point) {
+                        Ok(()) => eprintln!("harness: board {button}:{point} -> ok"),
+                        Err(error) => {
+                            eprintln!("harness: board {button}:{point} -> FAILED: {error}")
+                        }
+                    }
                     glib::timeout_future(Duration::from_millis(120)).await;
                 }
                 Step::Press(label) => {
@@ -328,6 +345,18 @@ fn press(app: &adw::Application, needle: &str) -> bool {
             {
                 button.emit_clicked();
                 return true;
+            }
+            if w.is_mapped()
+                && w.is_sensitive()
+                && matches!(
+                    w.accessible_role(),
+                    gtk::AccessibleRole::MenuItem
+                        | gtk::AccessibleRole::MenuItemCheckbox
+                        | gtk::AccessibleRole::MenuItemRadio
+                )
+                && find_label(w, needle)
+            {
+                return w.activate();
             }
         }
         let mut child = w.first_child();
@@ -522,11 +551,20 @@ fn set_spin(app: &adw::Application, needle: &str, value: f64) -> bool {
     }
 }
 
-/// Fills the first visible `gtk::SearchEntry` whose placeholder contains `needle`.
+/// Fills the first visible Entry or SearchEntry whose placeholder contains `needle`.
 fn fill(app: &adw::Application, needle: &str, text: &str) -> bool {
     fn walk(w: &gtk::Widget, needle: &str, text: &str) -> bool {
         if w.is_visible()
             && let Some(entry) = w.downcast_ref::<gtk::SearchEntry>()
+            && entry
+                .placeholder_text()
+                .is_some_and(|placeholder| placeholder.contains(needle))
+        {
+            entry.set_text(text);
+            return true;
+        }
+        if w.is_visible()
+            && let Some(entry) = w.downcast_ref::<gtk::Entry>()
             && entry
                 .placeholder_text()
                 .is_some_and(|placeholder| placeholder.contains(needle))
@@ -547,6 +585,44 @@ fn fill(app: &adw::Application, needle: &str, text: &str) -> bool {
         Some(w) => walk(w.upcast_ref::<gtk::Widget>(), needle, text),
         None => false,
     }
+}
+
+fn board_click(app: &adw::Application, button: &str, coordinate: &str) -> Result<(), String> {
+    use crate::widgets::BoardView;
+    use gtk::gdk;
+
+    fn find_board(widget: &gtk::Widget) -> Option<BoardView> {
+        if let Some(board) = widget.downcast_ref::<BoardView>() {
+            return board.is_mapped().then(|| board.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            if let Some(board) = find_board(&current) {
+                return Some(board);
+            }
+            child = current.next_sibling();
+        }
+        None
+    }
+
+    let (button, modifiers) = match button {
+        "primary" => (gdk::BUTTON_PRIMARY, gdk::ModifierType::empty()),
+        "secondary" => (gdk::BUTTON_SECONDARY, gdk::ModifierType::empty()),
+        "menu" => (gdk::BUTTON_SECONDARY, gdk::ModifierType::SHIFT_MASK),
+        _ => return Err("unknown button".into()),
+    };
+    let window = app.active_window().ok_or("no active window")?;
+    let board = find_board(window.upcast_ref()).ok_or("no mapped board")?;
+    let size = board.state().tree().info.size;
+    let point = size
+        .from_gtp(coordinate)
+        .filter(|&p| size.contains(p))
+        .ok_or("invalid board coordinate (PASS is not an intersection)")?;
+    let (x, y) = board
+        .point_center(point)
+        .ok_or("board layout is not ready")?;
+    board.click_at(button, modifiers, x, y);
+    Ok(())
 }
 
 /// A button's user-visible text. `GtkButton:label` is empty whenever the button holds a

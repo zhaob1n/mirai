@@ -30,9 +30,9 @@ cargo test -p mirai-proto --test wire_size -- --nocapture   # prints the measure
 ```
 
 `cargo fmt --all --check`, `blueprint-compiler lint crates/mirai/src/window.blp
-crates/mirai/src/new_game.blp crates/mirai/src/preferences.blp
-crates/mirai/src/profile_editor.blp crates/mirai/src/fox_picker.blp
-crates/mirai/src/panels/analysis.blp`, and the clippy line above are quiet under the current
+crates/mirai/src/new_game.blp crates/mirai/src/label_editor.blp
+crates/mirai/src/preferences.blp crates/mirai/src/profile_editor.blp
+crates/mirai/src/fox_picker.blp crates/mirai/src/panels/analysis.blp`, and the clippy line above are quiet under the current
 nightly. Between full runs, `cargo fmt` and `cargo clippy -p <crate>` on what you touched are
 enough. A toolchain bump that lights up untouched code is its own change.
 
@@ -54,7 +54,7 @@ the rest defend the surrounding behaviour and are named so you can find them.
 | `point.rs` | INV-1 encoding: `y = 0` is the top row, A19 is index 0, neighbours never wrap a row; rectangular geometry | `gtp_corners_19x19`, `sgf_corners_19x19`, `rectangular_geometry`, `neighbors_clip_at_edges` |
 | `rules.rs` | Each `RuleSet` maps to the exact KataGo rules string and the right `(ko, suicide, whb)` tuple | `katago_names_round_trip`, `ruleset_tuples_match_katago` |
 | `board.rs` | Ko released after exactly one move; suicide legality per ruleset — the one place rulesets genuinely disagree; capture counts; Zobrist order-independent and turn-aware, which superko depends on | **`simple_ko_is_banned_for_exactly_one_move`**, **`single_stone_suicide_illegal_under_every_ruleset`**, **`multi_stone_suicide_follows_the_ruleset`**, **`is_legal_agrees_with_play_over_random_games`** (randomised differential) |
-| `tree.rs` | Positional and situational superko really differ; simple ko stays in `Board`; passes never enter the superko set; edits keep `NodeId`s valid; handicap flips the first player | **`positional_superko_rejects_what_situational_allows`**, **`incremental_stepping_matches_a_cold_replay`** (the proof that fast navigation equals a cold replay) |
+| `tree.rs` | Positional and situational superko really differ; simple ko stays in `Board`; passes never enter the superko set; edits keep `NodeId`s valid; nonempty setup clears ko/superko while pure `PL` does not; marks and `PL` count as content; handicap flips the first player | **`positional_superko_rejects_what_situational_allows`**, **`incremental_stepping_matches_a_cold_replay`**, `marks_alone_are_content`, `to_play_override_alone_is_content`, `nonempty_setup_clears_ko_and_superko_history`, `pure_pl_keeps_ko_and_hash_history`, `detach_restore_keeps_ids_order_and_payload` |
 | `score.rs` | Each side scores territory **plus the prisoners it holds** — the margin alone is not enough, both totals must read as a human scorer would write them; per-chain dead toggling; seeding dead stones from ownership needs a confident majority | **`endgame_area_and_territory`** (one 9×9 endgame under both rule families), `handicap_compensation_variants`, `from_ownership_needs_a_confident_majority` |
 | `handicap.rs`, `clock.rs` | Conventional stone placement; time allocation never spends over half the main time and mostly consumes a byo-yomi period | `nine_stones_on_19x19_are_the_star_points`, `main_time_branch_spends_a_twentieth_and_never_over_half` |
 | `sgf.rs` | Escaping, soft line breaks, `SZ[w:h]`, multi-game collections, branches; a corrupt or future `MRAI[…]` blob is ignored rather than fatal | Two records, two jobs. **`engine_record_parses_replays_and_keeps_its_analysis`** — 17 862 bytes mirai wrote itself out of a real KataGo search; 25 moves replay legally, the three continuations at its end survive, and every node's evaluation returns unchanged through the one root `MRAI` blob. **`lizzieyzy_file_parses_replays_and_preserves_unknown_properties`** — 25 765 bytes *another program* wrote, which is the only input that can catch a parser agreeing with mirai's own writer: `KM` before `SZ`, empty `PB[]`, `PL[B]`, CJK comments with real newlines, and `DZ`/`LZOP`/`LZ` blobs that must survive parse → write → parse byte for byte. **`unmodelled_properties_survive_a_round_trip`** adds the shapes neither file happens to contain — a multi-value unknown property and an escaped `]` inside one |
@@ -71,9 +71,9 @@ the rest defend the surrounding behaviour and are named so you can find them.
 | `tuning.rs` | The generated analysis config: KataGo refuses to start unless `numAnalysisThreads`, `numSearchThreadsPerAnalysisThread` and `nnMaxBatchSize` are all present, so the rendered file must carry every one of them; the batch must cover the thread product; rewriting an unchanged file would churn a config two windows share | **`the_rendered_config_carries_every_key_katago_demands`**, **`writing_is_idempotent_so_shared_engines_do_not_churn`**, `the_defaults_are_internally_consistent`, `a_batch_smaller_than_the_thread_product_is_reported` |
 | `calibrate.rs` | Automatic tuning uses fixed visits and ownership on distinct positions, stops at the first search-thread doubling below 10%, picks aggregate analysis throughput, preserves the cache decision and grows the batch to cover the winner | **`benchmark_requests_are_fixed_visit_owned_and_position_distinct`**, `search_stops_before_low_gain`, `analysis_uses_maximum_throughput`, `final_tuning_preserves_cache_and_covers_threads` |
 | **mirai-client** | | |
-| `analysis.rs` | setup stones vs move list; SpeedMeter smoothing and the final-report echo | **`a_repeated_final_report_does_not_zero_the_rate`**, `root_setup_becomes_initial_stones_and_names_the_player`, `speed_meter_measures_visits_per_second` |
+| `analysis.rs` | last setup/`PL` boundary plus later moves; territory scoring folds boundary captures into `komi_x2`; SpeedMeter smoothing and the final-report echo | **`a_repeated_final_report_does_not_zero_the_rate`**, **`setup_after_a_move_keeps_later_moves`**, **`pl_after_a_move_then_a_real_move_keeps_post_boundary_history`**, **`territory_komi_uses_boundary_captures_not_the_target`**, `root_setup_becomes_initial_stones_and_names_the_player`, `cumulative_setup_overwrites_and_erases_before_the_move_list`, `speed_meter_measures_visits_per_second` |
 | `batch.rs` | main-line only; INV-2 blunders; 2 % noise floor; unanalysed parent is not a mistake; concurrency cap; the sink hears each result while the rest of the plan is still queued — a sweep that dispatched everything before joining anything left the banner at 0/N and the graph empty until the end | **`white_blunder_is_measured_from_whites_perspective`**, **`a_sweep_reports_a_result_before_dispatching_the_rest`**, `a_two_percent_drop_is_still_noise`, `an_unanalysed_parent_is_not_a_blunder`, `in_flight_scales_with_threads_and_saturates_at_sixteen` |
-| `game.rs` | illegal move is a no-op; dirty/revision; blank records; Save As after autosave | **`an_illegal_move_changes_nothing_at_all`**, `content_detection_ignores_a_blank_record`, `restoring_an_autosave_requires_save_as` |
+| `game/mod.rs` | illegal move is a no-op; dirty is a document token not undo depth; blank records; Save As after autosave; setup/PL history; revision-guarded analysis | **`an_illegal_move_changes_nothing_at_all`**, `content_detection_ignores_a_blank_record`, `restoring_an_autosave_requires_save_as`, **`save_checkpoint_follows_the_document_token`**, **`set_analysis_at_rejects_a_stale_revision`**, `setup_appends_a_variation_and_keeps_existing_children` |
 | `session.rs` | TOFU gate: unpinned waits, pin skips the dialog, reconnect keeps trust | **`an_unpinned_connection_waits_for_trust_before_analysing`**, `a_pinned_connection_is_usable_immediately`, `a_reconnecting_session_withdraws_the_engine_but_keeps_the_trust` |
 | `play.rs` | temperature 0 is deterministic; one bad report never resigns; last period flags | **`temperature_zero_always_plays_the_engines_choice`**, **`a_lone_bad_report_does_not_resign`**, `the_last_period_expiring_loses_on_time` |
 | `fox.rs` | Fox SGF dialect: backslashes outside values dropped, UTF-8 names, variations survive | `backslashes_outside_values_are_dropped`, `chinese_names_stay_utf8`, `escaped_newlines_keep_sibling_variations` |
@@ -83,7 +83,7 @@ the rest defend the surrounding behaviour and are named so you can find them.
 | `session.rs` | Exact-match auth, and no `[[token]]` means reject everyone rather than admit everyone; the zero-copy send path is byte-identical to what a client decodes; a client cannot escalate its own priority | **`authentication_accepts_only_an_exact_token`**, **`sub_msg_ref_is_byte_identical_to_sub_msg`**, `priority_is_clamped_into_the_served_band` |
 | **mirai (GUI)** — display-free logic only; everything visual is section 5 | | |
 | `config.rs` | A missing file is a first run, a corrupt one is an error; model/config directories have a fixed XDG order, every valid file is merged without duplicates, and GTP config is excluded; a TOFU pin can never land on a local profile; concurrent-window saves merge correctly | `missing_file_yields_a_seeded_config_not_an_error`, `xdg_system_directories_keep_precedence_and_ignore_relative_entries`, `discovery_directories_follow_the_documented_order`, `network_discovery_merges_every_bin_gz_and_ignores_everything_else`, `analysis_config_discovery_returns_every_analysis_config_but_not_gtp`, `pins_are_recorded_on_remote_profiles_only`, **`a_save_keeps_another_windows_edit`**, `a_removed_profile_is_removed_from_the_file` |
-| `window.rs` | `tree_has_content`: never autosave an empty board and never offer to restore one, with the boundaries that matter (a pass counts, marks alone do not, content deep in a variation is found); INV-8; Clear Board keeps size/rules/komi and drops identity | **`a_blank_record_is_not_worth_autosaving`** + five boundary cases, **`handlers_do_not_keep_the_window_alive`**, `clearing_the_board_keeps_size_rules_and_komi` |
+| `window.rs` | Clear Board keeps size/rules/komi and drops identity; the move slider spans the line through the cursor | **`clearing_the_board_keeps_size_rules_and_komi`**, `the_move_slider_spans_the_line_through_the_cursor` |
 | `fox.rs` | Fox's literal property separators and quarter-point komi are normalised; both documented handicap encodings become root setup stones without losing variations; query text and result metadata stay safe at the URL and GTK markup boundaries; last successful search round-trips through the cache file | `fox_escapes_and_quarter_point_komi_are_normalised`, `fox_setup_nodes_become_one_root_handicap`, `consecutive_black_handicap_moves_are_promoted_too`, `handicap_normalisation_preserves_root_variations`, `query_values_are_utf8_percent_encoded`, `last_search_round_trips_through_json` |
 | `play.rs` | Deterministic at temperature 0 and genuinely spread above it; one bad report never resigns and a good one clears the streak; clock transitions | **`temperature_zero_always_plays_the_engines_choice`**, **`a_lone_bad_report_does_not_resign`**, `the_last_period_expiring_loses_on_time` |
 | `batch.rs` | INV-2 applied to blunder detection — the drop is measured from the mover's side; batch concurrency follows `numAnalysisThreads` and saturates | **`white_blunder_is_measured_from_whites_perspective`**, `in_flight_scales_with_threads_and_saturates_at_sixteen` |
@@ -315,10 +315,18 @@ with no label at all is reached — `press:Edit this profile` in Preferences wor
 A `gtk::MenuButton` matching by label or tooltip is popped up instead of clicked, which is how
 the discovered-file choosers in the local-engine editor are opened; its entries are then
 ordinary buttons labelled with the file name, so `press:kata1-b18…` picks one.
+A visible, mapped, sensitive widget whose accessible role is `MenuItem`, `MenuItemCheckbox`
+or `MenuItemRadio` is activated (`WidgetExt::activate`) when its label matches — that is how
+a board context-menu item is chosen after `board:menu:`. Allow the popover to map first,
+for example `board:menu:D4,wait:1000,press:Set as Main Line`.
 A presented `adw::Dialog` is a descendant of the window, so this reaches dialog buttons too.
-`harness::fill` similarly finds a visible `gtk::SearchEntry` by placeholder substring and sets
-its text, so network-backed search dialogs can be exercised without a test-only application
-path.
+`harness::fill` finds a visible `gtk::SearchEntry` or `gtk::Entry` by placeholder substring
+and sets its text. `board:` finds the mapped BoardView, computes the intersection center
+from its actual layout, and calls the same hit-test handler as the released mouse gesture.
+In review, `board:secondary:` deletes the current branch in Play mode, toggles the opposite
+colour in Setup mode (matching stones are removed), and does nothing with mark tools.
+`board:menu:` never edits.
+This verifies the production handler, not physical Wayland compositor input delivery.
 Five traps:
 
 - Mnemonic underscores are stripped before matching (`press:Save` matches `_Save`).
@@ -346,11 +354,12 @@ Five traps:
 | `wait-status:<substring>` | Wait up to 10 s for the active window's visible labels to contain text | — |
 | `action:<prefix.name>` | Activate an action with no parameter | 120 ms |
 | `action:<prefix.name>=<string>` | Activate with a string parameter (`action:win.set-engine=workstation`) | 120 ms |
-| `press:<label substring>` | Click the first visible matching button | 250 ms |
+| `press:<label substring>` | Click the first visible matching button, or activate a visible enabled menu item | 250 ms |
 | `select:<row title substring>=<index>` | Set the first visible matching `adw::ComboRow`; index 0 is its prompt/default entry | 250 ms |
 | `stack:<view stack page title>` | Show that `adw::ViewStack` page — `stack:Moves` for the sidebar's branch graph | 250 ms |
 | `sort:<column title substring>` | Sort the first `gtk::ColumnView` by that column, and flip the direction if it is already the primary one. A column header is a `GtkColumnViewTitle`, not a `GtkButton`, so `press:` cannot reach it | 250 ms |
-| `fill:<entry placeholder substring>=<text>` | Fill the first visible `gtk::SearchEntry` whose placeholder matches | 120 ms |
+| `fill:<entry placeholder substring>=<text>` | Fill the first visible `gtk::SearchEntry` or `gtk::Entry` whose placeholder matches | 120 ms |
+| `board:<primary\|secondary\|menu>:<GTP>` | Click the mapped board through its production handler; `menu` is Shift+secondary. Invalid/PASS/off-board coordinates fail without editing | 120 ms |
 | `shot:<path.png>` | Render the active window to PNG | see below |
 | `shot:<path.png>=<widget id>` | Same render, cropped to one widget — the ids are Blueprint's (`blunder_expander`, `nav`, …) | see below |
 | `close-window` | Close only the active window through its normal shutdown path | 250 ms |
@@ -583,10 +592,13 @@ accelerators bound to them are listed in the [user guide](../user/GUIDE.md).
 ```text
 win.first win.last win.prev win.next win.prev10 win.next10 win.branch-prev win.branch-next
 win.toggle-analysis win.toggle-ownership win.toggle-policy win.toggle-coords win.toggle-move-numbers
-win.pass win.undo win.delete-branch win.resign win.new-game win.score win.analyse-game
+win.pass win.undo win.redo win.delete-branch win.resign win.new-game win.score win.analyse-game
 win.open win.save win.save-as win.copy-sgf win.paste-sgf win.download-fox win.clear-board
-win.preferences win.shortcuts win.about
+win.preferences win.shortcuts win.about win.board-menu
 win.set-engine=<profile name>        (stateful, takes a string argument)
+win.to-play=<black|white>
+win.edit-tool=<play|setup-black|setup-white|triangle|square|circle|cross|label|erase-mark>
+win.play-at / win.promote-line-at / win.delete-branch-at   (u32 parameter)
 window.close                         (GTK built-in; the only way to trigger teardown)
 ```
 
@@ -683,7 +695,7 @@ row is a defect that happened or a guard that exists because one did.
 | An engine connects then vanishes seconds later; the server logs a connection opening and closing with no subscription | Activation race: `activate_profile` is async and a local KataGo takes ~6 s, so an older activation can finish last and install itself over a newer one | The activation counter in `AppState::activate_profile`. `discarding a superseded engine activation` at debug level means the guard worked |
 | Live analysis restarts but reports keep arriving for the old position | The other counter: `generation`, bumped by `restart_analysis` and checked by the pump before applying a report | `app.rs` `restart_analysis` |
 | "mirai did not shut down cleanly" every start | The autosave is deleted by dropping the window's `Ui`, so either something is killing the app outright, or a leftover from an earlier crash has not been answered yet | `Drop for Ui`, `window::stale_autosaves` |
-| The restore prompt offers an empty board | `tree_has_content` regressed | `window.rs` and its six boundary tests |
+| The restore prompt offers an empty board | `GameTree::has_content` regressed | `tree.rs` (`a_blank_record_has_no_content`, `marks_alone_are_content`, `to_play_override_alone_is_content`) |
 | Overlay shading in the wrong place | Someone remapped indices; INV-1 says ownership and policy index identically to the board | `decode.rs` `ownership_keeps_katago_row_major_top_left_order`, then recipe (b) |
 | Win rates inverted for one side | INV-2 violated: a conversion applied somewhere other than display | `MoveInfo::winrate_for` / `score_lead_for` are the only sanctioned sites |
 | Territory totals low by the prisoner count while the margin is right | The "territory minus prisoners you lost" formula; each side gets territory **plus the prisoners it holds** | `score.rs`, `endgame_area_and_territory` |

@@ -228,11 +228,11 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 | `src/lib.rs` | crate root, flat re-exports, the shared PRNG | `SplitMix64` — deterministic across runs, which the Zobrist contract requires |
 | `src/point.rs` | **INV-1.** Point encoding, board dimensions, coordinate parsing/formatting, neighbours, star points | `Point`, `Size`, `Color`, `Neighbors`, `MIN_DIM`/`MAX_DIM`, `COLUMNS`, `to_gtp`/`from_gtp`, `to_sgf`/`from_sgf`, `star_points` |
 | `src/rules.rs` | the nine rulesets, mirrored from KataGo's `rules.cpp` so local legality never disagrees with the engine | `RuleSet` (+`ALL`, `katago_name`, `label`, `rules`, `default_komi`), `Rules`, `Ko`, `Scoring`, `Tax`, `Whb` |
-| `src/board.rs` | stones, capture, suicide, simple ko, incremental Zobrist, chain flood fill | `Board` (`play`, `is_legal`, `set`, `chain`, `liberties`, `zobrist`, `situational_hash`, `ko_ban`), `Captured`, `IllegalMove`, `WHITE_TO_MOVE_HASH` |
+| `src/board.rs` | stones, capture, suicide, simple ko, incremental Zobrist, chain flood fill | `Board` (`play`, `is_legal`, `set`, `clear_ko`, `chain`, `liberties`, `zobrist`, `situational_hash`, `ko_ban`), `Captured`, `IllegalMove`, `WHITE_TO_MOVE_HASH` |
 | `src/score.rs` | final-position scoring: dead stones, connected components, area and territory counts, seki tax | `score`, `DeadSet` (`from_ownership`, `toggle_chain`), `ScoreResult` (`margin`, `result_string`), private `components`, `MAX_EYE` |
 | `src/handicap.rs` | fixed handicap placement in conventional order | `fixed_handicap` — empty for unsupported counts, non-square, `< 7x7` or even-sided boards |
 | `src/clock.rs` | time control and the per-move thinking budget | `TimeControl`, `think_budget` |
-| `src/tree.rs` | the game record: node arena, tombstoned deletes, cached `Position`, superko enforcement | `GameTree`, `NodeId`, `Node`, `Position`, `GameInfo`, `Setup`, `Marks`/`MarkKind`, `NodeAnalysis`, `Candidate`, `revision` |
+| `src/tree.rs` | the game record: node arena, tombstoned deletes, cached `Position`, superko enforcement, reversible branch detach | `GameTree`, `NodeId`, `Node`, `Position`, `GameInfo`, `Setup`, `Marks`/`MarkKind`, `DetachedBranch`, `NodeAnalysis`, `Candidate`, `revision`, `has_content` |
 | `src/sgf.rs` | hand-written SGF FF[4] read/write, unknown-property preservation, the `MRAI` analysis property | `parse`, `parse_str`, `write`, `SgfError`, private `build`, `write_node`, `is_root_info_prop`, `encode_analysis`/`decode_analysis`, `MAX_DEPTH`, `MRAI_VERSION` |
 
 ### `mirai-proto` — MRP/1
@@ -267,9 +267,9 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 | file | owns | key symbols |
 |---|---|---|
 | `src/lib.rs` | crate root and re-exports | — |
-| `src/analysis.rs` | position → `AnalyzeReq`, `Report` → `NodeAnalysis`, search-speed meter | `request_for_node`, `analysis_of`, `SpeedMeter`, `PV_LEN` |
+| `src/analysis.rs` | position → `AnalyzeReq` from the last setup/`PL` boundary plus later moves; `Report` → `NodeAnalysis`; search-speed meter | `request_for_node`, `analysis_of`, `SpeedMeter`, `PV_LEN` |
 | `src/batch.rs` | main-line plan and bounded sweep; INV-2 blunder detection | `plan_mainline`, `sweep`, `blunders`, `in_flight`, `Planned`, `Analysed`, `Blunder` |
-| `src/game.rs` | cursor, dirty flag, revision, Save path; mutations go through here | `GameSession` |
+| `src/game/mod.rs`, `src/game/history.rs` | cursor, document-state dirty token, position revision, Save path, differential undo; mutations go through here | `GameSession`; private `History`, `Edit`, `EditKind` |
 | `src/session.rs` | TOFU policy in front of `RemoteEngine`; `Engine` impl that refuses until trusted | `Session`, `SessionConfig`, `SessionState`, `Peer`, `RemoteConnector` |
 | `src/play.rs` | clocks, resignation, move sampling, scoring; no UI | `Play`, `PlayState`, `GameSetup`, `Strength`, `select_move_index`, `resign_check` |
 | `src/fox.rs` | Fox lookup / list / SGF normalisation; HTTP behind `Fetch` | `Fetch`, `lookup_user`, `list_games`, `fetch_sgf`, `normalize_fox_sgf` |
@@ -290,37 +290,38 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 |---|---|---|
 | `build.rs` | compiles `resources/mirai.gresource.xml` into the binary | — |
 | `src/main.rs`, `src/application_shell.rs` | process entry and application lifetime: tracing, resources, CSS, `activate`/`open`; `MiraiApplication` uniquely owns the Tokio runtime and shared `EnginePool`, releases both from the GApplication `shutdown` vfunc (disposal is the backstop for a remote invocation, which never starts up), and turns SIGINT/SIGTERM/SIGHUP into an ordinary `quit` | `APP_ID`, `RESOURCE_PREFIX`, `MiraiApplication`, private `release`, `watch_termination_signals` |
-| `src/app.rs` | **INV-7.** `AppState`: the source of truth *for one window* — properties, epoch-qualified node references, tree/cursor API, explicit `EngineState`, the single `Change` dispatcher, engine activation, live-analysis pump; feeds `mirai_client::SpeedMeter` | `AppState`, `TreeEpoch`, `NodeRef`, `Change`, `EngineState`, `with_tree_mut`, `set_tree`, `resolve_node`, `set_cursor`, `play_move`, `activate_profile`, `cancel_tasks`, `request_for_node`, `restart_analysis`, `set_report` |
+| `src/app.rs` | **INV-7.** `AppState`: the source of truth *for one window* — properties, epoch-qualified node references, tree/cursor API, explicit `EngineState`, the single `Change` dispatcher, engine activation, live-analysis pump; feeds `mirai_client::SpeedMeter` | `AppState`, `TreeEpoch`, `NodeRef`, `Change`, `EditorTool`, `EngineState`, `with_session_mut`, `with_edit_session`, `set_tree`, `resolve_node`, `set_cursor`, `play_move`, `activate_profile`, `cancel_tasks`, `request_for_node`, `restart_analysis`, `set_report`, `set_analysis_at` |
 | `src/engines.rs` | the application-wide engines: one per profile, shared by every window, held weakly so the last window to let go takes KataGo with it; writes the generated analysis config when a local profile has no custom one | `EnginePool` (`running`, `acquire`), `Built`, private `key`, `start`, `build` |
 | `src/config.rs` | `$XDG_CONFIG_HOME/mirai/config.toml`: engine profiles and preferences; ordered XDG discovery merges all model and custom-analysis candidates | `Config` (`load`, `save`, `save_merged`, `seeded`, `profile`, `active_profile`, `set_pin`, `default_path`, `data_dir`), `discover_models`, `discover_analysis_configs`, private `model_dirs`, `analysis_config_dirs`, `merge_candidates`, `overlay`, `EngineProfile`, `ProfileKind` (`Local`'s optional config and tuning fields), `AnalysisSettings`, `PlaySettings`, `StrengthSetting`, `UiSettings` |
 | `src/util.rs` | formatting helpers; `analysis_of` is a thin wrap of `mirai_client::analysis_of` | `analysis_of`, `si_visits`, `visits_per_second`, `pct1`, `signed1`, `clock_text`, `gtp` |
 | `src/palette.rs` | the one candidate colour table: how much a move loses → RGB for the board, and the same table rendered as CSS for the list's badges, so the two can never disagree. Loss is pick minus candidate `utility` (side-to-move), KataGo's own blend of win rate and score. Below `TRUSTED_VISITS` the paint is grey, not a loss colour, the board drops the figures and the blob fades — one threshold, three consequences. MRAI v1 cache without utility falls back to the old two-channel means | `GRADE_RAMP`, `UTILITY_AT`, `POINTS_AT`, `WINRATE_AT`, `TRUSTED_VISITS`, `UNKNOWN_RGB`, `grade`, `grade_means`, `colour`, `colour_stop`, `grade_css`, `grade_class` |
-| `src/window.rs` | window behaviour and unique per-window `Ui`: the `Change` dispatcher, deterministic task/source registry, every `win.*` action, SGF I/O, autosave, score estimate and shutdown ordering | `Ui` (whose `Drop` is the release), `WindowTasks`, `TaskSlot`, `SourceSlot`, `AutosaveFile`, `present`, `handle_change`, `connect_close`, `install_actions`, `adopt`, `write_autosave`, `do_score`, `blank_tree` |
-| `src/window_shell.rs`, `src/window.blp` | `MiraiWindow` owns exactly one `Ui` in GObject state; `close-request`, `dispose` and the application's `shutdown` converge on idempotent `shutdown`, which only takes the `Ui` out and lets it drop. The template owns the static hierarchy; Rust inserts the stateful board, graph, tree and analysis panel | `MiraiWindow`, `install_ui`, `with_ui`, `take_ui`, `shutdown` |
+| `src/window.rs` | window behaviour and unique per-window `Ui`: the `Change` dispatcher, deterministic task/source registry, every `win.*` action, SGF I/O, autosave, score estimate, editor toolbar/actions and shutdown ordering | `Ui` (whose `Drop` is the release), `WindowTasks`, `TaskSlot`, `SourceSlot`, `AutosaveFile`, `present`, `handle_change`, `connect_close`, `install_actions`, `adopt`, `write_autosave`, `do_score`, `blank_tree` |
+| `src/window_shell.rs`, `src/window.blp` | `MiraiWindow` owns exactly one `Ui` in GObject state; `close-request`, `dispose` and the application's `shutdown` converge on idempotent `shutdown`, which only takes the `Ui` out and lets it drop. The template owns the static hierarchy including `editor_toolbar`; Rust inserts the stateful board, graph, tree and analysis panel | `MiraiWindow`, `install_ui`, `with_ui`, `take_ui`, `shutdown` |
 | `src/fox.rs`, `src/fox_picker.rs`, `src/fox_picker.blp` | anonymous Fox Go nickname/UID lookup, recent-public-game picker and download; the last successful search is cached in `$XDG_DATA_HOME/mirai/fox-last-search.json` and restored when the dialog opens; the up-to-200 records live in a `GListModel` of `FoxRow` behind a `GtkListView`, and the model is filled *after* `present` because a list view whose rows have never been measured tracks its whole model; one picker per window, kept in `Ui`, because libadwaita refuses to present one dialog in two windows; normalises Fox's SGF dialect before handing a `GameTree` to the window | `present`, `FoxPickerDialog` (`wired`, `prepare_to_show`, `replace_games`, `selected_game`), `FoxRow`, private `search_games`/`fetch_game`, `parse_fox_sgf`, `normalize_handicap`, `LastSearch`, `row_factory` |
 | `src/widgets/mod.rs` | widget root; states the no-cairo rule | re-exports `BoardView`, `MoveTreeView`, `WinrateGraph` |
 | `src/widgets/paint.rs` | the drawing primitives every custom widget uses, and the rule they enforce: quads, not paths ([`RENDERING.md`](RENDERING.md)) | `fill_disc`, `stroke_disc`, `stroke_rect`, `hline`, `vline`, `over` |
-| `src/widgets/board.rs` | goban rendering from a pushed `BoardProjection`: cached static layer and report-time heat-map textures, stones, marks, move numbers, candidates — hue from `palette::grade`, opacity from visits, white outline on the move the record plays next — PV preview and input | `BoardView` (`refresh_tree`, `refresh_cursor`, `refresh_report`, `point_at`, `set_click_hook`), `BoardProjection`, `StaticKey`, `Layout`, `BLOB_ALPHA_MIN`, `LABEL_MIN_VISITS`, `RECORD_RING`, `record_next` |
+| `src/widgets/board.rs` | goban rendering from a pushed `BoardProjection`: cached static layer and report-time heat-map textures, stones, marks, move numbers, candidates — hue from `palette::grade`, opacity from visits, white outline on the move the record plays next — PV preview and input. Clicks hit-test then call a window hook; a mark mask skips numbers/dots under SGF marks | `BoardView` (`refresh_tree`, `refresh_cursor`, `refresh_report`, `point_at`, `click_at`, `point_center`, `set_click_hook`), `BoardClick`, `BoardProjection`, `StaticKey`, `Layout`, `BLOB_ALPHA_MIN`, `LABEL_MIN_VISITS`, `RECORD_RING`, `record_next` |
 | `src/widgets/winrate.rs` | cached main-line `GraphProjection`; cached base render node for curves/guides/blunders, with cursor marker drawn separately | `WinrateGraph` (`refresh`, `refresh_cursor`), `GraphProjection`, `RenderKey`, `Severity`, `Sample`, `Geom` |
 | `src/widgets/tree.rs` | branch graph from a cached `TreeLayout`, rebuilt only when `structure_revision` moves: depth runs *down* the panel and lanes across it, because the sidebar is 340-520 px wide and a window tall | `MoveTreeView` (`refresh`), `lay_out`, `TreeLayout`, `Placed`, `cell_xy` |
 | `src/panels/mod.rs` | sidebar panel root | re-exports `AnalysisPanel` |
 | `src/panels/analysis.rs`, `src/panels/analysis.blp` | the `MiraiAnalysisPanel` composite template, the candidate `ColumnView` — a stable model whose objects are mutated in place at report rate, cells bound through `gtk::Expression` and pinned to a character width so digits never re-measure a column ([`RENDERING.md`](RENDERING.md) §7), with a `GtkSortListModel` between that store and the selection so a header click reorders the *view* while the store stays in KataGo's `order` — `resort` is what tells it the in-place numbers moved, and `sync_pv` reports the row's `rank` rather than its position because the hooks index the engine's move list — the rank badge, whose number is `order` and whose colour is the row's grade, and dynamic blunder rows: one line each, the mover an emoji stone rather than the word "Black", since `severity_class` owns the row's text colour and would tint a monochrome `●` red | `AnalysisPanel` (`connect_pv_preview`, `set_blunders`, `clear_blunders`, `resort`, `sync_pv`), `CandidateObject`, `Row` (`apply`, `to_object`), `grade_rows`, `Col`, `Headline`, `severity_class`, `stone`, `pv_text`, `column`, `rank_column` |
-| `src/play.rs` | window-owned play controller: GTK timers, dialogs and the live AI subscription; move choice and resignation also live in `mirai-client` | `PlayController`, `PlaySession`, `PlayState`, `GameSetup`, `Strength`, `tick_clock`, `resign_check`, `select_move_index` |
-| `src/batch.rs` | window-owned whole-game coordinator; `blunders` / `in_flight` wrap `mirai_client::batch` | `BatchAnalysis`, `BatchMessage`, `RuntimeTask`, `blunders`, `Blunder`, `in_flight` |
+| `src/play.rs` | window-owned play controller: GTK timers, dialogs and the live AI subscription; start disables `GameSession` history, stop re-enables it; move choice and resignation also live in `mirai-client` | `PlayController`, `PlaySession`, `PlayState`, `GameSetup`, `Strength`, `tick_clock`, `resign_check`, `select_move_index` |
+| `src/batch.rs` | window-owned whole-game coordinator; `blunders` / `in_flight` wrap `mirai_client::batch`; writes through `set_analysis_at` with the sweep's starting `position_revision` | `BatchAnalysis`, `BatchMessage`, `RuntimeTask`, `blunders`, `Blunder`, `in_flight` |
 | `src/new_game.rs`, `src/new_game.blp` | The `MiraiNewGameDialog` `CompositeTemplate` and its state-dependent setup wiring | `present`, `NewGameDialog` |
-| `src/dialogs.rs` | Dynamic result and certificate-confirmation alert dialogs | `show_score_with`, `confirm_fingerprint` |
+| `src/label_editor.rs`, `src/label_editor.blp` | Point-label dialog; Apply writes only if the cursor node is unchanged and play is not active | `present` |
+| `src/dialogs.rs` | Dynamic result and certificate-confirmation alert dialogs. Score: Close keeps counting, Review Game stops play, Analyse Game stops then sweeps | `show_score_with`, `confirm_fingerprint` |
 | `src/preferences_shell.rs`, `src/preferences.blp` | The `MiraiPreferencesDialog` `CompositeTemplate`: four fixed pages, groups, controls and accessible labels | `PreferencesDialog`, `PreferencesWidgets` |
 | `src/profile_editor.rs`, `src/profile_editor.blp` | Shared `MiraiProfileEditorPage` `CompositeTemplate`: navigation chrome, save action, error banner and content slot for both profile editors | `ProfileEditorPage` |
 | `src/prefs.rs` | preferences and profile editors; managed engine calibration is owned by one `CalibrationRun`, so completion and cancellation share one teardown path | `present`, `CalibrationRun`, `engine_menu_model`, `open_editor`, `local_editor`, `file_row`, `candidate_labels` |
-| `src/harness.rs` | debug-only scripted-UI harness; drives actions/dialog controls, waits on visible status, closes individual windows, and renders through the app's GSK renderer | `install`, `parse`, `activate`, `press`, `wait_status`, `shot` |
+| `src/harness.rs` | debug-only scripted-UI harness; drives actions/dialog controls, board `click_at`, waits on visible status, closes individual windows, and renders through the app's GSK renderer | `install`, `parse`, `activate`, `press`, `wait_status`, `shot` |
 | `src/render_probe.rs` | debug-only render-performance probe: frame-clock cadence and phase split, scoped pass timers, scene ablations ([`RENDERING.md`](RENDERING.md)) | `install`, `configure`, `Timer`, `trace`, `label_defer`, `dump_node` |
 
-Non-Rust in `crates/mirai`: `src/window.blp`, `src/new_game.blp`, `src/preferences.blp`,
-`src/profile_editor.blp`, `src/fox_picker.blp` and `src/panels/analysis.blp` (Blueprint
-composite templates), `resources/style.css` (`board-area`, `mirai-clock`, `mirai-readout`,
-`mirai-winrate`, `mirai-movetree`), `resources/icons/hicolor/` (`io.github.mirai.Mirai` and
-its `-symbolic` sibling) and `resources/mirai.gresource.xml`. The store-style preview lives
-at `docs/user/preview.png`.
+Non-Rust in `crates/mirai`: `src/window.blp`, `src/new_game.blp`, `src/label_editor.blp`,
+`src/preferences.blp`, `src/profile_editor.blp`, `src/fox_picker.blp` and
+`src/panels/analysis.blp` (Blueprint composite templates), `resources/style.css`
+(`board-area`, `mirai-clock`, `mirai-readout`, `mirai-winrate`, `mirai-movetree`),
+`resources/icons/hicolor/` (`io.github.mirai.Mirai` and its `-symbolic` sibling) and
+`resources/mirai.gresource.xml`. The store-style preview lives at `docs/user/preview.png`.
 
 ### Quick index
 
@@ -338,6 +339,9 @@ at `docs/user/preview.png`.
 | a wire message or field | `mirai-proto/src/msg.rs`, `types.rs`, then [`PROTOCOL.md`](PROTOCOL.md) |
 | scoring | `mirai-core/src/score.rs` — `score`; rule flags in `rules.rs` — `RuleSet::rules` |
 | an SGF property | `mirai-core/src/sgf.rs` — `build` (read) and `write_node` (write) |
+| placing stones, marks, or undo | `mirai-client/src/game/mod.rs` — `GameSession`; private `history.rs`. Toolbar and clicks: `window.rs`, `window.blp` `editor_toolbar`. Analysis after a setup/`PL`: `request_for_node` |
+| the editor toolbar layout | `window.blp`: native `.toolbar` with `Adw.WrapBox` and `Adw.ToggleGroup` tool groups. Group selection forwards to `win.edit-tool`; `update_editor_actions` projects the single `EditorTool` state back, including `Setup(Color)`. The Play icon shows the current player; explicit player edits live in Board Menu. Play right-click deletes the current branch; Setup left/right toggle selected/opposite colours, removing a matching stone. Icons live under `resources/icons/hicolor/scalable/actions` |
+| the board menu's popup position | `window.rs` converts the three-dot button bounds into `BoardView` coordinates; `BoardView::show_menu` right-aligns the toolbar popup to that rectangle. Shift+right-click instead anchors to the intersection. Never pass no anchor: GTK otherwise positions the menu against the whole board |
 | the move-tree layout | `widgets/tree.rs` — `lay_out` |
 | blunder colours or thresholds | `mirai-client/src/batch.rs` — `BLUNDER_MIN_DROP`; `widgets/winrate.rs` — `Severity::color`, `severity_of_drop` |
 | AI move choice or resignation | `mirai-client/src/play.rs` — `select_move_index`, `resign_check`; GTK wrapper `crates/mirai/src/play.rs` |
@@ -386,9 +390,9 @@ Suicide is legal only under `multi_stone_suicide` and only for chains larger tha
 ### GameTree: arena, tombstones, revision, position cache
 
 Nodes are addressed by `NodeId`, never by reference — no `Rc`, no lifetimes — so an id can be
-parked in a widget, a `Cell` or a `Blunder` without borrowing the tree. `delete_branch` unlinks a
-subtree and then *tombstones* its nodes, so ids are never reused and never shift, and every
-surviving `NodeId` held elsewhere stays correct. Consequences:
+parked in a widget, a `Cell` or a `Blunder` without borrowing the tree. `detach_branch` unlinks a
+subtree and tombstones its nodes without cloning; `restore_branch` puts the same ids and sibling
+index back. `delete_branch` is detach-and-drop. Consequences:
 
 - `node(id)` panics on a tombstone; use `get`/`contains` wherever deletion is possible.
 - `len()` counts live nodes, so it diverges from the arena's length after a delete.
@@ -412,9 +416,12 @@ positions undoable would cost more than the few hundred microseconds a replay ta
 takes `&mut self`, which is why `AppState` exposes `with_tree_cached` for read-only callers.
 
 The private `step` applies setup stones, the handicap turn flip, the move, then the `PL`/`MN`
-overrides, and appends both hashes. Replay never rejects an illegal move: a stored line is history,
-not a legality question. `Node` is all-public data — the tree owns structure, not content — and
-`children[0]` is the main line.
+overrides, and appends both hashes. A non-empty setup is a rules-history boundary: both superko
+histories are dropped and the ko ban is cleared (`Board::clear_ko`); a pure `PL` override only
+changes `to_play`. Replay never rejects an illegal move: a stored line is history, not a legality
+question. `Node` is all-public data — the tree owns structure, not content — and `children[0]`
+is the main line. `has_content` is true for a move, setup stone, mark, explicit `PL`, or a
+non-whitespace comment — that is what autosave and crash restore consult.
 
 ### NodeAnalysis and Candidate
 
@@ -422,10 +429,13 @@ not a legality question. `Node` is all-public data — the tree owns structure, 
 `AnalysisSettings::stored_suggestion_limit` (at most 50 even when the display shows all), produced
 only by `mirai_client::analysis_of`, with ownership left
 quantised at one byte per point. It exists so the win-rate graph and move tree can draw a whole
-game after the live report for a node is gone. Live analysis writes it only when the new report
-has more visits than what is already stored, so a finished sweep is not replaced by the first
-handful of pondering visits. The live `Report` — all fields, still quantised —
-lives separately in `AppState::last_report()` and is discarded the moment the cursor moves.
+game after the live report for a node is gone. Live analysis writes it only when `generation`
+matches and `set_analysis_at(cursor, analysis_revision, …)` succeeds — `analysis_revision` is
+the `position_revision` captured at `restart_analysis` — and the new report has more visits
+than what is already stored, so a finished sweep is not replaced by the first handful of
+pondering visits. The live `Report` — all fields, still quantised —
+lives separately in `AppState::last_report()` and is discarded the moment the cursor or
+position moves. Marks and comments do not bump `position_revision`.
 
 ```mermaid
 flowchart LR
@@ -571,7 +581,9 @@ sequenceDiagram
 
 Two properties to internalise: the board never asks an engine for anything — it reads `AppState`
 — and a report that arrives after the cursor moved cannot be drawn, because the pump that would
-deliver it was aborted and its generation no longer matches.
+deliver it was aborted and its generation no longer matches. A setup or `PL` edit also bumps
+`position_revision`, so a late `set_analysis_at` for the old board is refused; whole-game
+analysis and score estimate use the same gate.
 
 ---
 
@@ -681,8 +693,9 @@ that gains engines later cannot silently switch the client to a different one.
 
 ### AppState is the only source of truth (INV-7)
 
-`AppState` is a `glib::Object` subclass holding the game tree, the cursor, the config, the runtime
-handle, the active engine, the last report and the live-analysis pump. Widgets never hold pointers
+`AppState` is a `glib::Object` subclass holding the `GameSession` (tree, cursor, differential
+undo, document-state dirty token), the config, the runtime handle, the active engine, the last
+report and the live-analysis pump. Widgets never hold pointers
 to each other: they take an `AppState` clone (a GObject ref), read from it, and subscribe to its
 notifications. Anything that looks like widget-to-widget coupling is either a hook installed once
 by `window::present` (board ↔ analysis panel PV preview, play → batch)
@@ -711,12 +724,15 @@ refresh. This avoids several independently ordered signal callbacks observing ha
 
 | change | emitted by | dispatcher work |
 |---|---|---|
-| `Tree` | `with_tree_mut`, `set_tree`, batch completion | rebuild board/tree/graph projections, recompute the blunder list, refresh analysis and window chrome |
-| `Cursor` | `set_cursor`, `play_move`, `set_tree` | flush/load comment, update scale/readout/clocks, refresh cursor projections |
+| `BeforeEdit` | `with_edit_session`, `set_cursor`/`navigate`, adopt | flush the comment so it is one history item before the next edit |
+| `Edit { positions_changed, structure_changed }` | `with_session_mut` when the record actually changed | cancel batch (and abort score if the position moved) before Tree/Cursor refresh; update undo/redo |
+| `Editor` | tool / setup-colour selection | toolbar state; clear PV preview when leaving Play |
+| `Tree` | `with_session_mut`, `set_tree`, batch completion | rebuild board/tree/graph projections, recompute the blunder list, refresh analysis and window chrome |
+| `Cursor` | `set_cursor`, `play_move`, `set_tree` | load comment (does not flush), update scale/readout/clocks, refresh cursor projections |
 | `Report` | `set_report` and report clearing | refresh board textures, graph data, analysis rows and readout |
 | `Engine` | engine-state transitions and profile edits | rebuild menu/page/subtitle from `EngineState` |
 | `Toast(String)` | `AppState::toast` | add one `adw::Toast` |
-| `Play`, `BatchProgress` | the window-owned controllers | refresh play controls/clocks, or the graph and blunder list as the sweep lands |
+| `Play`, `BatchProgress` | the window-owned controllers | refresh play controls/clocks and editor-toolbar visibility, or the graph and blunder list as the sweep lands |
 
 Ordering remains explicit: cursor state is current before `Report`, and every tree borrow is
 released before `changed` enters window code.
@@ -737,6 +753,7 @@ MiraiWindow (adw::ApplicationWindow, `window.blp`)
                                         the breakpoint additionally collapses it to an overlay
       ├ content: gtk::Box
       │   ├ adw::Banner                 batch-analysis progress + Cancel
+      │   ├ editor_toolbar              review only; hidden during play
       │   └ gtk::Paned (vertical)
       │       ├ BoardView               expands; all extra space goes here
       │       └ WinrateGraph            fixed height request, still user-draggable
@@ -800,15 +817,16 @@ windows in one process is a normal state, not an edge case. Each owns a complete
 
 ### RefCell and identity discipline (INV-10)
 
-`AppState` keeps the tree in a `RefCell`. A borrow must be released before `changed`, `set_cursor`,
-`set_report` or `toast` enters window code; the dispatcher immediately reads the tree again.
-`with_tree_mut`, `set_tree`, report caching and navigation helpers scope or explicitly drop their
-borrows before dispatch.
+`AppState` keeps the `GameSession` (and thus the tree) in a `RefCell`. A borrow must be released
+before `changed`, `set_cursor`, `set_report` or `toast` enters window code; the dispatcher
+immediately reads the tree again. `with_session_mut`, `set_tree`, report caching and navigation
+helpers scope or explicitly drop their borrows before dispatch.
 
 `NodeId` is stable only within one `GameTree` arena. Every node reference that can outlive a
 borrow is therefore a `NodeRef { epoch, id }`; `set_tree` increments `TreeEpoch`, and
 `resolve_node` rejects references from the previous tree. Comments, batch results, play snapshots
-and async score work must carry `NodeRef`, never a naked long-lived `NodeId`.
+and async score/analysis work must carry `NodeRef` and, for in-tree edits, the
+`position_revision` they started with — never a naked long-lived `NodeId`.
 
 Widgets receive projections when `Change` is dispatched. `snapshot()` borrows only widget-local
 projection/cache state; it does not borrow `AppState` or replay the game tree.
@@ -831,7 +849,7 @@ and how a violation shows up.
 | **INV-7** | One source of truth: `AppState` owns application state; one window dispatcher pushes projections to widgets, which never hold siblings | `mirai/src/app.rs` (`Change`) and `window::handle_change` | Two dispatchers observe different intermediate states, or sibling widgets disagree after an edit |
 | **INV-8** | Window ownership: `MiraiWindow` owns exactly one `Ui`; long-lived callbacks hold only `WeakRef<MiraiWindow>`; close, dispose and the application's shutdown all reduce to dropping the `Ui` | `window_shell.rs` (`with_ui`, `take_ui`, `shutdown`), `Drop for Ui`, and window-owned controllers | Closing a window, quitting, or a termination signal leaves tasks, an autosave file or KataGo behind |
 | **INV-9** | Rendering: custom widgets draw with GSK; `snapshot()` consumes widget-local projections and cached textures/nodes. No `DrawingArea`, cairo or tree replay in a frame | `mirai/src/widgets/` | Frame-time allocation/state traversal, or a cairo context in the GUI |
-| **INV-10** | Release tree borrows before dispatch; retain epoch-qualified `NodeRef`, not arena-local `NodeId`, across tree replacement | `AppState::changed`, `set_tree`, `resolve_node`; async consumers in window/play/batch | `BorrowMutError`, `stale NodeId`, or an old async result applied to a new game |
+| **INV-10** | Release tree borrows before dispatch; retain epoch-qualified `NodeRef`, not arena-local `NodeId`, across tree replacement; refuse async analysis/score writes when `position_revision` has moved | `AppState::changed`, `set_tree`, `resolve_node`, `set_analysis_at`; async consumers in window/play/batch | `BorrowMutError`, `stale NodeId`, or an old async result applied to a new game or an edited position |
 
 ---
 
@@ -921,7 +939,7 @@ Deliberate. Each is commented at the source; do not "fix" one by accident.
 | **`Tax::All` (stone scoring) is approximated** with the `Tax::Seki` result and reports `approximate = true` | `score`, `ScoreResult::approximate` | Full stone-scoring tax is rarely used; the UI labels the result an estimate rather than pretending to exactness |
 | **`has_button` is a flat +0.5 to White** | end of `score` | mirai never plays the button, so there is no game state that could decide who takes it |
 | **Dead stones are decided per chain by majority vote** over an ownership threshold, not per stone | `DeadSet::from_ownership` | Per-stone marking produces speckled half-dead groups on unsettled boundaries |
-| **Setup stones become `initialStones` only when they precede every move**; a later setup node falls back to sending the replayed board with no move history | `AppState::request_for_node` | The KataGo query has no way to express "setup in the middle of a move list". The analysis is still correct, just without move history |
+| **A mid-record setup/`PL` node is a reconstruction boundary** for `AnalyzeReq`: snapshot that board as unique row-major `initialStones`, send only later real moves, and under territory scoring fold the *boundary* prisoner counts into `komi_x2` (never rewriting `KM`). Ordinary move-only games keep an unadjusted move list | `mirai_client::request_for_node` | KataGo cannot express a setup in the middle of a move list; a later setup must not discard the moves after it either |
 | **Replay never rejects an illegal move** | the private `step` in `mirai-core/src/tree.rs` | A stored line is history. Refusing to display a file because it contains an illegal move would be worse than showing it |
 | **`max_board` is fixed at 19x19** | `LocalEngine::spawn`'s `EngineDesc` | Stock KataGo builds cap `MAX_LEN` at 19; a larger board would need a custom build, and nothing else in the tree assumes otherwise |
 | **SHA-256 is implemented in-tree** | `mirai-proto/src/sha256.rs` | ~60 lines on no hot path, versus a dependency and its API churn. Pinned by the standard test vectors |

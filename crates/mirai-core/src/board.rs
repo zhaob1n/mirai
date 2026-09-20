@@ -181,6 +181,12 @@ impl Board {
         self.ko_ban
     }
 
+    /// Clears the simple-ko ban. Stones, the hash and capture counts stay put.
+    #[inline]
+    pub fn clear_ko(&mut self) {
+        self.ko_ban = None;
+    }
+
     #[inline]
     pub fn stone_count(&self, color: Color) -> u32 {
         self.stones.iter().filter(|s| **s == Some(color)).count() as u32

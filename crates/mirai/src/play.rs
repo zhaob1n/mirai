@@ -9,9 +9,8 @@
 //! The rules of a game — whose turn it is, the clocks, resignation, the move the engine
 //! actually plays, and the count at the end — are [`mirai_client::Play`], shared with the
 //! HarmonyOS client. What is here is the GTK half of it: the tick source, the engine
-//! subscription and its status text, the board's click hook and territory overlay, and the
+//! subscription and its status text, the territory overlay, and the
 //! result dialog. Every action mutates `Play` and then calls [`PlayController::sync`],
-//! which redraws and starts whatever the new state asks for.
 
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
@@ -86,14 +85,10 @@ impl PlayController {
         self.play.borrow().state()
     }
 
-    /// Gives the controller the board it scores on: it installs a click hook that toggles
-    /// dead groups while the game is being counted, and draws the territory overlay.
+    /// Gives the controller the board it scores on so it can draw the territory overlay.
+    /// Board clicks are installed once by the window, not here.
     pub fn attach_board(&self, board: &BoardView) {
         *self.board.borrow_mut() = Some(board.clone());
-        let weak = self.window.clone();
-        board.set_click_hook(move |p: Point| {
-            with_play(&weak, |play| play.on_board_click(p)).unwrap_or(false)
-        });
     }
 
     /// What the "Analyse game" button in the result dialog runs. The window wires this to
@@ -121,7 +116,8 @@ impl PlayController {
         self.state.with_session_mut(|game| {
             self.play
                 .borrow_mut()
-                .start(game, setup, &engine_name, &date)
+                .start(game, setup, &engine_name, &date);
+            game.set_edit_history_enabled(false);
         });
         self.clear_overlay();
         self.start_ticker();
@@ -138,6 +134,8 @@ impl PlayController {
         self.started.set(Started::Nothing);
         self.clear_overlay();
         if had {
+            self.state
+                .with_session_mut(|game| game.set_edit_history_enabled(true));
             self.state.set_status(String::new());
             self.state.notify_play_changed();
         }
@@ -443,16 +441,30 @@ impl PlayController {
         let board = self.board.borrow().clone();
         if let Some(board) = board {
             let weak = self.window.clone();
-            crate::dialogs::show_score_with(&board, &self.state, &summary, move || {
-                with_play(&weak, PlayController::run_analyse);
-            });
+            crate::dialogs::show_score_with(
+                &board,
+                &self.state,
+                &summary,
+                {
+                    let weak = weak.clone();
+                    move || {
+                        with_play(&weak, |play| {
+                            play.stop();
+                            play.run_analyse();
+                        });
+                    }
+                },
+                move || {
+                    with_play(&weak, PlayController::stop);
+                },
+            );
         }
     }
 
-    /// Every primary board click while a game is running comes through here, so the
-    /// controller can keep the clocks and the turn order honest. Outside a game it
-    /// returns `false` and the board plays the move itself, as in review mode.
-    fn on_board_click(&self, p: Point) -> bool {
+    /// Primary-board clicks in an active game come through here so clocks and
+    /// turn order stay honest. Scoring toggles dead stones. Idle returns
+    /// `false` so the window can dispatch review and editor tools.
+    pub(crate) fn on_board_click(&self, p: Point) -> bool {
         match self.play_state() {
             PlayState::Idle => false,
             PlayState::HumanTurn => {

@@ -12,6 +12,7 @@ mod fox;
 mod fox_picker;
 #[cfg(debug_assertions)]
 mod harness;
+mod label_editor;
 mod new_game;
 mod palette;
 mod panels;

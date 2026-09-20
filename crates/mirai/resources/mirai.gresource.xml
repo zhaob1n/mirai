@@ -4,5 +4,17 @@
     <file compressed="true">style.css</file>
     <file preprocess="xml-stripblanks">icons/hicolor/scalable/apps/io.github.mirai.Mirai.svg</file>
     <file preprocess="xml-stripblanks">icons/hicolor/symbolic/apps/io.github.mirai.Mirai-symbolic.svg</file>
+    <!-- Resource icon lookup uses scalable/actions, including symbolic icons.
+         Symbolic outlines are filled paths so GTK's recolouring preserves them. -->
+    <file preprocess="xml-stripblanks">icons/hicolor/scalable/actions/mirai-stone-black.svg</file>
+    <file preprocess="xml-stripblanks">icons/hicolor/scalable/actions/mirai-stone-white.svg</file>
+    <file preprocess="xml-stripblanks">icons/hicolor/scalable/actions/mirai-play-black.svg</file>
+    <file preprocess="xml-stripblanks">icons/hicolor/scalable/actions/mirai-play-white.svg</file>
+    <file preprocess="xml-stripblanks">icons/hicolor/scalable/actions/mirai-mark-triangle-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/hicolor/scalable/actions/mirai-mark-square-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/hicolor/scalable/actions/mirai-mark-circle-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/hicolor/scalable/actions/mirai-mark-cross-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/hicolor/scalable/actions/mirai-mark-label-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/hicolor/scalable/actions/mirai-eraser-symbolic.svg</file>
   </gresource>
 </gresources>

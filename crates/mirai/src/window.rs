@@ -17,15 +17,16 @@ use gtk::gdk;
 use gtk::gio;
 use gtk::glib;
 
-use mirai_core::{DeadSet, GameInfo, GameTree, NodeId, Point, sgf};
+use mirai_core::{Color, DeadSet, GameInfo, GameTree, MarkKind, NodeId, Point, sgf};
 use mirai_engine::{Report, SubEvent, Want};
 
-use crate::app::{AppState, Change, NodeRef};
+use crate::app::{AppState, Change, EditorTool, NodeRef};
 use crate::batch::BatchAnalysis;
 use crate::config::Config;
 use crate::panels::AnalysisPanel;
 use crate::play::{PlayController, PlayState};
 use crate::util;
+use crate::widgets::board::BoardClick;
 use crate::widgets::{BoardView, MoveTreeView, WinrateGraph};
 use crate::window_shell::MiraiWindow;
 
@@ -44,10 +45,12 @@ impl TaskSlot {
         *self.0.borrow_mut() = Some(task);
     }
 
-    fn abort(&self) {
-        if let Some(task) = self.0.borrow_mut().take() {
-            task.abort();
-        }
+    fn abort(&self) -> bool {
+        let Some(task) = self.0.borrow_mut().take() else {
+            return false;
+        };
+        task.abort();
+        true
     }
 }
 
@@ -129,6 +132,7 @@ pub struct Ui {
     pending_auto_analyse: Cell<bool>,
     tasks: WindowTasks,
     autosave: Option<AutosaveFile>,
+    win_actions: gio::SimpleActionGroup,
 }
 
 impl Ui {
@@ -215,6 +219,7 @@ pub fn present(
         .top_margin(8)
         .bottom_margin(8)
         .build();
+    comment.buffer().set_enable_undo(true);
     let play = PlayController::new(&state, &window);
     let batch = BatchAnalysis::new(&state, &window);
 
@@ -349,12 +354,14 @@ pub fn present(
         pending_auto_analyse: Cell::new(false),
         tasks: WindowTasks::default(),
         autosave: next_autosave_file(),
+        win_actions: gio::SimpleActionGroup::new(),
     });
     window.with_ui(|ui| {
         install_actions(&window, ui);
         connect_state(ui);
         connect_comment(ui);
         connect_scale(ui);
+        connect_editor_tools(&window, ui);
     });
     {
         let weak = window.downgrade();
@@ -365,6 +372,7 @@ pub fn present(
 
     // Cross-widget wiring the two panels cannot do for themselves.
     window.with_ui(|ui| ui.play.attach_board(&board));
+    window.with_ui(install_board_hook);
     {
         let board = board.clone();
         analysis.connect_pv_preview(move |index| board.set_pv_preview(index));
@@ -379,6 +387,8 @@ pub fn present(
         refresh_engine_menu(ui);
         update_analysis_page(ui);
         update_play_controls(ui);
+        sync_play_editability(ui);
+        update_editor_actions(ui);
         update_scale(ui);
         update_readout(ui);
         update_title(ui);
@@ -456,7 +466,27 @@ fn connect_state(ui: &Ui) {
 
 fn handle_change(ui: &Ui, change: Change) {
     match change {
+        Change::BeforeEdit => flush_comment(ui),
+        Change::Edit {
+            positions_changed,
+            structure_changed,
+        } => {
+            if positions_changed || structure_changed {
+                ui.batch.cancel();
+            }
+            if positions_changed && ui.tasks.score.abort() {
+                ui.state.set_status(String::new());
+            }
+            update_editor_actions(ui);
+        }
+        Change::Editor => {
+            update_editor_actions(ui);
+            if ui.state.editor_tool() != EditorTool::Play {
+                ui.board.clear_preview();
+            }
+        }
         Change::Tree => {
+            ui.board.close_menu();
             update_scale(ui);
             update_title(ui);
             ui.board.refresh_tree();
@@ -464,9 +494,10 @@ fn handle_change(ui: &Ui, change: Change) {
             ui.winrate.refresh();
             refresh_blunders(ui);
             ui.analysis.refresh();
+            update_editor_actions(ui);
         }
         Change::Cursor => {
-            flush_comment(ui);
+            ui.board.close_menu();
             load_comment(ui);
             update_scale(ui);
             update_readout(ui);
@@ -475,6 +506,7 @@ fn handle_change(ui: &Ui, change: Change) {
             ui.move_tree.refresh();
             ui.winrate.refresh_cursor();
             ui.analysis.refresh();
+            update_editor_actions(ui);
         }
         Change::Report => {
             update_readout(ui);
@@ -492,6 +524,8 @@ fn handle_change(ui: &Ui, change: Change) {
         Change::Play => {
             update_clocks(ui);
             update_play_controls(ui);
+            sync_play_editability(ui);
+            update_editor_actions(ui);
         }
         Change::BatchProgress(_, _) => {
             ui.winrate.refresh();
@@ -522,6 +556,268 @@ fn connect_comment(ui: &Ui) {
     let weak = ui.weak_window();
     focus.connect_leave(move |_| with_window_ui(&weak, flush_comment));
     ui.comment.add_controller(focus);
+
+    let keys = gtk::EventControllerKey::new();
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let weak = ui.weak_window();
+    keys.connect_key_pressed(move |_, key, _, modifiers| {
+        let Some(redo) = comment_buffer_op(key, modifiers) else {
+            return glib::Propagation::Proceed;
+        };
+        with_window_ui(&weak, |ui| apply_comment_buffer_op(ui, redo));
+        glib::Propagation::Stop
+    });
+    ui.comment.add_controller(keys);
+
+    // Application accels capture at the window; stop them while the comment
+    // view has focus even if the buffer can no longer undo.
+    if let Some(window) = ui.window() {
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let weak = ui.weak_window();
+        keys.connect_key_pressed(move |_, key, _, modifiers| {
+            let Some(redo) = comment_buffer_op(key, modifiers) else {
+                return glib::Propagation::Proceed;
+            };
+            let Some(window) = weak.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            let handled = window
+                .with_ui(|ui| {
+                    if !ui.comment.has_focus() {
+                        return false;
+                    }
+                    apply_comment_buffer_op(ui, redo);
+                    true
+                })
+                .unwrap_or(false);
+            if handled {
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
+        window.add_controller(keys);
+    }
+}
+
+/// `Some(true)` is redo, `Some(false)` is undo.
+fn comment_buffer_op(key: gdk::Key, modifiers: gdk::ModifierType) -> Option<bool> {
+    if !modifiers.contains(gdk::ModifierType::CONTROL_MASK) {
+        return None;
+    }
+    let shift = modifiers.contains(gdk::ModifierType::SHIFT_MASK);
+    if key == gdk::Key::z || key == gdk::Key::Z {
+        Some(shift)
+    } else if key == gdk::Key::y || key == gdk::Key::Y {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+fn apply_comment_buffer_op(ui: &Ui, redo: bool) {
+    let buffer = ui.comment.buffer();
+    if redo {
+        buffer.redo();
+    } else {
+        buffer.undo();
+    }
+}
+
+fn win_simple(ui: &Ui, name: &str) -> Option<gio::SimpleAction> {
+    ui.win_actions
+        .lookup_action(name)
+        .and_then(|action| action.downcast::<gio::SimpleAction>().ok())
+}
+
+fn color_name(color: Color) -> &'static str {
+    match color {
+        Color::Black => "black",
+        Color::White => "white",
+    }
+}
+
+fn parse_color(name: &str) -> Option<Color> {
+    match name {
+        "black" => Some(Color::Black),
+        "white" => Some(Color::White),
+        _ => None,
+    }
+}
+
+fn connect_editor_tools(window: &MiraiWindow, ui: &Ui) {
+    for group in [window.stone_tools(), window.mark_tools()] {
+        let weak = ui.weak_window();
+        group.connect_active_name_notify(move |group| {
+            let Some(name) = group.active_name() else {
+                return;
+            };
+            with_window_ui(&weak, |ui| {
+                // Projection updates select the already-current tool, not a new edit.
+                if name != ui.state.editor_tool().as_str() {
+                    let _ = group.activate_action("win.edit-tool", Some(&name.to_variant()));
+                }
+            });
+        });
+    }
+}
+
+fn update_editor_actions(ui: &Ui) {
+    let active = ui.play.is_active();
+    let human = matches!(ui.play.play_state(), PlayState::HumanTurn);
+    if let Some(action) = win_simple(ui, "undo") {
+        action.set_enabled(if active { true } else { ui.state.can_undo() });
+    }
+    if let Some(action) = win_simple(ui, "redo") {
+        action.set_enabled(!active && ui.state.can_redo());
+    }
+    if let Some(action) = win_simple(ui, "to-play") {
+        action.set_enabled(!active);
+        action.set_state(&color_name(ui.state.to_play()).to_variant());
+    }
+    if let Some(window) = ui.window() {
+        let (icon, label, tooltip) = match ui.state.to_play() {
+            Color::Black => (
+                "mirai-play-black",
+                "Play — Black to Play",
+                "Play — Black to Play; Left-click to Play, Right-click to Take Back and Delete the Current Branch",
+            ),
+            Color::White => (
+                "mirai-play-white",
+                "Play — White to Play",
+                "Play — White to Play; Left-click to Play, Right-click to Take Back and Delete the Current Branch",
+            ),
+        };
+        let button = window.play_tool();
+        window.play_tool_icon().set_icon_name(Some(icon));
+        button.set_tooltip(tooltip);
+        button.set_label(Some(label));
+        let name = ui.state.editor_tool().as_str();
+        for group in [window.stone_tools(), window.mark_tools()] {
+            group.set_sensitive(!active);
+            group.set_active_name(group.toggle_by_name(name).map(|_| name));
+        }
+    }
+    if let Some(action) = win_simple(ui, "edit-tool") {
+        action.set_enabled(!active);
+        action.set_state(&ui.state.editor_tool().as_str().to_variant());
+    }
+    if let Some(action) = win_simple(ui, "play-at") {
+        action.set_enabled(!active || human);
+    }
+    if let Some(action) = win_simple(ui, "promote-line-at") {
+        action.set_enabled(!active);
+    }
+    if let Some(action) = win_simple(ui, "delete-branch-at") {
+        action.set_enabled(!active);
+    }
+    if let Some(action) = win_simple(ui, "delete-branch") {
+        action.set_enabled(!active);
+    }
+}
+
+fn sync_play_editability(ui: &Ui) {
+    let active = ui.play.is_active();
+    if let Some(window) = ui.window() {
+        window.editor_toolbar().set_visible(!active);
+    }
+    if active {
+        if ui.comment.is_editable() {
+            ui.comment_node.set(None);
+            ui.comment.set_editable(false);
+            load_comment(ui);
+        }
+    } else if !ui.comment.is_editable() {
+        ui.comment.set_editable(true);
+    }
+}
+
+fn install_board_hook(ui: &Ui) {
+    let weak = ui.weak_window();
+    ui.board.set_click_hook(move |click: BoardClick| {
+        with_window_ui(&weak, |ui| on_board_click(ui, click));
+    });
+}
+
+fn on_board_click(ui: &Ui, click: BoardClick) {
+    let p = click.point;
+    if p.is_pass() {
+        return;
+    }
+    let shift = click.modifiers.contains(gdk::ModifierType::SHIFT_MASK);
+    let primary = click.button == gdk::BUTTON_PRIMARY;
+    let secondary = click.button == gdk::BUTTON_SECONDARY;
+
+    if secondary && shift {
+        ui.board.show_menu(Some(p), None, !ui.play.is_active());
+        return;
+    }
+
+    if ui.play.is_active() {
+        if primary {
+            ui.play.on_board_click(p);
+        }
+        return;
+    }
+
+    if secondary {
+        ui.board.clear_preview();
+        match ui.state.editor_tool() {
+            EditorTool::Play => delete_branch(ui),
+            EditorTool::Setup(color) => toggle_setup_stone(ui, p, color.other()),
+            _ => {}
+        }
+        return;
+    }
+
+    if !primary {
+        return;
+    }
+
+    if ui.state.editor_tool() != EditorTool::Play {
+        ui.board.clear_preview();
+    }
+
+    match ui.state.editor_tool() {
+        EditorTool::Play => {
+            if let Err(error) = ui.state.play_move(p) {
+                ui.state.toast_illegal_move(error);
+            }
+        }
+        EditorTool::Setup(color) => toggle_setup_stone(ui, p, color),
+        EditorTool::Triangle => {
+            ui.state
+                .with_edit_session(|session| session.toggle_mark(MarkKind::Triangle, p));
+        }
+        EditorTool::Square => {
+            ui.state
+                .with_edit_session(|session| session.toggle_mark(MarkKind::Square, p));
+        }
+        EditorTool::Circle => {
+            ui.state
+                .with_edit_session(|session| session.toggle_mark(MarkKind::Circle, p));
+        }
+        EditorTool::Cross => {
+            ui.state
+                .with_edit_session(|session| session.toggle_mark(MarkKind::Cross, p));
+        }
+        EditorTool::Label => {
+            if let Some(window) = ui.window() {
+                crate::label_editor::present(&window, p);
+            }
+        }
+        EditorTool::EraseMark => {
+            ui.state.with_edit_session(|session| session.clear_mark(p));
+        }
+    }
+}
+
+fn toggle_setup_stone(ui: &Ui, point: Point, color: Color) {
+    ui.state.with_edit_session(|session| {
+        let target = (session.position().board.at(point) != Some(color)).then_some(color);
+        session.set_setup_stone(point, target)
+    });
 }
 
 fn connect_close(window: &MiraiWindow) {
@@ -643,8 +939,8 @@ fn update_clocks(ui: &Ui) {
 
     let to_play = ui.state.to_play();
     for (label, mine) in [
-        (&ui.clock_black, to_play == mirai_core::Color::Black),
-        (&ui.clock_white, to_play == mirai_core::Color::White),
+        (&ui.clock_black, to_play == Color::Black),
+        (&ui.clock_white, to_play == Color::White),
     ] {
         if mine {
             label.add_css_class("active");
@@ -729,6 +1025,9 @@ fn refresh_blunders(ui: &Ui) {
 // -- comment pane -----------------------------------------------------------------------
 
 fn flush_comment(ui: &Ui) {
+    if ui.play.is_active() {
+        return;
+    }
     let Some(node) = ui.comment_node.get() else {
         return;
     };
@@ -748,7 +1047,7 @@ fn flush_comment(ui: &Ui) {
         return;
     }
     ui.comment_node.set(None);
-    ui.state.with_tree_mut(|t| t.set_comment(id, text));
+    ui.state.set_comment_at(node, &text);
     ui.comment_node.set(Some(node));
 }
 
@@ -759,7 +1058,10 @@ fn load_comment(ui: &Ui) {
         tree.node(node.id).comment.clone()
     };
     ui.comment_node.set(None);
-    ui.comment.buffer().set_text(&text);
+    let buffer = ui.comment.buffer();
+    buffer.begin_irreversible_action();
+    buffer.set_text(&text);
+    buffer.end_irreversible_action();
     ui.comment_node.set(Some(node));
 }
 
@@ -1212,6 +1514,7 @@ fn do_score(ui: &Ui) {
     };
     ui.tasks.score.abort();
     let target = ui.state.cursor_ref();
+    let revision = ui.state.position_revision();
     let mut req = ui
         .state
         .request_for_node(target.id, Some(SCORE_VISITS), Want::OWNERSHIP);
@@ -1233,6 +1536,7 @@ fn do_score(ui: &Ui) {
                 }
                 SubEvent::Failed(e) => {
                     with_window_ui(&weak, |ui| {
+                        ui.tasks.score.0.borrow_mut().take();
                         ui.state.set_status(String::new());
                         ui.state.on_engine_error(e);
                     });
@@ -1241,8 +1545,11 @@ fn do_score(ui: &Ui) {
             }
         }
         with_window_ui(&weak, |ui| {
+            ui.tasks.score.0.borrow_mut().take();
             ui.state.set_status(String::new());
-            if ui.state.resolve_node(target) != Some(ui.state.cursor()) {
+            if ui.state.resolve_node(target) != Some(ui.state.cursor())
+                || ui.state.position_revision() != revision
+            {
                 return;
             }
             match last {
@@ -1326,7 +1633,8 @@ fn show_shortcuts(ui: &Ui) {
             &[
                 ("New Game", "win.new-game"),
                 ("Pass", "win.pass"),
-                ("Undo", "win.undo"),
+                ("Undo Last Edit", "win.undo"),
+                ("Redo", "win.redo"),
                 ("Delete Branch", "win.delete-branch"),
             ][..],
         ),
@@ -1365,27 +1673,87 @@ fn show_about(ui: &Ui) {
 
 // -- actions ----------------------------------------------------------------------------
 
-/// Deletes the branch starting at the cursor and steps back to its parent.
 fn delete_branch(ui: &Ui) {
-    let id = ui.state.cursor();
-    let parent = ui.state.tree().parent(id);
-    let Some(parent) = parent else {
+    delete_branch_id(ui, ui.state.cursor());
+}
+
+fn delete_branch_id(ui: &Ui, id: NodeId) {
+    if ui.play.is_active() {
+        return;
+    }
+    if !ui.state.tree().contains(id) {
+        return;
+    }
+    if ui.state.tree().parent(id).is_none() {
         ui.state.toast("The root node cannot be deleted");
         return;
-    };
+    }
+    flush_comment(ui);
     ui.comment_node.set(None);
-    ui.state.set_cursor(parent);
-    ui.comment_node.set(None);
-    ui.state.with_tree_mut(|t| t.delete_branch(id));
+    ui.state
+        .with_edit_session(|session| session.delete_branch_at(id));
     load_comment(ui);
-    update_scale(ui);
+}
+
+fn promote_line_id(ui: &Ui, id: NodeId) {
+    if ui.play.is_active() {
+        return;
+    }
+    if !ui.state.tree().contains(id) {
+        return;
+    }
+    ui.state
+        .with_edit_session(|session| session.promote_to_main_line_at(id));
+}
+
+fn play_at_point(ui: &Ui, p: Point) {
+    if ui.play.is_active() {
+        if matches!(ui.play.play_state(), PlayState::HumanTurn) {
+            ui.play.on_board_click(p);
+        }
+        return;
+    }
+    if let Err(error) = ui.state.play_move(p) {
+        ui.state.toast_illegal_move(error);
+    }
+}
+
+fn do_undo(ui: &Ui) {
+    if ui.play.is_active() {
+        ui.play.undo();
+        return;
+    }
+    flush_comment(ui);
+    ui.comment_node.set(None);
+    ui.state.with_edit_session(|session| {
+        session.undo();
+    });
+    load_comment(ui);
+}
+
+fn do_redo(ui: &Ui) {
+    if ui.play.is_active() {
+        return;
+    }
+    flush_comment(ui);
+    ui.comment_node.set(None);
+    ui.state.with_edit_session(|session| {
+        session.redo();
+    });
+    load_comment(ui);
+}
+
+fn point_from_u32(raw: u32) -> Option<Point> {
+    u16::try_from(raw).ok().map(Point)
 }
 
 /// The body of a window action.
 type UiAction = Box<dyn Fn(&Ui)>;
+type PointAction = Box<dyn Fn(&Ui, u32)>;
+type ChoiceAction = Box<dyn Fn(&Ui, &str)>;
 
 fn install_actions(window: &MiraiWindow, ui: &Ui) {
-    let group = gio::SimpleActionGroup::new();
+    let group = ui.win_actions.clone();
     let weak = ui.weak_window();
     let add = |name: &str, f: UiAction| {
         let action = gio::SimpleAction::new(name, None);
@@ -1482,18 +1850,29 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
             }
         }),
     );
-    add(
-        "undo",
-        Box::new(|ui| {
-            if ui.play.is_active() {
-                ui.play.undo();
-            } else {
-                delete_branch(ui);
-            }
-        }),
-    );
+    add("undo", Box::new(do_undo));
+    add("redo", Box::new(do_redo));
     add("delete-branch", Box::new(delete_branch));
     add("resign", Box::new(|ui| ui.play.resign()));
+    add(
+        "board-menu",
+        Box::new(|ui| {
+            let Some(window) = ui.window() else {
+                return;
+            };
+            let Some(bounds) = window.board_menu_button().compute_bounds(&ui.board) else {
+                return;
+            };
+            // Popover pointing rectangles use the parent BoardView's coordinates.
+            let anchor = gdk::Rectangle::new(
+                bounds.x().round() as i32,
+                bounds.y().round() as i32,
+                bounds.width().ceil() as i32,
+                bounds.height().ceil() as i32,
+            );
+            ui.board.show_menu(None, Some(anchor), !ui.play.is_active());
+        }),
+    );
 
     add("open", Box::new(do_open));
     add("download-fox", Box::new(do_download_fox));
@@ -1602,6 +1981,77 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
     }
     group.add_action(&set_engine);
 
+    let add_u32 = |name: &str, handle: PointAction| {
+        let action = gio::SimpleAction::new(name, Some(glib::VariantTy::UINT32));
+        let weak = weak.clone();
+        action.connect_activate(move |_, param| {
+            let Some(value) = param.and_then(|p| p.get::<u32>()) else {
+                return;
+            };
+            with_window_ui(&weak, |ui| handle(ui, value));
+        });
+        group.add_action(&action);
+    };
+    add_u32(
+        "play-at",
+        Box::new(|ui, raw| {
+            if let Some(p) = point_from_u32(raw) {
+                play_at_point(ui, p);
+            }
+        }),
+    );
+    add_u32(
+        "promote-line-at",
+        Box::new(|ui, raw| promote_line_id(ui, NodeId(raw))),
+    );
+    add_u32(
+        "delete-branch-at",
+        Box::new(|ui, raw| delete_branch_id(ui, NodeId(raw))),
+    );
+
+    let add_choice = |name: &str, initial: &str, handle: ChoiceAction| {
+        let action = gio::SimpleAction::new_stateful(
+            name,
+            Some(glib::VariantTy::STRING),
+            &initial.to_variant(),
+        );
+        let weak = weak.clone();
+        action.connect_activate(move |_, param| {
+            let Some(value) = param.and_then(|p| p.str().map(str::to_owned)) else {
+                return;
+            };
+            with_window_ui(&weak, |ui| handle(ui, &value));
+        });
+        group.add_action(&action);
+    };
+    add_choice(
+        "to-play",
+        color_name(ui.state.to_play()),
+        Box::new(|ui, value| {
+            if ui.play.is_active() {
+                return;
+            }
+            let Some(color) = parse_color(value) else {
+                return;
+            };
+            ui.state
+                .with_edit_session(|session| session.set_to_play(color));
+        }),
+    );
+    add_choice(
+        "edit-tool",
+        ui.state.editor_tool().as_str(),
+        Box::new(|ui, value| {
+            if ui.play.is_active() {
+                return;
+            }
+            let Some(tool) = EditorTool::from_str(value) else {
+                return;
+            };
+            ui.state.set_editor_tool(tool);
+        }),
+    );
+
     window.insert_action_group("win", Some(&group));
 
     if let Some(app) = window.application() {
@@ -1617,6 +2067,7 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
             ("win.toggle-analysis", &["space"]),
             ("win.pass", &["p"]),
             ("win.undo", &["<Control>z"]),
+            ("win.redo", &["<Control><Shift>z"]),
             ("win.delete-branch", &["Delete"]),
             ("win.open", &["<Control>o"]),
             ("win.download-fox", &["<Control><Shift>o"]),
@@ -1637,6 +2088,7 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
             app.set_accels_for_action(action, accels);
         }
     }
+    update_editor_actions(ui);
 }
 
 #[cfg(test)]

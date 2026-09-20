@@ -1,7 +1,7 @@
 # mirai — user guide
 
-A Go board for Linux that talks to KataGo: live analysis, SGF review, and games against the
-computer. The engine can run on the same machine or on another one on your network.
+A Go board for Linux that talks to KataGo: live analysis, SGF review and editing, and games
+against the computer. The engine can run on the same machine or on another one on your network.
 
 [Installing](#1-installing) · [First run](#2-first-run) · [The interface](#3-the-interface) ·
 [Analysing](#4-analysing-a-position) · [Reviewing](#5-reviewing-a-game) ·
@@ -122,8 +122,9 @@ disk.
 
 | Region | What it shows |
 |---|---|
-| **Header bar** | On the left, the ways to get a record — **Open** (its ▾ also offers *Paste SGF* and *Clear Board*), an icon-only **Download from Fox** button, and **New Game…** — then the engine button (name + KataGo version; click for profiles and *Preferences*) and the ▶/■ live-analysis toggle. In the middle, the record's name with `•` while unsaved and the engine or current status beneath it. A saved record is named by its file; one that has never been saved — downloaded, pasted or just played — is named `Black vs White` from the record itself, falling back to the event and then to `Untitled`. On the right, the sidebar toggle and Main Menu (☰) |
+| **Header bar** | On the left, the ways to get a record — **Open** (its ▾ also offers *Paste SGF* and *Clear Board*), an icon-only **Download from Fox** button, and the icon-only **New Game** button — then the engine button (name + KataGo version; click for profiles and *Preferences*) and the ▶/■ live-analysis toggle. In the middle, the record's name with `•` while unsaved and the engine or current status beneath it. A saved record is named by its file; one that has never been saved — downloaded, pasted or just played — is named `Black vs White` from the record itself, falling back to the event and then to `Untitled`. On the right, the sidebar toggle and Main Menu (☰) |
 | **Board** | wood, grid, star points, optional coordinates, stones. The last move is marked with a red dot, or — when move numbers are on — by its number in red. SGF marks (triangle, square, circle, cross, text labels) are drawn |
+| **Editor toolbar** | Above the board in review: undo/redo, Play (two stones and an arrow), black/white setup tools, marks, a mark eraser and the three-dot **Board Menu**. The larger foreground stone in Play shows the side to move. Compact groups wrap on narrow windows. Hidden during an active game |
 | **Win-rate graph** | solid curve = Black's win rate (left axis 0/50/100); dashed curve = score lead (right axis, never tighter than ±5); vertical line = where you are; coloured bars along the bottom = the blunder strip |
 | **Sidebar** | Three pages — **Analysis** (readout, candidate list, blunder list), **Moves** (the branch graph), **Comment** (the current move's comment). The sidebar button in the header bar (<kbd>F9</kbd>, or ☰ → *View* → *Sidebar*) hides it at any window size, giving the board the whole width; at narrow widths it closes by itself and the same button reopens it as an overlay |
 | **Bottom bar** | First / previous / next / last, previous / next variation, then — during a timed game — both clocks, the one counting shown in the accent colour and turning red under ten seconds, followed by the contextual **Undo**, **Pass** and **Resign** controls, a slider along the current line, and a readout of side to move, win rate, score lead, visits and — while a search is running — its speed in visits per second |
@@ -136,12 +137,14 @@ ticked when it is on — and *Preferences*, *Keyboard Shortcuts*, *About mirai*.
 
 | Action | Effect |
 |---|---|
-| Left-click an empty point | play there — your move in a game, a move or variation in review |
+| Left-click (Play tool) | play a real move for the side to play — captures, legality, move number |
+| Right-click (Play tool) | take back the current node: delete it and its continuation from **Moves**, then return to its parent. Undo restores the deleted branch; the root cannot be deleted |
+| Left-click / right-click (black or white setup tool) | use the selected colour / the opposite colour: place on an empty point, replace an opposite stone, or remove a matching stone. No captures or move numbers; marks are preserved |
+| Left-click with a mark tool | apply that tool; right-click does nothing |
 | Left-click during scoring | toggle that group alive/dead |
-| Right-click the move you are standing on | take that move back |
-| Right-click anywhere else | *Play here*, *Set as main line*, *Delete branch*, *Copy SGF* |
-| Scroll wheel | back / forward one move |
-| Hover a candidate blob | preview its variation |
+| Shift+right-click, or **Board Menu** | *Play here*, *Set as main line*, *Delete branch*, *Copy SGF*, *Black to Play*, *White to Play*. During a game, record-changing items are disabled |
+| Scroll wheel | browse back / forward one move without deleting anything |
+| Hover a candidate blob | preview its variation. Non-Play tools clear this preview |
 
 Drag the divider between the board and the graph to make the graph taller.
 
@@ -335,21 +338,31 @@ go there.
 
 | Operation | How |
 |---|---|
-| Promote a variation to the main line | right-click → *Set as main line* |
-| Delete this move and everything after it | <kbd>Delete</kbd>, or right-click → *Delete branch* |
-| Take back just the move you are on | right-click that stone |
+| Promote a variation to the main line | Shift+right-click or **Board Menu** → *Set as main line* |
+| Delete this move and everything after it | Right-click in Play mode, <kbd>Delete</kbd>, or the same menu → *Delete branch* |
+| Undo / redo the last edit | <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> |
 
-The start of the game cannot be deleted.
+The start of the game cannot be deleted. Setup on a node that already has a move or a
+continuation adds a new variation; further setup clicks stay on that new leaf.
+
+**Stone tools.** The two-stone arrow icon selects Play and shows the current player with
+its larger foreground stone. Clicking the black or white stone immediately enters Setup
+for that colour: left-click uses it, right-click uses the opposite colour. A matching stone
+is removed; an opposite stone is replaced. Neither changes whose turn it is. Use
+**Board Menu** → **Black to Play** / **White to Play** to edit the actual player.
 
 **Comments and marks.** The **Comment** page edits the comment on the current move; it is
-stored when you navigate away, click out of the box, or save — there is no Apply. Marks are
-read from the SGF, drawn, and written back, but mirai has no tool for adding new ones.
+stored when you navigate away, click out of the box, or save — there is no Apply, and the
+whole typing session is one undo. Marks are drawn from the SGF and can be added: triangle,
+square, circle, cross, or a text label. A second click of the same shape removes it; a
+different mark at that point replaces it. The **A** icon edits a text label; empty label
+text deletes it. The eraser icon removes only marks and labels, leaving the stone alone.
 
 ---
 
 ## 6. Playing
 
-<kbd>Ctrl</kbd>+<kbd>N</kbd> or the **New Game…** button. To wipe the current record back to
+<kbd>Ctrl</kbd>+<kbd>N</kbd> or the **New Game** icon button. To wipe the current record back to
 an empty board without starting a game against the engine, use ☰ → *Clear Board* or
 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd>. Size, rules and komi stay; stones, comments
 and the file path do not.
@@ -398,7 +411,9 @@ The ruleset and the strength setting are remembered as next time's defaults.
 ### While the game runs
 
 Click an empty point to move. The board is read-only while the engine thinks (`Thinking… 3.4k
-visits` in the status line) and after the game ends.
+visits` in the status line) and after the game ends. During a game the editor toolbar is
+hidden, ordinary right-click is ignored, redo is disabled, and <kbd>Ctrl</kbd>+<kbd>Z</kbd>
+takes back the whole exchange rather than a document edit.
 
 **Clocks** appear in the header bar, Black left, White right, with the side to move
 highlighted.
@@ -438,8 +453,8 @@ in the owner's colour, and the status line reading *"… — click a group to ma
 
 **Click any group to toggle it alive or dead.** The count updates instantly and entirely
 locally — no engine query, no waiting. This is how you fix a misjudged group or settle a seki
-by hand. The result dialog's **Analyse game** button hands the finished game to whole-game
-analysis.
+by hand. The result dialog: **Close** keeps counting; **Review Game** stops the session so
+the record can be edited again; **Analyse game** stops then starts whole-game analysis.
 
 A resignation or a lost flag settles the result on its own; mirai still counts the board and
 shows what the count would have been.
@@ -626,19 +641,21 @@ first-run configuration rather than start with half of one.
 |---|---|---|---|---|---|---|---|
 | <kbd>Home</kbd> | first move | <kbd>Space</kbd> | live analysis on/off | <kbd>Ctrl</kbd>+<kbd>N</kbd> | new game | <kbd>Ctrl</kbd>+<kbd>O</kbd> | open |
 | <kbd>End</kbd> | last move | <kbd>Ctrl</kbd>+<kbd>A</kbd> | analyse whole game | <kbd>p</kbd> | pass | <kbd>Ctrl</kbd>+<kbd>S</kbd> | save |
-| <kbd>←</kbd> <kbd>→</kbd> | one move | <kbd>Ctrl</kbd>+<kbd>E</kbd> | estimate score | <kbd>Ctrl</kbd>+<kbd>Z</kbd> | undo | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> | save as |
-| <kbd>Page Up/Down</kbd> | ten moves | <kbd>o</kbd> | ownership overlay | <kbd>Delete</kbd> | delete branch | <kbd>Ctrl</kbd>+<kbd>C</kbd> | copy record |
-| <kbd>↑</kbd> <kbd>↓</kbd> | variations | <kbd>y</kbd> | policy overlay | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> | clear board | <kbd>Ctrl</kbd>+<kbd>V</kbd> | paste record |
+| <kbd>←</kbd> <kbd>→</kbd> | one move | <kbd>Ctrl</kbd>+<kbd>E</kbd> | estimate score | <kbd>Ctrl</kbd>+<kbd>Z</kbd> | last edit | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> | save as |
+| <kbd>Page Up/Down</kbd> | ten moves | <kbd>o</kbd> | ownership overlay | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> | redo | <kbd>Ctrl</kbd>+<kbd>C</kbd> | copy record |
+| <kbd>↑</kbd> <kbd>↓</kbd> | variations | <kbd>y</kbd> | policy overlay | <kbd>Delete</kbd> | delete branch | <kbd>Ctrl</kbd>+<kbd>V</kbd> | paste record |
 | | | <kbd>c</kbd> | coordinates | | | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> | download from Fox |
-| | | <kbd>n</kbd> | move numbers | | | | |
+| | | <kbd>n</kbd> | move numbers | | | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> | clear board |
 | | | <kbd>F9</kbd> | show/hide sidebar | | | | |
 
 <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes back both players' last moves during a game; in review it
-deletes the current branch. The same table is in the application under ☰ → *Keyboard
-Shortcuts*.
+undoes the last edit — a placed stone, a mark, a comment commit — not each keystroke.
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redoes it (disabled during a game). While a
+comment or label field has focus, those keys undo typing in that field instead. The same
+table is in the application under ☰ → *Keyboard Shortcuts*.
 
-Mouse only: switching engine profile, *Preferences*, *Keyboard Shortcuts*, *About mirai*, and
-the board's right-click menu.
+No dedicated accelerator: switching engine profile, *Preferences*, *Keyboard Shortcuts*,
+*About mirai*, and **Board Menu**. These remain reachable with standard keyboard focus.
 
 ---
 
@@ -655,14 +672,14 @@ the board's right-click menu.
 (`$XDG_CONFIG_HOME` and `$XDG_DATA_HOME` are honoured if set.)
 
 Autosave runs every 30 seconds, and only when there is something worth keeping — a move, a
-setup stone or a comment; a blank board is never saved and marks alone do not count. Closing a
-window **deletes** its autosave, so a file still there on the next start is one a crash left
-behind, and that is what mirai offers to restore. The autosave is not your file: restoring it
-does not make it the target of a plain Save. KataGo's logs accumulate and can be deleted at any
-time, as can the generated analysis config — mirai writes it again whenever its contents would
-change. The Fox search cache can be deleted; the next lookup writes it again. Nothing else is
-written; your own KataGo installation, model and any analysis config you supplied are never
-modified.
+setup stone, a mark, an explicit side to play, or a comment; a blank board is never saved.
+Closing a window **deletes** its autosave, so a file still there on the next start is one a
+crash left behind, and that is what mirai offers to restore. The autosave is not your file:
+restoring it does not make it the target of a plain Save. KataGo's logs accumulate and can be
+deleted at any time, as can the generated analysis config — mirai writes it again whenever
+its contents would change. The Fox search cache can be deleted; the next lookup writes it
+again. Nothing else is written; your own KataGo installation, model and any analysis config
+you supplied are never modified.
 
 ---
 

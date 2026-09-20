@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-
 using Gtk 4.0;
 using Adw 1;
 
-template $MiraiWindow : Adw.ApplicationWindow {
+template $MiraiWindow: Adw.ApplicationWindow {
   title: _("mirai");
   default-width: 1280;
   default-height: 860;
@@ -23,6 +22,7 @@ template $MiraiWindow : Adw.ApplicationWindow {
           tooltip-text: _("Open an SGF Game Record (Ctrl+O)");
           action-name: "win.open";
           menu-model: open_menu;
+
           accessibility {
             label: _("Open Game Record");
           }
@@ -33,6 +33,7 @@ template $MiraiWindow : Adw.ApplicationWindow {
           icon-name: "folder-download-symbolic";
           tooltip-text: _("Download a Public Game Record from Fox (Ctrl+Shift+O)");
           action-name: "win.download-fox";
+
           accessibility {
             label: _("Download from Fox");
           }
@@ -40,12 +41,10 @@ template $MiraiWindow : Adw.ApplicationWindow {
 
         [start]
         Gtk.Button {
-          tooltip-text: _("Set Up a Game Against the Engine (Ctrl+N)");
+          tooltip-text: _("New Game (Ctrl+N)");
           action-name: "win.new-game";
-          child: Adw.ButtonContent {
-            icon-name: "document-new-symbolic";
-            label: _("New Game…");
-          };
+          icon-name: "document-new-symbolic";
+
           accessibility {
             label: _("New Game…");
           }
@@ -53,16 +52,20 @@ template $MiraiWindow : Adw.ApplicationWindow {
 
         [start]
         Gtk.Separator {
-          styles ["spacer"]
+          styles [
+            "spacer",
+          ]
         }
 
         [start]
         Gtk.MenuButton engine_menu {
           tooltip-text: _("Analysis Engine");
+
           child: Adw.ButtonContent engine_content {
             icon-name: "applications-engineering-symbolic";
             label: _("No Engine");
           };
+
           accessibility {
             label: _("Analysis Engine");
           }
@@ -72,6 +75,7 @@ template $MiraiWindow : Adw.ApplicationWindow {
         Gtk.ToggleButton live_toggle {
           icon-name: "media-playback-start-symbolic";
           tooltip-text: _("Start Live Analysis (Space)");
+
           accessibility {
             label: _("Live Analysis");
           }
@@ -82,6 +86,7 @@ template $MiraiWindow : Adw.ApplicationWindow {
           icon-name: "open-menu-symbolic";
           tooltip-text: _("Main Menu");
           menu-model: primary_menu;
+
           accessibility {
             label: _("Main Menu");
           }
@@ -91,6 +96,7 @@ template $MiraiWindow : Adw.ApplicationWindow {
         Gtk.ToggleButton sidebar_toggle {
           icon-name: "sidebar-show-right-symbolic";
           tooltip-text: _("Hide Sidebar (F9)");
+
           accessibility {
             label: _("Sidebar");
           }
@@ -107,10 +113,191 @@ template $MiraiWindow : Adw.ApplicationWindow {
           orientation: vertical;
           hexpand: true;
           vexpand: true;
+
           Gtk.Box banner_slot {
             orientation: vertical;
           }
 
+          Gtk.Box editor_toolbar {
+            styles [
+              "toolbar",
+            ]
+
+            Adw.WrapBox {
+              child-spacing: 12;
+              line-spacing: 6;
+              line-homogeneous: true;
+              hexpand: true;
+
+              Gtk.Box {
+                spacing: 0;
+                valign: center;
+
+                accessibility {
+                  label: _("Edit History");
+                }
+
+                Gtk.Button {
+                  icon-name: "edit-undo-symbolic";
+                  action-name: "win.undo";
+                  tooltip-text: _("Undo the Last Edit (Ctrl+Z)");
+
+                  accessibility {
+                    label: _("Undo");
+                  }
+                }
+
+                Gtk.Button {
+                  icon-name: "edit-redo-symbolic";
+                  action-name: "win.redo";
+                  tooltip-text: _("Redo the Last Edit (Ctrl+Shift+Z)");
+
+                  accessibility {
+                    label: _("Redo");
+                  }
+                }
+              }
+
+              Adw.ToggleGroup stone_tools {
+                valign: center;
+
+                accessibility {
+                  label: _("Stone Tools");
+                }
+
+                Adw.Toggle play_tool {
+                  name: "play";
+                  label: _("Play");
+
+                  child: Gtk.Image play_tool_icon {
+                    icon-name: "mirai-play-black";
+                    pixel-size: 24;
+                    // The toggle supplies the accessible label.
+                    accessible-role: presentation;
+                  };
+
+                  tooltip: _("Play — Left-click to Play, Right-click to Take Back");
+                }
+
+                Adw.Toggle {
+                  name: "setup-black";
+                  label: _("Setup Black");
+
+                  child: Gtk.Image {
+                    icon-name: "mirai-stone-black";
+                    accessible-role: presentation;
+                  };
+
+                  tooltip: _("Setup Black — Left-click Black, Right-click White; Matching Color Removes the Stone");
+                }
+
+                Adw.Toggle {
+                  name: "setup-white";
+                  label: _("Setup White");
+
+                  child: Gtk.Image {
+                    icon-name: "mirai-stone-white";
+                    accessible-role: presentation;
+                  };
+
+                  tooltip: _("Setup White — Left-click White, Right-click Black; Matching Color Removes the Stone");
+                }
+              }
+
+              Adw.ToggleGroup mark_tools {
+                valign: center;
+
+                styles [
+                  "flat",
+                ]
+
+                accessibility {
+                  label: _("Marks");
+                }
+
+                Adw.Toggle {
+                  name: "triangle";
+                  label: _("Triangle");
+
+                  child: Gtk.Image {
+                    icon-name: "mirai-mark-triangle-symbolic";
+                    accessible-role: presentation;
+                  };
+
+                  tooltip: _("Triangle");
+                }
+
+                Adw.Toggle {
+                  name: "square";
+                  label: _("Square");
+
+                  child: Gtk.Image {
+                    icon-name: "mirai-mark-square-symbolic";
+                    accessible-role: presentation;
+                  };
+
+                  tooltip: _("Square");
+                }
+
+                Adw.Toggle {
+                  name: "circle";
+                  label: _("Circle");
+
+                  child: Gtk.Image {
+                    icon-name: "mirai-mark-circle-symbolic";
+                    accessible-role: presentation;
+                  };
+
+                  tooltip: _("Circle");
+                }
+
+                Adw.Toggle {
+                  name: "cross";
+                  label: _("Cross");
+
+                  child: Gtk.Image {
+                    icon-name: "mirai-mark-cross-symbolic";
+                    accessible-role: presentation;
+                  };
+
+                  tooltip: _("Cross");
+                }
+
+                Adw.Toggle {
+                  name: "label";
+                  label: _("Label");
+
+                  child: Gtk.Image {
+                    icon-name: "mirai-mark-label-symbolic";
+                    accessible-role: presentation;
+                  };
+
+                  tooltip: _("Label");
+                }
+
+                Adw.Toggle {
+                  name: "erase-mark";
+                  label: _("Erase Mark");
+
+                  child: Gtk.Image {
+                    icon-name: "mirai-eraser-symbolic";
+                    accessible-role: presentation;
+                  };
+                }
+              }
+            }
+
+            Gtk.Button board_menu_button {
+              icon-name: "view-more-symbolic";
+              valign: start;
+              action-name: "win.board-menu";
+              tooltip-text: _("Board Menu — Also Available with Shift+Right-click");
+
+              accessibility {
+                label: _("Board Menu");
+              }
+            }
+          }
 
           Gtk.Paned content {
             orientation: vertical;
@@ -130,6 +317,7 @@ template $MiraiWindow : Adw.ApplicationWindow {
           Adw.HeaderBar {
             show-start-title-buttons: false;
             show-end-title-buttons: false;
+
             title-widget: Adw.ViewSwitcher {
               stack: sidebar_stack;
               policy: wide;
@@ -153,46 +341,67 @@ template $MiraiWindow : Adw.ApplicationWindow {
           icon-name: "go-first-symbolic";
           action-name: "win.first";
           tooltip-text: _("First Move (Home)");
-          accessibility { label: _("First Move"); }
+
+          accessibility {
+            label: _("First Move");
+          }
         }
 
         Gtk.Button {
           icon-name: "go-previous-symbolic";
           action-name: "win.prev";
           tooltip-text: _("Previous Move (Left)");
-          accessibility { label: _("Previous Move"); }
+
+          accessibility {
+            label: _("Previous Move");
+          }
         }
 
         Gtk.Button {
           icon-name: "go-next-symbolic";
           action-name: "win.next";
           tooltip-text: _("Next Move (Right)");
-          accessibility { label: _("Next Move"); }
+
+          accessibility {
+            label: _("Next Move");
+          }
         }
 
         Gtk.Button {
           icon-name: "go-last-symbolic";
           action-name: "win.last";
           tooltip-text: _("Last Move (End)");
-          accessibility { label: _("Last Move"); }
+
+          accessibility {
+            label: _("Last Move");
+          }
         }
 
         Gtk.Box {
           spacing: 0;
-          styles ["linked"]
+
+          styles [
+            "linked",
+          ]
 
           Gtk.Button {
             icon-name: "go-up-symbolic";
             action-name: "win.branch-prev";
             tooltip-text: _("Previous Variation (Up)");
-            accessibility { label: _("Previous Variation"); }
+
+            accessibility {
+              label: _("Previous Variation");
+            }
           }
 
           Gtk.Button {
             icon-name: "go-down-symbolic";
             action-name: "win.branch-next";
             tooltip-text: _("Next Variation (Down)");
-            accessibility { label: _("Next Variation"); }
+
+            accessibility {
+              label: _("Next Variation");
+            }
           }
         }
 
@@ -204,12 +413,18 @@ template $MiraiWindow : Adw.ApplicationWindow {
 
           Gtk.Label clock_black {
             label: _("–:––");
-            styles ["mirai-clock"]
+
+            styles [
+              "mirai-clock",
+            ]
           }
 
           Gtk.Label clock_white {
             label: _("–:––");
-            styles ["mirai-clock"]
+
+            styles [
+              "mirai-clock",
+            ]
           }
         }
 
@@ -234,7 +449,10 @@ template $MiraiWindow : Adw.ApplicationWindow {
             label: _("Resign");
             action-name: "win.resign";
             tooltip-text: _("Resign the Current Game");
-            styles ["destructive-action"]
+
+            styles [
+              "destructive-action",
+            ]
           }
         }
 
@@ -244,11 +462,13 @@ template $MiraiWindow : Adw.ApplicationWindow {
           draw-value: false;
           round-digits: 0;
           digits: 0;
+
           adjustment: Gtk.Adjustment {
             lower: 0;
             upper: 1;
             value: 0;
           };
+
           accessibility {
             label: _("Move Number");
           }
@@ -257,7 +477,10 @@ template $MiraiWindow : Adw.ApplicationWindow {
         Gtk.Label readout {
           label: _("—");
           tooltip-text: _("Side to Move, Win Rate, Score Lead, Visits, and Search Speed");
-          styles ["mirai-readout"]
+
+          styles [
+            "mirai-readout",
+          ]
         }
       }
     };

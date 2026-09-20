@@ -6,12 +6,14 @@ use adw::prelude::*;
 
 use crate::app::AppState;
 
-/// The same dialog, with a working "Analyse game" button.
+/// Score result dialog. Close keeps counting; Review Game stops play; Analyse Game
+/// stops then starts whole-game analysis (wired by the caller).
 pub fn show_score_with(
     parent: &impl IsA<gtk::Widget>,
     state: &AppState,
     summary: &str,
     on_analyse: impl Fn() + 'static,
+    on_review: impl Fn() + 'static,
 ) {
     let (rules, komi, size) = {
         let tree = state.tree();
@@ -24,14 +26,18 @@ pub fn show_score_with(
         rules.label()
     );
     let dialog = adw::AlertDialog::new(Some("Result"), Some(&body));
-    dialog.add_responses(&[("close", "Close"), ("analyse", "Analyse Game")]);
+    dialog.add_responses(&[
+        ("close", "Close"),
+        ("review", "Review Game"),
+        ("analyse", "Analyse Game"),
+    ]);
     dialog.set_response_appearance("analyse", adw::ResponseAppearance::Suggested);
     dialog.set_default_response(Some("close"));
     dialog.set_close_response("close");
-    dialog.connect_response(None, move |_, response| {
-        if response == "analyse" {
-            on_analyse();
-        }
+    dialog.connect_response(None, move |_, response| match response {
+        "analyse" => on_analyse(),
+        "review" => on_review(),
+        _ => {}
     });
     dialog.present(Some(parent));
 }

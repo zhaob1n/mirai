@@ -33,6 +33,12 @@ pub struct NodeRef {
 }
 
 pub enum Change {
+    BeforeEdit,
+    Edit {
+        positions_changed: bool,
+        structure_changed: bool,
+    },
+    Editor,
     Tree,
     Cursor,
     Report,
@@ -40,6 +46,50 @@ pub enum Change {
     Toast(String),
     Play,
     BatchProgress(u32, u32),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum EditorTool {
+    #[default]
+    Play,
+    Setup(Color),
+    Triangle,
+    Square,
+    Circle,
+    Cross,
+    Label,
+    EraseMark,
+}
+
+impl EditorTool {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Play => "play",
+            Self::Setup(Color::Black) => "setup-black",
+            Self::Setup(Color::White) => "setup-white",
+            Self::Triangle => "triangle",
+            Self::Square => "square",
+            Self::Circle => "circle",
+            Self::Cross => "cross",
+            Self::Label => "label",
+            Self::EraseMark => "erase-mark",
+        }
+    }
+
+    pub(crate) fn from_str(value: &str) -> Option<Self> {
+        Some(match value {
+            "play" => Self::Play,
+            "setup-black" => Self::Setup(Color::Black),
+            "setup-white" => Self::Setup(Color::White),
+            "triangle" => Self::Triangle,
+            "square" => Self::Square,
+            "circle" => Self::Circle,
+            "cross" => Self::Cross,
+            "label" => Self::Label,
+            "erase-mark" => Self::EraseMark,
+            _ => return None,
+        })
+    }
 }
 #[derive(Clone, Debug)]
 pub enum EngineState {
@@ -132,6 +182,8 @@ mod imp {
         pub activation_task: RefCell<Option<glib::JoinHandle<()>>>,
         /// Bumped on every analysis restart so a stale pump can tell it has been superseded.
         pub generation: Cell<u64>,
+        pub analysis_revision: Cell<u64>,
+        pub(super) editor_tool: Cell<EditorTool>,
         /// This window's one `Change` dispatcher (INV-7). The cell *is* the invariant: a
         /// second installation cannot silently win, and `changed` borrows nothing while the
         /// dispatcher runs back through this state.
@@ -166,6 +218,8 @@ mod imp {
                 activation: Cell::new(0),
                 activation_task: RefCell::new(None),
                 generation: Cell::new(0),
+                analysis_revision: Cell::new(0),
+                editor_tool: Cell::new(EditorTool::Play),
                 change_hook: OnceCell::new(),
                 speed: Cell::new(None),
             }
@@ -335,14 +389,6 @@ impl AppState {
         Ref::map(self.imp().session.borrow(), GameSession::tree)
     }
 
-    /// Mutable access for a single edit; emits `tree-changed` afterwards.
-    pub fn with_tree_mut<R>(&self, f: impl FnOnce(&mut GameTree) -> R) -> R {
-        let out = f(self.imp().session.borrow_mut().tree_mut());
-        self.sync_record_flags();
-        self.changed(Change::Tree);
-        out
-    }
-
     /// Read-only access that still needs `&mut GameTree` (e.g. `position`, which caches).
     pub fn with_tree_cached<R>(&self, f: impl FnOnce(&mut GameTree) -> R) -> R {
         f(self.imp().session.borrow_mut().tree_cached_mut())
@@ -350,8 +396,16 @@ impl AppState {
 
     /// Writes an engine evaluation onto a node. Pondering is not an edit, so this leaves
     /// the dirty flag alone; the caller emits [`Change::Tree`] when it wants a redraw.
-    pub fn set_analysis(&self, id: NodeId, analysis: Option<NodeAnalysis>) {
-        self.imp().session.borrow_mut().set_analysis(id, analysis);
+    pub(crate) fn set_analysis_at(
+        &self,
+        id: NodeId,
+        expected_position_revision: u64,
+        analysis: Option<NodeAnalysis>,
+    ) -> bool {
+        self.imp()
+            .session
+            .borrow_mut()
+            .set_analysis_at(id, expected_position_revision, analysis)
     }
 
     /// Mirrors the record's own dirty flag and Save target onto the GObject properties the
@@ -378,49 +432,94 @@ impl AppState {
     /// are its rules, not the window's — so this is the one door it goes through and a play
     /// action cannot forget to dispatch. The borrow is always released first (INV-10).
     pub fn with_session_mut<R>(&self, f: impl FnOnce(&mut GameSession) -> R) -> R {
-        let (out, changed) = {
+        let (out, changed, positions_changed, structure_changed, cursor_changed) = {
             let mut session = self.imp().session.borrow_mut();
-            let before = (session.cursor(), session.revision());
+            let before = (
+                session.revision(),
+                session.cursor(),
+                session.epoch(),
+                session.position_revision(),
+                session.tree().structure_revision(),
+            );
             let out = f(&mut session);
-            (out, before != (session.cursor(), session.revision()))
+            let replaced = before.2 != session.epoch();
+            if replaced {
+                self.imp().editor_tool.set(EditorTool::Play);
+            }
+            (
+                out,
+                before.0 != session.revision(),
+                replaced || before.3 != session.position_revision(),
+                replaced || before.4 != session.tree().structure_revision(),
+                replaced || before.1 != session.cursor(),
+            )
         };
         if changed {
-            self.imp().report.replace(None);
+            if positions_changed || cursor_changed {
+                self.imp().report.replace(None);
+            }
             self.sync_record_flags();
+            self.changed(Change::Edit {
+                positions_changed,
+                structure_changed,
+            });
             self.changed(Change::Tree);
-            self.moved_cursor();
+            if positions_changed || cursor_changed {
+                self.moved_cursor();
+            }
         }
         out
+    }
+
+    pub(crate) fn with_edit_session<R>(&self, f: impl FnOnce(&mut GameSession) -> R) -> R {
+        self.changed(Change::BeforeEdit);
+        self.with_session_mut(f)
+    }
+
+    pub(crate) fn set_comment_at(&self, node: NodeRef, text: &str) {
+        if let Some(id) = self.resolve_node(node) {
+            self.with_session_mut(|session| session.set_comment_at(id, text));
+        }
+    }
+
+    pub(crate) fn position_revision(&self) -> u64 {
+        self.imp().session.borrow().position_revision()
+    }
+
+    pub(crate) fn can_undo(&self) -> bool {
+        self.imp().session.borrow().can_undo()
+    }
+
+    pub(crate) fn can_redo(&self) -> bool {
+        self.imp().session.borrow().can_redo()
+    }
+
+    pub(crate) fn editor_tool(&self) -> EditorTool {
+        self.imp().editor_tool.get()
+    }
+
+    pub(crate) fn set_editor_tool(&self, tool: EditorTool) {
+        if self.imp().editor_tool.replace(tool) != tool {
+            self.changed(Change::Editor);
+        }
     }
 
     /// Replaces the record. `path` is the file Save writes to, or `None` for a record that
     /// must go through Save As.
     pub fn adopt_record(&self, tree: GameTree, path: Option<String>) {
-        {
-            let imp = self.imp();
-            imp.session.borrow_mut().adopt(tree, path);
-            // A report belongs to one exact position; after replacing the game it may not
-            // even have the same board size.
-            imp.report.replace(None);
-        }
-        self.sync_record_flags();
-        self.changed(Change::Tree);
-        self.changed(Change::Cursor);
-        self.restart_analysis();
+        self.changed(Change::BeforeEdit);
+        self.imp().editor_tool.set(EditorTool::Play);
+        self.with_session_mut(|session| session.adopt(tree, path));
+        self.changed(Change::Editor);
     }
 
     /// Replaces the record with one nothing on disk holds — a paste, a download, or
     /// crash-recovery data. No Save target, and dirty from the start.
     pub fn adopt_unsaved(&self, tree: GameTree) {
-        {
-            let imp = self.imp();
-            imp.session.borrow_mut().restore(tree);
-            imp.report.replace(None);
-        }
-        self.sync_record_flags();
-        self.changed(Change::Tree);
-        self.changed(Change::Cursor);
-        self.restart_analysis();
+        self.changed(Change::BeforeEdit);
+        self.imp().editor_tool.set(EditorTool::Play);
+        self.with_session_mut(|session| session.restore(tree));
+        self.changed(Change::Editor);
     }
 
     /// Records that the tree was written to `path`.
@@ -459,19 +558,12 @@ impl AppState {
     }
 
     pub fn set_cursor(&self, id: NodeId) {
-        {
-            let imp = self.imp();
-            let mut session = imp.session.borrow_mut();
-            if session.cursor() == id {
-                return;
-            }
-            session.go_to(id);
-            if session.cursor() != id {
-                // `go_to` refuses an id this tree does not hold.
-                return;
-            }
-            imp.report.replace(None);
+        if self.cursor() == id || !self.tree().contains(id) {
+            return;
         }
+        self.changed(Change::BeforeEdit);
+        self.imp().session.borrow_mut().go_to(id);
+        self.imp().report.replace(None);
         self.moved_cursor();
     }
 
@@ -493,16 +585,7 @@ impl AppState {
 
     /// Plays a move for the side to move at the cursor, and moves the cursor onto it.
     pub fn play_move(&self, p: Point) -> Result<NodeId, IllegalMove> {
-        let id = {
-            let imp = self.imp();
-            let id = imp.session.borrow_mut().play(p)?;
-            imp.report.replace(None);
-            id
-        };
-        self.sync_record_flags();
-        self.changed(Change::Tree);
-        self.moved_cursor();
-        Ok(id)
+        self.with_edit_session(|session| session.play(p))
     }
 
     // -- navigation ---------------------------------------------------------------------
@@ -512,6 +595,7 @@ impl AppState {
 
     /// Runs `walk` over the record and dispatches if it actually moved the cursor.
     fn navigate(&self, walk: impl FnOnce(&mut GameSession)) {
+        self.changed(Change::BeforeEdit);
         {
             let imp = self.imp();
             let mut session = imp.session.borrow_mut();
@@ -716,6 +800,7 @@ impl AppState {
             handle.abort();
         }
         imp.generation.set(imp.generation.get().wrapping_add(1));
+        imp.analysis_revision.set(self.position_revision());
         imp.speed.set(None);
 
         if !self.live_analysis() {
@@ -796,7 +881,7 @@ impl AppState {
                 .as_ref()
                 .map(|a| a.visits);
             if crate::util::replaces_stored_analysis(existing, analysis.visits) {
-                session.set_analysis(cursor, Some(analysis));
+                session.set_analysis_at(cursor, self.imp().analysis_revision.get(), Some(analysis));
             }
         }
         self.imp().report.replace(Some(report));
