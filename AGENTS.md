@@ -36,6 +36,7 @@ Do not modify this section without explicit approval.
   A topic branch holding one commit off the current tip fast-forwards — an
   empty `Merge branch 'x'` carries no information and should not exist.
 - Follow Linus Torvalds' code taste.
+- Launch a reviewer subagent before a branch is merged into main.
 - Helper scripts and tools that paid for themselves stay in the tree so
   the next task can reuse them.
 
