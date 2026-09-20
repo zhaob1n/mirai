@@ -26,8 +26,8 @@ pub use rules::{Ko, RuleSet, Rules, Scoring, Tax, Whb};
 pub use score::{DeadSet, ScoreResult, score};
 pub use sgf::SgfError;
 pub use tree::{
-    Candidate, GameInfo, GameTree, MarkKind, Marks, Node, NodeAnalysis, NodeId, PlayerInfo,
-    Position, Setup,
+    Candidate, DetachedBranch, GameInfo, GameTree, MarkKind, Marks, Node, NodeAnalysis, NodeId,
+    PlayerInfo, Position, Setup,
 };
 
 /// A tiny deterministic PRNG (SplitMix64), used for Zobrist tables and play-mode sampling.

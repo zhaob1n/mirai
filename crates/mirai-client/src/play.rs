@@ -469,11 +469,9 @@ impl Play {
         let mut removed = 0;
         while removed < 2 {
             let cursor = game.cursor();
-            let Some(parent) = game.tree().parent(cursor) else {
+            if !game.delete_branch_at(cursor) {
                 break;
-            };
-            game.go_to(parent);
-            game.tree_mut().delete_branch(cursor);
+            }
             removed += 1;
             match human {
                 Some(h) if game.to_play() != h => continue,
@@ -497,7 +495,7 @@ impl Play {
             s.result.clear();
             s.state = PlayState::HumanTurn;
         }
-        game.tree_mut().info.result.clear();
+        game.set_result(String::new());
         self.advance(game);
     }
 
@@ -607,7 +605,7 @@ impl Play {
             s.forced_result = forced.clone();
         }
         if let Some(r) = &forced {
-            game.tree_mut().info.result = r.clone();
+            game.set_result(r.clone());
         }
         if forced.is_some() {
             self.rescore(game);
@@ -694,7 +692,7 @@ impl Play {
         };
         let result = s.forced_result.clone().unwrap_or(counted_str);
         s.result = result.clone();
-        game.tree_mut().info.result = result;
+        game.set_result(result);
     }
 
     pub fn scoring_request(&mut self, game: &mut GameSession) -> AnalyzeReq {

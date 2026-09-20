@@ -422,10 +422,8 @@ impl AnalysisPanel {
     }
 
     fn play(&self, p: Point) {
-        let state = self.state();
-        if let Err(error) = state.play_move(p) {
-            state.toast_illegal_move(error);
-        }
+        let point = u32::from(p.0);
+        let _ = self.activate_action("win.play-at", Some(&glib::Variant::from(point)));
     }
 
     // -- refreshing ---------------------------------------------------------------------

@@ -71,14 +71,37 @@ impl Marks {
             && self.cross.is_empty()
     }
 
-    /// Adds `p` to `kind`, or removes it if it is already there.
+    /// Adds `p` to `kind`, or clears every mark at `p` if `kind` is already there.
+    /// A different shape or label at `p` is replaced; other points are left as they are.
     pub fn toggle(&mut self, kind: MarkKind, p: Point) {
-        let v = self.of_mut(kind);
-        match v.iter().position(|&q| q == p) {
-            Some(i) => {
-                v.remove(i);
-            }
-            None => v.push(p),
+        let had = self.of(kind).contains(&p);
+        self.remove_at(p);
+        if !had {
+            self.of_mut(kind).push(p);
+        }
+    }
+
+    pub fn contains(&self, p: Point) -> bool {
+        self.labels.iter().any(|(q, _)| *q == p)
+            || self.triangle.contains(&p)
+            || self.square.contains(&p)
+            || self.circle.contains(&p)
+            || self.cross.contains(&p)
+    }
+
+    pub fn remove_at(&mut self, p: Point) {
+        self.labels.retain(|(q, _)| *q != p);
+        self.triangle.retain(|&q| q != p);
+        self.square.retain(|&q| q != p);
+        self.circle.retain(|&q| q != p);
+        self.cross.retain(|&q| q != p);
+    }
+
+    /// Replaces any mark at `p` with `text`. An empty string removes the mark.
+    pub fn set_label(&mut self, p: Point, text: &str) {
+        self.remove_at(p);
+        if !text.is_empty() {
+            self.labels.push((p, text.to_string()));
         }
     }
 
@@ -220,6 +243,19 @@ pub struct GameTree {
     pub info: GameInfo,
 }
 
+/// A subtree taken out of a [`GameTree`] by [`GameTree::detach_branch`].
+///
+/// Not [`Clone`]: restoring is a transfer of ownership, and a detached branch
+/// must not be applied to a different tree. Replacing the record drops any
+/// history that holds one of these.
+#[derive(Debug)]
+pub struct DetachedBranch {
+    root: NodeId,
+    parent: NodeId,
+    index: usize,
+    nodes: Vec<(NodeId, Node)>,
+}
+
 impl GameTree {
     pub fn new(info: GameInfo) -> GameTree {
         GameTree {
@@ -274,16 +310,20 @@ impl GameTree {
         self.get(id).is_some()
     }
 
-    /// True when the record holds anything a user would miss: a move, a setup stone or a
-    /// comment. A blank tree must leave nothing behind for a crash-recovery prompt.
+    /// True when the record holds anything a user would miss: a move, a setup stone,
+    /// a mark, an explicit to-play override, or a comment. A blank tree must leave
+    /// nothing behind for a crash-recovery prompt.
     ///
     /// Walks the arena rather than `0..len()`: [`GameTree::len`] counts live nodes, and a
     /// tombstone left by [`GameTree::delete_branch`] makes the two disagree.
     pub fn has_content(&self) -> bool {
-        self.nodes
-            .iter()
-            .flatten()
-            .any(|n| n.mv.is_some() || !n.setup.is_empty() || !n.comment.trim().is_empty())
+        self.nodes.iter().flatten().any(|n| {
+            n.mv.is_some()
+                || !n.setup.is_empty()
+                || !n.marks.is_empty()
+                || n.to_play_override.is_some()
+                || !n.comment.trim().is_empty()
+        })
     }
 
     #[inline]
@@ -351,12 +391,25 @@ impl GameTree {
     /// played more than once on this line the later move wins, which is what a board showing
     /// stone numbers must display. Passes and off-board points are skipped, and a captured
     /// stone leaves its number behind — a caller draws numbers only where a stone stands.
+    /// Setup stones (`AB`/`AW`/`AE`) clear any inherited number at those points and do not
+    /// themselves count as a move.
     pub fn move_numbers(&self, id: NodeId) -> Box<[u16]> {
         let size = self.info.size;
         let mut numbers = vec![0u16; size.points()];
         let mut n = 0u16;
         for at in self.path_to(id) {
             let node = self.node(at);
+            for &p in node
+                .setup
+                .add_black
+                .iter()
+                .chain(&node.setup.add_white)
+                .chain(&node.setup.add_empty)
+            {
+                if !p.is_pass() && size.contains(p) {
+                    numbers[p.index()] = 0;
+                }
+            }
             if node.mv.is_some() {
                 n = n.saturating_add(1);
             }
@@ -413,8 +466,12 @@ impl GameTree {
     }
 
     /// Applies one node to `pos` and records the resulting hashes.
+    ///
+    /// A non-empty setup is a rules-history boundary: both superko histories are dropped
+    /// and the ko ban is cleared. A pure `PL` override only changes [`Position::to_play`].
     fn step(&self, pos: &mut Position, id: NodeId, rules: &Rules) {
         let node = self.node(id);
+        let had_setup = !node.setup.is_empty();
         for &p in &node.setup.add_black {
             pos.board.set(p, Some(Color::Black));
         }
@@ -423,6 +480,11 @@ impl GameTree {
         }
         for &p in &node.setup.add_empty {
             pos.board.set(p, None);
+        }
+        if had_setup {
+            pos.board.clear_ko();
+            pos.hash_history.clear();
+            pos.situational_history.clear();
         }
         if node.parent.is_none() && self.info.handicap >= 2 {
             // Black has already placed the handicap stones.
@@ -527,26 +589,96 @@ impl GameTree {
     /// Removes `id` and everything below it. Ids of surviving nodes stay valid.
     /// Deleting the root is a no-op — a tree always has one.
     pub fn delete_branch(&mut self, id: NodeId) {
+        let _ = self.detach_branch(id);
+    }
+
+    /// Takes `id` and its descendants out of the arena, leaving tombstones.
+    ///
+    /// The root and unknown ids return `None` with no mutation. Original sibling
+    /// order is recorded so [`GameTree::restore_branch`] can put the branch back.
+    pub fn detach_branch(&mut self, id: NodeId) -> Option<DetachedBranch> {
         if id == self.root || !self.contains(id) {
-            return;
+            return None;
         }
-        if let Some(parent) = self.node(id).parent {
-            self.nodes[parent.index()]
-                .as_mut()
-                .expect("stale NodeId")
-                .children
-                .retain(|c| *c != id);
-        }
+        let parent = self.node(id).parent?;
+        let index = self.node(parent).children.iter().position(|&c| c == id)?;
+        self.nodes[parent.index()]
+            .as_mut()
+            .expect("stale NodeId")
+            .children
+            .remove(index);
+
         let mut stack = vec![id];
+        let mut nodes = Vec::new();
         while let Some(n) = stack.pop() {
             if let Some(node) = self.nodes[n.index()].take() {
                 self.live -= 1;
-                stack.extend_from_slice(&node.children);
+                for &c in &node.children {
+                    stack.push(c);
+                }
+                nodes.push((n, node));
             }
         }
         if matches!(&self.cache, Some((cached, _)) if !self.contains(*cached)) {
             self.cache = None;
         }
+        self.touch_structure();
+        Some(DetachedBranch {
+            root: id,
+            parent,
+            index,
+            nodes,
+        })
+    }
+
+    /// Puts a branch from [`GameTree::detach_branch`] back at its original ids
+    /// and sibling index. History-internal: slots must still be tombstones and
+    /// the parent must still exist.
+    pub fn restore_branch(&mut self, branch: DetachedBranch) -> NodeId {
+        assert!(
+            self.contains(branch.parent),
+            "restore_branch parent must exist"
+        );
+        for (id, _) in &branch.nodes {
+            assert!(
+                self.nodes.get(id.index()).is_some_and(Option::is_none),
+                "restore_branch overwrites only tombstones"
+            );
+        }
+        assert!(branch.index <= self.children(branch.parent).len());
+        let root = branch.root;
+        let parent = branch.parent;
+        let index = branch.index;
+        for (id, node) in branch.nodes {
+            self.nodes[id.index()] = Some(node);
+            self.live += 1;
+        }
+        let children = &mut self.nodes[parent.index()]
+            .as_mut()
+            .expect("stale NodeId")
+            .children;
+        children.insert(index, root);
+        self.invalidate_position();
+        self.touch_structure();
+        root
+    }
+
+    /// Reorders `child` among `parent`'s children. No-op when `child` is not a
+    /// child of `parent` or already sits at `index`.
+    pub fn move_child(&mut self, parent: NodeId, child: NodeId, index: usize) {
+        let children = &mut self.nodes[parent.index()]
+            .as_mut()
+            .expect("stale NodeId")
+            .children;
+        let Some(from) = children.iter().position(|&c| c == child) else {
+            return;
+        };
+        let index = index.min(children.len() - 1);
+        if from == index {
+            return;
+        }
+        let c = children.remove(from);
+        children.insert(index, c);
         self.touch_structure();
     }
 
@@ -590,17 +722,90 @@ impl GameTree {
 
     /// Adds `p` to this node's setup as `c`, or as `AE` when `c` is `None`.
     pub fn set_setup_stone(&mut self, id: NodeId, p: Point, c: Option<Color>) {
-        let setup = &mut self.nodes[id.index()].as_mut().expect("stale NodeId").setup;
-        setup.add_black.retain(|&q| q != p);
-        setup.add_white.retain(|&q| q != p);
-        setup.add_empty.retain(|&q| q != p);
-        match c {
-            Some(Color::Black) => setup.add_black.push(p),
-            Some(Color::White) => setup.add_white.push(p),
-            None => setup.add_empty.push(p),
+        if !self.info.size.contains(p) {
+            return;
         }
-        self.cache = None;
+        {
+            let setup = &mut self.nodes[id.index()].as_mut().expect("stale NodeId").setup;
+            let counts = [
+                setup.add_black.iter().filter(|&&q| q == p).count(),
+                setup.add_white.iter().filter(|&&q| q == p).count(),
+                setup.add_empty.iter().filter(|&&q| q == p).count(),
+            ];
+            let expected = match c {
+                Some(Color::Black) => [1, 0, 0],
+                Some(Color::White) => [0, 1, 0],
+                None => [0, 0, 1],
+            };
+            if counts == expected {
+                return;
+            }
+            setup.add_black.retain(|&q| q != p);
+            setup.add_white.retain(|&q| q != p);
+            setup.add_empty.retain(|&q| q != p);
+            match c {
+                Some(Color::Black) => setup.add_black.push(p),
+                Some(Color::White) => setup.add_white.push(p),
+                None => setup.add_empty.push(p),
+            }
+        }
+        self.invalidate_setup(id);
+    }
+
+    /// Swaps this node's setup and to-play override with the caller's. Equal values
+    /// are a no-op. A real change drops the position cache and this node's analysis
+    /// plus every descendant's.
+    pub fn swap_setup(&mut self, id: NodeId, setup: &mut Setup, to_play: &mut Option<Color>) {
+        {
+            let node = self.nodes[id.index()].as_mut().expect("stale NodeId");
+            if node.setup == *setup && node.to_play_override == *to_play {
+                return;
+            }
+            std::mem::swap(&mut node.setup, setup);
+            std::mem::swap(&mut node.to_play_override, to_play);
+        }
+        self.invalidate_setup(id);
+    }
+
+    pub fn swap_marks(&mut self, id: NodeId, marks: &mut Marks) {
+        let node = self.nodes[id.index()].as_mut().expect("stale NodeId");
+        if node.marks == *marks {
+            return;
+        }
+        std::mem::swap(&mut node.marks, marks);
         self.revision += 1;
+    }
+
+    pub fn swap_comment(&mut self, id: NodeId, text: &mut String) {
+        let node = self.nodes[id.index()].as_mut().expect("stale NodeId");
+        if node.comment == *text {
+            return;
+        }
+        std::mem::swap(&mut node.comment, text);
+        self.revision += 1;
+    }
+
+    #[inline]
+    pub fn invalidate_position(&mut self) {
+        self.cache = None;
+    }
+
+    fn invalidate_setup(&mut self, id: NodeId) {
+        self.invalidate_position();
+        self.clear_analysis_from(id);
+        self.revision += 1;
+    }
+
+    fn clear_analysis_from(&mut self, id: NodeId) {
+        let mut stack = vec![id];
+        while let Some(n) = stack.pop() {
+            if let Some(node) = self.nodes.get_mut(n.index()).and_then(Option::as_mut) {
+                node.analysis = None;
+                for &c in &node.children {
+                    stack.push(c);
+                }
+            }
+        }
     }
 
     pub fn set_analysis(&mut self, id: NodeId, a: Option<NodeAnalysis>) {
@@ -705,13 +910,19 @@ mod tests {
     }
 
     #[test]
-    fn marks_alone_are_not_content() {
-        // Marks are review annotations on an otherwise blank board; they are not worth
-        // interrupting the next launch for.
+    fn marks_alone_are_content() {
         let mut t = empty_19();
         let root = t.root();
         t.toggle_mark(root, MarkKind::Triangle, Size::square(19).point(3, 3));
-        assert!(!t.has_content());
+        assert!(t.has_content());
+    }
+
+    #[test]
+    fn to_play_override_alone_is_content() {
+        let mut t = empty_19();
+        let root = t.root();
+        t.node_mut(root).to_play_override = Some(Color::White);
+        assert!(t.has_content());
     }
 
     /// The arena is tombstoned, so a scan bounded by `len()` — the *live* count — would
@@ -1008,5 +1219,238 @@ mod tests {
             t.structure_revision() > structure,
             "a new node changes the structure"
         );
+    }
+
+    fn dummy_analysis() -> NodeAnalysis {
+        NodeAnalysis {
+            visits: 7,
+            winrate: 0.5,
+            score_lead: 0.0,
+            score_stdev: 0.0,
+            candidates: Vec::new(),
+            ownership: None,
+        }
+    }
+
+    #[test]
+    fn marks_are_exclusive_per_point() {
+        let mut m = Marks::default();
+        let p = Size::square(5).point(2, 2);
+        let q = Size::square(5).point(1, 1);
+        m.toggle(MarkKind::Triangle, p);
+        m.toggle(MarkKind::Square, p);
+        assert!(!m.triangle.contains(&p));
+        assert_eq!(m.of(MarkKind::Square), &[p]);
+        m.set_label(p, "A");
+        assert!(m.of(MarkKind::Square).is_empty());
+        assert_eq!(m.labels, vec![(p, "A".into())]);
+        m.toggle(MarkKind::Circle, q);
+        m.set_label(p, "");
+        assert!(!m.contains(p));
+        assert!(m.contains(q));
+        m.set_label(q, "死活:A\\]");
+        assert_eq!(m.labels, vec![(q, "死活:A\\]".into())]);
+        assert!(m.of(MarkKind::Circle).is_empty());
+    }
+
+    #[test]
+    fn setup_clears_inherited_move_numbers() {
+        let mut t = tree(RuleSet::Chinese);
+        let s = t.info.size;
+        let root = t.root();
+        let p = s.point(0, 0);
+        let a = t.play(root, Color::Black, p).unwrap();
+        assert_eq!(t.move_numbers(a)[p.index()], 1);
+        let setup = t.add_child(a);
+        t.set_setup_stone(setup, p, Some(Color::White));
+        let numbers = t.move_numbers(setup);
+        assert_eq!(numbers[p.index()], 0);
+        assert_eq!(t.position(setup).move_number, 1);
+        assert_eq!(t.position(setup).board.at(p), Some(Color::White));
+    }
+
+    #[test]
+    fn nonempty_setup_clears_ko_and_superko_history() {
+        let mut t = tree(RuleSet::Chinese);
+        let (p, q) = ko_setup(&mut t);
+        let s = t.info.size;
+        let root = t.root();
+        let a = t.play(root, Color::White, q).expect("white takes");
+        assert_eq!(t.position(a).board.ko_ban(), Some(p));
+        let before = t.position(a).hash_history.len();
+        assert!(before >= 2);
+
+        let setup = t.add_child(a);
+        t.set_setup_stone(setup, s.point(0, 0), Some(Color::Black));
+        let pos = t.position(setup);
+        assert_eq!(pos.board.ko_ban(), None);
+        assert_eq!(pos.hash_history.len(), 1);
+        assert_eq!(pos.situational_history.len(), 1);
+        assert_eq!(pos.move_number, 1);
+    }
+
+    #[test]
+    fn moves_after_setup_still_enforce_superko() {
+        let mut t = tree(RuleSet::TrompTaylor);
+        let (p, q) = ko_setup(&mut t);
+        let root = t.root();
+        let capture = t.play(root, Color::White, q).unwrap();
+        // An explicit AE on an already empty point establishes a fresh position
+        // boundary without changing the ko shape or prisoner count.
+        let boundary = t.add_child(capture);
+        let empty = t.info.size.point(4, 4);
+        t.set_setup_stone(boundary, empty, None);
+        let recapture = t.play(boundary, Color::Black, p).unwrap();
+        assert_eq!(t.position(recapture).board.captures, [1, 1]);
+        assert_eq!(t.play(recapture, Color::White, q), Err(IllegalMove::Ko));
+    }
+
+    #[test]
+    fn ae_only_setup_clears_ko_ban() {
+        let mut t = tree(RuleSet::Chinese);
+        let (p, q) = ko_setup(&mut t);
+        let s = t.info.size;
+        let root = t.root();
+        let a = t.play(root, Color::White, q).expect("white takes");
+        assert_eq!(t.position(a).board.ko_ban(), Some(p));
+        let setup = t.add_child(a);
+        t.set_setup_stone(setup, s.point(1, 1), None);
+        assert_eq!(t.position(setup).board.ko_ban(), None);
+        assert_eq!(t.position(setup).board.at(s.point(1, 1)), None);
+    }
+
+    #[test]
+    fn pure_pl_keeps_ko_and_hash_history() {
+        let mut t = tree(RuleSet::Chinese);
+        let (p, q) = ko_setup(&mut t);
+        let root = t.root();
+        let a = t.play(root, Color::White, q).expect("white takes");
+        assert_eq!(t.position(a).board.ko_ban(), Some(p));
+        let hashes = t.position(a).hash_history.clone();
+        let pl_node = t.add_child(a);
+        let mut setup = Setup::default();
+        let mut pl = Some(Color::White);
+        t.swap_setup(pl_node, &mut setup, &mut pl);
+        let pos = t.position(pl_node);
+        assert_eq!(pos.board.ko_ban(), Some(p));
+        assert_eq!(&pos.hash_history[..hashes.len()], hashes.as_slice());
+        assert_eq!(pos.to_play, Color::White);
+        assert_eq!(pl, None);
+        assert!(setup.is_empty());
+    }
+
+    #[test]
+    fn equal_swaps_do_not_bump_revision() {
+        let mut t = tree(RuleSet::Chinese);
+        let root = t.root();
+        let revision = t.revision();
+        let mut setup = t.node(root).setup.clone();
+        let mut pl = t.node(root).to_play_override;
+        t.swap_setup(root, &mut setup, &mut pl);
+        let mut marks = t.node(root).marks.clone();
+        t.swap_marks(root, &mut marks);
+        let mut comment = t.node(root).comment.clone();
+        t.swap_comment(root, &mut comment);
+        assert_eq!(t.revision(), revision);
+    }
+
+    #[test]
+    fn setup_clears_descendant_analysis_not_siblings() {
+        let mut t = tree(RuleSet::Chinese);
+        let s = t.info.size;
+        let root = t.root();
+        let a = t.play(root, Color::Black, s.point(0, 0)).unwrap();
+        let child = t.play(a, Color::White, s.point(1, 1)).unwrap();
+        let sibling = t.add_variation(root, Color::Black, s.point(2, 2)).unwrap();
+        t.set_analysis(a, Some(dummy_analysis()));
+        t.set_analysis(child, Some(dummy_analysis()));
+        t.set_analysis(sibling, Some(dummy_analysis()));
+        t.set_setup_stone(a, s.point(4, 4), Some(Color::White));
+        assert!(t.node(a).analysis.is_none());
+        assert!(t.node(child).analysis.is_none());
+        assert!(t.node(sibling).analysis.is_some());
+    }
+
+    #[test]
+    fn marks_and_comment_swaps_keep_analysis() {
+        let mut t = tree(RuleSet::Chinese);
+        let s = t.info.size;
+        let root = t.root();
+        t.set_analysis(root, Some(dummy_analysis()));
+        let mut marks = Marks::default();
+        marks.toggle(MarkKind::Triangle, s.point(0, 0));
+        t.swap_marks(root, &mut marks);
+        let mut comment = "note".into();
+        t.swap_comment(root, &mut comment);
+        assert!(t.node(root).analysis.is_some());
+        assert_eq!(t.position(root).to_play, Color::Black);
+    }
+
+    #[test]
+    fn detach_restore_keeps_ids_order_and_payload() {
+        let mut t = tree(RuleSet::Chinese);
+        let s = t.info.size;
+        let root = t.root();
+        let a = t.play(root, Color::Black, s.point(0, 0)).unwrap();
+        let a1 = t.play(a, Color::White, s.point(1, 0)).unwrap();
+        let b = t.add_variation(root, Color::Black, s.point(2, 2)).unwrap();
+        t.set_comment(b, "other");
+        t.set_analysis(a, Some(dummy_analysis()));
+        t.node_mut(a1)
+            .unknown_props
+            .push(("XX".into(), vec!["v".into()]));
+
+        let rev = t.revision();
+        assert!(t.detach_branch(root).is_none());
+        assert_eq!(t.revision(), rev);
+        assert!(t.detach_branch(NodeId(9999)).is_none());
+
+        let detached = t.detach_branch(a).unwrap();
+        assert!(!t.contains(a) && !t.contains(a1));
+        assert_eq!(t.children(root), &[b]);
+        assert_eq!(t.node(b).comment, "other");
+
+        let restored = t.restore_branch(detached);
+        assert_eq!(restored, a);
+        assert_eq!(t.children(root), &[a, b]);
+        assert_eq!(t.node(a1).mv, Some((Color::White, s.point(1, 0))));
+        assert!(t.node(a).analysis.is_some());
+        assert_eq!(
+            t.node(a1).unknown_props,
+            vec![("XX".into(), vec!["v".into()])]
+        );
+    }
+
+    #[test]
+    fn move_child_reorders_without_copying() {
+        let mut t = tree(RuleSet::Chinese);
+        let s = t.info.size;
+        let root = t.root();
+        let a = t.play(root, Color::Black, s.point(0, 0)).unwrap();
+        let b = t.add_variation(root, Color::Black, s.point(2, 2)).unwrap();
+        assert_eq!(t.children(root), &[a, b]);
+        let structure = t.structure_revision();
+        t.move_child(root, b, 0);
+        assert_eq!(t.children(root), &[b, a]);
+        assert!(t.structure_revision() > structure);
+        let structure = t.structure_revision();
+        t.move_child(root, b, 0);
+        assert_eq!(t.structure_revision(), structure);
+    }
+
+    #[test]
+    fn detach_restore_long_line_does_not_overflow() {
+        let mut t = empty_19();
+        let mut cur = t.root();
+        for _ in 0..8000 {
+            cur = t.add_child(cur);
+        }
+        let child = t.children(t.root())[0];
+        let detached = t.detach_branch(child).unwrap();
+        assert_eq!(t.len(), 1);
+        let restored = t.restore_branch(detached);
+        assert_eq!(restored, child);
+        assert_eq!(t.len(), 8001);
+        assert_eq!(t.path_to(cur).len(), 8001);
     }
 }

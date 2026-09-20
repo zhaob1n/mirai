@@ -1,0 +1,51 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Huang Zhaobin
+
+using Gtk 4.0;
+using Adw 1;
+
+template $MiraiLabelEditorDialog : Adw.Dialog {
+  title: _("Edit Label");
+  content-width: 360;
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      show-start-title-buttons: false;
+      show-end-title-buttons: false;
+
+      [start]
+      Gtk.Button cancel_button {
+        label: _("Cancel");
+      }
+
+      [end]
+      Gtk.Button apply_button {
+        label: _("Apply Label");
+        styles ["suggested-action"]
+      }
+    }
+
+    content: Gtk.Box {
+      orientation: vertical;
+      spacing: 12;
+      margin-start: 16;
+      margin-end: 16;
+      margin-top: 12;
+      margin-bottom: 16;
+
+      Gtk.Entry entry {
+        placeholder-text: _("Label text");
+        hexpand: true;
+        enable-undo: true;
+      }
+
+      Gtk.Label {
+        label: _("Leave empty to remove the label");
+        wrap: true;
+        xalign: 0;
+        styles ["caption"]
+      }
+    };
+  };
+}

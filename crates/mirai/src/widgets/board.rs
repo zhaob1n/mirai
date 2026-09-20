@@ -19,7 +19,7 @@ use mirai_core::{
 };
 use mirai_proto::types::dq_policy;
 
-use crate::app::AppState;
+use crate::app::{AppState, EditorTool, NodeRef};
 use crate::widgets::paint::{fill_disc, hline, over, rgba8, stroke_disc, stroke_rect, vline};
 
 /// Wood beyond the outermost grid line, in cells.
@@ -180,12 +180,18 @@ fn is_dark() -> bool {
     adw::StyleManager::default().is_dark()
 }
 
-/// A callback that gets first refusal on a click, and reports whether it consumed it.
-///
-/// `Rc`, not `Box`: the hook re-enters this widget — the play controller redraws the score
-/// overlay from inside it — so a click clones the handle and releases the cell before
-/// calling, rather than holding a borrow across it.
-pub type ClickHook = Rc<dyn Fn(Point) -> bool + 'static>;
+/// A hit-tested intersection click. Window installs the only hook.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BoardClick {
+    pub point: Point,
+    pub button: u32,
+    pub modifiers: gdk::ModifierType,
+}
+
+/// `Rc`, not `Box`: the hook re-enters this widget — the play controller redraws the
+/// score overlay from inside it — so a click clones the handle and releases the cell
+/// before calling, rather than holding a borrow across it.
+type ClickHook = Rc<dyn Fn(BoardClick) + 'static>;
 
 /// The geometry and position a single `snapshot` pass draws against.
 ///
@@ -212,6 +218,8 @@ struct BoardProjection {
     rules: Rules,
     position: Position,
     marks: Marks,
+    /// Points that carry a shape or label; built once per projection, indexed in snapshot.
+    marked: Box<[bool]>,
     last: Option<(Color, Point)>,
     /// The move the record plays on from the cursor, when it is a real point on an empty
     /// intersection; see [`record_next`].
@@ -252,7 +260,11 @@ mod imp {
         pub static_layer: RefCell<Option<(StaticKey, gsk::RenderNode)>>,
         pub popover: RefCell<Option<gtk::PopoverMenu>>,
         pub menu_point: Cell<Option<Point>>,
-        pub click_hook: RefCell<Option<ClickHook>>,
+        pub menu_cursor: Cell<Option<NodeRef>>,
+        pub play_here: OnceCell<gio::SimpleAction>,
+        pub main_line: OnceCell<gio::SimpleAction>,
+        pub delete_branch: OnceCell<gio::SimpleAction>,
+        pub(super) click_hook: RefCell<Option<ClickHook>>,
         pub dead: RefCell<Option<DeadSet>>,
         pub territory: RefCell<Option<Box<[Option<Color>]>>>,
         pub(super) projection: RefCell<Option<BoardProjection>>,
@@ -528,7 +540,7 @@ mod imp {
                     labels,
                 };
                 self.draw_stones(snapshot, scene, None);
-                self.draw_numbers(snapshot, scene, &seq, None);
+                self.draw_numbers(snapshot, scene, &seq, None, None);
                 return;
             }
 
@@ -546,25 +558,27 @@ mod imp {
             }
             drop(dead);
 
+            let marked = projection.marked.as_ref();
             if let Some(nums) = projection.move_numbers.as_ref() {
-                self.draw_numbers(snapshot, scene, nums, projection.last.map(|(_, p)| p));
-            } else if let Some((color, p)) = projection.last {
+                self.draw_numbers(
+                    snapshot,
+                    scene,
+                    nums,
+                    projection.last.map(|(_, p)| p),
+                    Some(marked),
+                );
+            } else if let Some((color, p)) = projection.last
+                && !marked[p.index()]
+            {
                 let (x, y) = size.xy(p);
                 let (cx, cy) = l.xy(x, y);
                 fill_disc(snapshot, cx, cy, l.stone_r * 0.34, &last_move_tint(color));
             }
 
-            self.draw_marks(snapshot, scene, &projection.marks);
             if let Some(report) = projection.report.as_ref() {
-                self.draw_candidates(
-                    snapshot,
-                    scene,
-                    projection.position.to_play,
-                    report,
-                    projection.suggestion_limit,
-                    projection.next,
-                );
+                self.draw_candidates(snapshot, scene, report, projection);
             }
+            self.draw_marks(snapshot, scene, &projection.marks);
         }
     }
 
@@ -641,6 +655,7 @@ mod imp {
             scene: Scene,
             nums: &[u16],
             highlight: Option<Point>,
+            marked: Option<&[bool]>,
         ) {
             if !scene.labels {
                 return;
@@ -659,6 +674,9 @@ mod imp {
                     let p = size.point(x, y);
                     let n = nums[p.index()];
                     if n == 0 {
+                        continue;
+                    }
+                    if marked.is_some_and(|m| m[p.index()]) {
                         continue;
                     }
                     let Some(color) = board.at(p) else { continue };
@@ -790,12 +808,14 @@ mod imp {
             &self,
             snapshot: &gtk::Snapshot,
             scene: Scene,
-            to_play: Color,
             report: &mirai_engine::Report,
-            max: usize,
-            next: Option<Point>,
+            projection: &BoardProjection,
         ) {
             let _t = crate::render_probe::Timer::new("board-candidates");
+            let to_play = projection.position.to_play;
+            let max = projection.suggestion_limit;
+            let next = projection.next;
+            let marked = &projection.marked;
             let Scene {
                 l,
                 size,
@@ -827,18 +847,19 @@ mod imp {
                 };
                 let blob = rgba8(rgb, blob_alpha(info.visits));
                 fill_disc(snapshot, cx, cy, l.stone_r, &blob);
+                let skip_overlay = marked[info.mv.index()];
                 let played = next == Some(info.mv);
-                if played {
+                if played && !skip_overlay {
                     stroke_disc(snapshot, cx, cy, l.stone_r, RECORD_RING_W, &RECORD_RING);
                     ringed = true;
                 }
 
                 // The engine's pick and the record's move keep their numbers whatever their
                 // search: a played move the engine dismissed is exactly the one to read.
-                if info.visits < LABEL_MIN_VISITS && rank != 0 && !played {
-                    continue;
-                }
-                if !labels {
+                if skip_overlay
+                    || (info.visits < LABEL_MIN_VISITS && rank != 0 && !played)
+                    || !labels
+                {
                     continue;
                 }
 
@@ -881,6 +902,7 @@ mod imp {
             // behind it.
             if let Some(p) = next
                 && !ringed
+                && !marked[p.index()]
             {
                 let (x, y) = size.xy(p);
                 let (cx, cy) = l.xy(x, y);
@@ -902,6 +924,30 @@ fn record_next(tree: &GameTree, cursor: NodeId, position: &Position) -> Option<P
     let (_, p) = tree.node(child).mv?;
     let drawable = !p.is_pass() && tree.info.size.contains(p) && position.board.at(p).is_none();
     drawable.then_some(p)
+}
+
+/// One slot per intersection; out-of-board marks are ignored. Built outside snapshot.
+fn mark_mask(size: Size, marks: &Marks) -> Box<[bool]> {
+    let mut marked = vec![false; size.points()];
+    let mut paint = |p: Point| {
+        if size.contains(p) {
+            marked[p.index()] = true;
+        }
+    };
+    for kind in [
+        MarkKind::Triangle,
+        MarkKind::Square,
+        MarkKind::Circle,
+        MarkKind::Cross,
+    ] {
+        for &p in marks.of(kind) {
+            paint(p);
+        }
+    }
+    for &(p, _) in &marks.labels {
+        paint(p);
+    }
+    marked.into_boxed_slice()
 }
 
 /// Uploads an RGBA8-premultiplied `w * h` buffer and stretches it over `rect`.
@@ -1054,13 +1100,94 @@ impl BoardView {
         self.imp().layout.get().hit(size, x, y)
     }
 
-    /// When set, a primary click calls this instead of [`AppState::play_move`].
-    /// Returning `true` means the click was consumed.
-    ///
-    /// Taken by value so the closure is boxed exactly once, into the `Rc` it is stored in.
-    pub fn set_click_hook(&self, hook: impl Fn(Point) -> bool + 'static) {
-        let hook: ClickHook = Rc::new(hook);
-        *self.imp().click_hook.borrow_mut() = Some(hook);
+    /// Window installs the sole click hook. The board does not play by default.
+    pub(crate) fn set_click_hook(&self, hook: impl Fn(BoardClick) + 'static) {
+        *self.imp().click_hook.borrow_mut() = Some(Rc::new(hook));
+    }
+
+    /// Hit-tests `(x, y)` and delivers the click to the window hook. No default play path.
+    pub(crate) fn click_at(&self, button: u32, modifiers: gdk::ModifierType, x: f64, y: f64) {
+        let Some(point) = self.point_at(x, y) else {
+            return;
+        };
+        self.clear_preview();
+        let hook = self.imp().click_hook.borrow().clone();
+        if let Some(hook) = hook {
+            hook(BoardClick {
+                point,
+                button,
+                modifiers,
+            });
+        }
+    }
+
+    /// Centre of `p` in widget coordinates from the live layout, if both are valid.
+    pub(crate) fn point_center(&self, p: Point) -> Option<(f64, f64)> {
+        let layout = self.imp().layout.get();
+        if layout.cell <= 0.0 || layout.width <= 0 || layout.height <= 0 {
+            return None;
+        }
+        let size = self.imp().board_size();
+        if !size.contains(p) {
+            return None;
+        }
+        let (x, y) = size.xy(p);
+        let (cx, cy) = layout.xy(x, y);
+        Some((cx as f64, cy as f64))
+    }
+
+    /// Toolbar callers supply their bounds in board coordinates; board clicks use `point`.
+    pub(crate) fn show_menu(
+        &self,
+        point: Option<Point>,
+        toolbar_anchor: Option<gdk::Rectangle>,
+        editable: bool,
+    ) {
+        let imp = self.imp();
+        imp.menu_point.set(point);
+        imp.menu_cursor.set(Some(self.state().cursor_ref()));
+        if let Some(play) = imp.play_here.get() {
+            play.set_enabled(editable && point.is_some());
+        }
+        if let Some(main_line) = imp.main_line.get() {
+            main_line.set_enabled(editable);
+        }
+        if let Some(delete) = imp.delete_branch.get() {
+            delete.set_enabled(editable);
+        }
+        let Some(popover) = imp.popover.borrow().clone() else {
+            return;
+        };
+        popover.set_halign(if toolbar_anchor.is_some() {
+            gtk::Align::End
+        } else {
+            gtk::Align::Start
+        });
+        let Some(rect) = toolbar_anchor.or_else(|| {
+            point
+                .and_then(|p| self.point_center(p))
+                .map(|(x, y)| gdk::Rectangle::new(x.round() as i32, y.round() as i32, 1, 1))
+        }) else {
+            return;
+        };
+        popover.set_pointing_to(Some(&rect));
+        popover.popup();
+    }
+
+    pub(crate) fn close_menu(&self) {
+        self.imp().menu_point.set(None);
+        self.imp().menu_cursor.set(None);
+        if let Some(popover) = self.imp().popover.borrow().as_ref() {
+            popover.popdown();
+        }
+    }
+
+    pub(crate) fn clear_preview(&self) {
+        let hover = self.imp().hover.replace(None);
+        let pinned = self.imp().pinned.replace(None);
+        if hover.is_some() || pinned.is_some() {
+            self.queue_draw();
+        }
     }
 
     /// Extra dead-stone shading and territory squares drawn during scoring.
@@ -1075,7 +1202,7 @@ impl BoardView {
     }
 
     /// Pins the PV preview to `Report::moves[index]`; `None` clears the pin. A pointer
-    /// hover over a blob still wins while it lasts.
+    /// hover over a blob still wins while it lasts. Non-Play tools ignore the overlay.
     pub fn set_pv_preview(&self, index: Option<usize>) {
         if self.imp().pinned.get() == index {
             return;
@@ -1086,6 +1213,9 @@ impl BoardView {
 
     /// The candidate whose PV is currently previewed: pointer hover first, then the pin.
     fn active_preview(&self) -> Option<usize> {
+        if self.state().editor_tool() != EditorTool::Play {
+            return None;
+        }
         self.imp().hover.get().or_else(|| self.imp().pinned.get())
     }
 
@@ -1160,11 +1290,13 @@ impl BoardView {
             let move_numbers = state.show_move_numbers().then(|| tree.move_numbers(cursor));
             (size, rules, marks, last, next, move_numbers)
         };
+        let marked = mark_mask(size, &marks);
         self.imp().projection.replace(Some(BoardProjection {
             size,
             rules,
             position,
             marks,
+            marked,
             last,
             next,
             move_numbers,
@@ -1195,23 +1327,23 @@ impl BoardView {
     }
 
     fn install_controllers(&self) {
-        let primary = gtk::GestureClick::new();
-        primary.set_button(gdk::BUTTON_PRIMARY);
-        primary.connect_released(glib::clone!(
-            #[weak(rename_to = view)]
-            self,
-            move |_, _, x, y| view.on_primary(x, y)
-        ));
-        self.add_controller(primary);
-
-        let secondary = gtk::GestureClick::new();
-        secondary.set_button(gdk::BUTTON_SECONDARY);
-        secondary.connect_pressed(glib::clone!(
-            #[weak(rename_to = view)]
-            self,
-            move |_, _, x, y| view.on_secondary(x, y)
-        ));
-        self.add_controller(secondary);
+        for button in [gdk::BUTTON_PRIMARY, gdk::BUTTON_SECONDARY] {
+            let gesture = gtk::GestureClick::new();
+            gesture.set_button(button);
+            gesture.connect_released(glib::clone!(
+                #[weak(rename_to = view)]
+                self,
+                move |gesture, _, x, y| {
+                    view.click_at(
+                        gesture.current_button(),
+                        gesture.current_event_state(),
+                        x,
+                        y,
+                    );
+                }
+            ));
+            self.add_controller(gesture);
+        }
 
         let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
         scroll.connect_scroll(glib::clone!(
@@ -1252,57 +1384,52 @@ impl BoardView {
             #[weak(rename_to = view)]
             self,
             move |_, _| {
-                if let Some(p) = view.imp().menu_point.get() {
-                    view.play_at(p);
+                let Some(p) = view.imp().menu_point.get() else {
+                    return;
+                };
+                if view.resolved_menu_cursor().is_none() {
+                    return;
                 }
+                view.activate_win_u32("win.play-at", u32::from(p.0));
             }
         ));
         group.add_action(&play);
+        let _ = self.imp().play_here.set(play);
 
         let main_line = gio::SimpleAction::new("main-line", None);
         main_line.connect_activate(glib::clone!(
             #[weak(rename_to = view)]
             self,
             move |_, _| {
-                let state = view.state();
-                let target = view.node_for_menu_point().unwrap_or_else(|| state.cursor());
-                state.with_tree_mut(|t| t.promote_to_main_line(target));
+                let Some(id) = view.menu_node_target() else {
+                    return;
+                };
+                view.activate_win_u32("win.promote-line-at", id.0);
             }
         ));
         group.add_action(&main_line);
+        let _ = self.imp().main_line.set(main_line);
 
         let delete = gio::SimpleAction::new("delete-branch", None);
         delete.connect_activate(glib::clone!(
             #[weak(rename_to = view)]
             self,
             move |_, _| {
-                let state = view.state();
-                let cursor = state.cursor();
-                match view.node_for_menu_point() {
-                    Some(child) => state.with_tree_mut(|t| t.delete_branch(child)),
-                    None => {
-                        if state.tree().parent(cursor).is_none() {
-                            state.toast("The root node cannot be deleted");
-                            return;
-                        }
-                        state.go_prev();
-                        state.with_tree_mut(|t| t.delete_branch(cursor));
-                    }
-                }
+                let Some(id) = view.menu_node_target() else {
+                    return;
+                };
+                view.activate_win_u32("win.delete-branch-at", id.0);
             }
         ));
         group.add_action(&delete);
+        let _ = self.imp().delete_branch.set(delete);
 
         let copy = gio::SimpleAction::new("copy-sgf", None);
         copy.connect_activate(glib::clone!(
             #[weak(rename_to = view)]
             self,
             move |_, _| {
-                let state = view.state();
-                let include = state.config().ui.save_analysis_in_sgf;
-                let sgf = mirai_core::sgf::write(&state.tree(), include);
-                view.clipboard().set_text(&sgf);
-                state.toast("SGF copied to the clipboard");
+                let _ = view.activate_action("win.copy-sgf", None);
             }
         ));
         group.add_action(&copy);
@@ -1314,65 +1441,49 @@ impl BoardView {
         menu.append(Some("Set as Main Line"), Some("board.main-line"));
         menu.append(Some("Delete Branch"), Some("board.delete-branch"));
         menu.append(Some("Copy SGF"), Some("board.copy-sgf"));
+        let to_play = gio::Menu::new();
+        to_play.append(Some("Black to Play"), Some("win.to-play::black"));
+        to_play.append(Some("White to Play"), Some("win.to-play::white"));
+        menu.append_section(None, &to_play);
 
         let popover = gtk::PopoverMenu::from_model(Some(&menu));
         popover.set_parent(self);
         popover.set_has_arrow(false);
-        popover.set_halign(gtk::Align::Start);
         *self.imp().popover.borrow_mut() = Some(popover);
     }
 
-    /// The child of the cursor whose move sits on the menu point, if there is one.
-    fn node_for_menu_point(&self) -> Option<mirai_core::NodeId> {
+    fn activate_win_u32(&self, name: &str, value: u32) {
+        let _ = self.activate_action(name, Some(&value.to_variant()));
+    }
+
+    fn resolved_menu_cursor(&self) -> Option<NodeId> {
+        self.state().resolve_node(self.imp().menu_cursor.get()?)
+    }
+
+    /// The child of the saved menu cursor whose move sits on the menu point, if any.
+    fn node_for_menu_point(&self) -> Option<NodeId> {
         let p = self.imp().menu_point.get()?;
-        let state = self.state();
-        let cursor = state.cursor();
-        let tree = state.tree();
+        let cursor = self.resolved_menu_cursor()?;
+        let tree = self.state().tree();
         tree.children(cursor)
             .iter()
             .copied()
             .find(|&c| tree.node(c).mv.is_some_and(|(_, mv)| mv == p))
     }
 
-    fn play_at(&self, p: Point) {
-        let hook = self.imp().click_hook.borrow().clone();
-        if let Some(hook) = hook
-            && hook(p)
-        {
-            return;
-        }
-        let state = self.state();
-        if let Err(error) = state.play_move(p) {
-            state.toast_illegal_move(error);
-        }
-    }
-
-    fn on_primary(&self, x: f64, y: f64) {
-        let Some(p) = self.point_at(x, y) else { return };
-        self.play_at(p);
-    }
-
-    fn on_secondary(&self, x: f64, y: f64) {
-        let Some(p) = self.point_at(x, y) else { return };
-        let state = self.state();
-        let cursor = state.cursor();
-        let current = { state.tree().node(cursor).mv };
-        if let Some((_, mv)) = current
-            && mv == p
-        {
-            state.go_prev();
-            state.with_tree_mut(|t| t.delete_branch(cursor));
-            return;
-        }
-
-        self.imp().menu_point.set(Some(p));
-        if let Some(popover) = self.imp().popover.borrow().as_ref() {
-            popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-            popover.popup();
-        }
+    fn menu_node_target(&self) -> Option<NodeId> {
+        let cursor = self.resolved_menu_cursor()?;
+        Some(self.node_for_menu_point().unwrap_or(cursor))
     }
 
     fn update_hover(&self, pointer: Option<(f64, f64)>) {
+        if self.state().editor_tool() != EditorTool::Play {
+            if self.imp().hover.get().is_some() {
+                self.imp().hover.set(None);
+                self.queue_draw();
+            }
+            return;
+        }
         let idx = pointer.and_then(|(x, y)| self.candidate_at(x, y));
         if self.imp().hover.get() != idx {
             self.imp().hover.set(idx);

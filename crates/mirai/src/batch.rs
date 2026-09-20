@@ -80,6 +80,7 @@ pub struct BatchAnalysis {
     /// The tree the running sweep was planned against; a result that arrives after the
     /// record was replaced must not land on the new one.
     epoch: Cell<TreeEpoch>,
+    start_position_revision: Cell<u64>,
     total: Cell<u32>,
     done: Cell<u32>,
     analysed: Cell<u32>,
@@ -98,6 +99,7 @@ impl BatchAnalysis {
             running: Cell::new(false),
             task: RefCell::new(None),
             epoch: Cell::new(state.tree_epoch()),
+            start_position_revision: Cell::new(state.position_revision()),
             total: Cell::new(0),
             done: Cell::new(0),
             analysed: Cell::new(0),
@@ -150,6 +152,8 @@ impl BatchAnalysis {
 
         self.running.set(true);
         self.epoch.set(epoch);
+        self.start_position_revision
+            .set(self.state.position_revision());
         self.done.set(0);
         self.analysed.set(0);
         self.total.set(plan.len() as u32);
@@ -218,7 +222,10 @@ impl BatchAnalysis {
     }
 
     fn handle_message(&self, message: BatchMessage, max_candidates: usize) -> bool {
-        if !self.running.get() {
+        if !self.running.get()
+            || self.state.position_revision() != self.start_position_revision.get()
+            || self.state.tree_epoch() != self.epoch.get()
+        {
             return false;
         }
         match message {
@@ -227,12 +234,15 @@ impl BatchAnalysis {
                     epoch: self.epoch.get(),
                     id: node,
                 });
-                if let Some(id) = id {
+                let stored = id.is_some_and(|id| {
                     let analysis = crate::util::analysis_of(&report, max_candidates);
-                    self.state
-                        .with_tree_cached(|tree| tree.set_analysis(id, Some(analysis)));
-                }
-                self.record_progress(id.is_some());
+                    self.state.set_analysis_at(
+                        id,
+                        self.start_position_revision.get(),
+                        Some(analysis),
+                    )
+                });
+                self.record_progress(stored);
                 true
             }
             BatchMessage::Item(_, Err(message)) => {

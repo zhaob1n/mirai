@@ -39,6 +39,18 @@ mod imp {
         #[template_child]
         pub banner_slot: TemplateChild<gtk::Box>,
         #[template_child]
+        pub editor_toolbar: TemplateChild<gtk::Box>,
+        #[template_child]
+        pub play_tool: TemplateChild<adw::Toggle>,
+        #[template_child]
+        pub play_tool_icon: TemplateChild<gtk::Image>,
+        #[template_child]
+        pub stone_tools: TemplateChild<adw::ToggleGroup>,
+        #[template_child]
+        pub mark_tools: TemplateChild<adw::ToggleGroup>,
+        #[template_child]
+        pub board_menu_button: TemplateChild<gtk::Button>,
+        #[template_child]
         pub content: TemplateChild<gtk::Paned>,
         #[template_child]
         pub sidebar_stack: TemplateChild<adw::ViewStack>,
@@ -142,6 +154,30 @@ impl MiraiWindow {
 
     pub fn banner_slot(&self) -> gtk::Box {
         self.imp().banner_slot.get()
+    }
+
+    pub(crate) fn editor_toolbar(&self) -> gtk::Box {
+        self.imp().editor_toolbar.get()
+    }
+
+    pub(crate) fn play_tool(&self) -> adw::Toggle {
+        self.imp().play_tool.get()
+    }
+
+    pub(crate) fn play_tool_icon(&self) -> gtk::Image {
+        self.imp().play_tool_icon.get()
+    }
+
+    pub(crate) fn stone_tools(&self) -> adw::ToggleGroup {
+        self.imp().stone_tools.get()
+    }
+
+    pub(crate) fn mark_tools(&self) -> adw::ToggleGroup {
+        self.imp().mark_tools.get()
+    }
+
+    pub(crate) fn board_menu_button(&self) -> gtk::Button {
+        self.imp().board_menu_button.get()
     }
 
     pub fn content_paned(&self) -> gtk::Paned {
