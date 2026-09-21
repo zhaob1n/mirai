@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-
 using Gtk 4.0;
 using Adw 1;
 
-template $MiraiPreferencesDialog : Adw.PreferencesDialog {
+template $MiraiPreferencesDialog: Adw.PreferencesDialog {
   title: _("Preferences");
   content-width: 760;
   content-height: 720;
@@ -21,31 +20,16 @@ template $MiraiPreferencesDialog : Adw.PreferencesDialog {
     Adw.PreferencesGroup {
       title: _("Add Profile");
 
-      Gtk.Box {
-        spacing: 12;
-        halign: center;
+      Adw.ButtonRow add_local_button {
+        title: _("Add Local Engine");
+        start-icon-name: "list-add-symbolic";
+        end-icon-name: "go-next-symbolic";
+      }
 
-        Gtk.Button add_local_button {
-          styles ["pill"]
-          child: Adw.ButtonContent {
-            icon-name: "list-add-symbolic";
-            label: _("Add Local…");
-          };
-          accessibility {
-            label: _("Add Local Engine");
-          }
-        }
-
-        Gtk.Button add_remote_button {
-          styles ["pill"]
-          child: Adw.ButtonContent {
-            icon-name: "network-server-symbolic";
-            label: _("Add Remote…");
-          };
-          accessibility {
-            label: _("Add Remote Engine");
-          }
-        }
+      Adw.ButtonRow add_remote_button {
+        title: _("Add Remote Engine");
+        start-icon-name: "network-server-symbolic";
+        end-icon-name: "go-next-symbolic";
       }
     }
   }
@@ -92,7 +76,10 @@ template $MiraiPreferencesDialog : Adw.PreferencesDialog {
       description: _("Engine profiles are never reset, and the toast offers an undo.");
 
       Gtk.Button analysis_reset_button {
-        styles ["pill"]
+        styles [
+          "pill",
+        ]
+
         halign: center;
         label: _("Restore Analysis Defaults");
       }
@@ -152,7 +139,10 @@ template $MiraiPreferencesDialog : Adw.PreferencesDialog {
       description: _("Engine profiles are never reset, and the toast offers an undo.");
 
       Gtk.Button play_reset_button {
-        styles ["pill"]
+        styles [
+          "pill",
+        ]
+
         halign: center;
         label: _("Restore Play Defaults");
       }
@@ -175,20 +165,10 @@ template $MiraiPreferencesDialog : Adw.PreferencesDialog {
         title: _("Move Numbers");
         subtitle: _("Number every stone; the last move’s number is red");
       }
-    }
 
-    Adw.PreferencesGroup {
-      title: _("Overlays");
-      description: _("Only one overlay is drawn at a time.");
-
-      Adw.SwitchRow ownership_overlay_row {
-        title: _("Ownership");
-        subtitle: _("Shade each point by who is predicted to own it");
-      }
-
-      Adw.SwitchRow policy_overlay_row {
-        title: _("Policy");
-        subtitle: _("Shade each point by the raw network policy");
+      Adw.ComboRow overlay_row {
+        title: _("Overlay");
+        subtitle: _("Shade the board by predicted ownership or raw network policy");
       }
     }
 
@@ -205,7 +185,10 @@ template $MiraiPreferencesDialog : Adw.PreferencesDialog {
       description: _("Engine profiles are never reset, and the toast offers an undo.");
 
       Gtk.Button appearance_reset_button {
-        styles ["pill"]
+        styles [
+          "pill",
+        ]
+
         halign: center;
         label: _("Restore Appearance Defaults");
       }

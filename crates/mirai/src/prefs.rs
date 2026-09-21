@@ -82,11 +82,19 @@ pub fn present(parent: &impl IsA<gtk::Widget>, state: &AppState) {
 
 /// The empty-state page shown on first run when no engine profile exists.
 pub fn no_engine_status_page() -> adw::StatusPage {
-    adw::StatusPage::builder()
+    let page = adw::StatusPage::builder()
         .icon_name("application-x-executable-symbolic")
         .title("No Engine Configured")
         .description("Add a local KataGo or a remote mirai-server in Preferences.")
-        .build()
+        .build();
+    let button = gtk::Button::builder()
+        .label("Preferences")
+        .action_name("win.preferences")
+        .halign(gtk::Align::Center)
+        .css_classes(["pill", "suggested-action"])
+        .build();
+    page.set_child(Some(&button));
+    page
 }
 
 /// The engine drop-down menu model for the header bar: one radio item per profile plus a
@@ -126,7 +134,7 @@ pub fn engine_menu_model(state: &AppState) -> gio::Menu {
 
 fn connect_engines(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state: &AppState) {
     let local_state = state.clone();
-    widgets.add_local_button.connect_clicked(glib::clone!(
+    widgets.add_local_button.connect_activated(glib::clone!(
         #[weak]
         dialog,
         #[weak(rename_to = group)]
@@ -137,7 +145,7 @@ fn connect_engines(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, sta
     ));
 
     let remote_state = state.clone();
-    widgets.add_remote_button.connect_clicked(glib::clone!(
+    widgets.add_remote_button.connect_activated(glib::clone!(
         #[weak]
         dialog,
         #[weak(rename_to = group)]
@@ -1735,8 +1743,42 @@ fn reset_play(dialog: &PreferencesDialog, state: &AppState, syncing: &Rc<Cell<bo
 fn connect_appearance(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state: &AppState) {
     bind_switch(&widgets.show_coordinates_row, state, "show-coordinates");
     bind_switch(&widgets.show_move_numbers_row, state, "show-move-numbers");
-    bind_switch(&widgets.ownership_overlay_row, state, "ownership-overlay");
-    bind_switch(&widgets.policy_overlay_row, state, "policy-overlay");
+
+    let overlay_syncing = Rc::new(Cell::new(false));
+    widgets
+        .overlay_row
+        .set_model(Some(&gtk::StringList::new(&OVERLAY_CHOICES)));
+    overlay_syncing.set(true);
+    widgets.overlay_row.set_selected(overlay_index(
+        state.ownership_overlay(),
+        state.policy_overlay(),
+    ));
+    overlay_syncing.set(false);
+
+    let overlay_state = state.clone();
+    let overlay_syncing_row = overlay_syncing.clone();
+    widgets.overlay_row.connect_selected_notify(move |row| {
+        if overlay_syncing_row.get() {
+            return;
+        }
+        apply_overlay_index(&overlay_state, row.selected());
+        overlay_state.save_config();
+    });
+
+    state.connect_ownership_overlay_notify(glib::clone!(
+        #[weak]
+        dialog,
+        #[strong]
+        overlay_syncing,
+        move |state| sync_overlay_row(&dialog, state, &overlay_syncing)
+    ));
+    state.connect_policy_overlay_notify(glib::clone!(
+        #[weak]
+        dialog,
+        #[strong]
+        overlay_syncing,
+        move |state| sync_overlay_row(&dialog, state, &overlay_syncing)
+    ));
 
     widgets
         .save_analysis_row
@@ -1757,13 +1799,52 @@ fn connect_appearance(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, 
         ));
 }
 
-/// The four display toggles are bound to `AppState` properties, so setting the properties
-/// moves the switches; only the SGF switch owns its own key.
+const OVERLAY_CHOICES: [&str; 3] = ["None", "Ownership", "Policy"];
+
+fn overlay_index(ownership: bool, policy: bool) -> u32 {
+    if ownership {
+        1
+    } else if policy {
+        2
+    } else {
+        0
+    }
+}
+
+/// Maps the combo onto the existing mutually exclusive setters. Turning one
+/// overlay on clears the other inside `AppState`, so Ownership↔Policy is one
+/// call and the combo never passes through None.
+fn apply_overlay_index(state: &AppState, index: u32) {
+    match index {
+        1 => state.set_ownership_overlay(true),
+        2 => state.set_policy_overlay(true),
+        _ => {
+            state.set_ownership_overlay(false);
+            state.set_policy_overlay(false);
+        }
+    }
+}
+
+fn sync_overlay_row(dialog: &PreferencesDialog, state: &AppState, syncing: &Cell<bool>) {
+    let index = overlay_index(state.ownership_overlay(), state.policy_overlay());
+    let row = &dialog.widgets().overlay_row;
+    if row.selected() == index {
+        return;
+    }
+    syncing.set(true);
+    row.set_selected(index);
+    syncing.set(false);
+}
+
+/// Display switches bind to `AppState` properties; the overlay combo maps onto
+/// the same two booleans. Only the SGF switch owns its own key.
 fn apply_ui(dialog: &PreferencesDialog, state: &AppState, ui: UiSettings) {
     state.set_show_coordinates(ui.show_coordinates);
     state.set_show_move_numbers(ui.show_move_numbers);
-    state.set_ownership_overlay(ui.ownership_overlay);
-    state.set_policy_overlay(ui.policy_overlay);
+    apply_overlay_index(
+        state,
+        overlay_index(ui.ownership_overlay, ui.policy_overlay),
+    );
     dialog
         .widgets()
         .save_analysis_row

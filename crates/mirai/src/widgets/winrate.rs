@@ -122,6 +122,7 @@ struct RenderKey {
     height: i32,
     foreground: gdk::RGBA,
     accent: gdk::RGBA,
+    text_serial: u32,
 }
 
 /// Geometry, in widget coordinates.
@@ -383,6 +384,7 @@ impl WinrateGraph {
             height,
             foreground: self.color(),
             accent: style.accent_color().to_standalone_rgba(style.is_dark()),
+            text_serial: self.pango_context().serial(),
         };
         if let Some((cached_key, node)) = self.imp().render_cache.borrow().as_ref()
             && *cached_key == key
@@ -413,23 +415,12 @@ impl WinrateGraph {
         let geom = Geom::new(width, height, samples.len().max(1));
 
         let fg = self.color();
-        let axis = with_alpha(fg, 0.16);
-        let faint = with_alpha(fg, 0.35);
+        let axis = with_alpha(fg, 0.12);
+        let faint = with_alpha(fg, 0.6);
         let curve = with_alpha(fg, 0.92);
         let accent = adw::StyleManager::default()
             .accent_color()
             .to_standalone_rgba(adw::StyleManager::default().is_dark());
-
-        // Plot background, so the graph reads as a panel rather than floating ink.
-        snapshot.append_color(
-            &with_alpha(fg, 0.05),
-            &graphene::Rect::new(
-                geom.left,
-                geom.top,
-                geom.right - geom.left,
-                geom.bottom - geom.top,
-            ),
-        );
 
         // Horizontal guides at 0 %, 25 %, 75 % and 100 %. One stroked path spanning the plot
         // would make GSK walk every segment across the whole graph on each frame; horizontal
@@ -451,7 +442,7 @@ impl WinrateGraph {
         half.line_to(geom.right, y50);
         let half_stroke = gsk::Stroke::new(1.0);
         half_stroke.set_dash(&[3.0, 3.0]);
-        snapshot.append_stroke(&half.to_path(), &half_stroke, &with_alpha(fg, 0.45));
+        snapshot.append_stroke(&half.to_path(), &half_stroke, &with_alpha(fg, 0.22));
 
         // The score axis range: symmetric, never tighter than ±5 points.
         let max_lead = samples
@@ -460,17 +451,27 @@ impl WinrateGraph {
             .fold(0.0f32, |m, v| m.max(v.abs()));
         let range = max_lead.ceil().max(5.0);
 
-        let font = pango::FontDescription::from_string("Sans 7");
+        let context = self.pango_context();
+        let font = context.font_description().unwrap_or_default();
+        let label_height = context.metrics(Some(&font), None).height() as f32 / pango::SCALE as f32;
         let layout = self.create_pango_layout(None);
         Self::label(snapshot, &layout, &font, "100", 2.0, geom.top - 1.0, &faint);
-        Self::label(snapshot, &layout, &font, "50", 2.0, y50 - 6.0, &faint);
+        Self::label(
+            snapshot,
+            &layout,
+            &font,
+            "50",
+            2.0,
+            y50 - label_height / 2.0,
+            &faint,
+        );
         Self::label(
             snapshot,
             &layout,
             &font,
             "0",
             2.0,
-            geom.bottom - 11.0,
+            geom.bottom - label_height,
             &faint,
         );
         let hi = format!("+{}", range as i32);
@@ -490,7 +491,7 @@ impl WinrateGraph {
             &font,
             &lo,
             geom.right + 4.0,
-            geom.bottom - 11.0,
+            geom.bottom - label_height,
             &with_alpha(accent, 0.75),
         );
 
@@ -577,11 +578,13 @@ impl WinrateGraph {
         );
         if let Some(winrate) = samples[cursor_index].winrate {
             fill_disc(snapshot, x, geom.y_winrate(winrate), 3.0, &accent);
-            let font = pango::FontDescription::from_string("Sans 7");
             let text = format!("{:.1}%", winrate * 100.0);
-            let tx = (x + 5.0).min(geom.right - 28.0);
-            let layout = self.create_pango_layout(None);
-            Self::label(snapshot, &layout, &font, &text, tx, geom.top + 1.0, &curve);
+            let layout = self.create_pango_layout(Some(&text));
+            let tx = (x + 5.0).min(geom.right - layout.pixel_size().0 as f32);
+            snapshot.save();
+            snapshot.translate(&graphene::Point::new(tx, geom.top + 1.0));
+            snapshot.append_layout(&layout, &curve);
+            snapshot.restore();
         }
     }
 

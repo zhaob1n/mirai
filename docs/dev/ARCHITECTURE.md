@@ -286,6 +286,12 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 
 ### `mirai` — the application
 
+Equivalent Adwaita controls stay native: `AdwButtonRow` for adding profiles,
+`AdwInlineViewSwitcher` for inspector pages and `AdwViewStack`/`AdwSpinnerPaintable` for
+loading states. The Appearance overlay `AdwComboRow` projects the existing mutually exclusive
+AppState booleans; menu changes, defaults and undo must all stay in sync with it.
+The inspector uses `.view`; blunders are a flat disclosure, not a boxed preferences card.
+
 | file | owns | key symbols |
 |---|---|---|
 | `build.rs` | compiles `resources/mirai.gresource.xml` into the binary | — |
@@ -301,7 +307,7 @@ Every `.rs` file under `crates/`. Open the file named in the row; the symbols ar
 | `src/widgets/mod.rs` | widget root; states the no-cairo rule | re-exports `BoardView`, `MoveTreeView`, `WinrateGraph` |
 | `src/widgets/paint.rs` | the drawing primitives every custom widget uses, and the rule they enforce: quads, not paths ([`RENDERING.md`](RENDERING.md)) | `fill_disc`, `stroke_disc`, `stroke_rect`, `hline`, `vline`, `over` |
 | `src/widgets/board.rs` | goban rendering from a pushed `BoardProjection`: cached static layer and report-time heat-map textures, stones, marks, move numbers, candidates — hue from `palette::grade`, opacity from visits, white outline on the move the record plays next — PV preview and input. Clicks hit-test then call a window hook; a mark mask skips numbers/dots under SGF marks | `BoardView` (`refresh_tree`, `refresh_cursor`, `refresh_report`, `point_at`, `click_at`, `point_center`, `set_click_hook`), `BoardClick`, `BoardProjection`, `StaticKey`, `Layout`, `BLOB_ALPHA_MIN`, `LABEL_MIN_VISITS`, `RECORD_RING`, `record_next` |
-| `src/widgets/winrate.rs` | cached main-line `GraphProjection`; cached base render node for curves/guides/blunders, with cursor marker drawn separately | `WinrateGraph` (`refresh`, `refresh_cursor`), `GraphProjection`, `RenderKey`, `Severity`, `Sample`, `Geom` |
+| `src/widgets/winrate.rs` | cached main-line `GraphProjection`; cached base render node for curves/guides/blunders, with cursor marker drawn separately. Labels inherit the widget font; `RenderKey` includes the Pango context serial to invalidate cached text when it changes | `WinrateGraph` (`refresh`, `refresh_cursor`), `GraphProjection`, `RenderKey`, `Severity`, `Sample`, `Geom` |
 | `src/widgets/tree.rs` | branch graph from a cached `TreeLayout`, rebuilt only when `structure_revision` moves: depth runs *down* the panel and lanes across it, because the sidebar is 340-520 px wide and a window tall | `MoveTreeView` (`refresh`), `lay_out`, `TreeLayout`, `Placed`, `cell_xy` |
 | `src/panels/mod.rs` | sidebar panel root | re-exports `AnalysisPanel` |
 | `src/panels/analysis.rs`, `src/panels/analysis.blp` | the `MiraiAnalysisPanel` composite template, the candidate `ColumnView` — a stable model whose objects are mutated in place at report rate, cells bound through `gtk::Expression` and pinned to a character width so digits never re-measure a column ([`RENDERING.md`](RENDERING.md) §7), with a `GtkSortListModel` between that store and the selection so a header click reorders the *view* while the store stays in KataGo's `order` — `resort` is what tells it the in-place numbers moved, and `sync_pv` reports the row's `rank` rather than its position because the hooks index the engine's move list — the rank badge, whose number is `order` and whose colour is the row's grade, and dynamic blunder rows: one line each, the mover an emoji stone rather than the word "Black", since `severity_class` owns the row's text colour and would tint a monochrome `●` red | `AnalysisPanel` (`connect_pv_preview`, `set_blunders`, `clear_blunders`, `resort`, `sync_pv`), `CandidateObject`, `Row` (`apply`, `to_object`), `grade_rows`, `Col`, `Headline`, `severity_class`, `stone`, `pv_text`, `column`, `rank_column` |

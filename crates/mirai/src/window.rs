@@ -123,7 +123,7 @@ pub struct Ui {
     pass_button: gtk::Button,
     undo_button: gtk::Button,
     resign_button: gtk::Button,
-    analysis_stack: gtk::Stack,
+    analysis_stack: adw::ViewStack,
     /// This window's Fox picker, built the first time it is asked for. One per
     /// window: libadwaita refuses to present one dialog in two windows at once.
     fox_picker: RefCell<Option<crate::fox_picker::FoxPickerDialog>>,
@@ -234,7 +234,7 @@ pub fn present(
     content.set_end_child(Some(&winrate));
     window.banner_slot().append(batch.banner());
 
-    let analysis_stack = gtk::Stack::new();
+    let analysis_stack = adw::ViewStack::new();
     analysis_stack.add_named(&analysis, Some("panel"));
     analysis_stack.add_named(&crate::prefs::no_engine_status_page(), Some("empty"));
     analysis_stack.set_vexpand(true);
@@ -517,6 +517,7 @@ fn handle_change(ui: &Ui, change: Change) {
         Change::Engine => {
             refresh_engine_menu(ui);
             update_analysis_page(ui);
+            ui.analysis.refresh();
             update_subtitle(ui);
             maybe_auto_analyse(ui);
         }

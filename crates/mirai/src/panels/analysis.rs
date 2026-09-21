@@ -192,6 +192,7 @@ pub struct Inner {
     columns: gtk::ColumnView,
     store: gio::ListStore,
     selection: gtk::SingleSelection,
+    blunder_group: gtk::Box,
     blunder_expander: gtk::Expander,
     blunder_list: gtk::ListBox,
 }
@@ -212,6 +213,8 @@ mod imp {
         pub detail: TemplateChild<gtk::Label>,
         #[template_child]
         pub columns: TemplateChild<gtk::ColumnView>,
+        #[template_child]
+        pub blunder_group: TemplateChild<gtk::Box>,
         #[template_child]
         pub blunder_expander: TemplateChild<gtk::Expander>,
         #[template_child]
@@ -289,6 +292,7 @@ impl AnalysisPanel {
         let readout = imp.readout.get();
         let detail = imp.detail.get();
         let columns = imp.columns.get();
+        let blunder_group = imp.blunder_group.get();
         let blunder_expander = imp.blunder_expander.get();
         let blunder_list = imp.blunder_list.get();
 
@@ -416,6 +420,7 @@ impl AnalysisPanel {
             columns,
             store,
             selection,
+            blunder_group,
             blunder_expander,
             blunder_list,
         });
@@ -512,21 +517,20 @@ impl AnalysisPanel {
         let inner = self.inner();
         match headline {
             Some(h) => {
-                let letter = h.color.katago();
                 inner.readout.set_label(&format!(
-                    "{letter} {}%   {letter}{}",
+                    "{} to play · {}% · {} points",
+                    h.color.name(),
                     pct1(h.winrate),
-                    signed1(h.score)
+                    signed1(h.score),
                 ));
                 let speed = match h.speed {
                     Some(rate) => format!(" · {}", visits_per_second(rate)),
                     None => String::new(),
                 };
                 inner.detail.set_label(&format!(
-                    "{} visits{speed} · ±{:.1} points · {} to play",
+                    "{} visits{speed} · ±{:.1} points",
                     si_visits(h.visits),
                     h.stdev,
-                    h.color.name()
                 ));
             }
             None => {
@@ -642,6 +646,7 @@ impl AnalysisPanel {
             let row = adw::ActionRow::builder()
                 .title(format!("{} {} · {detail}", stone(b.player), b.move_number))
                 .activatable(true)
+                .title_lines(1)
                 .build();
             if let Some(class) = severity_class(severity_of_drop(b.drop)) {
                 row.add_css_class(class);
@@ -663,7 +668,7 @@ impl AnalysisPanel {
         inner
             .blunder_expander
             .set_label(Some(&format!("Blunders ({})", rows.len())));
-        inner.blunder_expander.set_visible(true);
+        inner.blunder_group.set_visible(true);
     }
 
     pub fn clear_blunders(&self) {
@@ -671,7 +676,7 @@ impl AnalysisPanel {
         clear_list(&inner.blunder_list);
         self.imp().blunder_nodes.borrow_mut().clear();
         inner.blunder_expander.set_label(Some("Blunders"));
-        inner.blunder_expander.set_visible(false);
+        inner.blunder_group.set_visible(false);
     }
 }
 

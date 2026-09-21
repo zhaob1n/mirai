@@ -1,30 +1,40 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-
 using Gtk 4.0;
 
-template $MiraiAnalysisPanel : Gtk.Box {
+template $MiraiAnalysisPanel: Gtk.Box {
   orientation: vertical;
 
   Gtk.Box {
     orientation: vertical;
     spacing: 2;
+    hexpand: true;
     margin-start: 12;
     margin-end: 12;
     margin-top: 8;
     margin-bottom: 8;
 
     Gtk.Label readout {
-      label: _("No Analysis");
+      label: _("No analysis");
       xalign: 0;
-      ellipsize: end;
-      styles ["mirai-readout", "heading"]
+      hexpand: true;
+      wrap: true;
+      wrap-mode: word_char;
+
+      styles [
+        "heading",
+      ]
     }
 
     Gtk.Label detail {
       xalign: 0;
-      ellipsize: end;
-      styles ["mirai-status-dim"]
+      hexpand: true;
+      wrap: true;
+      wrap-mode: word_char;
+
+      styles [
+        "dim-label",
+      ]
     }
   }
 
@@ -37,27 +47,39 @@ template $MiraiAnalysisPanel : Gtk.Box {
       show-row-separators: false;
       single-click-activate: false;
       vexpand: true;
-      styles ["mirai-candidates"]
+
+      styles [
+        "mirai-candidates",
+      ]
     };
   }
 
-  Gtk.Expander blunder_expander {
-    label: _("Blunders");
-    expanded: true;
+  Gtk.Box blunder_group {
     visible: false;
-    margin-start: 12;
-    margin-end: 12;
-    margin-top: 6;
-    margin-bottom: 12;
+    orientation: vertical;
 
-    child: Gtk.ScrolledWindow {
-      propagate-natural-height: true;
-      max-content-height: 240;
+    Gtk.Separator {}
 
-      child: Gtk.ListBox blunder_list {
-        selection-mode: none;
-        styles ["boxed-list"]
-      };
-    };
+    Gtk.Expander blunder_expander {
+      label: _("Blunders");
+      expanded: true;
+      margin-start: 12;
+      margin-end: 12;
+      margin-bottom: 8;
+
+      styles [
+        "mirai-blunders",
+      ]
+
+      Gtk.ScrolledWindow {
+        propagate-natural-height: true;
+        max-content-height: 240;
+        hscrollbar-policy: never;
+
+        child: Gtk.ListBox blunder_list {
+          selection-mode: none;
+        };
+      }
+    }
   }
 }

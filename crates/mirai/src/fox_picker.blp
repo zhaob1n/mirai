@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-
 using Gtk 4.0;
 using Adw 1;
 
-template $MiraiFoxPickerDialog : Adw.Dialog {
+template $MiraiFoxPickerDialog: Adw.Dialog {
   title: _("Download from Fox");
   content-width: 720;
   content-height: 680;
@@ -24,7 +23,10 @@ template $MiraiFoxPickerDialog : Adw.Dialog {
       Gtk.Button open_button {
         label: _("Open Game");
         sensitive: false;
-        styles ["suggested-action"]
+
+        styles [
+          "suggested-action",
+        ]
       }
     }
 
@@ -57,7 +59,11 @@ template $MiraiFoxPickerDialog : Adw.Dialog {
         margin-end: 18;
         margin-top: 6;
         margin-bottom: 12;
-        styles ["dim-label", "caption"]
+
+        styles [
+          "dim-label",
+          "caption",
+        ]
       }
 
       Adw.Banner banner {
@@ -65,8 +71,8 @@ template $MiraiFoxPickerDialog : Adw.Dialog {
         revealed: false;
       }
 
-      Gtk.Stack stack {
-        transition-type: crossfade;
+      Adw.ViewStack stack {
+        enable-transitions: true;
         vexpand: true;
 
         Adw.StatusPage status_page {
@@ -79,9 +85,7 @@ template $MiraiFoxPickerDialog : Adw.Dialog {
           title: _("Searching Fox");
           description: _("This may take a few seconds.");
 
-          child: Gtk.Spinner {
-            spinning: true;
-          };
+          paintable: Adw.SpinnerPaintable {};
         }
 
         Gtk.Box results_page {
@@ -94,7 +98,10 @@ template $MiraiFoxPickerDialog : Adw.Dialog {
             label: _("Recent Games");
             xalign: 0;
             margin-bottom: 8;
-            styles ["heading"]
+
+            styles [
+              "heading",
+            ]
           }
 
           Gtk.ScrolledWindow {
@@ -103,7 +110,11 @@ template $MiraiFoxPickerDialog : Adw.Dialog {
 
             child: Gtk.ListView result_list {
               single-click-activate: true;
-              styles ["card", "separators"]
+
+              styles [
+                "card",
+                "separators",
+              ]
             };
           }
         }

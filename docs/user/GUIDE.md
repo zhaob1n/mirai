@@ -71,7 +71,7 @@ configured"*.
 
 ### Adding a local engine
 
-1. **Preferences → Engines → Add Local…**
+1. **Preferences → Engines → Add Local Engine**
 2. **Name** — anything unique; it labels the engine in the header-bar menu.
 3. **KataGo binary** and **Neural network model** — the list button on the model row offers
    every discovered network by file name, with its directory underneath whenever two share a
@@ -255,7 +255,8 @@ record.
 ### Overlays
 
 Both read from the same analysis, so they need a report (live, or one cached on this move).
-Switching both on layers policy over ownership and is unreadable — use one at a time.
+Choose **None**, **Ownership** or **Policy** in Preferences → Appearance → Board → **Overlay**.
+The keyboard and menu toggles select the same mutually exclusive overlays.
 
 | Overlay | Key | Reading it |
 |---|---|---|
@@ -327,7 +328,8 @@ or edit a comment, and follows the record if the tree changes:
 ```
 
 One line each: the stone the mover played, the move number, the win rate it lost, the move
-played, the engine's move. **Click a row to jump there.** Needs a running engine.
+played, the engine's move. **Click a row to jump there.** Click the **Blunders** heading to
+collapse the list without losing its contents. Whole-game analysis needs a running engine.
 
 **Variations and the move tree.** Playing anywhere other than the end of the line creates a
 variation; the original continuation is untouched. The Moves page draws every node: filled
@@ -511,7 +513,7 @@ One server serves several clients from the one KataGo; it does not start a copy 
 
 ### On the laptop
 
-**Preferences → Engines → Add Remote…**, then:
+**Preferences → Engines → Add Remote Engine**, then:
 
 | Field | Value |
 |---|---|

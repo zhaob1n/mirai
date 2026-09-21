@@ -13,9 +13,9 @@ mod imp {
         #[template_child]
         pub profiles_group: TemplateChild<adw::PreferencesGroup>,
         #[template_child]
-        pub add_local_button: TemplateChild<gtk::Button>,
+        pub add_local_button: TemplateChild<adw::ButtonRow>,
         #[template_child]
-        pub add_remote_button: TemplateChild<gtk::Button>,
+        pub add_remote_button: TemplateChild<adw::ButtonRow>,
         #[template_child]
         pub analysis_visits_row: TemplateChild<adw::SpinRow>,
         #[template_child]
@@ -51,9 +51,7 @@ mod imp {
         #[template_child]
         pub show_move_numbers_row: TemplateChild<adw::SwitchRow>,
         #[template_child]
-        pub ownership_overlay_row: TemplateChild<adw::SwitchRow>,
-        #[template_child]
-        pub policy_overlay_row: TemplateChild<adw::SwitchRow>,
+        pub overlay_row: TemplateChild<adw::ComboRow>,
         #[template_child]
         pub save_analysis_row: TemplateChild<adw::SwitchRow>,
         #[template_child]
@@ -117,8 +115,7 @@ impl PreferencesDialog {
             play_reset_button: imp.play_reset_button.get(),
             show_coordinates_row: imp.show_coordinates_row.get(),
             show_move_numbers_row: imp.show_move_numbers_row.get(),
-            ownership_overlay_row: imp.ownership_overlay_row.get(),
-            policy_overlay_row: imp.policy_overlay_row.get(),
+            overlay_row: imp.overlay_row.get(),
             save_analysis_row: imp.save_analysis_row.get(),
             appearance_reset_button: imp.appearance_reset_button.get(),
         }
@@ -133,8 +130,8 @@ impl Default for PreferencesDialog {
 
 pub struct PreferencesWidgets {
     pub profiles_group: adw::PreferencesGroup,
-    pub add_local_button: gtk::Button,
-    pub add_remote_button: gtk::Button,
+    pub add_local_button: adw::ButtonRow,
+    pub add_remote_button: adw::ButtonRow,
     pub analysis_visits_row: adw::SpinRow,
     pub analysis_interval_row: adw::SpinRow,
     pub analysis_suggestions_row: adw::SpinRow,
@@ -152,8 +149,7 @@ pub struct PreferencesWidgets {
     pub play_reset_button: gtk::Button,
     pub show_coordinates_row: adw::SwitchRow,
     pub show_move_numbers_row: adw::SwitchRow,
-    pub ownership_overlay_row: adw::SwitchRow,
-    pub policy_overlay_row: adw::SwitchRow,
+    pub overlay_row: adw::ComboRow,
     pub save_analysis_row: adw::SwitchRow,
     pub appearance_reset_button: gtk::Button,
 }

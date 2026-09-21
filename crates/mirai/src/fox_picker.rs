@@ -68,7 +68,7 @@ mod imp {
         #[template_child]
         pub banner: TemplateChild<adw::Banner>,
         #[template_child]
-        pub stack: TemplateChild<gtk::Stack>,
+        pub stack: TemplateChild<adw::ViewStack>,
         #[template_child]
         pub status_page: TemplateChild<adw::StatusPage>,
         #[template_child]
@@ -106,6 +106,11 @@ mod imp {
     impl ObjectImpl for FoxPickerDialog {
         fn constructed(&self) {
             self.parent_constructed();
+            if let Some(paintable) = self.loading_page.paintable()
+                && let Ok(spinner) = paintable.downcast::<adw::SpinnerPaintable>()
+            {
+                spinner.set_widget(Some(self.loading_page.upcast_ref::<gtk::Widget>()));
+            }
             self.obj().install_model();
         }
 
@@ -304,7 +309,7 @@ pub struct FoxPickerWidgets {
     pub entry: gtk::SearchEntry,
     pub search_button: gtk::Button,
     pub banner: adw::Banner,
-    pub stack: gtk::Stack,
+    pub stack: adw::ViewStack,
     pub status_page: adw::StatusPage,
     pub loading_page: adw::StatusPage,
     pub results_page: gtk::Box,

@@ -22,10 +22,9 @@
 
 use std::time::Duration;
 
-use adw::prelude::{ComboRowExt, PreferencesDialogExt, PreferencesPageExt, PreferencesRowExt};
+use adw::prelude::*;
 use gtk::gio;
 use gtk::glib;
-use gtk::prelude::*;
 
 #[derive(Debug)]
 enum Step {
@@ -327,13 +326,12 @@ fn activate(app: &adw::Application, full: &str, arg: Option<&str>) -> bool {
     }
 }
 
-/// Activates the first `gtk::Button` whose text contains `needle`, searching the whole
-/// widget tree under the active window. A presented `adw::Dialog` is a descendant of the
-/// window, so this reaches dialog buttons too. A matching `gtk::MenuButton` is popped up
-/// instead of clicked, which is how the discovered-file choosers are opened.
+/// Activates the first button or native action/expander row whose text contains `needle`,
+/// searching the visible dialog when one is presented, otherwise the active window. A
+/// matching `gtk::MenuButton` is popped up instead, opening discovered-file choosers.
 fn press(app: &adw::Application, needle: &str) -> bool {
     fn walk(w: &gtk::Widget, needle: &str) -> bool {
-        if w.is_visible() {
+        if w.is_mapped() && w.is_sensitive() {
             if let Some(menu) = w.downcast_ref::<gtk::MenuButton>()
                 && menu_text(menu).is_some_and(|l| l.replace('_', "").contains(needle))
             {
@@ -346,15 +344,30 @@ fn press(app: &adw::Application, needle: &str) -> bool {
                 button.emit_clicked();
                 return true;
             }
-            if w.is_mapped()
-                && w.is_sensitive()
-                && matches!(
-                    w.accessible_role(),
-                    gtk::AccessibleRole::MenuItem
-                        | gtk::AccessibleRole::MenuItemCheckbox
-                        | gtk::AccessibleRole::MenuItemRadio
-                )
-                && find_label(w, needle)
+            if let Some(row) = w.downcast_ref::<adw::ButtonRow>()
+                && row.title().replace('_', "").contains(needle)
+            {
+                return w.activate();
+            }
+            if let Some(row) = w.downcast_ref::<adw::ActionRow>()
+                && row.title().replace('_', "").contains(needle)
+            {
+                return w.activate();
+            }
+            if let Some(expander) = w.downcast_ref::<gtk::Expander>()
+                && expander
+                    .label()
+                    .is_some_and(|label| label.replace('_', "").contains(needle))
+            {
+                expander.set_expanded(!expander.is_expanded());
+                return true;
+            }
+            if matches!(
+                w.accessible_role(),
+                gtk::AccessibleRole::MenuItem
+                    | gtk::AccessibleRole::MenuItemCheckbox
+                    | gtk::AccessibleRole::MenuItemRadio
+            ) && find_label(w, needle)
             {
                 return w.activate();
             }
@@ -368,9 +381,16 @@ fn press(app: &adw::Application, needle: &str) -> bool {
         }
         false
     }
-    match app.active_window() {
-        Some(w) => walk(w.upcast_ref::<gtk::Widget>(), needle),
-        None => false,
+    let Some(window) = app.active_window() else {
+        return false;
+    };
+    if let Some(dialog) = window
+        .downcast_ref::<adw::ApplicationWindow>()
+        .and_then(|window| window.visible_dialog())
+    {
+        walk(dialog.upcast_ref(), needle)
+    } else {
+        walk(window.upcast_ref(), needle)
     }
 }
 

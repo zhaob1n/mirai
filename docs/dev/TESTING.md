@@ -307,9 +307,10 @@ the prefix through the widget's action muxer. `action:win.toggle-analysis` there
 `window::install_actions`. There is no parallel test code path and no scaffolding inside
 feature code. Names beginning `app.` are routed to the `adw::Application` instead.
 
-Dialogs are not action-driven, so `harness::press` walks the widget tree from the window root
-and clicks the first **visible** `gtk::Button` matching the needle. Three things are tried per
-button, in order: `GtkButton:label`; the first `gtk::Label` in its subtree, which is how an
+Dialogs are not action-driven, so `harness::press` walks the visible dialog when one is
+presented, otherwise the window. It matches only visible, mapped, sensitive controls; a modal
+toast's **Undo** must never hit the background editor's **Undo**. For `gtk::Button`, it tries
+`GtkButton:label`, then the first `gtk::Label` in its subtree, which is how an
 `adw::ButtonContent` child is matched; then `tooltip_text`, which is how an icon-only button
 with no label at all is reached — `press:Edit this profile` in Preferences works on the tooltip.
 A `gtk::MenuButton` matching by label or tooltip is popped up instead of clicked, which is how
@@ -319,7 +320,8 @@ A visible, mapped, sensitive widget whose accessible role is `MenuItem`, `MenuIt
 or `MenuItemRadio` is activated (`WidgetExt::activate`) when its label matches — that is how
 a board context-menu item is chosen after `board:menu:`. Allow the popover to map first,
 for example `board:menu:D4,wait:1000,press:Set as Main Line`.
-A presented `adw::Dialog` is a descendant of the window, so this reaches dialog buttons too.
+Native `adw::ButtonRow` and `adw::ActionRow` controls activate by title; `gtk::Expander`
+toggles expansion by label. `press:Blunders` folds the list; `press:played` activates its first row.
 `harness::fill` finds a visible `gtk::SearchEntry` or `gtk::Entry` by placeholder substring
 and sets its text. `board:` finds the mapped BoardView, computes the intersection center
 from its actual layout, and calls the same hit-test handler as the released mouse gesture.
@@ -327,11 +329,11 @@ In review, `board:secondary:` deletes the current branch in Play mode, toggles t
 colour in Setup mode (matching stones are removed), and does nothing with mark tools.
 `board:menu:` never edits.
 This verifies the production handler, not physical Wayland compositor input delivery.
-Five traps:
+Traps:
 
 - Mnemonic underscores are stripped before matching (`press:Save` matches `_Save`).
-- Substring match, depth-first from the window root: choose a needle unique to the intended
-  control. `press:Start Game` reaches the New Game dialog rather than the live-analysis toggle.
+- Substring match is depth-first within the active dialog or window: choose a needle unique
+  to the intended control.
 - A popover lives in its own surface, so its contents never appear in a `shot`. Verify a
   chooser by what picking an entry *does* — the row subtitle, and the `katago …` start line
   after **Save Profile** — not by a screenshot of the open list.
@@ -339,10 +341,10 @@ Five traps:
   are declared as response ids, not as buttons we construct. [INFERENCE] `press:Close` works
   only if libadwaita realises them as labelled buttons; unverified. End such recipes with
   `shot` then `quit` instead of dismissing the dialog.
-- The sidebar's `Adw.ViewSwitcher` is a toggle group in libadwaita 1.9, and a toggle there is
-  not a `GtkButton`, so `press:Moves` reports `NOT FOUND` — measured. Switch sidebar pages
-  with `stack:Moves`, which sets the `adw::ViewStack`'s visible child, exactly what the
-  switcher itself does.
+- The sidebar uses `Adw.InlineViewSwitcher`, whose toggles are not `GtkButton`s. Switch
+  pages with `stack:Moves`, which sets the `adw::ViewStack`'s visible child.
+- Fox's `GtkSearchEntry` debounces `search-changed`. Use
+  `fill:Exact Fox nickname=…,wait:500,press:Search`, not an immediate press while Search is disabled.
 
 ### Step grammar
 
@@ -354,7 +356,7 @@ Five traps:
 | `wait-status:<substring>` | Wait up to 10 s for the active window's visible labels to contain text | — |
 | `action:<prefix.name>` | Activate an action with no parameter | 120 ms |
 | `action:<prefix.name>=<string>` | Activate with a string parameter (`action:win.set-engine=workstation`) | 120 ms |
-| `press:<label substring>` | Click the first visible matching button, or activate a visible enabled menu item | 250 ms |
+| `press:<label substring>` | Activate the first matching mapped, sensitive button, action row or menu item; toggle an expander row. Scoped to the visible dialog when present | 250 ms |
 | `select:<row title substring>=<index>` | Set the first visible matching `adw::ComboRow`; index 0 is its prompt/default entry | 250 ms |
 | `stack:<view stack page title>` | Show that `adw::ViewStack` page — `stack:Moves` for the sidebar's branch graph | 250 ms |
 | `sort:<column title substring>` | Sort the first `gtk::ColumnView` by that column, and flip the direction if it is already the primary one. A column header is a `GtkColumnViewTitle`, not a `GtkButton`, so `press:` cannot reach it | 250 ms |

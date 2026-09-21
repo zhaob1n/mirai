@@ -313,14 +313,17 @@ template $MiraiWindow: Adw.ApplicationWindow {
         sidebar: Adw.ToolbarView sidebar_view {
           width-request: 340;
 
+          styles [
+            "view",
+          ]
+
           [top]
           Adw.HeaderBar {
             show-start-title-buttons: false;
             show-end-title-buttons: false;
 
-            title-widget: Adw.ViewSwitcher {
+            title-widget: Adw.InlineViewSwitcher {
               stack: sidebar_stack;
-              policy: wide;
             };
           }
 

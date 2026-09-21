@@ -35,6 +35,12 @@
   min-width: 90px;
 }
 
+/* A disclosure within the analysis surface, not a preferences card. */
+.mirai-blunders > box > title {
+  padding: 10px 0;
+  font-weight: 600;
+}
+
 .mirai-blunder-major {
   color: @error_color;
 }
@@ -59,14 +65,10 @@
   min-width: 20px;
 }
 
-/* The candidate table is six numeric columns and a variation in a sidebar; GTK's default cell
-   padding spends the width the variation needs. */
+/* Keep the seven candidate columns compact without shrinking their text. */
 .mirai-candidates > listview > row > cell,
 .mirai-candidates > header > button {
   padding-left: 4px;
   padding-right: 4px;
 }
 
-.mirai-status-dim {
-  opacity: 0.6;
-}
