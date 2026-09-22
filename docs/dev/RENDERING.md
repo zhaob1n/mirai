@@ -346,3 +346,15 @@ update at report rate — a new sidebar list, a new readout — has to follow th
   new pass in `snapshot()` can do. Cap `live_max_visits` low, let the search end, then fold.
 - There is deliberately no unit test for any of this: a headless test cannot see a frame, and
   asserting on node types would pin the implementation rather than the behaviour.
+
+## 9. Native Adwaita controls integration
+
+One merge-time smoke run on native Wayland, debug build, DP-1 at 60 Hz, 1280×860,
+isolated profile, real engine ready but live search off. `MIRAI_FRAMES=1` and
+`tools/perf/frame-stats.py` on the 285-setup-stone fixture recorded zero missed
+intervals over one sidebar close/open pair: paint median/max 7.7/8.8 ms closing
+and 8.4/10.5 ms opening; layout stayed below 0.47 ms. A separate sweep of the
+27-position self-play record missed two of 397 frame intervals while analysing
+(max 33.3 ms, layout max 21.51 ms), then one interval after completion (33.2 ms).
+These are scoped integration observations, not a before/after speedup claim;
+the sweep's layout outlier remains worth watching.
