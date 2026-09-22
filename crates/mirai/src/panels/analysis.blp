@@ -63,9 +63,6 @@ template $MiraiAnalysisPanel: Gtk.Box {
     Gtk.Expander blunder_expander {
       label: _("Blunders");
       expanded: true;
-      margin-start: 12;
-      margin-end: 12;
-      margin-bottom: 8;
 
       styles [
         "mirai-blunders",
@@ -78,6 +75,7 @@ template $MiraiAnalysisPanel: Gtk.Box {
 
         child: Gtk.ListBox blunder_list {
           selection-mode: none;
+          show-separators: true;
         };
       }
     }

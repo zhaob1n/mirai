@@ -37,19 +37,20 @@
 
 /* A disclosure within the analysis surface, not a preferences card. */
 .mirai-blunders > box > title {
-  padding: 10px 0;
+  padding: 10px 12px;
   font-weight: 600;
 }
 
-.mirai-blunder-major {
+/* Tint the title label, not the row: GTK derives separator color from the row foreground. */
+.mirai-blunder-major label.title {
   color: @error_color;
 }
 
-.mirai-blunder-medium {
+.mirai-blunder-medium label.title {
   color: @warning_color;
 }
 
-.mirai-blunder-minor {
+.mirai-blunder-minor label.title {
   color: @accent_color;
 }
 

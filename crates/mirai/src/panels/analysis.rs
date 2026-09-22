@@ -16,9 +16,9 @@ use gtk::pango;
 use gtk::subclass::prelude::*;
 use gtk::{CompositeTemplate, gio, glib, glib::clone};
 
-use mirai_core::{Color, Point};
+use mirai_core::{Color, Point, Size};
 
-use crate::app::{AppState, EngineState, NodeRef};
+use crate::app::{AppState, EngineState};
 use crate::batch::Blunder;
 use crate::util::{pct1, si_visits, signed1, visits_per_second};
 use crate::widgets::winrate::{Severity, severity_of_drop};
@@ -222,8 +222,9 @@ mod imp {
         pub state: OnceCell<AppState>,
         pub inner: OnceCell<super::Inner>,
         pub pv_hooks: RefCell<Vec<PvHook>>,
-        /// The nodes the blunder rows jump to, parallel to the list box's children.
-        pub blunder_nodes: RefCell<Vec<NodeRef>>,
+        /// Keep row widgets alive across batch results so pointer hover and activation
+        /// survive updates to the graph or to another blunder.
+        pub blunder_rows: RefCell<Vec<(Blunder, adw::ActionRow)>>,
         /// The selection index last reported to the PV hooks.
         pub last_pv: Cell<u32>,
     }
@@ -403,13 +404,16 @@ impl AnalysisPanel {
             #[weak(rename_to = panel)]
             self,
             move |_, row| {
-                let nodes = panel.imp().blunder_nodes.borrow();
-                if let Some(&node) = nodes.get(row.index().max(0) as usize) {
-                    drop(nodes);
-                    let state = panel.state();
-                    if let Some(id) = state.resolve_node(node) {
-                        state.set_cursor(id);
-                    }
+                let node = panel
+                    .imp()
+                    .blunder_rows
+                    .borrow()
+                    .get(row.index().max(0) as usize)
+                    .map(|(blunder, _)| blunder.node);
+                if let Some(node) = node
+                    && let Some(id) = panel.state().resolve_node(node)
+                {
+                    panel.state().set_cursor(id);
                 }
             }
         ));
@@ -621,63 +625,74 @@ impl AnalysisPanel {
 
     // -- blunders -----------------------------------------------------------------------
 
-    /// Fills the blunder list from stored main-line analyses.
+    /// Syncs the stored main-line blunders without replacing rows on each batch result.
     pub fn set_blunders(&self, rows: Vec<Blunder>) {
-        self.clear_blunders();
-        if rows.is_empty() {
-            return;
-        }
         let inner = self.inner();
         let size = self.state().tree().info.size;
-
-        let mut nodes = Vec::with_capacity(rows.len());
-        for b in &rows {
-            let detail = match b.best {
-                Some(best) => format!(
-                    "−{}% · played {} · best {}",
-                    pct1(b.drop),
-                    size.to_gtp(b.played),
-                    size.to_gtp(best)
-                ),
-                None => format!("−{}% · played {}", pct1(b.drop), size.to_gtp(b.played)),
-            };
-            // One line: stone, move number, what it cost. A move number on a line of its own
-            // spent a row's height saying nothing the eye had to read.
-            let row = adw::ActionRow::builder()
-                .title(format!("{} {} · {detail}", stone(b.player), b.move_number))
-                .activatable(true)
-                .title_lines(1)
-                .build();
-            if let Some(class) = severity_class(severity_of_drop(b.drop)) {
-                row.add_css_class(class);
+        let mut shown = self.imp().blunder_rows.borrow_mut();
+        let old_len = shown.len();
+        let new_len = rows.len();
+        for (index, blunder) in rows.into_iter().enumerate() {
+            if let Some((previous, row)) = shown.get_mut(index) {
+                if *previous != blunder {
+                    update_blunder_row(row, blunder, size);
+                    *previous = blunder;
+                }
+            } else {
+                let row = adw::ActionRow::builder()
+                    .activatable(true)
+                    .title_lines(1)
+                    .build();
+                update_blunder_row(&row, blunder, size);
+                inner.blunder_list.append(&row);
+                shown.push((blunder, row));
             }
-            // The stone is a picture; a screen reader sees "black circle" at best, so the row
-            // carries the word. `AdwActionRow` is not declared `Accessible` in the bindings,
-            // its widget is.
-            row.upcast_ref::<gtk::Widget>()
-                .update_property(&[gtk::accessible::Property::Label(&format!(
-                    "Move {} · {} · {detail}",
-                    b.move_number,
-                    b.player.name()
-                ))]);
-            inner.blunder_list.append(&row);
-            nodes.push(b.node);
         }
-        *self.imp().blunder_nodes.borrow_mut() = nodes;
-
-        inner
-            .blunder_expander
-            .set_label(Some(&format!("Blunders ({})", rows.len())));
-        inner.blunder_group.set_visible(true);
+        for (_, row) in shown.drain(new_len..) {
+            inner.blunder_list.remove(&row);
+        }
+        if old_len != new_len {
+            if new_len == 0 {
+                inner.blunder_group.set_visible(false);
+                inner.blunder_expander.set_label(Some("Blunders"));
+            } else {
+                inner
+                    .blunder_expander
+                    .set_label(Some(&format!("Blunders ({new_len})")));
+                inner.blunder_group.set_visible(true);
+            }
+        }
     }
+}
 
-    pub fn clear_blunders(&self) {
-        let inner = self.inner();
-        clear_list(&inner.blunder_list);
-        self.imp().blunder_nodes.borrow_mut().clear();
-        inner.blunder_expander.set_label(Some("Blunders"));
-        inner.blunder_group.set_visible(false);
+fn update_blunder_row(row: &adw::ActionRow, b: Blunder, size: Size) {
+    let detail = match b.best {
+        Some(best) => format!(
+            "−{}% · played {} · best {}",
+            pct1(b.drop),
+            size.to_gtp(b.played),
+            size.to_gtp(best)
+        ),
+        None => format!("−{}% · played {}", pct1(b.drop), size.to_gtp(b.played)),
+    };
+    row.set_title(&format!("{} {} · {detail}", stone(b.player), b.move_number));
+    for class in [
+        "mirai-blunder-minor",
+        "mirai-blunder-medium",
+        "mirai-blunder-major",
+    ] {
+        row.remove_css_class(class);
     }
+    if let Some(class) = severity_class(severity_of_drop(b.drop)) {
+        row.add_css_class(class);
+    }
+    // The emoji stone is a picture; the accessible label must name the player.
+    row.upcast_ref::<gtk::Widget>()
+        .update_property(&[gtk::accessible::Property::Label(&format!(
+            "Move {} · {} · {detail}",
+            b.move_number,
+            b.player.name()
+        ))]);
 }
 
 /// The root numbers, already in the mover's perspective.
@@ -714,12 +729,6 @@ fn severity_class(severity: Severity) -> Option<&'static str> {
         Severity::Minor => Some("mirai-blunder-minor"),
         Severity::Medium => Some("mirai-blunder-medium"),
         Severity::Major => Some("mirai-blunder-major"),
-    }
-}
-
-fn clear_list(list: &gtk::ListBox) {
-    while let Some(child) = list.first_child() {
-        list.remove(&child);
     }
 }
 

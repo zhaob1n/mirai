@@ -290,7 +290,13 @@ Equivalent Adwaita controls stay native: `AdwButtonRow` for adding profiles,
 `AdwInlineViewSwitcher` for inspector pages and `AdwViewStack`/`AdwSpinnerPaintable` for
 loading states. The Appearance overlay `AdwComboRow` projects the existing mutually exclusive
 AppState booleans; menu changes, defaults and undo must all stay in sync with it.
-The inspector uses `.view`; blunders are a flat disclosure, not a boxed preferences card.
+The theme has three intentional surfaces: `AdwOverlaySplitView` supplies the sidebar colour
+for the inspector header, analysis summary and Blunders title; the board surround and graph
+share the window background; candidate and blunder rows use the view background. These
+pairs follow focus and light/dark mode without custom colour literals. Blunder loss classes
+target only `AdwActionRow`'s `label.title`: tinting the row also tints GTK's
+`show-separators` borders through `currentColor`. Rows stay alive during batch updates so
+hover and activation do not reset when the curve fills.
 
 | file | owns | key symbols |
 |---|---|---|
