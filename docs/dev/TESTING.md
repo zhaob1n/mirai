@@ -14,11 +14,11 @@ Section 5 is the reason this file exists: this is a GTK4 app on Wayland, where e
 screen capture returns black frames, so the application screenshots itself.
 
 Frame timings are a separate instrument: `crates/mirai/src/render_probe.rs` and `tools/perf/`,
-with [`RENDERING.md`](RENDERING.md) as the report they produced. Reach for them when something
-stutters — the harness here proves *what* is drawn, not how fast. It cannot prove the second
-thing even in principle: a `shot:` capture re-enters `snapshot()`, so a widget that skips work
-while its geometry moves has already stopped skipping by the time the capture runs
-([`RENDERING.md`](RENDERING.md) §6).
+with [`RENDERING.md`](RENDERING.md) as the report they produced. Verify each UI change in the
+actual interface, but **do not rerun frame benchmarks after every iteration**: measure the
+completed feature set before merging. An observed stutter or a change to a per-frame drawing
+path warrants measuring sooner. A `shot:` proves *what* is drawn, not how fast: capture
+re-enters `snapshot()` after the geometry has settled ([`RENDERING.md`](RENDERING.md) §6).
 
 ## 1. Quick reference
 
