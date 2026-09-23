@@ -5,11 +5,15 @@ normatively in [`PROTOCOL.md`](PROTOCOL.md); how to prove a change works is
 [`TESTING.md`](TESTING.md); why the design is what it is, with the history, is
 [`../archive/RETROSPECTIVE.md`](../archive/RETROSPECTIVE.md); the user's view is
 [`../user/GUIDE.md`](../user/GUIDE.md). Candidate colour versus KataGo's `order` is
-[`CANDIDATE_COLOUR.md`](CANDIDATE_COLOUR.md).
+[`CANDIDATE_COLOUR.md`](CANDIDATE_COLOUR.md). Fox HTTP and its SGF dialect are
+[`FOX_KIFU_API_SPEC.md`](FOX_KIFU_API_SPEC.md).
 
-Citations are file plus symbol. Signatures and field lists are deliberately not repeated here —
-run `cargo doc --workspace --open` for those. `[INFERENCE]` marks anything reasoned rather than
-read.
+§3 is a task index: paths there are from the repository root, and a symbol is named only as
+the entry to open. Elsewhere, citations are file plus symbol. Signatures and field lists are
+not repeated here — run `cargo doc --workspace --open` for those. Point encoding, perspective
+and quantisation are stated in [`../../AGENTS.md`](../../AGENTS.md) §2 and, where they cross
+the wire, in PROTOCOL; §2 below keeps the reason and the cost, not a second copy of the
+numbers. `[INFERENCE]` marks anything reasoned rather than read.
 
 ---
 
@@ -89,9 +93,10 @@ stream.
 - **Buys.** No replay/undo machinery. Arbitrary tree navigation is one new request, not a diff.
   The remote protocol is a pure request/stream forwarder, so the server keeps no per-client
   board state and can multiplex clients onto one KataGo. Cancellation is a drop.
-- **Costs.** Every request re-sends the position (a 200-move `Open` frames to 500 bytes) and
-  KataGo re-walks the move list; its NN cache absorbs most of that. Anything genuinely stateful
-  — pondering that persists across cursor moves — is out of reach by construction.
+- **Costs.** Every request re-sends the position (a 200-move `Open` frames to 500 bytes —
+  [PROTOCOL §11](PROTOCOL.md#11-reference-figures)) and KataGo re-walks the move list; its NN
+  cache absorbs most of that. Anything genuinely stateful — pondering that persists across
+  cursor moves — is out of reach by construction.
 
 ### 2.2 mirai generates KataGo's analysis config
 
@@ -143,10 +148,12 @@ uses that file as it stands.
 
 ### 2.3 KataGo's own point encoding (INV-1)
 
-`index = y * width + x`, `y = 0` the top row, `PASS` as the maximum `u16`.
+The ordering is INV-1. The wire statement — index, pass, and the ownership and policy array
+lengths — is [PROTOCOL §7.1](PROTOCOL.md#71-inv-1-point-and-array-ordering). The board picture
+is [§4](#4-data-model).
 
-- **Rationale.** KataGo emits `ownership` and `policy` in exactly this order. Any other
-  convention means writing a remap, and remaps are where transposed heat maps come from.
+- **Rationale.** KataGo emits `ownership` and `policy` in that order. Any other convention
+  means writing a remap, and remaps are where transposed heat maps come from.
 - **Buys.** `report.ownership[i]` and `board.stones()[i]` are the same intersection, so overlays
   are a straight texture blit with no index arithmetic. SGF is also top-left-origin, so
   `Size::to_sgf`/`from_sgf` need no flip.
@@ -155,15 +162,19 @@ uses that file as it stands.
 
 ### 2.4 Everything is stored Black-perspective (INV-2)
 
-KataGo runs with `reportAnalysisWinratesAs=BLACK`; every stored, cached and transmitted value is
-Black's. Conversion happens only at display time via `winrate_for` / `score_lead_for`.
+KataGo runs with `reportAnalysisWinratesAs=BLACK`. INV-2, and
+[PROTOCOL §7.2.1](PROTOCOL.md#721-inv-2-black-perspective) on the wire: every stored, cached
+and transmitted value is Black's. Conversion happens only at display time via `winrate_for` /
+`score_lead_for`. The graph never converts — it is Black's series. The analysis sidebar does,
+into the side to move. Those are different displays, not a second stored perspective.
 
 - **Rationale.** A side-to-move value is only interpretable together with the node it came from.
   Black-perspective values are sign-stable, so a cached series can be plotted across a whole game
   without asking whose turn each node was.
 - **Buys.** Blunder detection is a subtraction after one flip each side
-  (`blunder_severity` in `widgets/winrate.rs`, `blunders` in `batch.rs`). SGF-persisted analysis
-  needs no perspective metadata. `Color::sign()` is also KataGo's ownership sign.
+  (`blunder_severity` in `crates/mirai/src/widgets/winrate.rs`, `blunders` in
+  `crates/mirai-client/src/batch.rs`). SGF-persisted analysis needs no perspective metadata.
+  `Color::sign()` is also KataGo's ownership sign.
 - **Costs.** A double conversion is nearly invisible on screen — 45% looks as plausible as 55%.
   Every new display site must be checked; that is why no call site hand-rolls `1.0 - x`.
 
@@ -184,18 +195,22 @@ overwritten rather than queued.
 
 ### 2.6 Quantised wire values (INV-6)
 
-Quantisation is part of the type: a candidate's win rate *is* a `u16`. Scales live only in
-`mirai-proto/src/types.rs`; `*_f32` accessors are the only way back to floats.
+Quantisation is part of the type: a candidate's win rate is a fixed-point integer, not an
+`f32`. Scales, the illegal-prior sentinel and the round-trip error budget are normative in
+[PROTOCOL §7.2](PROTOCOL.md#72-quantisation) (INV-6). They live in code only in
+`crates/mirai-proto/src/types.rs`; `*_f32` accessors are the only way back to floats.
 
 - **Rationale.** The equivalent KataGo JSON for a 50-candidate report with ownership is ~45 KB.
   At 10 Hz per client that is the difference between a protocol that works on a LAN and one that
   does not.
-- **Buys.** 2622 bytes framed for that worst case (`mirai-proto/tests/wire_size.rs`). The local
-  and remote paths quantise with the same functions, so the two engines produce bit-identical
-  reports — which is what permits one GUI code path. Ownership is one byte per point.
-- **Costs.** A tested error budget (winrate ≤ 1e-4, lead ≤ 0.02 pt, ownership ≤ 0.005). Changing
-  a scale is a protocol change: bump `PROTO_VERSION` and update `wire_size.rs`. `POLICY_ILLEGAL`
-  burns one sentinel value because KataGo reports illegal moves as `-1`.
+- **Buys.** The framed worst case is the measured figure in
+  [PROTOCOL §11](PROTOCOL.md#11-reference-figures) (`crates/mirai-proto/tests/wire_size.rs`).
+  The local and remote paths quantise with the same functions, so the two engines produce
+  bit-identical reports — which is what permits one GUI code path. Ownership is one byte per
+  point, as that section specifies.
+- **Costs.** Changing a scale is a protocol change: bump `PROTO_VERSION` and update
+  `wire_size.rs` and PROTOCOL together. One sentinel is burned because KataGo reports an
+  illegal prior as `-1`; the sentinel's value is in PROTOCOL, not here.
 
 ### 2.7 Custom `gsk` widgets, not `DrawingArea` + cairo (INV-9)
 
@@ -209,154 +224,76 @@ Board, win-rate graph and move tree are `gtk::Widget` subclasses drawing in `sna
   render node and redraws only the cursor marker while navigating. Widgets consume pushed
   projections, so `snapshot()` does not walk `AppState` or rebuild tree-derived data.
 - **Costs.** No cairo conveniences: a circle is a colour node inside a rounded clip
-  (`widgets/paint.rs`), and text is a `pango::Layout` per label. Projection and cache
-  invalidation are explicit. Text is deferred while the board is being resized, because GSK
-  caches a glyph per `PangoFont` — so moving the board is free and rescaling it is not
-  ([`RENDERING.md`](RENDERING.md) §6). The honest verification path is the app's own renderer
-  through `harness.rs`, plus `render_probe.rs` for anything per-frame.
+  (`crates/mirai/src/widgets/paint.rs`), and text is a `pango::Layout` per label. Projection
+  and cache invalidation are explicit. Text is deferred while the board is being resized,
+  because GSK caches a glyph per `PangoFont` — so moving the board is free and rescaling it
+  is not ([`RENDERING.md`](RENDERING.md) §6). The honest verification path is the app's own
+  renderer through `crates/mirai/src/harness.rs`, plus `crates/mirai/src/render_probe.rs` for
+  anything per-frame.
 
 ---
 
 ## 3. Module map
 
-Every `.rs` file under `crates/`. Open the file named in the row; the symbols are greppable.
-
-### `mirai-core` — geometry, rules, tree, SGF
-
-| file | owns | key symbols |
-|---|---|---|
-| `src/lib.rs` | crate root, flat re-exports, the shared PRNG | `SplitMix64` — deterministic across runs, which the Zobrist contract requires |
-| `src/point.rs` | **INV-1.** Point encoding, board dimensions, coordinate parsing/formatting, neighbours, star points | `Point`, `Size`, `Color`, `Neighbors`, `MIN_DIM`/`MAX_DIM`, `COLUMNS`, `to_gtp`/`from_gtp`, `to_sgf`/`from_sgf`, `star_points` |
-| `src/rules.rs` | the nine rulesets, mirrored from KataGo's `rules.cpp` so local legality never disagrees with the engine | `RuleSet` (+`ALL`, `katago_name`, `label`, `rules`, `default_komi`), `Rules`, `Ko`, `Scoring`, `Tax`, `Whb` |
-| `src/board.rs` | stones, capture, suicide, simple ko, incremental Zobrist, chain flood fill | `Board` (`play`, `is_legal`, `set`, `clear_ko`, `chain`, `liberties`, `zobrist`, `situational_hash`, `ko_ban`), `Captured`, `IllegalMove`, `WHITE_TO_MOVE_HASH` |
-| `src/score.rs` | final-position scoring: dead stones, connected components, area and territory counts, seki tax | `score`, `DeadSet` (`from_ownership`, `toggle_chain`), `ScoreResult` (`margin`, `result_string`), private `components`, `MAX_EYE` |
-| `src/handicap.rs` | fixed handicap placement in conventional order | `fixed_handicap` — empty for unsupported counts, non-square, `< 7x7` or even-sided boards |
-| `src/clock.rs` | time control and the per-move thinking budget | `TimeControl`, `think_budget` |
-| `src/tree.rs` | the game record: node arena, tombstoned deletes, cached `Position`, superko enforcement, reversible branch detach | `GameTree`, `NodeId`, `Node`, `Position`, `GameInfo`, `Setup`, `Marks`/`MarkKind`, `DetachedBranch`, `NodeAnalysis`, `Candidate`, `revision`, `has_content` |
-| `src/sgf.rs` | hand-written SGF FF[4] read/write, unknown-property preservation, the `MRAI` analysis property | `parse`, `parse_str`, `write`, `SgfError`, private `build`, `write_node`, `is_root_info_prop`, `encode_analysis`/`decode_analysis`, `MAX_DEPTH`, `MRAI_VERSION` |
-
-### `mirai-proto` — MRP/1
-
-| file | owns | key symbols |
-|---|---|---|
-| `src/lib.rs` | crate root and re-exports | — |
-| `src/types.rs` | **INV-2, INV-5, INV-6.** Quantised wire values, the request and report types | `AnalyzeReq`, `Report`, `RootInfo`, `MoveInfo`, `EngineDesc`, `Want`, `AvoidSpec`, `PROTO_VERSION`, `POLICY_ILLEGAL`, the `*_SCALE` constants, `q16`/`dq16`/`qs`/`dqs`/`qu`/`dqu`/`q_own`/`q_policy`, `winrate_for`, `score_lead_for` |
-| `src/msg.rs` | the three message enums and the error code set | `ClientMsg`, `ServerMsg`, `SubMsg`, `ErrCode` |
-| `src/frame.rs` | length-prefixed postcard framing with optional zstd, generic over `AsyncRead`/`AsyncWrite` | `read_msg`/`write_msg`, `encode`/`decode`, `FrameBuf` (reused per connection, so steady state does not allocate), `MAX_FRAME`, `COMPRESS_THRESHOLD`, `FrameError`, private `Bounded` decompression-bomb guard |
-| `src/endpoint.rs` | ALPN, default port, `mirai://` parsing — always compiled, even without Quinn | `parse_url`, `sni_for`, `ALPN`, `DEFAULT_PORT`, `URL_SCHEME`, `AddressError` |
-| `src/transport.rs` | QUIC endpoints, stream topology, TOFU certificate verification | `connect`, `client_endpoint`, `server_endpoint`, `TofuVerifier`, `load_or_generate_cert`, `fingerprint_of`, `transport_config` |
-| `src/sha256.rs` | in-tree SHA-256, only for certificate fingerprints | `sha256`, `fingerprint` |
-| `tests/wire_size.rs` | measures the size claim and pins the quantisation error budget | — |
-
-### `mirai-engine` — engine drivers
-
-| file | owns | key symbols |
-|---|---|---|
-| `src/lib.rs` | **the engine contract** | `Engine`, `Subscription`, `SubEvent`, `CancelGuard`, `EngineError` |
-| `src/query.rs` | KataGo analysis-engine query construction — the only place KataGo field names are written | `build_query`, `action_query`, `terminate_query` |
-| `src/decode.rs` | the only place KataGo JSON becomes a `Report`; classifies every stdout line | `RawResponse::classify`, `decode_report`, `RAW_VAR_TIME_SCALE` |
-| `src/local.rs` | one `katago analysis` subprocess: three tasks, id routing, startup handshake, shutdown | `LocalEngine::spawn`, `LocalEngine::shutdown`, `LocalEngineConfig`, private `Inner` (`cancel`, `handle`, `deliver`, `fail_all`), `write_lines`, `read_responses`, `drain_stderr`, `supervise`, `handshake`, `override_config` |
-| `src/tuning.rs` | the analysis config mirai writes for itself: the three required KataGo keys plus the cache size, one fixed set of defaults, everything else left to KataGo | `EngineTuning` (`analysis_threads`, `search_threads`, `nn_max_batch_size`, `nn_cache_size_power_of_two`; `Default`, `render`, `write_to` — rewrites only on change, `cache_bytes`, `batch_covers_threads`, the `MAX_*`/`*_CACHE_POWER` bounds), `CACHE_ENTRY_BYTES` |
-| `src/calibrate.rs` | explicit two-stage measurement of search width and concurrent positions against the real local model | `calibrate`, `CalibrationConfig`, `CalibrationProgress`, `CalibrationResult`, `CalibrationSample`, private `measure_candidate`, `select_search_threads`, `select_analysis_threads` |
-| `src/remote.rs` | MRP/1 client: one background task owns the connection, control stream and subscription table | `RemoteEngine::connect`, `RemoteStatus`, `TofuStore`, private `run`, `serve`, `handle_cmd`, `handle_int`, `control_reader`, `uni_acceptor`, `sub_reader`, `reconnect`, `backoff` |
-| `examples/probe.rs` | CLI that drives either backend through the same trait and prints every report — the local-vs-remote comparison harness | `--katago/--model/--config` or `--remote/--token` |
-| `examples/sweep.rs` | CLI that grades a whole record: every n-th main-line position at a fixed visit cap, one CSV row per candidate with both losses against the engine's pick — the material the candidate colour ramp is fitted on ([`TESTING.md`](TESTING.md) §4) | `--katago/--model/--visits/--every/--until/--label` |
-
-### `mirai-client` — shared application layer
-
-| file | owns | key symbols |
-|---|---|---|
-| `src/lib.rs` | crate root and re-exports | — |
-| `src/analysis.rs` | position → `AnalyzeReq` from the last setup/`PL` boundary plus later moves; `Report` → `NodeAnalysis`; search-speed meter | `request_for_node`, `analysis_of`, `SpeedMeter`, `PV_LEN` |
-| `src/batch.rs` | main-line plan and bounded sweep; INV-2 blunder detection | `plan_mainline`, `sweep`, `blunders`, `in_flight`, `Planned`, `Analysed`, `Blunder` |
-| `src/game/mod.rs`, `src/game/history.rs` | cursor, document-state dirty token, position revision, Save path, differential undo; mutations go through here | `GameSession`; private `History`, `Edit`, `EditKind` |
-| `src/session.rs` | TOFU policy in front of `RemoteEngine`; `Engine` impl that refuses until trusted | `Session`, `SessionConfig`, `SessionState`, `Peer`, `RemoteConnector` |
-| `src/play.rs` | clocks, resignation, move sampling, scoring; no UI | `Play`, `PlayState`, `GameSetup`, `Strength`, `select_move_index`, `resign_check` |
-| `src/fox.rs` | Fox lookup / list / SGF normalisation; HTTP behind `Fetch` | `Fetch`, `lookup_user`, `list_games`, `fetch_sgf`, `normalize_fox_sgf` |
-| `examples/selfplay.rs` | CLI that plays KataGo against itself down the *same* path the GUI saves a record on, and writes the SGF — how `mirai-core/tests/data/katago-selfplay.sgf` is regenerated ([`TESTING.md`](TESTING.md) §4). It takes `mirai-engine` with `local` as a dev-dependency only | `--katago/--model/--visits/--moves/--variations/--out` |
-
-### `mirai-server` — headless host
-
-| file | owns | key symbols |
-|---|---|---|
-| `src/main.rs` | CLI, engine startup, endpoint bind, accept loop, Ctrl-C shutdown | `Args`, `run`, `start_engines` (a broken engine is logged and skipped, never fatal), `generate_token`, `cert_hostnames`, `report_missing_config` |
-| `src/config.rs` | `server.toml`: engines, tokens, limits. Relative paths resolve against the config file's directory, never the CWD | `ServerConfig` (`parse`, `load`, `listen_addr`), `EngineCfg` (`config` is optional, plus `nn_max_batch_size`; `to_local_config` is fallible because omitting `config` makes it write the generated config into `log_dir`), `TokenCfg`, `MINIMAL_EXAMPLE`, `resolve_listen`, private `rebase`. All three structs are `deny_unknown_fields` |
-| `src/session.rs` | one QUIC connection: control stream, token check, one task per subscription | `serve`, `Host` (`authenticate` — constant-time via `subtle`, no early exit; `resolve_engine`; `describe`), `NamedEngine`, `Token`, private `session_loop`, `pump`, `SubMsgRef` (a zero-copy mirror of `SubMsg`, pinned byte-identical by a test), `PRIORITY_RANGE`, `CODE_CANCELLED` |
-| `server.example.toml` | commented example config (not Rust) | — |
-
-### `mirai` — the application
-
-Equivalent Adwaita controls stay native: `AdwButtonRow` for adding profiles,
-`AdwInlineViewSwitcher` for inspector pages and `AdwViewStack`/`AdwSpinnerPaintable` for
-loading states. The Appearance overlay `AdwComboRow` projects the existing mutually exclusive
-AppState booleans; menu changes, defaults and undo must all stay in sync with it.
-The theme has three intentional surfaces: `AdwOverlaySplitView` supplies the sidebar colour
-for the inspector header, analysis summary and Blunders title; the board surround and graph
-share the window background; candidate and blunder rows use the view background. These
-pairs follow focus and light/dark mode without custom colour literals. Blunder loss classes
-target only `AdwActionRow`'s `label.title`: tinting the row also tints GTK's
-`show-separators` borders through `currentColor`. Rows stay alive during batch updates so
-hover and activation do not reset when the curve fills.
-
-| file | owns | key symbols |
-|---|---|---|
-| `build.rs` | compiles `resources/mirai.gresource.xml` into the binary | — |
-| `src/main.rs`, `src/application_shell.rs` | process entry and application lifetime: tracing, resources, CSS, `activate`/`open`; `MiraiApplication` uniquely owns the Tokio runtime and shared `EnginePool`, releases both from the GApplication `shutdown` vfunc (disposal is the backstop for a remote invocation, which never starts up), and turns SIGINT/SIGTERM/SIGHUP into an ordinary `quit` | `APP_ID`, `RESOURCE_PREFIX`, `MiraiApplication`, private `release`, `watch_termination_signals` |
-| `src/app.rs` | **INV-7.** `AppState`: the source of truth *for one window* — properties, epoch-qualified node references, tree/cursor API, explicit `EngineState`, the single `Change` dispatcher, engine activation, live-analysis pump; feeds `mirai_client::SpeedMeter` | `AppState`, `TreeEpoch`, `NodeRef`, `Change`, `EditorTool`, `EngineState`, `with_session_mut`, `with_edit_session`, `set_tree`, `resolve_node`, `set_cursor`, `play_move`, `activate_profile`, `cancel_tasks`, `request_for_node`, `restart_analysis`, `set_report`, `set_analysis_at` |
-| `src/engines.rs` | the application-wide engines: one per profile, shared by every window, held weakly so the last window to let go takes KataGo with it; writes the generated analysis config when a local profile has no custom one | `EnginePool` (`running`, `acquire`), `Built`, private `key`, `start`, `build` |
-| `src/config.rs` | `$XDG_CONFIG_HOME/mirai/config.toml`: engine profiles and preferences; ordered XDG discovery merges all model and custom-analysis candidates | `Config` (`load`, `save`, `save_merged`, `seeded`, `profile`, `active_profile`, `set_pin`, `default_path`, `data_dir`), `discover_models`, `discover_analysis_configs`, private `model_dirs`, `analysis_config_dirs`, `merge_candidates`, `overlay`, `EngineProfile`, `ProfileKind` (`Local`'s optional config and tuning fields), `AnalysisSettings`, `PlaySettings`, `StrengthSetting`, `UiSettings` |
-| `src/util.rs` | formatting helpers; `analysis_of` is a thin wrap of `mirai_client::analysis_of` | `analysis_of`, `si_visits`, `visits_per_second`, `pct1`, `signed1`, `clock_text`, `gtp` |
-| `src/palette.rs` | the one candidate colour table: how much a move loses → RGB for the board, and the same table rendered as CSS for the list's badges, so the two can never disagree. Loss is pick minus candidate `utility` (side-to-move), KataGo's own blend of win rate and score. Below `TRUSTED_VISITS` the paint is grey, not a loss colour, the board drops the figures and the blob fades — one threshold, three consequences. MRAI v1 cache without utility falls back to the old two-channel means | `GRADE_RAMP`, `UTILITY_AT`, `POINTS_AT`, `WINRATE_AT`, `TRUSTED_VISITS`, `UNKNOWN_RGB`, `grade`, `grade_means`, `colour`, `colour_stop`, `grade_css`, `grade_class` |
-| `src/window.rs` | window behaviour and unique per-window `Ui`: the `Change` dispatcher, deterministic task/source registry, every `win.*` action, SGF I/O, autosave, score estimate, editor toolbar/actions and shutdown ordering | `Ui` (whose `Drop` is the release), `WindowTasks`, `TaskSlot`, `SourceSlot`, `AutosaveFile`, `present`, `handle_change`, `connect_close`, `install_actions`, `adopt`, `write_autosave`, `do_score`, `blank_tree` |
-| `src/window_shell.rs`, `src/window.blp` | `MiraiWindow` owns exactly one `Ui` in GObject state; `close-request`, `dispose` and the application's `shutdown` converge on idempotent `shutdown`, which only takes the `Ui` out and lets it drop. The template owns the static hierarchy including `editor_toolbar`; Rust inserts the stateful board, graph, tree and analysis panel | `MiraiWindow`, `install_ui`, `with_ui`, `take_ui`, `shutdown` |
-| `src/fox.rs`, `src/fox_picker.rs`, `src/fox_picker.blp` | anonymous Fox Go nickname/UID lookup, recent-public-game picker and download; the last successful search is cached in `$XDG_DATA_HOME/mirai/fox-last-search.json` and restored when the dialog opens; the up-to-200 records live in a `GListModel` of `FoxRow` behind a `GtkListView`, and the model is filled *after* `present` because a list view whose rows have never been measured tracks its whole model; one picker per window, kept in `Ui`, because libadwaita refuses to present one dialog in two windows; normalises Fox's SGF dialect before handing a `GameTree` to the window | `present`, `FoxPickerDialog` (`wired`, `prepare_to_show`, `replace_games`, `selected_game`), `FoxRow`, private `search_games`/`fetch_game`, `parse_fox_sgf`, `normalize_handicap`, `LastSearch`, `row_factory` |
-| `src/widgets/mod.rs` | widget root; states the no-cairo rule | re-exports `BoardView`, `MoveTreeView`, `WinrateGraph` |
-| `src/widgets/paint.rs` | the drawing primitives every custom widget uses, and the rule they enforce: quads, not paths ([`RENDERING.md`](RENDERING.md)) | `fill_disc`, `stroke_disc`, `stroke_rect`, `hline`, `vline`, `over` |
-| `src/widgets/board.rs` | goban rendering from a pushed `BoardProjection`: cached static layer and report-time heat-map textures, stones, marks, move numbers, candidates — hue from `palette::grade`, opacity from visits, white outline on the move the record plays next — PV preview and input. Clicks hit-test then call a window hook; a mark mask skips numbers/dots under SGF marks | `BoardView` (`refresh_tree`, `refresh_cursor`, `refresh_report`, `point_at`, `click_at`, `point_center`, `set_click_hook`), `BoardClick`, `BoardProjection`, `StaticKey`, `Layout`, `BLOB_ALPHA_MIN`, `LABEL_MIN_VISITS`, `RECORD_RING`, `record_next` |
-| `src/widgets/winrate.rs` | cached main-line `GraphProjection`; cached base render node for curves/guides/blunders, with cursor marker drawn separately. Labels inherit the widget font; `RenderKey` includes the Pango context serial to invalidate cached text when it changes | `WinrateGraph` (`refresh`, `refresh_cursor`), `GraphProjection`, `RenderKey`, `Severity`, `Sample`, `Geom` |
-| `src/widgets/tree.rs` | branch graph from a cached `TreeLayout`, rebuilt only when `structure_revision` moves: depth runs *down* the panel and lanes across it, because the sidebar is 340-520 px wide and a window tall | `MoveTreeView` (`refresh`), `lay_out`, `TreeLayout`, `Placed`, `cell_xy` |
-| `src/panels/mod.rs` | sidebar panel root | re-exports `AnalysisPanel` |
-| `src/panels/analysis.rs`, `src/panels/analysis.blp` | the `MiraiAnalysisPanel` composite template, the candidate `ColumnView` — a stable model whose objects are mutated in place at report rate, cells bound through `gtk::Expression` and pinned to a character width so digits never re-measure a column ([`RENDERING.md`](RENDERING.md) §7), with a `GtkSortListModel` between that store and the selection so a header click reorders the *view* while the store stays in KataGo's `order` — `resort` is what tells it the in-place numbers moved, and `sync_pv` reports the row's `rank` rather than its position because the hooks index the engine's move list — the rank badge, whose number is `order` and whose colour is the row's grade, and dynamic blunder rows: one line each, the mover an emoji stone rather than the word "Black", since `severity_class` owns the row's text colour and would tint a monochrome `●` red | `AnalysisPanel` (`connect_pv_preview`, `set_blunders`, `clear_blunders`, `resort`, `sync_pv`), `CandidateObject`, `Row` (`apply`, `to_object`), `grade_rows`, `Col`, `Headline`, `severity_class`, `stone`, `pv_text`, `column`, `rank_column` |
-| `src/play.rs` | window-owned play controller: GTK timers, dialogs and the live AI subscription; start disables `GameSession` history, stop re-enables it; move choice and resignation also live in `mirai-client` | `PlayController`, `PlaySession`, `PlayState`, `GameSetup`, `Strength`, `tick_clock`, `resign_check`, `select_move_index` |
-| `src/batch.rs` | window-owned whole-game coordinator; `blunders` / `in_flight` wrap `mirai_client::batch`; writes through `set_analysis_at` with the sweep's starting `position_revision` | `BatchAnalysis`, `BatchMessage`, `RuntimeTask`, `blunders`, `Blunder`, `in_flight` |
-| `src/new_game.rs`, `src/new_game.blp` | The `MiraiNewGameDialog` `CompositeTemplate` and its state-dependent setup wiring | `present`, `NewGameDialog` |
-| `src/label_editor.rs`, `src/label_editor.blp` | Point-label dialog; Apply writes only if the cursor node is unchanged and play is not active | `present` |
-| `src/dialogs.rs` | Dynamic result and certificate-confirmation alert dialogs. Score: Close keeps counting, Review Game stops play, Analyse Game stops then sweeps | `show_score_with`, `confirm_fingerprint` |
-| `src/preferences_shell.rs`, `src/preferences.blp` | The `MiraiPreferencesDialog` `CompositeTemplate`: four fixed pages, groups, controls and accessible labels | `PreferencesDialog`, `PreferencesWidgets` |
-| `src/profile_editor.rs`, `src/profile_editor.blp` | Shared `MiraiProfileEditorPage` `CompositeTemplate`: navigation chrome, save action, error banner and content slot for both profile editors | `ProfileEditorPage` |
-| `src/prefs.rs` | preferences and profile editors; managed engine calibration is owned by one `CalibrationRun`, so completion and cancellation share one teardown path | `present`, `CalibrationRun`, `engine_menu_model`, `open_editor`, `local_editor`, `file_row`, `candidate_labels` |
-| `src/harness.rs` | debug-only scripted-UI harness; drives actions/dialog controls, board `click_at`, waits on visible status, closes individual windows, and renders through the app's GSK renderer | `install`, `parse`, `activate`, `press`, `wait_status`, `shot` |
-| `src/render_probe.rs` | debug-only render-performance probe: frame-clock cadence and phase split, scoped pass timers, scene ablations ([`RENDERING.md`](RENDERING.md)) | `install`, `configure`, `Timer`, `trace`, `label_defer`, `dump_node` |
-
-Non-Rust in `crates/mirai`: `src/window.blp`, `src/new_game.blp`, `src/label_editor.blp`,
-`src/preferences.blp`, `src/profile_editor.blp`, `src/fox_picker.blp` and
-`src/panels/analysis.blp` (Blueprint composite templates), `resources/style.css`
-(`board-area`, `mirai-clock`, `mirai-readout`, `mirai-winrate`, `mirai-movetree`),
-`resources/icons/hicolor/` (`io.github.mirai.Mirai` and its `-symbolic` sibling) and
-`resources/mirai.gresource.xml`. The store-style preview lives at `docs/user/preview.png`.
+Where a change lives. This is not a symbol index: open the path and grep the entry. Paths are
+from the repository root, because `play.rs` and `batch.rs` each exist twice. What a crate may
+depend on is [§1](#1-the-system). User settings and shortcuts are
+[GUIDE §8](../user/GUIDE.md#8-settings-reference) and
+[§9](../user/GUIDE.md#9-keyboard-reference); this table is the source.
 
 ### Quick index
 
-| I want to change… | open |
-|---|---|
-| candidate blob colour, visit depth and labels | `palette.rs` — `colour` / `colour_stop` and `GRADE_RAMP` are the one reading both the board and the list badges take; loss is `utility` against the pick; unsearched moves paint grey, faded and unlabelled (`TRUSTED_VISITS`, the only search threshold). `widgets/board.rs` — `blob_alpha` and `draw_candidates`. Why the list is not monotonic with that colour: [`CANDIDATE_COLOUR.md`](CANDIDATE_COLOUR.md) |
-| how many candidates are drawn or listed | `config.rs` — `AnalysisSettings::suggestion_limit` (`max_suggestions = 0` means all) |
-| the ownership or policy heat map | `widgets/board.rs` — `ownership_texture` / `policy_texture`, appended by `BoardView::snapshot` |
-| a keyboard shortcut, or what an action does | `window.rs` — `install_actions` (action bodies and the accel table), `show_shortcuts` for the help window |
-| live-analysis visit cap / report rate | `config.rs` — `AnalysisSettings`, consumed by `AppState::restart_analysis` |
-| the search-speed reading (visits per second) | `mirai-client/src/analysis.rs` — `SpeedMeter`; `AppState` feeds it from `set_report` and resets it in `restart_analysis`; formatted by `util::visits_per_second`, shown in `panels/analysis.rs` (`Headline::speed`) and `window.rs` (`update_readout`) |
-| the KataGo command line or its config overrides | `mirai-engine/src/local.rs` — `LocalEngine::spawn`, `override_config` |
-| what goes into KataGo's analysis config | `mirai-engine/src/tuning.rs` — `EngineTuning::render` and its defaults; the profile side is `ProfileKind::tuning` in `config.rs`, the write site `build` in `engines.rs` |
-| a KataGo query field, or how a response is read | `mirai-engine/src/query.rs` — `build_query`; `mirai-engine/src/decode.rs` — `decode_report` |
-| a wire message or field | `mirai-proto/src/msg.rs`, `types.rs`, then [`PROTOCOL.md`](PROTOCOL.md) |
-| scoring | `mirai-core/src/score.rs` — `score`; rule flags in `rules.rs` — `RuleSet::rules` |
-| an SGF property | `mirai-core/src/sgf.rs` — `build` (read) and `write_node` (write) |
-| placing stones, marks, or undo | `mirai-client/src/game/mod.rs` — `GameSession`; private `history.rs`. Toolbar and clicks: `window.rs`, `window.blp` `editor_toolbar`. Analysis after a setup/`PL`: `request_for_node` |
-| the editor toolbar layout | `window.blp`: native `.toolbar` with `Adw.WrapBox` and `Adw.ToggleGroup` tool groups. Group selection forwards to `win.edit-tool`; `update_editor_actions` projects the single `EditorTool` state back, including `Setup(Color)`. The Play icon shows the current player; explicit player edits live in Board Menu. Play right-click deletes the current branch; Setup left/right toggle selected/opposite colours, removing a matching stone. Icons live under `resources/icons/hicolor/scalable/actions` |
-| the board menu's popup position | `window.rs` converts the three-dot button bounds into `BoardView` coordinates; `BoardView::show_menu` right-aligns the toolbar popup to that rectangle. Shift+right-click instead anchors to the intersection. Never pass no anchor: GTK otherwise positions the menu against the whole board |
-| the move-tree layout | `widgets/tree.rs` — `lay_out` |
-| blunder colours or thresholds | `mirai-client/src/batch.rs` — `BLUNDER_MIN_DROP`; `widgets/winrate.rs` — `Severity::color`, `severity_of_drop` |
-| AI move choice or resignation | `mirai-client/src/play.rs` — `select_move_index`, `resign_check`; GTK wrapper `crates/mirai/src/play.rs` |
+| I want to… | source | key entry |
+|---|---|---|
+| encode a point, or convert GTP / SGF | `crates/mirai-core/src/point.rs` | `Point`, `Size`. Ordering is INV-1; the wire statement is [PROTOCOL §7.1](PROTOCOL.md#71-inv-1-point-and-array-ordering) |
+| choose a ruleset | `crates/mirai-core/src/rules.rs` | `RuleSet` |
+| play a stone, test legality, or touch Zobrist | `crates/mirai-core/src/board.rs` | `Board::play`. The fixed seed is `SplitMix64` in `crates/mirai-core/src/lib.rs` |
+| score a finished position, or place a handicap | `crates/mirai-core/src/score.rs`, `crates/mirai-core/src/handicap.rs` | `score`, `DeadSet::from_ownership`; `fixed_handicap` |
+| time control or a thinking budget | `crates/mirai-core/src/clock.rs` | `TimeControl`, `think_budget` |
+| the game record, position cache, or superko | `crates/mirai-core/src/tree.rs` | `GameTree`, `position` |
+| an SGF property, or cached `MRAI` | `crates/mirai-core/src/sgf.rs` | `parse` / `write`. A new root property also goes in `is_root_info_prop` |
+| a wire value, scale, or perspective conversion | `crates/mirai-proto/src/types.rs` | `AnalyzeReq`, `Report`, `winrate_for`. Scales and the error budget are [PROTOCOL §7](PROTOCOL.md#7-value-types-and-quantisation) |
+| a protocol message | `crates/mirai-proto/src/msg.rs` | `ClientMsg`, `ServerMsg`, `SubMsg`, then [PROTOCOL](PROTOCOL.md) |
+| framing, QUIC, a `mirai://` URL, or a cert pin | `crates/mirai-proto/src/frame.rs`, `crates/mirai-proto/src/transport.rs`, `crates/mirai-proto/src/endpoint.rs`, `crates/mirai-proto/src/sha256.rs` | `read_msg`, `connect`, `parse_url`, `fingerprint` |
+| the engine contract | `crates/mirai-engine/src/lib.rs` | `Engine::subscribe` |
+| a KataGo query field, or how a response is read | `crates/mirai-engine/src/query.rs`, `crates/mirai-engine/src/decode.rs` | `build_query`, `decode_report` — the only JSON boundary |
+| the KataGo command line or its overrides | `crates/mirai-engine/src/local.rs` | `LocalEngine::spawn`, `override_config` |
+| the generated analysis config, or automatic tuning | `crates/mirai-engine/src/tuning.rs`, `crates/mirai-engine/src/calibrate.rs` | `EngineTuning::render`, `calibrate`. The measured thread tradeoff is [§2.2](#22-mirai-generates-katagos-analysis-config) |
+| a remote engine connection | `crates/mirai-engine/src/remote.rs` | `RemoteEngine::connect` |
+| drive an engine with no GUI, or regenerate the self-play fixture | `crates/mirai-engine/examples/probe.rs`, `crates/mirai-engine/examples/sweep.rs`, `crates/mirai-client/examples/selfplay.rs` | flags in those files. How to read the result is [TESTING §4](TESTING.md#4-verifying-against-a-real-engine) |
+| build an analysis request, or store a report | `crates/mirai-client/src/analysis.rs` | `request_for_node`, `analysis_of` |
+| the search-speed reading | `crates/mirai-client/src/analysis.rs` | `SpeedMeter`, fed from `AppState::set_report` and reset in `restart_analysis`. Formatted by `visits_per_second` in `crates/mirai/src/util.rs` and shown only as `Headline::speed` in `crates/mirai/src/panels/analysis.rs` — live reports only, never a window readout |
+| sweep a game, or decide what counts as a blunder | `crates/mirai-client/src/batch.rs` | `plan_mainline`, `sweep`, `blunders`, `BLUNDER_MIN_DROP` |
+| move the cursor, undo, or remember the Save path | `crates/mirai-client/src/game/mod.rs` | `GameSession`. Differential history is `crates/mirai-client/src/game/history.rs` |
+| trust a remote certificate before analysis | `crates/mirai-client/src/session.rs` | `Session` |
+| choose an AI move, resign, or advance a clock, with no widgets | `crates/mirai-client/src/play.rs` | `select_move_index`, `resign_check`. GTK timers and dialogs are `PlayController` in `crates/mirai/src/play.rs` |
+| Fox HTTP, or Fox's SGF dialect | [`docs/dev/FOX_KIFU_API_SPEC.md`](FOX_KIFU_API_SPEC.md) | the spec. Client calls are `lookup_user`, `list_games`, `fetch_sgf`, `normalize_fox_sgf` in `crates/mirai-client/src/fox.rs` |
+| the Fox picker | `crates/mirai/src/fox.rs`, `crates/mirai/src/fox_picker.blp` | `present` |
+| the headless server, or `server.toml` | `crates/mirai-server/src/main.rs`, `crates/mirai-server/src/session.rs`, `crates/mirai-server/src/config.rs`, `crates/mirai-server/server.example.toml` | `run`, `serve`, `ServerConfig::load` |
+| per-window state, or which `Change` fires | `crates/mirai/src/app.rs` | `AppState`, `Change`. The projection is `handle_change` in `crates/mirai/src/window.rs` |
+| share one KataGo across windows | `crates/mirai/src/engines.rs` | `EnginePool::acquire` |
+| client settings on disk | `crates/mirai/src/config.rs` | `Config::load`, `AnalysisSettings` (`suggestion_limit`, live visit cap). What a key means for a user is [GUIDE §8](../user/GUIDE.md#8-settings-reference) |
+| candidate colour, visit grey-out, or the rank badge | `crates/mirai/src/palette.rs` | `colour`, `GRADE_RAMP`, `TRUSTED_VISITS`. Why list order is not that colour: [`CANDIDATE_COLOUR.md`](CANDIDATE_COLOUR.md) |
+| an ownership or policy heat map | `crates/mirai/src/widgets/board.rs` | `ownership_texture` / `policy_texture`, appended from `BoardView::snapshot`. Circles are `fill_disc` in `crates/mirai/src/widgets/paint.rs` |
+| a shortcut, or what an action does | `crates/mirai/src/window.rs` | `install_actions`. The user table is [GUIDE §9](../user/GUIDE.md#9-keyboard-reference) |
+| show or hide the editor toolbar | `crates/mirai/src/window.blp`, `crates/mirai/src/window.rs` | `editor_revealer` starts collapsed. `set_editor_visible` is the only writer; `win.toggle-editor` projects it |
+| where the board menu pops up | `crates/mirai/src/window.rs`, `crates/mirai/src/widgets/board.rs` | button bounds become `BoardView` coordinates; `BoardView::show_menu` right-aligns to that rectangle. Shift+right-click anchors to the intersection. Never pass no anchor |
+| the move-tree layout | `crates/mirai/src/widgets/tree.rs` | `lay_out`. Depth runs down the sidebar |
+| the win-rate graph | `crates/mirai/src/widgets/winrate.rs` | `WinrateGraph::refresh`. Cursor text and tooltip are Black-perspective; the sidebar headline is side-to-move |
+| blunder colour, or the list row | `crates/mirai/src/widgets/winrate.rs`, `crates/mirai/src/panels/analysis.rs` | `Severity::color`, `severity_of_drop`, `update_blunder_row`. One emoji line; the title carries the severity colour |
+| the analysis sidebar | `crates/mirai/src/panels/analysis.rs`, `crates/mirai/src/panels/analysis.blp` | `refresh`, `set_detailed_columns`, `set_blunders`. Default columns are `# / Move / Win / Score / Visits`; Loss and Prior start hidden |
+| the static window, or another Blueprint template | `crates/mirai/src/window.blp` | template `MiraiWindow`, bound in `crates/mirai/src/window_shell.rs`. Also `crates/mirai/src/panels/analysis.blp`, `crates/mirai/src/preferences.blp`, `crates/mirai/src/profile_editor.blp`, `crates/mirai/src/new_game.blp`, `crates/mirai/src/label_editor.blp`, `crates/mirai/src/fox_picker.blp` |
+| preferences, including automatic tuning in the editor | `crates/mirai/src/prefs.rs`, `crates/mirai/src/preferences.blp` | `present`, `CalibrationRun`. Opening Preferences is `win.preferences`; a new window does not present it |
+| a score, fingerprint, new-game, or label dialog | `crates/mirai/src/dialogs.rs`, `crates/mirai/src/new_game.rs`, `crates/mirai/src/label_editor.rs` | `show_score_with`, `confirm_fingerprint`, `present` |
+| drive the real GUI, or count frames | `crates/mirai/src/harness.rs`, `crates/mirai/src/render_probe.rs` | `harness::install` / `parse` (debug, `MIRAI_HARNESS`); `render_probe::install`. Recipes are [TESTING §5](TESTING.md#5-testing-the-gui) |
+| process lifetime, the runtime, or shutdown | `crates/mirai/src/main.rs`, `crates/mirai/src/application_shell.rs` | `MiraiApplication` — `shutdown` releases the runtime and `EnginePool` |
+| whole-game analysis from the window | `crates/mirai/src/batch.rs` | `BatchAnalysis`. Planning and the drop threshold stay in `crates/mirai-client/src/batch.rs` |
+
+Non-Rust that is not a template: `crates/mirai/resources/style.css` (`board-area`, `mirai-clock`,
+`mirai-position`, `mirai-winrate`, `mirai-movetree`, `mirai-candidates`, `mirai-blunder-*` —
+there is no `mirai-readout`), `crates/mirai/resources/mirai.gresource.xml` compiled by
+`crates/mirai/build.rs`, and `docs/user/preview.png`. Why a frame allocates is
+[`RENDERING.md`](RENDERING.md).
 
 ---
 
@@ -736,55 +673,86 @@ refresh. This avoids several independently ordered signal callbacks observing ha
 
 | change | emitted by | dispatcher work |
 |---|---|---|
-| `BeforeEdit` | `with_edit_session`, `set_cursor`/`navigate`, adopt | flush the comment so it is one history item before the next edit |
-| `Edit { positions_changed, structure_changed }` | `with_session_mut` when the record actually changed | cancel batch (and abort score if the position moved) before Tree/Cursor refresh; update undo/redo |
-| `Editor` | tool / setup-colour selection | toolbar state; clear PV preview when leaving Play |
-| `Tree` | `with_session_mut`, `set_tree`, batch completion | rebuild board/tree/graph projections, recompute the blunder list, refresh analysis and window chrome |
-| `Cursor` | `set_cursor`, `play_move`, `set_tree` | load comment (does not flush), update scale/readout/clocks, refresh cursor projections |
-| `Report` | `set_report` and report clearing | refresh board textures, graph data, analysis rows and readout |
-| `Engine` | engine-state transitions and profile edits | rebuild menu/page/subtitle from `EngineState` |
+| `BeforeEdit` | `with_edit_session`, `set_cursor`, `navigate`, `adopt_record` / `adopt_unsaved` | flush the comment so it is one history item before the next edit |
+| `Edit { positions_changed, structure_changed }` | `with_session_mut` when the record actually changed | cancel batch, and abort score if the position moved, before the Tree/Cursor refresh; update undo/redo sensitivity |
+| `Editor` | `set_editor_tool`; adopt forces Play and emits this too | if the tool is not Play, reveal `editor_revealer`; project toolbar state; clear the PV preview when leaving Play. Collapsing the revealer forces Play first. Returning to Play does not hide a toolbar the user opened |
+| `Tree` | `with_session_mut`; the batch coordinator when a sweep lands, cancels or fails | close the board menu; update the board-local position label; choose the analysis page; rebuild board, tree and graph projections; recompute blunders; refresh the analysis panel and editor actions |
+| `Cursor` | `set_cursor`, and `moved_cursor` after `play_move` or a cursor-changing edit | load the comment (does not flush); update the board-local position label and clocks; choose the analysis page; refresh cursor projections. Does not refresh the subtitle |
+| `Report` | `set_report`, and `moved_cursor` after the live report is cleared | refresh board textures, graph data and analysis rows; choose the analysis page. Does not move the slider or the position label |
+| `Engine` | engine-state transitions and profile edits | rebuild the engine menu, choose the analysis page, refresh the panel, update the subtitle |
 | `Toast(String)` | `AppState::toast` | add one `adw::Toast` |
-| `Play`, `BatchProgress` | the window-owned controllers | refresh play controls/clocks and editor-toolbar visibility, or the graph and blunder list as the sweep lands |
+| `Play` | `notify_play_changed` | refresh clocks and play controls. Active play forces the editor revealer closed and disables its toggle |
+| `BatchProgress` | `notify_batch_progress` | refresh the graph and the blunder list as the sweep lands. Completion, cancel and failure also emit `Tree` |
 
 Ordering remains explicit: cursor state is current before `Report`, and every tree borrow is
 released before `changed` enters window code.
 
+### Surfaces, rows and native controls
+
+Equivalent Adwaita controls stay native. `Adw.ButtonRow` adds a profile and restores a
+preferences page. `Adw.InlineViewSwitcher` is the inspector switcher. `Adw.ViewStack` is the
+sidebar and the analysis/empty stack. `Adw.SpinnerPaintable` is the Fox picker's loading
+state. The Appearance overlay is one `Adw.ComboRow` projecting the mutually exclusive
+`ownership-overlay` and `policy-overlay` booleans; the menu, defaults and undo must stay in
+sync with it (`overlay_row` in `crates/mirai/src/prefs.rs`).
+
+Three surfaces, and no custom colour literals for them. `Adw.OverlaySplitView` supplies the
+sidebar colour for the inspector header, the analysis summary (plain labels, not a list) and
+the Blunders expander title. The board surround is `.board-area` → `@window_bg_color`; the
+graph draws no background of its own, so the content pane shows through. Candidate
+`ColumnView` rows and blunder `ListBox` rows use the view background. The three follow focus
+and light/dark mode.
+
+Candidate objects are mutated in place and bound with `gtk::Expression`, so a report does not
+replace the model or drop hover. Default columns are `# / Move / Win / Score / Visits`. Loss
+and Prior start hidden; `set_detailed_columns` shows them, and if the primary sort is one of
+those columns it sorts by rank before hiding. The rank badge's number is KataGo's `order`;
+its colour is the row's grade (`palette::grade_css`).
+
+A blunder row is one `Adw.ActionRow` line: a black or white stone emoji, the move number, the
+loss, and the played point, plus the best point when the sweep has one.
+`update_blunder_row` puts that on the title. `mirai-blunder-*` tints only `label.title` —
+tinting the row would also tint GTK's `show-separators` borders through `currentColor`.
+Existing rows are updated in place; only the tail is appended or removed, so hover and
+activation survive a refill.
+
+The graph is always Black-perspective: the cursor reads `Black {:.1}%`, and the tooltip names
+Black win rate and Black score lead. The sidebar headline is the side to move. A White-to-play
+position can show about 9.9% in the sidebar and about 90.1% on the graph; that is the same
+stored value, not a calculation error.
+
 ### Widget tree
 
-```
-MiraiWindow (adw::ApplicationWindow, `window.blp`)
-└ adw::ToastOverlay                     ← every toast lands here
-  └ adw::ToolbarView
-    ├ top:    adw::HeaderBar            start: Open split button (Fox download, paste SGF)
-    │                                   · New Game · engine menu · live-analysis toggle
-    │                                   centre: title · status
-    │                                   end: sidebar toggle · primary menu (holds the View submenu)
-    ├ bottom: gtk::Box                  first/prev/next/last · branch up/down · clocks
-    │                                   · contextual Undo/Pass/Resign · move scale · readout
-    └ content: adw::OverlaySplitView    `win.toggle-sidebar` (F9) hides the sidebar at any width;
-                                        the breakpoint additionally collapses it to an overlay
-      ├ content: gtk::Box
-      │   ├ adw::Banner                 batch-analysis progress + Cancel
-      │   ├ editor_toolbar              review only; hidden during play
-      │   └ gtk::Paned (vertical)
-      │       ├ BoardView               expands; all extra space goes here
-      │       └ WinrateGraph            fixed height request, still user-draggable
-      └ sidebar: adw::ToolbarView
-          ├ adw::HeaderBar              title widget IS the ViewSwitcher
-          └ adw::ViewStack
-              ├ Analysis  gtk::Stack{ AnalysisPanel | no-engine StatusPage }
-              ├ Moves     MoveTreeView in a ScrolledWindow
-              └ Comment   gtk::TextView
-```
+Static layout is [`crates/mirai/src/window.blp`](../../crates/mirai/src/window.blp). The user's
+map of regions and mouse behaviour is [GUIDE §3](../user/GUIDE.md#3-the-interface).
 
-The graph must use `resize_end_child(false)` plus a size request rather than a hardcoded `Paned`
-position, and the sidebar header must keep `show_title` on — it hides the title *widget*, which is
-the switcher.
+The outer `Adw.ToolbarView` has only a header. Board navigation is the `[bottom]` bar of the
+content `Adw.ToolbarView` (`nav`): first/prev/next/last, branch prev/next, the slider,
+`move_position`, the editor toggle and the board menu. Clocks and Undo/Pass/Resign are a
+separate `play_bar` in that same bottom box, hidden unless a game is in progress or the clocks
+are showing. The sidebar therefore runs to the window bottom. There is no window-level analysis
+readout.
 
-Every user-triggerable operation is a `win.*` action registered in `install_actions`, so the menu,
-the buttons, the accelerators, the shortcuts window and the debug harness all drive the same code.
-Add an action there, with its accelerator in the same table; never wire a button's `clicked`
-directly to logic.
+`editor_revealer` starts collapsed (`reveal-child: false`). `set_editor_visible` is the only
+writer. A non-Play tool reveals it; returning to Play does not hide a toolbar the user opened.
+Active play forces it closed and disables `win.toggle-editor`.
+
+`present` does not open Preferences. With no profile, no live report and no cached analysis on
+the current node, the analysis `Adw.ViewStack` shows `no_engine_status_page()`; otherwise it
+shows the panel (`update_analysis_page`, also after Tree, Cursor, Report and Engine). Cached
+`MRAI` is enough. Speed is not invented for a cache hit.
+
+The graph `Paned` sets `resize-end-child: false` and does not shrink either child. Extra space
+goes to the board. `present` gives `WinrateGraph` a height request (`set_size_request(-1, 170)`)
+rather than a hardcoded paned position. The sidebar header must keep `show-title` at its
+default: clearing it hides the title widget, which is the `Adw.InlineViewSwitcher`. Sidebar
+width is the Blueprint constraint, 386–520 sp at a 0.30 fraction; the window collapses the
+split at 926 sp. The minimum includes 12 sp beyond the five-column natural width at 150% text.
+
+Every user-triggerable operation is a `win.*` action registered in `install_actions`, so the
+menu, the buttons, the accelerators, the shortcuts window and the debug harness all drive the
+same code. Add an action there, with its accelerator in the same table; never wire a button's
+`clicked` directly to logic.
 
 ### Window ownership rule (INV-8)
 
@@ -831,12 +799,13 @@ windows in one process is a normal state, not an edge case. Each owns a complete
 
 `AppState` keeps the `GameSession` (and thus the tree) in a `RefCell`. A borrow must be released
 before `changed`, `set_cursor`, `set_report` or `toast` enters window code; the dispatcher
-immediately reads the tree again. `with_session_mut`, `set_tree`, report caching and navigation
-helpers scope or explicitly drop their borrows before dispatch.
+immediately reads the tree again. `with_session_mut`, `adopt_record` / `adopt_unsaved`, report
+caching and navigation helpers scope or explicitly drop their borrows before dispatch.
 
 `NodeId` is stable only within one `GameTree` arena. Every node reference that can outlive a
-borrow is therefore a `NodeRef { epoch, id }`; `set_tree` increments `TreeEpoch`, and
-`resolve_node` rejects references from the previous tree. Comments, batch results, play snapshots
+borrow is therefore a `NodeRef { epoch, id }`. Replacing the record (`GameSession::adopt` /
+`restore`, in `crates/mirai-client/src/game/mod.rs`) increments the epoch; `resolve_node`
+rejects references from the previous tree. Comments, batch results, play snapshots
 and async score/analysis work must carry `NodeRef` and, for in-tree edits, the
 `position_revision` they started with — never a naked long-lived `NodeId`.
 
@@ -847,21 +816,21 @@ projection/cache state; it does not borrow `AppState` or replay the game tree.
 
 ## 8. Invariants — the detailed reference
 
-[`../../AGENTS.md`](../../AGENTS.md) states these in summary form. This is where each is enforced
-and how a violation shows up.
+[`../../AGENTS.md`](../../AGENTS.md) §2 states each rule. Where the same rule crosses the wire,
+[PROTOCOL](PROTOCOL.md) is normative. This table is only where the rule is enforced.
 
-| # | invariant | enforced in | how you would notice it broken |
-|---|---|---|---|
-| **INV-1** | Point encoding: `index = y * width + x`, `y = 0` is the **top** row, `PASS` is the maximum `u16`, boards are 2..=19 per side. KataGo's `ownership`/`policy` index identically to the board array; never add a remap | `mirai-core/src/point.rs` (`Point`, `Size`, `MIN_DIM`/`MAX_DIM`); consumed unremapped by `BoardView::snapshot` | The ownership overlay is mirrored or transposed — dark shading sits over the opponent's group. This is the canary check for the whole encoding design |
-| **INV-2** | Perspective: KataGo runs `reportAnalysisWinratesAs=BLACK`; everything stored and transmitted is Black's, converted only at display time via `winrate_for` / `score_lead_for` | `override_config` in `mirai-engine/src/local.rs` sets it; `mirai-proto/src/types.rs` provides the only converters; `mirai_client::analysis_of` keeps stored values Black | A win rate that reads `1 - x`: plausible on screen, so check it as an *invariant*, not by eye. A komi sweep must be monotonically decreasing for Black |
-| **INV-3** | Cancellation: dropping a `Subscription` is the only mechanism. Local enqueues a KataGo `terminate`; remote sends `Cancel` **and** `stop_sending` on that subscription's stream | `CancelGuard` in `mirai-engine/src/lib.rs`; the closures installed by `LocalEngine::subscribe` and `RemoteEngine::subscribe`; `AppState::restart_analysis` and `session.rs`'s `pump` are the drop sites | KataGo keeps burning CPU with no subscription open, or stale reports appear for the previous position. Prove it by sampling a CPU *rate*, not a total |
-| **INV-4** | Stateless queries: every request carries its whole position; there is no engine-side session state | `AnalyzeReq` in `mirai-proto/src/types.rs`; built in `mirai_client::request_for_node`, with the visit cap added by `AppState::request_for_node`; `build_query` never emits `analyzeTurns` | An analysis that is correct only after visiting nodes in a particular order; a remote client that needs resynchronising after a reconnect |
-| **INV-5** | Komi crosses the wire as a doubled integer (`komi_x2`), because KataGo accepts only integer or half-integer komi | `AnalyzeReq` (`komi_x2`, `komi()`) in `mirai-proto/src/types.rs` | Komi silently rounded, or a rejected query from a fractional komi |
-| **INV-6** | Quantisation: wire floats are fixed-point; every scale lives in `mirai-proto/src/types.rs`. Round-trip error budget: winrate ≤ 1e-4, score lead ≤ 0.02 pt, ownership ≤ 0.005 | the `q*`/`dq*` helpers and `*_SCALE` constants; both engine paths use them, so reports are bit-identical | `mirai-proto/tests/wire_size.rs` fails on frame size or error budget. Changing a scale means bumping `PROTO_VERSION` and updating that test and [`PROTOCOL.md`](PROTOCOL.md) |
-| **INV-7** | One source of truth: `AppState` owns application state; one window dispatcher pushes projections to widgets, which never hold siblings | `mirai/src/app.rs` (`Change`) and `window::handle_change` | Two dispatchers observe different intermediate states, or sibling widgets disagree after an edit |
-| **INV-8** | Window ownership: `MiraiWindow` owns exactly one `Ui`; long-lived callbacks hold only `WeakRef<MiraiWindow>`; close, dispose and the application's shutdown all reduce to dropping the `Ui` | `window_shell.rs` (`with_ui`, `take_ui`, `shutdown`), `Drop for Ui`, and window-owned controllers | Closing a window, quitting, or a termination signal leaves tasks, an autosave file or KataGo behind |
-| **INV-9** | Rendering: custom widgets draw with GSK; `snapshot()` consumes widget-local projections and cached textures/nodes. No `DrawingArea`, cairo or tree replay in a frame | `mirai/src/widgets/` | Frame-time allocation/state traversal, or a cairo context in the GUI |
-| **INV-10** | Release tree borrows before dispatch; retain epoch-qualified `NodeRef`, not arena-local `NodeId`, across tree replacement; refuse async analysis/score writes when `position_revision` has moved | `AppState::changed`, `set_tree`, `resolve_node`, `set_analysis_at`; async consumers in window/play/batch | `BorrowMutError`, `stale NodeId`, or an old async result applied to a new game or an edited position |
+| INV | enforced in |
+|---|---|
+| **INV-1** | `crates/mirai-core/src/point.rs` (`Point`, `Size`); consumed unremapped by `BoardView::snapshot` in `crates/mirai/src/widgets/board.rs` |
+| **INV-2** | `override_config` in `crates/mirai-engine/src/local.rs`; the only converters in `crates/mirai-proto/src/types.rs`; stored values via `analysis_of` in `crates/mirai-client/src/analysis.rs` |
+| **INV-3** | `CancelGuard` in `crates/mirai-engine/src/lib.rs`; drop sites `AppState::restart_analysis` in `crates/mirai/src/app.rs` and `pump` in `crates/mirai-server/src/session.rs` |
+| **INV-4** | `AnalyzeReq` in `crates/mirai-proto/src/types.rs`; built by `request_for_node` in `crates/mirai-client/src/analysis.rs`; `build_query` in `crates/mirai-engine/src/query.rs` |
+| **INV-5** | `AnalyzeReq::komi_x2` in `crates/mirai-proto/src/types.rs`. The wire rule is [PROTOCOL §7.4](PROTOCOL.md#74-komi) |
+| **INV-6** | `crates/mirai-proto/src/types.rs`; both engine paths; the budget is pinned by `crates/mirai-proto/tests/wire_size.rs` and [PROTOCOL §7.2](PROTOCOL.md#72-quantisation) |
+| **INV-7** | `Change` in `crates/mirai/src/app.rs`; `handle_change` in `crates/mirai/src/window.rs` |
+| **INV-8** | `with_ui`, `take_ui`, `shutdown` in `crates/mirai/src/window_shell.rs`; `Drop for Ui` in `crates/mirai/src/window.rs` |
+| **INV-9** | `crates/mirai/src/widgets/` |
+| **INV-10** | `changed`, `resolve_node`, `set_analysis_at` in `crates/mirai/src/app.rs`; the epoch bump is `GameSession::adopt` / `restore` in `crates/mirai-client/src/game/mod.rs` |
 
 ---
 

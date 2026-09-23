@@ -48,14 +48,19 @@ Do not modify this section without explicit approval.
 |---|---|
 | Where does X live? What may I depend on? | [`docs/dev/ARCHITECTURE.md`](docs/dev/ARCHITECTURE.md) — module map, data model, extension recipes |
 | Implement or change the network protocol | [`docs/dev/PROTOCOL.md`](docs/dev/PROTOCOL.md) — normative MRP/1 spec, implementable without reading Rust |
-| Prove a change works, especially in the GUI | [`docs/dev/TESTING.md`](docs/dev/TESTING.md) — test map, engine verification, GUI harness recipes, debugging playbook |
+| Prove a change works, especially in the GUI | [`docs/dev/TESTING.md`](docs/dev/TESTING.md) — crate coverage, engine verification, GUI harness, debugging playbook |
 | Draw in a widget, or chase a dropped frame | [`docs/dev/RENDERING.md`](docs/dev/RENDERING.md) — why the custom widgets draw with quads, and the measurements behind it |
 | Candidate colour, or why the list is not monotonic | [`docs/dev/CANDIDATE_COLOUR.md`](docs/dev/CANDIDATE_COLOUR.md) — KataGo's `order` is play-selection value, not the win-rate column; what that does to the ramp |
-| Touch anything the HarmonyOS client depends on | [`../mirai-hmos/docs/dev/UPSTREAM.md`](../mirai-hmos/docs/dev/UPSTREAM.md) — that client's ledger of what it reuses from here and every change made here on its behalf; it lives in its own repository |
+| Fox HTTP, or the Fox SGF dialect | [`docs/dev/FOX_KIFU_API_SPEC.md`](docs/dev/FOX_KIFU_API_SPEC.md) |
+| Touch anything the HarmonyOS client depends on | [`../mirai-hmos/docs/dev/UPSTREAM.md`](../mirai-hmos/docs/dev/UPSTREAM.md) — optional adjacent checkout, not a path in this repository. Present only if `mirai-hmos` is checked out beside this one; that client's ledger of what it reuses from here |
 | Why is it built this way? What already went wrong? | [`docs/archive/RETROSPECTIVE.md`](docs/archive/RETROSPECTIVE.md) — decisions, obstacles, defects found |
 | What was originally specified, before any code | [`docs/archive/PLAN.md`](docs/archive/PLAN.md) — historical; the code, not the plan, is authoritative |
 | What does the application do, from a user's seat | [`docs/user/GUIDE.md`](docs/user/GUIDE.md) |
-| Project front page, install, config | [`README.md`](README.md) |
+| Project front page and install | [`README.md`](README.md) — product, and Requirements (build dependencies and commands) |
+| Client settings, including a hand-edited config | [`docs/user/GUIDE.md`](docs/user/GUIDE.md#8-settings-reference) |
+
+Search user-facing questions in `README.md docs/user/` and implementation questions in
+`AGENTS.md docs/dev/`; search `docs/archive/` only when tracing history.
 
 ```
 crates/mirai-core     geometry, rules, scoring, game tree, SGF     no I/O, no GUI
@@ -200,38 +205,16 @@ defaults, or source text.
 
 ## 4. Traps this codebase has already fallen into
 
-Each of these cost real debugging time. They are documented so they cost you none.
-
-| Symptom | Cause |
-|---|---|
-| A `notify::` handler or `bind_property` silently stops firing | `explicit_notify` on a **derive-generated** setter. It is a pspec flag that disables GObject's automatic notify; it belongs only on properties with a hand-written setter that emits the signal itself. |
-| An engine vanishes seconds after you select it | A slower engine activation completing later and overwriting the newer one. Guarded by an activation generation counter in `AppState::activate_profile`; keep the guard. |
-| A widget refuses to shrink, or eats the window | `gtk::Paned` resize/shrink flags. A fixed strip wants `resize_end_child(false)` plus a size request, not a hardcoded `position`. |
-| A title widget is invisible | `adw::HeaderBar::show_title(false)` hides the *title widget*, not just the text. |
-| A screen capture of the running app is black | Wayland. The XWayland root window is not composited. Use the built-in harness, which renders through the app's own GSK renderer. |
-| A "did not shut down cleanly" prompt after doing nothing | Guarded now by `tree_has_content`: an autosave with no move, setup stone or comment is neither written nor offered. |
-| A `size_allocate` override does not run on every animation frame | `gtk_widget_allocate` returns early when the pixel size, baseline and `alloc_needed` are all unchanged, so the vfunc goes quiet exactly on the plateau frames of a spring. Never use it as "something is still animating". |
-| A `queue_draw` from inside `snapshot()` is ignored | GTK clears `draw_needed` *after* the vfunc returns. Ask for the next frame with a tick callback, not a GLib idle — an idle runs between frames at a priority the frame clock outranks. |
-| Board text stutters an animation, but only in one direction | Glyphs are cached per `PangoFont`, so moving the board is free and resizing it is not. `Layout::cell` only tracks the sidebar while the board is width-limited ([`docs/dev/RENDERING.md`](docs/dev/RENDERING.md) §6). |
-| A geometry value repeating for one frame is not the animation ending | Width is an integer and a spring's last frames move under a pixel. Deciding "settled" on one repeat costs a wasted cold paint *and* a visible flicker; `BoardView` waits for two ([`docs/dev/RENDERING.md`](docs/dev/RENDERING.md) §6). |
-| A frame-timing bug that reproduces only on an idle machine | Load coarsens animations — 13–16 frames per fold instead of 22–31 — and a coarse animation never lands on a repeated value. Check `/proc/loadavg` before trusting a clean run. |
-| Frames drop while the engine is searching, and the GPU sits at 99 % | Not the GPU: another process pinning the same card costs this one nothing. It was the candidate list replacing its whole model per report — a `GtkColumnView` handed new objects rebuilds every row widget, which is a full window relayout (7–17 ms) and also what made a hovered row flicker. Mutate list objects in place and bind cells with expressions ([`docs/dev/RENDERING.md`](docs/dev/RENDERING.md) §7). |
-| Whole-game analysis sits at 0/N and then completes in one jump | A bounded-concurrency loop that awaits a semaphore permit per position dispatches the *whole* plan before it joins anything, so the first result is handed to the caller only once all but `concurrency` searches are done. Refill the `JoinSet` inside the join loop instead; `running.len() < concurrency` is the whole cap. |
+The playbook — symptom, cause, and where the guard lives — is
+[`docs/dev/TESTING.md`](docs/dev/TESTING.md#7-debugging-playbook). Do not keep a second copy here.
 
 ---
 
 ## 5. Deliberate simplifications — do not "fix" these by accident
 
-They are commented at the source, and `docs/dev/ARCHITECTURE.md` lists them together.
-
-- **Territory scoring** counts each side's territory *plus the prisoners it holds* (captured
-  stones and the opponent's dead stones in its area), which reproduces conventional Japanese
-  totals. The mirror formulation is margin-equivalent but displays totals ~3 points low.
-- **`Tax::All`** (stone scoring) is approximated with the `Tax::Seki` result and reports
-  `approximate = true`; the UI labels it as an estimate.
-- **Seki detection** is deliberately narrower than "a group adjacent to a shared dame", which
-  would tax ordinary territory. See the comment in `crates/mirai-core/src/score.rs`.
-- **`has_button`** is modelled as a flat +0.5 to White; mirai never plays the button.
+The full list, with the source of each, is
+[`docs/dev/ARCHITECTURE.md`](docs/dev/ARCHITECTURE.md#10-known-simplifications).
+They are commented at the source. Do not "fix" one by accident.
 
 ---
 
@@ -244,9 +227,7 @@ weighed against the maintenance surface, not accepted by default.
 **In scope, decided:** mirai owns the KataGo analysis config. It writes the file itself from
 one set of static defaults (`mirai-engine/src/tuning.rs`), editable in Preferences; a
 user-supplied `analysis.cfg` stays available and then owns every setting but the two thread
-counts. A **measured** calibration — timing a few thread combinations against the real model
-and keeping the winner — is wanted as well, as an explicit opt-in per profile, never as
-something that runs on its own. It replaces the earlier blanket ban on benchmark wizards,
-which ruled out the only honest way to fit unknown hardware: GPU tier cannot be established
-from the outside, since only the CUDA and TensorRT backends report device memory and a
-model-name table would rot.
+counts. A measured calibration — timing a few thread combinations against the real model and
+keeping the winner — is an explicit opt-in per profile, never something that runs on its own.
+Why a reported device memory or a model-name table is not a substitute is
+[`docs/dev/ARCHITECTURE.md`](docs/dev/ARCHITECTURE.md#22-mirai-generates-katagos-analysis-config).
