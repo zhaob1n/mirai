@@ -321,7 +321,6 @@ impl AnalysisPanel {
             Col {
                 title: "Move",
                 property: "mv",
-                xalign: 0.0,
                 width_chars: 4,
                 ..Col::default()
             },
@@ -371,9 +370,9 @@ impl AnalysisPanel {
             Col {
                 title: "Visits",
                 property: "visits",
+                expand: false,
                 width_chars: 5,
                 sortable: true,
-                ..Col::default()
             },
             |visits: u32| si_visits(visits),
         ));
@@ -382,8 +381,8 @@ impl AnalysisPanel {
                 title: "Prior",
                 property: "prior",
                 width_chars: 6,
+                expand: false,
                 sortable: true,
-                ..Col::default()
             },
             |prior: f64| format!("{}%", pct1(prior as f32)),
         );
@@ -770,7 +769,8 @@ struct Col {
     title: &'static str,
     /// The [`CandidateObject`] property the cell follows.
     property: &'static str,
-    xalign: f32,
+    /// Keep the trailing numeric columns compact while preceding columns share spare width.
+    expand: bool,
     /// Natural width in characters, GTK's own `-1` for "as wide as the text".
     ///
     /// Pinning it is what keeps a column from re-measuring when `1.4k` becomes `12.7k`: the
@@ -788,7 +788,7 @@ impl Default for Col {
         Col {
             title: "",
             property: "",
-            xalign: 1.0,
+            expand: true,
             width_chars: -1,
             sortable: false,
         }
@@ -815,7 +815,8 @@ where
             return;
         };
         let label = gtk::Label::builder()
-            .xalign(col.xalign)
+            .xalign(0.0)
+            .hexpand(true)
             // Both bounds, not just the minimum: a cell whose *natural* width still tracked
             // its digits would go on re-measuring the column.
             .width_chars(col.width_chars)
@@ -838,6 +839,7 @@ where
     let this = gtk::ColumnViewColumn::builder()
         .title(col.title)
         .factory(&factory)
+        .expand(col.expand)
         .resizable(true)
         .build();
     if col.sortable {
