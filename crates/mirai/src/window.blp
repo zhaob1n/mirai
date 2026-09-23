@@ -96,10 +96,6 @@ template $MiraiWindow: Adw.ApplicationWindow {
       content: Adw.OverlaySplitView split {
         sidebar-position: end;
         show-sidebar: true;
-        // Five compact candidate columns measure 374sp at 150% text; leave 12sp slack.
-        min-sidebar-width: 386;
-        max-sidebar-width: 520;
-        sidebar-width-fraction: 0.30;
 
         content: Adw.ToolbarView board_view {
           content: Gtk.Box content_box {

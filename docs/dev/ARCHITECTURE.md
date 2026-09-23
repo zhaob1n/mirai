@@ -746,8 +746,10 @@ The graph `Paned` sets `resize-end-child: false` and does not shrink either chil
 goes to the board. `present` gives `WinrateGraph` a height request (`set_size_request(-1, 170)`)
 rather than a hardcoded paned position. The sidebar header must keep `show-title` at its
 default: clearing it hides the title widget, which is the `Adw.InlineViewSwitcher`. Sidebar
-width is the Blueprint constraint, 386–520 sp at a 0.30 fraction; the window collapses the
-split at 926 sp. The minimum includes 12 sp beyond the five-column natural width at 150% text.
+width follows `win.toggle-candidate-details`: 300 sp for the five common columns, 386 sp
+with Loss and Prior, including when the split collapses at 926 sp. The rank badge keeps
+its natural width; the visible data columns share the rest equally unless resized by hand.
+Cell width requests stay pinned so new engine numbers do not remeasure the list on every report.
 
 Every user-triggerable operation is a `win.*` action registered in `install_actions`, so the
 menu, the buttons, the accelerators, the shortcuts window and the debug harness all drive the

@@ -290,6 +290,7 @@ pub fn present(
     engine_menu.set_tooltip_text(Some(&format!("Analysis Engine — {}", state.engine_label())));
 
     let split = window.split();
+    set_candidate_sidebar_width(&split, false);
     let sidebar_toggle = window.sidebar_toggle();
     split
         .bind_property("show-sidebar", &sidebar_toggle, "active")
@@ -1767,6 +1768,12 @@ type UiAction = Box<dyn Fn(&Ui)>;
 type PointAction = Box<dyn Fn(&Ui, u32)>;
 type ChoiceAction = Box<dyn Fn(&Ui, &str)>;
 
+fn set_candidate_sidebar_width(split: &adw::OverlaySplitView, detailed: bool) {
+    let width = if detailed { 386.0 } else { 300.0 };
+    split.set_min_sidebar_width(width);
+    split.set_max_sidebar_width(width);
+}
+
 fn install_actions(window: &MiraiWindow, ui: &Ui) {
     let group = ui.win_actions.clone();
     let weak = ui.weak_window();
@@ -1900,6 +1907,9 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
         };
         with_window_ui(&weak_details, |ui| {
             ui.analysis.set_detailed_columns(detailed);
+            if let Some(window) = ui.window() {
+                set_candidate_sidebar_width(&window.split(), detailed);
+            }
             action.set_state(value);
         });
     });

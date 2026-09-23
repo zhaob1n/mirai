@@ -332,7 +332,6 @@ impl AnalysisPanel {
                 property: "winrate",
                 width_chars: 6,
                 sortable: true,
-                ..Col::default()
             },
             |winrate: f64| format!("{}%", pct1(winrate as f32)),
         ));
@@ -342,7 +341,6 @@ impl AnalysisPanel {
                 property: "score",
                 width_chars: 6,
                 sortable: true,
-                ..Col::default()
             },
             |score: f64| signed1(score as f32),
         ));
@@ -354,7 +352,6 @@ impl AnalysisPanel {
                 property: "loss",
                 width_chars: 5,
                 sortable: true,
-                ..Col::default()
             },
             |loss: f64| {
                 if loss.is_finite() {
@@ -370,7 +367,6 @@ impl AnalysisPanel {
             Col {
                 title: "Visits",
                 property: "visits",
-                expand: false,
                 width_chars: 5,
                 sortable: true,
             },
@@ -381,7 +377,6 @@ impl AnalysisPanel {
                 title: "Prior",
                 property: "prior",
                 width_chars: 6,
-                expand: false,
                 sortable: true,
             },
             |prior: f64| format!("{}%", pct1(prior as f32)),
@@ -769,8 +764,6 @@ struct Col {
     title: &'static str,
     /// The [`CandidateObject`] property the cell follows.
     property: &'static str,
-    /// Keep the trailing numeric columns compact while preceding columns share spare width.
-    expand: bool,
     /// Natural width in characters, GTK's own `-1` for "as wide as the text".
     ///
     /// Pinning it is what keeps a column from re-measuring when `1.4k` becomes `12.7k`: the
@@ -788,7 +781,6 @@ impl Default for Col {
         Col {
             title: "",
             property: "",
-            expand: true,
             width_chars: -1,
             sortable: false,
         }
@@ -839,9 +831,15 @@ where
     let this = gtk::ColumnViewColumn::builder()
         .title(col.title)
         .factory(&factory)
-        .expand(col.expand)
+        .expand(true)
+        // All non-rank columns start at the same width; GTK divides the remaining space
+        // equally among the visible columns, regardless of their labels or values.
+        .fixed_width(0)
         .resizable(true)
         .build();
+    // Dragging a header sets its fixed width. Stop expanding that column so the
+    // requested size sticks; untouched columns still share the remaining space.
+    this.connect_fixed_width_notify(|column| column.set_expand(column.fixed_width() == 0));
     if col.sortable {
         // One expression, two jobs: the header becomes a button with an arrow, and the
         // `GtkSortListModel` behind the view has something to order by.
