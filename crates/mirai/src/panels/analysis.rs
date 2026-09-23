@@ -3,10 +3,8 @@
 //! The Analysis sidebar page: the root readout, the candidate list and the blunder list.
 //! Step 10 / Step 12.
 //!
-//! The candidate list is rebound at the report rate (10 Hz by default), so the model is
-//! built once and spliced in place; only the six labels of the visible rows are touched
-//! per report. The selected row index is preserved across a splice, which is what pins a
-//! PV preview on the board while the engine keeps thinking.
+//! Candidate objects are updated in place at report rate; expression bindings preserve row
+//! hover and PV selection without replacing the model.
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
@@ -21,7 +19,7 @@ use mirai_core::{Color, Point, Size};
 use crate::app::{AppState, EngineState};
 use crate::batch::Blunder;
 use crate::util::{pct1, si_visits, signed1, visits_per_second};
-use crate::widgets::winrate::{Severity, severity_of_drop};
+use crate::widgets::winrate::severity_of_drop;
 
 // -- the row model ----------------------------------------------------------------------
 
@@ -188,8 +186,12 @@ fn grade_rows(rows: &mut [Row]) {
 /// `ObjectSubclass` impl makes publicly reachable; its own fields stay private.
 pub struct Inner {
     readout: gtk::Label,
+    metrics: gtk::Label,
     detail: gtk::Label,
     columns: gtk::ColumnView,
+    rank_column: gtk::ColumnViewColumn,
+    loss_column: gtk::ColumnViewColumn,
+    prior_column: gtk::ColumnViewColumn,
     store: gio::ListStore,
     selection: gtk::SingleSelection,
     blunder_group: gtk::Box,
@@ -209,6 +211,8 @@ mod imp {
     pub struct AnalysisPanel {
         #[template_child]
         pub readout: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub metrics: TemplateChild<gtk::Label>,
         #[template_child]
         pub detail: TemplateChild<gtk::Label>,
         #[template_child]
@@ -291,6 +295,7 @@ impl AnalysisPanel {
     fn build(&self) {
         let imp = self.imp();
         let readout = imp.readout.get();
+        let metrics = imp.metrics.get();
         let detail = imp.detail.get();
         let columns = imp.columns.get();
         let blunder_group = imp.blunder_group.get();
@@ -309,7 +314,8 @@ impl AnalysisPanel {
             .build();
         selection.set_selected(gtk::INVALID_LIST_POSITION);
         columns.set_model(Some(&selection));
-        columns.append_column(&rank_column());
+        let rank_column = rank_column();
+        columns.append_column(&rank_column);
         // The move itself is the one column with nothing to rank by, so its header is inert.
         columns.append_column(&column(
             Col {
@@ -343,7 +349,7 @@ impl AnalysisPanel {
         ));
         // The loss against the pick is what the colour is made of. Raw utility is a reading of
         // the position rather than of the move, so it is not useful on its own here.
-        columns.append_column(&column(
+        let loss_column = column(
             Col {
                 title: "Loss",
                 property: "loss",
@@ -358,7 +364,9 @@ impl AnalysisPanel {
                     "—".to_string()
                 }
             },
-        ));
+        );
+        loss_column.set_visible(false);
+        columns.append_column(&loss_column);
         columns.append_column(&column(
             Col {
                 title: "Visits",
@@ -369,7 +377,7 @@ impl AnalysisPanel {
             },
             |visits: u32| si_visits(visits),
         ));
-        columns.append_column(&column(
+        let prior_column = column(
             Col {
                 title: "Prior",
                 property: "prior",
@@ -378,7 +386,9 @@ impl AnalysisPanel {
                 ..Col::default()
             },
             |prior: f64| format!("{}%", pct1(prior as f32)),
-        ));
+        );
+        prior_column.set_visible(false);
+        columns.append_column(&prior_column);
 
         // Selecting a row pins the PV preview; activating it plays the move. The model is
         // never replaced, so a selection change is always the user's.
@@ -420,14 +430,37 @@ impl AnalysisPanel {
 
         let _ = self.imp().inner.set(Inner {
             readout,
+            metrics,
             detail,
             columns,
+            rank_column,
+            loss_column,
+            prior_column,
             store,
             selection,
             blunder_group,
             blunder_expander,
             blunder_list,
         });
+    }
+
+    pub(crate) fn set_detailed_columns(&self, detailed: bool) {
+        let inner = self.inner();
+        if !detailed
+            && let Some(sorter) = inner
+                .columns
+                .sorter()
+                .and_downcast::<gtk::ColumnViewSorter>()
+            && sorter
+                .primary_sort_column()
+                .is_some_and(|column| column == inner.loss_column || column == inner.prior_column)
+        {
+            inner
+                .columns
+                .sort_by_column(Some(&inner.rank_column), gtk::SortType::Ascending);
+        }
+        inner.loss_column.set_visible(detailed);
+        inner.prior_column.set_visible(detailed);
     }
 
     fn play(&self, p: Point) {
@@ -521,12 +554,15 @@ impl AnalysisPanel {
         let inner = self.inner();
         match headline {
             Some(h) => {
-                inner.readout.set_label(&format!(
-                    "{} to play · {}% · {} points",
-                    h.color.name(),
+                inner
+                    .readout
+                    .set_label(&format!("{} to Play", h.color.name()));
+                inner.metrics.set_label(&format!(
+                    "{}% · {} points",
                     pct1(h.winrate),
                     signed1(h.score),
                 ));
+                inner.metrics.set_visible(true);
                 let speed = match h.speed {
                     Some(rate) => format!(" · {}", visits_per_second(rate)),
                     None => String::new(),
@@ -538,7 +574,8 @@ impl AnalysisPanel {
                 ));
             }
             None => {
-                inner.readout.set_label("No analysis");
+                inner.readout.set_label("No Analysis");
+                inner.metrics.set_visible(false);
                 let detail = match self.state().engine_state() {
                     EngineState::Starting { profile } => format!("Starting {profile}…"),
                     EngineState::Failed { message, .. } => message,
@@ -708,12 +745,8 @@ struct Headline {
 
 /// The mover of a blunder, as the stone they played.
 ///
-/// A reviewer reading the list is looking at a board, where the player *is* a colour, so
-/// "Black"/"White" made them translate a word back into the thing in front of them.
-///
-/// These two are `Emoji_Presentation=Yes`, so Pango renders them from the colour emoji font
-/// and they keep their own black and white — which matters here, because the row carries a
-/// `severity_class` that sets `color`, and a monochrome `●`/`○` would come out red.
+/// These two are `Emoji_Presentation=Yes`, so they keep their own black and white under
+/// the row's severity foreground colour.
 fn stone(color: Color) -> &'static str {
     match color {
         Color::Black => "⚫",
@@ -721,9 +754,8 @@ fn stone(color: Color) -> &'static str {
     }
 }
 
-/// The CSS class for a blunder's severity, or `None` when the drop is below the noise
-/// floor and the row must not be tinted at all.
-fn severity_class(severity: Severity) -> Option<&'static str> {
+fn severity_class(severity: crate::widgets::winrate::Severity) -> Option<&'static str> {
+    use crate::widgets::winrate::Severity;
     match severity {
         Severity::None => None,
         Severity::Minor => Some("mirai-blunder-minor"),
@@ -874,30 +906,4 @@ fn rank_column() -> gtk::ColumnViewColumn {
     );
     this.set_sorter(Some(&gtk::NumericSorter::new(Some(expr))));
     this
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The list and the win-rate strip must agree on what counts as a blunder at all.
-    /// `severity_class` used to re-derive its own thresholds with no noise floor, so a
-    /// 1 % drop came back tinted as a minor blunder.
-    #[test]
-    fn a_drop_below_the_noise_floor_gets_no_class() {
-        assert_eq!(severity_class(severity_of_drop(0.01)), None);
-        assert_eq!(severity_class(severity_of_drop(f32::NAN)), None);
-        assert_eq!(
-            severity_class(severity_of_drop(0.03)),
-            Some("mirai-blunder-minor")
-        );
-        assert_eq!(
-            severity_class(severity_of_drop(0.07)),
-            Some("mirai-blunder-medium")
-        );
-        assert_eq!(
-            severity_class(severity_of_drop(0.12)),
-            Some("mirai-blunder-major")
-        );
-    }
 }

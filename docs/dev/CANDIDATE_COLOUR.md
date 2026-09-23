@@ -12,6 +12,12 @@ by rank would honestly fix.
 [architecture](ARCHITECTURE.md) · [testing](TESTING.md) · [user guide](../user/GUIDE.md) ·
 [AGENTS.md](../../AGENTS.md).
 
+**Current behavior:** candidates remain in KataGo's `order`; colour represents the
+side-to-move utility lost relative to its pick, not visits or rank. Below ten visits a
+candidate is grey; the pick is always known. Opacity represents search confidence.
+The measured final decision is [§5](#5-what-shipped); §§3–4 retain the examples and
+historical alternatives that led to it.
+
 KataGo citations are against the tree at `~/KataGo` (`cpp/search/searchresults.cpp`
 and friends). mirai does not vendor that code; this note is the ledger of what we
 read out of it.
@@ -26,7 +32,7 @@ For each candidate KataGo reports (and mirai stores on `MoveInfo`):
 |---|---|---|
 | `order` | 0-based rank after sorting on `playSelectionValue` | The engine's play menu. `moves[0]` is what it would play. The list is this order. |
 | `winrate` / `scoreLead` | MCTS **means** of the child (Black-perspective on the wire) | "If this move is played, what does the position read?" Display columns. |
-| `utility` / `utilityLcb` | KataGo's blended value, and its lower confidence bound | Live colour is LCB loss against the pick. |
+| `utility` / `utilityLcb` | KataGo's blended value, and its lower confidence bound | Live colour uses mean `utility` loss against the pick; `utilityLcb` was tried and rejected (§6). |
 | `visits` / `edgeVisits` | How much search actually went here | Opacity, labels, play-mode temperature sampling's cousin. Not the sort key. |
 | `playSelectionValue` | Visit-like weight, then clipped and LCB-boosted | The quantity `order` is computed from. Play mode samples `play_value ^ (1/T)`. |
 
@@ -190,6 +196,9 @@ are answering two different questions and only the list order is KataGo's.
 ---
 
 ## 4. Options
+
+Historical comparison: D plus E is the current choice. F was briefly shipped before
+the measured sweep in §6 rejected it; the options below are not alternate UI modes.
 
 Do not sort the list by colour. `order` is what play mode obeys
 (`mirai-client/src/play.rs` — `select_move_index`) and what "the engine's

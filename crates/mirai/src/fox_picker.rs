@@ -248,7 +248,7 @@ impl FoxPickerDialog {
     }
 }
 
-/// Two lines and a chevron, bound to the row's properties by expression so the
+/// Two lines, bound to the row's properties by expression so the
 /// factory needs no bind handler of its own.
 fn row_factory() -> gtk::SignalListItemFactory {
     let factory = gtk::SignalListItemFactory::new();
@@ -272,19 +272,13 @@ fn row_factory() -> gtk::SignalListItemFactory {
             .build();
         lines.append(&title);
         lines.append(&subtitle);
-
-        let chevron = gtk::Image::from_icon_name("go-next-symbolic");
-        chevron.add_css_class("dim-label");
-
         let row = gtk::Box::builder()
-            .spacing(12)
             .margin_start(12)
             .margin_end(12)
             .margin_top(10)
             .margin_bottom(10)
             .build();
         row.append(&lines);
-        row.append(&chevron);
 
         item.property_expression("item")
             .chain_property::<FoxRow>("title")

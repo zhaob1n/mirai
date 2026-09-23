@@ -1466,11 +1466,13 @@ fn connect_analysis(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, st
 
     let reset_state = state.clone();
     let reset_syncing = syncing.clone();
-    widgets.analysis_reset_button.connect_clicked(glib::clone!(
-        #[weak]
-        dialog,
-        move |_| reset_analysis(&dialog, &reset_state, &reset_syncing)
-    ));
+    widgets
+        .analysis_reset_button
+        .connect_activated(glib::clone!(
+            #[weak]
+            dialog,
+            move |_| reset_analysis(&dialog, &reset_state, &reset_syncing)
+        ));
 }
 
 /// Pushes `config.analysis` into the preference rows.
@@ -1538,7 +1540,7 @@ fn undo_toast(title: &str) -> adw::Toast {
 
 // -- Play -------------------------------------------------------------------------------
 
-const STRENGTH_KINDS: [&str; 3] = ["Fixed visits", "Fixed time", "Human-like"];
+const STRENGTH_KINDS: [&str; 3] = ["Visits", "Time per move", "Human-like"];
 
 fn connect_play(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state: &AppState) {
     let syncing = Rc::new(Cell::new(false));
@@ -1638,7 +1640,7 @@ fn connect_play(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state:
 
     let reset_state = state.clone();
     let reset_syncing = syncing.clone();
-    widgets.play_reset_button.connect_clicked(glib::clone!(
+    widgets.play_reset_button.connect_activated(glib::clone!(
         #[weak]
         dialog,
         move |_| reset_play(&dialog, &reset_state, &reset_syncing)
@@ -1792,7 +1794,7 @@ fn connect_appearance(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, 
     let reset_state = state.clone();
     widgets
         .appearance_reset_button
-        .connect_clicked(glib::clone!(
+        .connect_activated(glib::clone!(
             #[weak]
             dialog,
             move |_| reset_ui(&dialog, &reset_state)

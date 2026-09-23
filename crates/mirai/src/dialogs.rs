@@ -43,6 +43,10 @@ pub fn show_score_with(
 }
 
 /// Asks the user to confirm a server's certificate fingerprint before pinning it.
+///
+/// The fingerprint is a selectable label under the body, not part of the body
+/// text. Cancel is the default and the close response, so Enter and Escape
+/// dismiss the dialog and never pin the server.
 pub fn confirm_fingerprint(
     parent: &impl IsA<gtk::Widget>,
     url: &str,
@@ -58,10 +62,23 @@ pub fn confirm_fingerprint(
     let dialog = adw::AlertDialog::new(
         Some("Trust This Server?"),
         Some(&format!(
-            "{url} presented a certificate with SHA-256\n\n{pretty}\n\n\
+            "{url} presented a certificate with SHA-256.\n\n\
              mirai will refuse to connect if it ever changes."
         )),
     );
+    // Colon groups are one token, so word wrap would not break them. WordChar
+    // keeps the whole pin visible inside the dialog instead of ellipsizing it.
+    let pin = gtk::Label::builder()
+        .label(&pretty)
+        .selectable(true)
+        .wrap(true)
+        .wrap_mode(gtk::pango::WrapMode::WordChar)
+        .ellipsize(gtk::pango::EllipsizeMode::None)
+        .justify(gtk::Justification::Center)
+        .xalign(0.5)
+        .css_classes(["monospace"])
+        .build();
+    dialog.set_extra_child(Some(&pin));
     dialog.add_responses(&[("cancel", "Cancel"), ("trust", "Trust")]);
     dialog.set_response_appearance("trust", adw::ResponseAppearance::Suggested);
     dialog.set_default_response(Some("cancel"));

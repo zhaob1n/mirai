@@ -39,7 +39,11 @@ mod imp {
         #[template_child]
         pub banner_slot: TemplateChild<gtk::Box>,
         #[template_child]
-        pub editor_toolbar: TemplateChild<gtk::Box>,
+        pub editor_revealer: TemplateChild<gtk::Revealer>,
+        #[template_child]
+        pub editor_toggle: TemplateChild<gtk::ToggleButton>,
+        #[template_child]
+        pub editor_toolbar: TemplateChild<adw::Bin>,
         #[template_child]
         pub play_tool: TemplateChild<adw::Toggle>,
         #[template_child]
@@ -55,6 +59,8 @@ mod imp {
         #[template_child]
         pub sidebar_stack: TemplateChild<adw::ViewStack>,
         #[template_child]
+        pub play_bar: TemplateChild<gtk::Box>,
+        #[template_child]
         pub play_controls: TemplateChild<gtk::Box>,
         #[template_child]
         pub undo_button: TemplateChild<gtk::Button>,
@@ -65,7 +71,7 @@ mod imp {
         #[template_child]
         pub move_scale: TemplateChild<gtk::Scale>,
         #[template_child]
-        pub readout: TemplateChild<gtk::Label>,
+        pub move_position: TemplateChild<gtk::Label>,
     }
 
     #[glib::object_subclass]
@@ -156,7 +162,15 @@ impl MiraiWindow {
         self.imp().banner_slot.get()
     }
 
-    pub(crate) fn editor_toolbar(&self) -> gtk::Box {
+    pub(crate) fn editor_revealer(&self) -> gtk::Revealer {
+        self.imp().editor_revealer.get()
+    }
+
+    pub(crate) fn editor_toggle(&self) -> gtk::ToggleButton {
+        self.imp().editor_toggle.get()
+    }
+
+    pub(crate) fn editor_toolbar(&self) -> adw::Bin {
         self.imp().editor_toolbar.get()
     }
 
@@ -200,6 +214,10 @@ impl MiraiWindow {
         self.imp().clock_white.get()
     }
 
+    pub fn play_bar(&self) -> gtk::Box {
+        self.imp().play_bar.get()
+    }
+
     pub fn play_controls(&self) -> gtk::Box {
         self.imp().play_controls.get()
     }
@@ -220,7 +238,7 @@ impl MiraiWindow {
         self.imp().move_scale.get()
     }
 
-    pub fn readout(&self) -> gtk::Label {
-        self.imp().readout.get()
+    pub fn move_position(&self) -> gtk::Label {
+        self.imp().move_position.get()
     }
 }

@@ -107,7 +107,7 @@ pub struct Ui {
     pub comment: gtk::TextView,
     pub play: PlayController,
     pub batch: BatchAnalysis,
-    pub readout: gtk::Label,
+    move_position: gtk::Label,
     pub move_scale: gtk::Scale,
     pub engine_menu: gtk::MenuButton,
     pub analysis: AnalysisPanel,
@@ -117,6 +117,7 @@ pub struct Ui {
     pub file: RefCell<Option<PathBuf>>,
     title: adw::WindowTitle,
     clock_box: gtk::Box,
+    play_bar: gtk::Box,
     clock_black: gtk::Label,
     clock_white: gtk::Label,
     play_controls: gtk::Box,
@@ -286,6 +287,7 @@ pub fn present(
         .bind_property("engine-label", &engine_content, "label")
         .sync_create()
         .build();
+    engine_menu.set_tooltip_text(Some(&format!("Analysis Engine — {}", state.engine_label())));
 
     let split = window.split();
     let sidebar_toggle = window.sidebar_toggle();
@@ -305,7 +307,7 @@ pub fn present(
     });
     let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
         adw::BreakpointConditionLengthType::MaxWidth,
-        900.0,
+        926.0,
         adw::LengthUnit::Sp,
     ));
     breakpoint.add_setter(&split, "collapsed", Some(&true.to_value()));
@@ -321,7 +323,7 @@ pub fn present(
     let undo_button = window.undo_button();
     let resign_button = window.resign_button();
     let move_scale = window.move_scale();
-    let readout = window.readout();
+    let move_position = window.move_position();
     move_scale.set_increments(1.0, 10.0);
 
     window.install_ui(Ui {
@@ -332,7 +334,7 @@ pub fn present(
         play,
         batch,
         analysis: analysis.clone(),
-        readout,
+        move_position,
         board: board.clone(),
         winrate: winrate.clone(),
         move_tree: move_tree.clone(),
@@ -341,6 +343,7 @@ pub fn present(
         file: RefCell::new(None),
         title,
         clock_box,
+        play_bar: window.play_bar(),
         clock_black,
         clock_white,
         play_controls,
@@ -390,7 +393,6 @@ pub fn present(
         sync_play_editability(ui);
         update_editor_actions(ui);
         update_scale(ui);
-        update_readout(ui);
         update_title(ui);
         update_subtitle(ui);
         load_comment(ui);
@@ -426,10 +428,6 @@ pub fn present(
             offer_restore(ui, autosave);
         }
     });
-
-    if state.config().engine_profiles.is_empty() {
-        crate::prefs::present(&window, &state);
-    }
 }
 
 fn refresh_engine_menu(ui: &Ui) {
@@ -454,14 +452,14 @@ fn connect_state(ui: &Ui) {
     }
     {
         let weak = weak.clone();
-        state.connect_status_notify(move |_| {
-            with_window_ui(&weak, |ui| {
-                update_subtitle(ui);
-                update_readout(ui);
-            });
-        });
+        state.connect_status_notify(move |_| with_window_ui(&weak, update_subtitle));
     }
-    state.connect_engine_label_notify(move |_| with_window_ui(&weak, update_subtitle));
+    state.connect_engine_label_notify(move |state| {
+        with_window_ui(&weak, |ui| {
+            ui.engine_menu
+                .set_tooltip_text(Some(&format!("Analysis Engine — {}", state.engine_label())));
+        });
+    });
 }
 
 fn handle_change(ui: &Ui, change: Change) {
@@ -480,6 +478,9 @@ fn handle_change(ui: &Ui, change: Change) {
             update_editor_actions(ui);
         }
         Change::Editor => {
+            if ui.state.editor_tool() != EditorTool::Play {
+                set_editor_visible(ui, true);
+            }
             update_editor_actions(ui);
             if ui.state.editor_tool() != EditorTool::Play {
                 ui.board.clear_preview();
@@ -488,6 +489,7 @@ fn handle_change(ui: &Ui, change: Change) {
         Change::Tree => {
             ui.board.close_menu();
             update_scale(ui);
+            update_analysis_page(ui);
             update_title(ui);
             ui.board.refresh_tree();
             ui.move_tree.refresh();
@@ -500,7 +502,7 @@ fn handle_change(ui: &Ui, change: Change) {
             ui.board.close_menu();
             load_comment(ui);
             update_scale(ui);
-            update_readout(ui);
+            update_analysis_page(ui);
             update_clocks(ui);
             ui.board.refresh_cursor();
             ui.move_tree.refresh();
@@ -509,10 +511,10 @@ fn handle_change(ui: &Ui, change: Change) {
             update_editor_actions(ui);
         }
         Change::Report => {
-            update_readout(ui);
             ui.board.refresh_report();
             ui.winrate.refresh();
             ui.analysis.refresh();
+            update_analysis_page(ui);
         }
         Change::Engine => {
             refresh_engine_menu(ui);
@@ -718,10 +720,34 @@ fn update_editor_actions(ui: &Ui) {
     }
 }
 
+fn set_editor_visible(ui: &Ui, visible: bool) {
+    let Some(window) = ui.window() else { return };
+    let revealer = window.editor_revealer();
+    if revealer.reveals_child() == visible {
+        return;
+    }
+    if !visible {
+        ui.state.set_editor_tool(EditorTool::Play);
+        if gtk::prelude::GtkWindowExt::focus(&window)
+            .is_some_and(|focused| focused.is_ancestor(&window.editor_toolbar()))
+        {
+            window.editor_toggle().grab_focus();
+        }
+    }
+    revealer.set_reveal_child(visible);
+}
+
 fn sync_play_editability(ui: &Ui) {
     let active = ui.play.is_active();
+    if active {
+        set_editor_visible(ui, false);
+        ui.state.set_editor_tool(EditorTool::Play);
+    }
+    if let Some(action) = win_simple(ui, "toggle-editor") {
+        action.set_enabled(!active);
+    }
     if let Some(window) = ui.window() {
-        window.editor_toolbar().set_visible(!active);
+        window.editor_toggle().set_sensitive(!active);
     }
     if active {
         if ui.comment.is_editable() {
@@ -899,44 +925,32 @@ fn update_scale(ui: &Ui) {
     ui.scale_guard.set(false);
     ui.move_scale
         .set_tooltip_text(Some(&format!("Move {index} of {upper}")));
-}
-
-fn update_readout(ui: &Ui) {
-    let text = match ui.state.last_report() {
-        Some(report) => {
-            let to_play = ui.state.to_play();
-            let speed = match ui.state.analysis_speed() {
-                Some(rate) => format!("  {}", util::visits_per_second(rate)),
-                None => String::new(),
-            };
-            format!(
-                "{} {}%  {}  {}{speed}",
-                to_play.katago(),
-                util::pct1(report.root.winrate_for(to_play)),
-                util::signed1(report.root.score_lead_for(to_play)),
-                util::si_visits(report.root.visits),
-            )
+    let color = ui.state.to_play();
+    ui.move_position
+        .set_label(&format!("{index} / {upper} · {}", color.katago()));
+    let tip = format!(
+        "Move {index} of {upper} · {} to play",
+        if color == Color::Black {
+            "Black"
+        } else {
+            "White"
         }
-        None => {
-            let status = ui.state.status();
-            if status.is_empty() {
-                "—".to_string()
-            } else {
-                status
-            }
-        }
-    };
-    ui.readout.set_label(&text);
+    );
+    ui.move_position.set_tooltip_text(Some(&tip));
+    ui.move_position
+        .update_property(&[gtk::accessible::Property::Label(&tip)]);
 }
 
 fn update_clocks(ui: &Ui) {
     let Some((black, white)) = ui.play.clocks() else {
         ui.clock_box.set_visible(false);
+        ui.play_bar.set_visible(ui.play_controls.is_visible());
         return;
     };
     ui.clock_black.set_label(&format!("● {black}"));
     ui.clock_white.set_label(&format!("○ {white}"));
     ui.clock_box.set_visible(true);
+    ui.play_bar.set_visible(true);
 
     let to_play = ui.state.to_play();
     for (label, mine) in [
@@ -960,6 +974,8 @@ fn update_play_controls(ui: &Ui) {
     ui.undo_button.set_sensitive(ui.play.is_active());
     ui.resign_button
         .set_visible(in_progress && ui.play.is_human_vs_engine());
+    ui.play_bar
+        .set_visible(in_progress || ui.clock_box.is_visible());
 }
 
 /// The name for a record with no backing file: who played it, else the event it came from.
@@ -998,19 +1014,17 @@ fn update_title(ui: &Ui) {
 }
 
 fn update_subtitle(ui: &Ui) {
-    let status = ui.state.status();
-    let subtitle = if status.is_empty() {
-        ui.state.engine_label()
-    } else {
-        status
-    };
-    ui.title.set_subtitle(&subtitle);
+    ui.title.set_subtitle(&ui.state.status());
 }
 
 fn update_analysis_page(ui: &Ui) {
-    let empty = ui.state.config().engine_profiles.is_empty();
+    let has_analysis =
+        !ui.state.config().engine_profiles.is_empty() || ui.state.last_report().is_some() || {
+            let tree = ui.state.tree();
+            tree.node(ui.state.cursor()).analysis.is_some()
+        };
     ui.analysis_stack
-        .set_visible_child_name(if empty { "empty" } else { "panel" });
+        .set_visible_child_name(if has_analysis { "panel" } else { "empty" });
 }
 
 /// Rebuilds the sidebar blunder list from analyses already stored on the main line.
@@ -1101,7 +1115,7 @@ fn adopt(ui: &Ui, tree: GameTree, path: Option<PathBuf>, unsaved: bool) {
     }
     load_comment(ui);
     update_scale(ui);
-    update_readout(ui);
+    update_analysis_page(ui);
     update_title(ui);
     update_clocks(ui);
     ui.pending_auto_analyse
@@ -1838,6 +1852,58 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
     split.connect_show_sidebar_notify(move |split| {
         sidebar.set_state(&split.shows_sidebar().to_variant());
     });
+
+    let editor = window.editor_revealer();
+    let editor_action = toggle(
+        "toggle-editor",
+        editor.reveals_child(),
+        Box::new(|ui| {
+            if !ui.play.is_active()
+                && let Some(window) = ui.window()
+            {
+                set_editor_visible(ui, !window.editor_revealer().reveals_child());
+            }
+        }),
+    );
+    let weak_editor = ui.weak_window();
+    window.editor_toggle().connect_toggled(move |button| {
+        with_window_ui(&weak_editor, |ui| {
+            if let Some(window) = ui.window()
+                && button.is_active() != window.editor_revealer().reveals_child()
+                && !ui.play.is_active()
+            {
+                set_editor_visible(ui, button.is_active());
+            }
+        });
+    });
+    let editor_toggle = window.editor_toggle();
+    editor.connect_reveal_child_notify(move |revealer| {
+        let visible = revealer.reveals_child();
+        if editor_toggle.is_active() != visible {
+            editor_toggle.set_active(visible);
+        }
+        if editor_action.state().and_then(|state| state.get::<bool>()) != Some(visible) {
+            editor_action.set_state(&visible.to_variant());
+        }
+    });
+
+    // Menu check items request a state change directly; activation should use the same path.
+    let details =
+        gio::SimpleAction::new_stateful("toggle-candidate-details", None, &false.to_variant());
+    let weak_details = ui.weak_window();
+    details.connect_change_state(move |action, value| {
+        let Some(value) = value else {
+            return;
+        };
+        let Some(detailed) = value.get::<bool>() else {
+            return;
+        };
+        with_window_ui(&weak_details, |ui| {
+            ui.analysis.set_detailed_columns(detailed);
+            action.set_state(value);
+        });
+    });
+    group.add_action(&details);
 
     add(
         "pass",
