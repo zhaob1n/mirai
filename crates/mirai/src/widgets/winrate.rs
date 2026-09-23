@@ -125,6 +125,19 @@ struct RenderKey {
     text_serial: u32,
 }
 
+#[derive(Clone, Copy)]
+struct AxisMetrics {
+    text_serial: u32,
+    range: f32,
+    left: f32,
+    right: f32,
+}
+impl AxisMetrics {
+    fn minimum_width(self) -> i32 {
+        ((self.left + self.right).ceil() as i32 + 32).max(120)
+    }
+}
+
 /// Geometry, in widget coordinates.
 struct Geom {
     left: f32,
@@ -137,8 +150,6 @@ struct Geom {
     step: f32,
 }
 
-const PAD_L: f32 = 30.0;
-const PAD_R: f32 = 34.0;
 const PAD_T: f32 = 7.0;
 const PAD_B: f32 = 3.0;
 const STRIP_H: f32 = 10.0;
@@ -146,19 +157,19 @@ const STRIP_GAP: f32 = 2.0;
 const NAT_HEIGHT: i32 = 140;
 
 impl Geom {
-    fn new(width: f32, height: f32, samples: usize) -> Geom {
+    fn new(width: f32, height: f32, samples: usize, left: f32, right_pad: f32) -> Geom {
         let strip_bottom = (height - PAD_B).max(PAD_T + 1.0);
         let strip_top = (strip_bottom - STRIP_H).max(PAD_T + 1.0);
         let bottom = (strip_top - STRIP_GAP).max(PAD_T + 1.0);
-        let right = (width - PAD_R).max(PAD_L + 1.0);
-        let span = right - PAD_L;
+        let right = (width - right_pad).max(left + 1.0);
+        let span = right - left;
         let step = if samples > 1 {
             span / (samples - 1) as f32
         } else {
             span
         };
         Geom {
-            left: PAD_L,
+            left,
             right,
             top: PAD_T,
             bottom,
@@ -198,11 +209,10 @@ impl Geom {
 }
 
 /// The main-line node under widget x, copied out so the projection borrow can end.
-fn node_at(projection: &GraphProjection, width: f32, height: f32, x: f32) -> Option<NodeId> {
+fn node_at(projection: &GraphProjection, geom: &Geom, x: f32) -> Option<NodeId> {
     if projection.line.is_empty() {
         return None;
     }
-    let geom = Geom::new(width, height, projection.line.len());
     Some(projection.line[geom.index_at(x, projection.line.len())])
 }
 
@@ -215,6 +225,7 @@ mod imp {
         pub pressed: Cell<bool>,
         pub(super) projection: RefCell<GraphProjection>,
         pub(super) render_cache: RefCell<Option<(RenderKey, gsk::RenderNode)>>,
+        pub(super) axis_metrics: Cell<Option<AxisMetrics>>,
     }
     #[glib::object_subclass]
     impl ObjectSubclass for WinrateGraph {
@@ -229,7 +240,10 @@ mod imp {
         fn measure(&self, orientation: gtk::Orientation, _for_size: i32) -> (i32, i32, i32, i32) {
             match orientation {
                 gtk::Orientation::Vertical => (NAT_HEIGHT, NAT_HEIGHT, -1, -1),
-                _ => (120, 240, -1, -1),
+                _ => {
+                    let minimum = self.obj().axis_metrics().minimum_width();
+                    (minimum, minimum.max(240), -1, -1)
+                }
             }
         }
 
@@ -255,7 +269,7 @@ impl WinrateGraph {
         this.add_css_class("mirai-winrate");
         this.set_hexpand(true);
         this.set_tooltip_text(Some(
-            "Win rate (solid) and score lead (dashed) over the main line",
+            "Black win rate (solid) and Black score lead (dashed) over the main line",
         ));
 
         let click = gtk::GestureClick::new();
@@ -319,9 +333,46 @@ impl WinrateGraph {
             .get()
             .expect("WinrateGraph was built without a state")
     }
+    fn axis_metrics(&self) -> AxisMetrics {
+        let context = self.pango_context();
+        let serial = context.serial();
+        if let Some(axis) = self.imp().axis_metrics.get()
+            && axis.text_serial == serial
+        {
+            return axis;
+        }
+        let max_lead = self
+            .imp()
+            .projection
+            .borrow()
+            .samples
+            .iter()
+            .filter_map(|sample| sample.lead)
+            .fold(0.0f32, |max, lead| max.max(lead.abs()));
+        let range = max_lead.ceil().max(5.0);
+        let layout = self.create_pango_layout(Some("100"));
+        let left = (layout.pixel_size().0 as f32 + 8.0).max(30.0);
+        layout.set_text(&format!("+{}", range as i32));
+        let positive = layout.pixel_size().0;
+        layout.set_text(&format!("−{}", range as i32));
+        let right = (positive.max(layout.pixel_size().0) as f32 + 8.0).max(34.0);
+        let axis = AxisMetrics {
+            text_serial: serial,
+            range,
+            left,
+            right,
+        };
+        self.imp().axis_metrics.set(Some(axis));
+        axis
+    }
+
     pub(crate) fn refresh(&self) {
-        let state = self.state();
-        *self.imp().projection.borrow_mut() = self.samples(state);
+        let before = self.axis_metrics().minimum_width();
+        *self.imp().projection.borrow_mut() = self.samples(self.state());
+        self.imp().axis_metrics.set(None);
+        if self.axis_metrics().minimum_width() != before {
+            self.queue_resize();
+        }
         self.imp().render_cache.borrow_mut().take();
         self.queue_draw();
     }
@@ -345,16 +396,20 @@ impl WinrateGraph {
 
     /// Moves the cursor to the main-line node nearest to a widget x coordinate.
     fn jump_to(&self, x: f32) {
-        let Some(id) = node_at(
-            &self.imp().projection.borrow(),
-            self.width() as f32,
-            self.height() as f32,
-            x,
-        ) else {
-            return;
+        let axis = self.axis_metrics();
+        let id = {
+            let projection = self.imp().projection.borrow();
+            let geom = Geom::new(
+                self.width() as f32,
+                self.height() as f32,
+                projection.line.len(),
+                axis.left,
+                axis.right,
+            );
+            node_at(&projection, &geom, x)
         };
-        // INV-10: `set_cursor` emits Cursor and Report, both of which rebuild
-        // this projection. `id` is a copy — the RefCell is not borrowed.
+        let Some(id) = id else { return };
+        // INV-10: `set_cursor` rebuilds the projection; own the ID first.
         self.state().set_cursor(id);
     }
 
@@ -410,9 +465,16 @@ impl WinrateGraph {
     }
 
     fn draw_base(&self, snapshot: &gtk::Snapshot, width: f32, height: f32) {
+        let axis_metrics = self.axis_metrics();
         let projection = self.imp().projection.borrow();
         let samples = &projection.samples;
-        let geom = Geom::new(width, height, samples.len().max(1));
+        let geom = Geom::new(
+            width,
+            height,
+            samples.len().max(1),
+            axis_metrics.left,
+            axis_metrics.right,
+        );
 
         let fg = self.color();
         let axis = with_alpha(fg, 0.12);
@@ -444,53 +506,66 @@ impl WinrateGraph {
         half_stroke.set_dash(&[3.0, 3.0]);
         snapshot.append_stroke(&half.to_path(), &half_stroke, &with_alpha(fg, 0.22));
 
-        // The score axis range: symmetric, never tighter than ±5 points.
-        let max_lead = samples
-            .iter()
-            .filter_map(|s| s.lead)
-            .fold(0.0f32, |m, v| m.max(v.abs()));
-        let range = max_lead.ceil().max(5.0);
+        let range = axis_metrics.range;
 
         let context = self.pango_context();
         let font = context.font_description().unwrap_or_default();
         let label_height = context.metrics(Some(&font), None).height() as f32 / pango::SCALE as f32;
         let layout = self.create_pango_layout(None);
-        Self::label(snapshot, &layout, &font, "100", 2.0, geom.top - 1.0, &faint);
+        layout.set_text("100");
+        let left_x = (geom.left - 8.0 - layout.pixel_size().0 as f32).max(2.0);
+        Self::label(
+            snapshot,
+            &layout,
+            &font,
+            "100",
+            left_x,
+            geom.top - 1.0,
+            &faint,
+        );
+        layout.set_text("50");
+        let left_x = (geom.left - 8.0 - layout.pixel_size().0 as f32).max(2.0);
         Self::label(
             snapshot,
             &layout,
             &font,
             "50",
-            2.0,
+            left_x,
             y50 - label_height / 2.0,
             &faint,
         );
+        layout.set_text("0");
+        let left_x = (geom.left - 8.0 - layout.pixel_size().0 as f32).max(2.0);
         Self::label(
             snapshot,
             &layout,
             &font,
             "0",
-            2.0,
+            left_x,
             geom.bottom - label_height,
             &faint,
         );
         let hi = format!("+{}", range as i32);
-        let lo = format!("-{}", range as i32);
+        let lo = format!("−{}", range as i32);
+        layout.set_text(&hi);
+        let hi_x = width - layout.pixel_size().0 as f32 - 4.0;
         Self::label(
             snapshot,
             &layout,
             &font,
             &hi,
-            geom.right + 4.0,
+            hi_x,
             geom.top - 1.0,
             &with_alpha(accent, 0.75),
         );
+        layout.set_text(&lo);
+        let lo_x = width - layout.pixel_size().0 as f32 - 4.0;
         Self::label(
             snapshot,
             &layout,
             &font,
             &lo,
-            geom.right + 4.0,
+            lo_x,
             geom.bottom - label_height,
             &with_alpha(accent, 0.75),
         );
@@ -564,7 +639,8 @@ impl WinrateGraph {
         if samples.is_empty() {
             return;
         }
-        let geom = Geom::new(width, height, samples.len());
+        let axis = self.axis_metrics();
+        let geom = Geom::new(width, height, samples.len(), axis.left, axis.right);
         let cursor_index = projection.cursor_index.min(samples.len() - 1);
         let fg = self.color();
         let curve = with_alpha(fg, 0.92);
@@ -578,9 +654,11 @@ impl WinrateGraph {
         );
         if let Some(winrate) = samples[cursor_index].winrate {
             fill_disc(snapshot, x, geom.y_winrate(winrate), 3.0, &accent);
-            let text = format!("{:.1}%", winrate * 100.0);
+            let text = format!("Black {:.1}%", winrate * 100.0);
             let layout = self.create_pango_layout(Some(&text));
-            let tx = (x + 5.0).min(geom.right - layout.pixel_size().0 as f32);
+            let tx = (x + 5.0)
+                .min(geom.right - layout.pixel_size().0 as f32)
+                .max(geom.left);
             snapshot.save();
             snapshot.translate(&graphene::Point::new(tx, geom.top + 1.0));
             snapshot.append_layout(&layout, &curve);
@@ -706,16 +784,28 @@ mod tests {
 
     #[test]
     fn geometry_maps_axes_and_clicks() {
-        let g = Geom::new(300.0, 140.0, 11);
+        let g = Geom::new(300.0, 140.0, 11, 70.0, 98.0);
         assert!(g.y_winrate(1.0) < g.y_winrate(0.0));
         assert!((g.y_winrate(0.5) - (g.top + g.bottom) * 0.5).abs() < 0.01);
         // The score axis is symmetric about the middle of the plot.
         assert!((g.y_lead(3.0, 10.0) + g.y_lead(-3.0, 10.0) - (g.top + g.bottom)).abs() < 0.01);
         assert_eq!(g.index_at(g.x(0) - 50.0, 11), 0);
+        assert_eq!(g.index_at(g.x(5), 11), 5);
         assert_eq!(g.index_at(g.x(7) + 1.0, 11), 7);
         assert_eq!(g.index_at(g.x(10) + 50.0, 11), 10);
-        // A single sample must not divide by zero.
-        let g1 = Geom::new(300.0, 140.0, 1);
+        // The same asymmetric plot geometry must pick its drawn first, middle and last node.
+        let projection = GraphProjection {
+            line: (0..11).map(NodeId).collect(),
+            samples: vec![],
+            cursor_index: 0,
+        };
+        for index in [0, 5, 10] {
+            assert_eq!(
+                node_at(&projection, &g, g.x(index)),
+                Some(NodeId(index as u32))
+            );
+        }
+        let g1 = Geom::new(300.0, 140.0, 1, 70.0, 98.0);
         assert_eq!(g1.index_at(123.0, 1), 0);
     }
 
@@ -726,9 +816,10 @@ mod tests {
             samples: vec![],
             cursor_index: 0,
         });
-        let id = node_at(&projection.borrow(), 300.0, 140.0, 150.0).expect("a node");
+        let geom = Geom::new(300.0, 140.0, 3, 70.0, 98.0);
+        let id = node_at(&projection.borrow(), &geom, geom.x(1)).expect("a node");
         *projection.borrow_mut() = GraphProjection::default();
         assert!(matches!(id, NodeId(1) | NodeId(2) | NodeId(3)));
-        assert!(node_at(&projection.borrow(), 300.0, 140.0, 150.0).is_none());
+        assert!(node_at(&projection.borrow(), &geom, geom.x(1)).is_none());
     }
 }

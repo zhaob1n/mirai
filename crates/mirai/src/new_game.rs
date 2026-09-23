@@ -37,6 +37,8 @@ mod imp {
         #[template_child]
         pub rules_row: TemplateChild<adw::ComboRow>,
         #[template_child]
+        pub players_group: TemplateChild<adw::PreferencesGroup>,
+        #[template_child]
         pub colour_row: TemplateChild<adw::ComboRow>,
         #[template_child]
         pub time_row: TemplateChild<adw::ComboRow>,
@@ -199,6 +201,12 @@ impl NewGameDialog {
             self,
             move |row| dialog.refresh_strength(row.selected())
         ));
+        self.refresh_players();
+        imp.colour_row.connect_selected_notify(glib::clone!(
+            #[weak(rename_to = dialog)]
+            self,
+            move |_| dialog.refresh_players()
+        ));
     }
 
     fn sync_komi(&self) {
@@ -228,6 +236,17 @@ impl NewGameDialog {
         imp.visits_row.set_visible(kind == 0);
         imp.seconds_row.set_visible(kind == 1);
         imp.profile_row.set_visible(kind == 2);
+    }
+
+    fn refresh_players(&self) {
+        let imp = self.imp();
+        let both = imp.colour_row.selected() == 2;
+        imp.strength_group.set_visible(!both);
+        imp.players_group.set_description(Some(if both {
+            "Play both sides on this device"
+        } else {
+            "The engine takes the other colour"
+        }));
     }
 
     fn setup(&self) -> GameSetup {

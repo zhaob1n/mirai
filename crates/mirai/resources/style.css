@@ -19,10 +19,8 @@
   color: @error_color;
 }
 
-.mirai-readout {
-  font-family: monospace;
-  /* Keeps the move scale from jiggling as the readout text changes width. */
-  min-width: 168px;
+.mirai-position {
+  font-feature-settings: "tnum";
 }
 
 .mirai-winrate {
@@ -66,7 +64,11 @@
   min-width: 20px;
 }
 
-/* Keep the seven candidate columns compact without shrinking their text. */
+/* Keep candidate columns compact without shrinking their text. */
+.mirai-candidates {
+  font-feature-settings: "tnum";
+}
+
 .mirai-candidates > listview > row > cell,
 .mirai-candidates > header > button {
   padding-left: 4px;

@@ -8,6 +8,7 @@ template $MiraiNewGameDialog : Adw.Dialog {
   title: _("New Game");
   content-width: 460;
   content-height: 620;
+  default-widget: start_button;
 
   child: Adw.ToolbarView {
     [top]
@@ -56,7 +57,7 @@ template $MiraiNewGameDialog : Adw.Dialog {
         }
       }
 
-      Adw.PreferencesGroup {
+      Adw.PreferencesGroup players_group {
         title: _("Players");
         description: _("The engine takes the other colour");
 
@@ -105,7 +106,7 @@ template $MiraiNewGameDialog : Adw.Dialog {
         }
 
         Adw.EntryRow profile_row {
-          title: _("Human-like Profile");
+          title: _("Human Model Profile");
         }
       }
     };

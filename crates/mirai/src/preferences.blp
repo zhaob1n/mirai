@@ -73,15 +73,9 @@ template $MiraiPreferencesDialog: Adw.PreferencesDialog {
     }
 
     Adw.PreferencesGroup {
-      description: _("Engine profiles are never reset, and the toast offers an undo.");
-
-      Gtk.Button analysis_reset_button {
-        styles [
-          "pill",
-        ]
-
-        halign: center;
-        label: _("Restore Analysis Defaults");
+      title: _("Analysis Defaults");
+      Adw.ButtonRow analysis_reset_button {
+        title: _("Restore Defaults");
       }
     }
   }
@@ -136,15 +130,9 @@ template $MiraiPreferencesDialog: Adw.PreferencesDialog {
     }
 
     Adw.PreferencesGroup {
-      description: _("Engine profiles are never reset, and the toast offers an undo.");
-
-      Gtk.Button play_reset_button {
-        styles [
-          "pill",
-        ]
-
-        halign: center;
-        label: _("Restore Play Defaults");
+      title: _("Play Defaults");
+      Adw.ButtonRow play_reset_button {
+        title: _("Restore Defaults");
       }
     }
   }
@@ -182,15 +170,9 @@ template $MiraiPreferencesDialog: Adw.PreferencesDialog {
     }
 
     Adw.PreferencesGroup {
-      description: _("Engine profiles are never reset, and the toast offers an undo.");
-
-      Gtk.Button appearance_reset_button {
-        styles [
-          "pill",
-        ]
-
-        halign: center;
-        label: _("Restore Appearance Defaults");
+      title: _("Appearance Defaults");
+      Adw.ButtonRow appearance_reset_button {
+        title: _("Restore Defaults");
       }
     }
   }

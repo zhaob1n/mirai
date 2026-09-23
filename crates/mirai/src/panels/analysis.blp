@@ -14,15 +14,38 @@ template $MiraiAnalysisPanel: Gtk.Box {
     margin-top: 8;
     margin-bottom: 8;
 
-    Gtk.Label readout {
-      label: _("No analysis");
+    Gtk.Box {
+      spacing: 6;
+
+      Gtk.Label readout {
+        label: _("No Analysis");
+        xalign: 0;
+        hexpand: true;
+
+        styles [
+          "heading",
+        ]
+      }
+
+      Gtk.MenuButton {
+        icon-name: "view-more-symbolic";
+        tooltip-text: _("Analysis Options");
+        menu-model: analysis_options;
+
+        accessibility {
+          label: _("Analysis Options");
+        }
+      }
+    }
+
+    Gtk.Label metrics {
+      visible: false;
       xalign: 0;
       hexpand: true;
-      wrap: true;
-      wrap-mode: word_char;
 
       styles [
-        "heading",
+        "title-4",
+        "mirai-position",
       ]
     }
 
@@ -33,6 +56,7 @@ template $MiraiAnalysisPanel: Gtk.Box {
       wrap-mode: word_char;
 
       styles [
+        "caption",
         "dim-label",
       ]
     }
@@ -79,5 +103,11 @@ template $MiraiAnalysisPanel: Gtk.Box {
         };
       }
     }
+  }
+}
+
+menu analysis_options {
+  section {
+    item ("Show Detailed Columns", "win.toggle-candidate-details")
   }
 }

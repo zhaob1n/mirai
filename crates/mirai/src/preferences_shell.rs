@@ -27,7 +27,7 @@ mod imp {
         #[template_child]
         pub analysis_auto_open_row: TemplateChild<adw::SwitchRow>,
         #[template_child]
-        pub analysis_reset_button: TemplateChild<gtk::Button>,
+        pub analysis_reset_button: TemplateChild<adw::ButtonRow>,
         #[template_child]
         pub play_strength_kind_row: TemplateChild<adw::ComboRow>,
         #[template_child]
@@ -45,7 +45,7 @@ mod imp {
         #[template_child]
         pub play_rules_row: TemplateChild<adw::ComboRow>,
         #[template_child]
-        pub play_reset_button: TemplateChild<gtk::Button>,
+        pub play_reset_button: TemplateChild<adw::ButtonRow>,
         #[template_child]
         pub show_coordinates_row: TemplateChild<adw::SwitchRow>,
         #[template_child]
@@ -55,7 +55,7 @@ mod imp {
         #[template_child]
         pub save_analysis_row: TemplateChild<adw::SwitchRow>,
         #[template_child]
-        pub appearance_reset_button: TemplateChild<gtk::Button>,
+        pub appearance_reset_button: TemplateChild<adw::ButtonRow>,
     }
 
     #[glib::object_subclass]
@@ -137,7 +137,7 @@ pub struct PreferencesWidgets {
     pub analysis_suggestions_row: adw::SpinRow,
     pub analysis_batch_visits_row: adw::SpinRow,
     pub analysis_auto_open_row: adw::SwitchRow,
-    pub analysis_reset_button: gtk::Button,
+    pub analysis_reset_button: adw::ButtonRow,
     pub play_strength_kind_row: adw::ComboRow,
     pub play_visits_row: adw::SpinRow,
     pub play_seconds_row: adw::SpinRow,
@@ -146,10 +146,10 @@ pub struct PreferencesWidgets {
     pub play_threshold_row: adw::SpinRow,
     pub play_streak_row: adw::SpinRow,
     pub play_rules_row: adw::ComboRow,
-    pub play_reset_button: gtk::Button,
+    pub play_reset_button: adw::ButtonRow,
     pub show_coordinates_row: adw::SwitchRow,
     pub show_move_numbers_row: adw::SwitchRow,
     pub overlay_row: adw::ComboRow,
     pub save_analysis_row: adw::SwitchRow,
-    pub appearance_reset_button: gtk::Button,
+    pub appearance_reset_button: adw::ButtonRow,
 }
