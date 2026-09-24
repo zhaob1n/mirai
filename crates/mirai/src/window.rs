@@ -1597,7 +1597,7 @@ fn collect_stale_autosaves() -> Vec<PathBuf> {
             }
         }
     });
-    found.sort();
+    sort_autosaves(&mut found);
     found
 }
 
@@ -1673,6 +1673,45 @@ fn offer_stale_when_ready(ui: &Ui) {
         });
     });
     ui.tasks.restore.replace(handle);
+}
+
+/// Newest last, so `pop` offers the most recent leftover first.
+///
+/// `autosave-<pid>-<start>-<n>.sgf` is ordered by `(start, n)`, not by the pid
+/// that happens to come first in the name. Unparsable names sort first. The
+/// legacy `autosave.sgf` is older than any stamped file.
+fn autosave_rank(name: &str) -> (u8, u64, u32) {
+    if let Some((start, n)) = autosave_stamp(name) {
+        return (2, start, n);
+    }
+    if name == "autosave.sgf" {
+        return (1, 0, 0);
+    }
+    (0, 0, 0)
+}
+
+fn autosave_stamp(name: &str) -> Option<(u64, u32)> {
+    let rest = name.strip_prefix("autosave-")?.strip_suffix(".sgf")?;
+    let (pid, rest) = rest.split_once('-')?;
+    let (start, n) = rest.split_once('-')?;
+    if pid.is_empty() || !pid.bytes().all(|b| b.is_ascii_digit()) || n.contains('-') {
+        return None;
+    }
+    Some((start.parse().ok()?, n.parse().ok()?))
+}
+
+fn cmp_autosave_names(a: &str, b: &str) -> std::cmp::Ordering {
+    autosave_rank(a)
+        .cmp(&autosave_rank(b))
+        .then_with(|| a.cmp(b))
+}
+
+fn sort_autosaves(paths: &mut [PathBuf]) {
+    paths.sort_by(|a, b| {
+        let an = a.file_name().and_then(|name| name.to_str()).unwrap_or("");
+        let bn = b.file_name().and_then(|name| name.to_str()).unwrap_or("");
+        cmp_autosave_names(an, bn)
+    });
 }
 
 fn write_autosave(ui: &Ui) {
@@ -2557,7 +2596,7 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
 #[cfg(test)]
 mod tests {
 
-    use super::{blank_tree, line_extent, line_node, record_label};
+    use super::{blank_tree, cmp_autosave_names, line_extent, line_node, record_label};
     use mirai_core::{Color, GameInfo, GameTree, RuleSet, Size};
 
     fn empty_tree() -> GameTree {
@@ -2636,5 +2675,29 @@ mod tests {
             assert_eq!(line_node(&tree, cursor, i), Some(id), "index {i}");
         }
         assert_eq!(line_node(&tree, cursor, line.len()), None, "past the end");
+    }
+
+    /// A larger pid must not sort as newer. The stamp is `(start, n)`; the legacy
+    /// file is older than any stamp, and a name that does not parse sorts first.
+    #[test]
+    fn autosaves_sort_by_start_time_not_by_pid() {
+        let mut names = vec![
+            "autosave-100-2000-1.sgf",
+            "autosave-99999-1000-1.sgf",
+            "autosave.sgf",
+            "autosave-not-a-stamp.sgf",
+            "autosave-100-2000-2.sgf",
+        ];
+        names.sort_by(|a, b| cmp_autosave_names(a, b));
+        assert_eq!(
+            names,
+            [
+                "autosave-not-a-stamp.sgf",
+                "autosave.sgf",
+                "autosave-99999-1000-1.sgf",
+                "autosave-100-2000-1.sgf",
+                "autosave-100-2000-2.sgf",
+            ]
+        );
     }
 }
