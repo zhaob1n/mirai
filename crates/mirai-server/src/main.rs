@@ -137,6 +137,19 @@ async fn run(
     key: rustls::pki_types::PrivateKeyDer<'static>,
     fingerprint: String,
 ) -> ExitCode {
+    // A longer token could never be presented: the server refuses such a Hello.
+    if let Some(i) = cfg
+        .tokens
+        .iter()
+        .position(|t| t.value.len() > session::MAX_HELLO_FIELD)
+    {
+        error!(
+            "[[token]] #{} is longer than {} bytes; no client could present it",
+            i + 1,
+            session::MAX_HELLO_FIELD
+        );
+        return ExitCode::FAILURE;
+    }
     let engines = start_engines(&cfg).await;
     if engines.is_empty() {
         error!("no engine started; there is nothing to serve");

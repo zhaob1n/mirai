@@ -472,7 +472,7 @@ That path is `$XDG_CONFIG_HOME/mirai/server.toml` when the variable is set. Edit
 paste the token into the `[[token]]` value, and set the KataGo binary and model. Relative
 paths resolve next to the config file, so the directory can be moved as a unit. Leave the
 commented keys alone unless you mean to override them. With no `[[token]]` block at all the
-server starts but rejects every client.
+server starts but rejects every client; a token longer than 256 bytes stops it from starting.
 
 **3. Start it.**
 

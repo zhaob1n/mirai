@@ -53,6 +53,20 @@ pub const PREAUTH_DEADLINE: Duration = Duration::from_secs(10);
 /// stream to write an `Error` frame on, so the close itself is the signal.
 const PREAUTH_CLOSE_REASON: &[u8] = b"pre-authentication deadline";
 
+/// Longest `Hello.token` and `Hello.client` the server accepts, in bytes.
+///
+/// Both arrive before authentication, and `client` goes into the log. A generated token is
+/// 64 characters and the reference client string is `mirai/<version>`; four times the token
+/// leaves room for any hand-made one while keeping every pre-authentication log line short.
+pub const MAX_HELLO_FIELD: usize = 256;
+
+/// Largest first control frame, in bytes of payload.
+///
+/// A `Hello` at [`MAX_HELLO_FIELD`] is about 520 bytes of postcard, and compressing a
+/// payload that small adds only a few bytes. Anything larger is not a `Hello` a real client
+/// sends, so the unauthenticated peer never gets to make the server allocate `MAX_FRAME`.
+const MAX_HELLO_FRAME: usize = 1024;
+
 static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 
 pub struct NamedEngine {
@@ -185,19 +199,20 @@ async fn session_loop(
     let mut wbuf = FrameBuf::new();
     let mut rbuf = FrameBuf::new();
 
-    let first = match tokio::time::timeout_at(
-        preauth_deadline,
-        frame::read_msg::<_, ClientMsg>(&mut rx, &mut rbuf),
-    )
-    .await
-    {
-        Ok(Ok(msg)) => msg,
-        Ok(Err(e)) => return Err(e.into()),
-        Err(_) => {
-            close_preauth(conn);
-            anyhow::bail!("pre-authentication deadline exceeded waiting for Hello");
-        }
-    };
+    let first =
+        match tokio::time::timeout_at(preauth_deadline, read_hello(&mut rx, &mut rbuf)).await {
+            Ok(Ok(msg)) => msg,
+            Ok(Err(FrameError::TooLarge(len))) => {
+                let msg = format!("a first frame of {len} bytes exceeds {MAX_HELLO_FRAME}");
+                reject(&mut tx, &mut wbuf, conn, ErrCode::BadRequest, &msg).await;
+                anyhow::bail!("{msg}");
+            }
+            Ok(Err(e)) => return Err(e.into()),
+            Err(_) => {
+                close_preauth(conn);
+                anyhow::bail!("pre-authentication deadline exceeded waiting for Hello");
+            }
+        };
     let ClientMsg::Hello {
         proto,
         token,
@@ -214,6 +229,12 @@ async fn session_loop(
         .await;
         anyhow::bail!("first control message was not Hello");
     };
+
+    if token.len() > MAX_HELLO_FIELD || client.len() > MAX_HELLO_FIELD {
+        let msg = format!("Hello.token and Hello.client are limited to {MAX_HELLO_FIELD} bytes");
+        reject(&mut tx, &mut wbuf, conn, ErrCode::BadRequest, &msg).await;
+        anyhow::bail!("{msg}");
+    }
 
     if proto != PROTO_VERSION {
         reject(
@@ -236,6 +257,7 @@ async fn session_loop(
             "unknown token",
         )
         .await;
+        // Bounded above and Debug-escaped: this reaches the log unauthenticated.
         anyhow::bail!("unauthorized client {client:?}");
     };
     let token_name = if auth.name.is_empty() {
@@ -244,7 +266,7 @@ async fn session_loop(
         auth.name.as_str()
     };
     let max_subs = auth.max_subs;
-    info!(session, %client, token = token_name, max_subs, "authenticated");
+    info!(session, client = ?client, token = token_name, max_subs, "authenticated");
 
     frame::write_msg(
         &mut tx,
@@ -386,6 +408,30 @@ async fn session_loop(
             }
         }
     }
+}
+
+/// Reads the first control message under [`MAX_HELLO_FRAME`] rather than `MAX_FRAME`.
+///
+/// The length is checked before the body is read, into a buffer on the stack; an oversized
+/// frame is [`FrameError::TooLarge`].
+async fn read_hello<R: tokio::io::AsyncRead + Unpin>(
+    rx: &mut R,
+    rbuf: &mut FrameBuf,
+) -> Result<ClientMsg, FrameError> {
+    use tokio::io::AsyncReadExt;
+
+    let mut frame = [0u8; 5 + MAX_HELLO_FRAME];
+    match rx.read_exact(&mut frame[..5]).await {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Err(FrameError::Eof),
+        Err(e) => return Err(e.into()),
+    }
+    let len = u32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
+    if len > MAX_HELLO_FRAME {
+        return Err(FrameError::TooLarge(len as u64));
+    }
+    rx.read_exact(&mut frame[5..5 + len]).await?;
+    frame::decode(rbuf, &frame[..5 + len])
 }
 
 /// Streams one subscription's events down its own unidirectional stream.
@@ -1009,6 +1055,131 @@ mod tests {
             }
         }
         panic!("the slot never came back after the subscription was dropped");
+    }
+
+    /// Runs the server side of one connection on `first`, the raw bytes the client puts on
+    /// its control stream, and returns what the client read back and how the session ended.
+    async fn first_frame_exchange(first: Vec<u8>) -> (ServerMsg, String) {
+        let (endpoint, fp, dir) = test_endpoint("hello");
+        let addr = endpoint.local_addr().expect("bound");
+        let accepting = endpoint.clone();
+        let served = tokio::spawn(async move {
+            let conn = accepting
+                .accept()
+                .await
+                .expect("incoming")
+                .await
+                .expect("handshake");
+            let host = Host {
+                engines: Vec::new(),
+                tokens: vec![Token {
+                    value: "secret".into(),
+                    name: "test".into(),
+                    max_subs: 1,
+                }],
+            };
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+            session_loop(&host, &conn, 1, deadline).await
+        });
+
+        let (conn, _) = mirai_proto::transport::connect(&format!("mirai://{addr}"), Some(fp))
+            .await
+            .expect("handshake");
+        let (mut tx, mut rx) = conn.open_bi().await.expect("control stream");
+        tokio::io::AsyncWriteExt::write_all(&mut tx, &first)
+            .await
+            .expect("write the first frame");
+        let reply: ServerMsg = tokio::time::timeout(
+            Duration::from_secs(2),
+            frame::read_msg(&mut rx, &mut FrameBuf::new()),
+        )
+        .await
+        .expect("the server did not answer")
+        .expect("read the answer");
+        let outcome = tokio::time::timeout(Duration::from_secs(2), served)
+            .await
+            .expect("the session did not end")
+            .expect("serve task");
+        let _ = std::fs::remove_dir_all(dir);
+        (
+            reply,
+            outcome.expect_err("the session was accepted").to_string(),
+        )
+    }
+
+    fn hello_frame(token: &str, client: &str) -> Vec<u8> {
+        let mut buf = FrameBuf::new();
+        frame::encode(
+            &mut buf,
+            &ClientMsg::Hello {
+                proto: PROTO_VERSION,
+                token: token.into(),
+                client: client.into(),
+            },
+        )
+        .expect("encode Hello")
+        .to_vec()
+    }
+
+    fn assert_bad_request(reply: &ServerMsg) {
+        assert!(
+            matches!(
+                reply,
+                ServerMsg::Error {
+                    sub: None,
+                    code: ErrCode::BadRequest,
+                    ..
+                }
+            ),
+            "expected a BadRequest, got {reply:?}"
+        );
+    }
+
+    /// A few hundred bytes of zstd inflate to a megabyte `client`. Before authentication
+    /// that string must not reach the log, whatever the token.
+    #[tokio::test]
+    async fn an_oversized_hello_field_is_refused_and_kept_out_of_the_log() {
+        for token in ["wrong", "secret"] {
+            let client = "A".repeat(1 << 20);
+            let first = hello_frame(token, &client);
+            assert!(first.len() <= MAX_HELLO_FRAME, "{} bytes", first.len());
+            let (reply, error) = first_frame_exchange(first).await;
+            assert_bad_request(&reply);
+            assert!(error.len() < 200, "{} bytes of error text", error.len());
+        }
+    }
+
+    /// The bound is checked on the header, before any body arrives.
+    #[tokio::test]
+    async fn a_first_frame_over_the_hello_bound_is_refused_unread() {
+        let mut header = (mirai_proto::frame::MAX_FRAME as u32)
+            .to_le_bytes()
+            .to_vec();
+        header.push(0);
+        let (reply, error) = first_frame_exchange(header).await;
+        assert_bad_request(&reply);
+        assert!(error.contains(&MAX_HELLO_FRAME.to_string()), "{error}");
+    }
+
+    /// A `client` within the bound is still escaped: a newline in it cannot forge a log line.
+    #[tokio::test]
+    async fn an_unauthorized_client_name_is_escaped() {
+        let (reply, error) =
+            first_frame_exchange(hello_frame("wrong", "x\nINFO forged\u{1b}[2J")).await;
+        assert!(
+            matches!(
+                reply,
+                ServerMsg::Error {
+                    code: ErrCode::Unauthorized,
+                    ..
+                }
+            ),
+            "{reply:?}"
+        );
+        assert!(
+            !error.contains('\n') && !error.contains('\u{1b}'),
+            "{error:?}"
+        );
     }
 
     fn test_endpoint(tag: &str) -> (quinn::Endpoint, String, std::path::PathBuf) {

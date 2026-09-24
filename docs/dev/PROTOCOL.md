@@ -378,7 +378,7 @@ At most one terminal message per stream, always the last frame.
 | **1** | `Unauthorized` | `unauthorized` | `Hello.token` matches no configured token. |
 | **2** | `NoSuchEngine` | `no-such-engine` | `Open.engine` names an unknown engine, or is `None` and no engine is configured. |
 | **3** | `TooManySubs` | `too-many-subs` | The token's `max_subs` is already reached. |
-| **4** | `BadRequest` | `bad-request` | First control message was not `Hello`; a second `Hello`; `Open.sub` duplicates a live id. |
+| **4** | `BadRequest` | `bad-request` | First control message was not `Hello`, or exceeds the `Hello` bounds ([§9.3](#93-limits)); a second `Hello`; `Open.sub` duplicates a live id. |
 | **5** | `EngineFailed` | `engine-failed` | Reserved. Not emitted by the reference server — engine failures arrive as `SubMsg::Failed` ([B.3](#appendix-b-findings)). |
 | **6** | `Internal` | `internal` | Reserved. Not emitted by the reference server. |
 
@@ -765,7 +765,7 @@ watching.
 
 | `ErrCode` | `sub` | Trigger | Fatal to |
 |---|---|---|---|
-| `BadRequest` | `None` | first control message was not `Hello` | **connection** (server closes, code 1) |
+| `BadRequest` | `None` | first control message was not `Hello`, or exceeds the `Hello` bounds | **connection** (server closes, code 1) |
 | `BadVersion` | `None` | `Hello.proto != 2` | **connection** (code 1) |
 | `Unauthorized` | `None` | token not recognised | **connection** (code 1) |
 | `BadRequest` | `None` | second `Hello` | nothing |
@@ -785,7 +785,7 @@ signal — a server MAY close without sending one.
 | Where | Code | Meaning |
 |---|---|---|
 | connection close, either side | 0 (`bye`) | orderly shutdown |
-| connection close, server | 1 | `Error` frame, then close: `BadVersion`, `Unauthorized`, or a first control message that was not `Hello` |
+| connection close, server | 1 | `Error` frame, then close: `BadVersion`, `Unauthorized`, or a first control message that was not `Hello` or exceeds its bounds |
 | connection close, server | 1 | reason `pre-authentication deadline`, no `Error` frame: handshake finished, `Hello` not received in time |
 | `RESET_STREAM` on a subscription stream (server) | 1 | subscription cancelled |
 | `STOP_SENDING` on a subscription stream (client) | 1 | subscription cancelled |
@@ -809,6 +809,8 @@ reason. Dropping the attempt is that close. It is not an authentication failure.
 | Board size | `2..=19` per dimension | receiver MUST reject anything else |
 | Control streams | exactly 1 bidirectional | client MUST NOT open more |
 | Time to `Hello` | 10 s on the reference server (`PREAUTH_DEADLINE`) | frees the slot; keep-alives do not extend it. After the handshake: application code 1, reason `pre-authentication deadline`, no `Error` frame. During the handshake: transport `APPLICATION_ERROR`. A client SHOULD send `Hello` immediately |
+| First control frame | payload ≤ 1024 bytes on the reference server (`MAX_HELLO_FRAME`) | checked on the header, before the body is read: `Error { None, BadRequest }`, close with code 1. A `Hello` within the field bounds is about 520 bytes |
+| `Hello.token`, `Hello.client` | ≤ 256 bytes each on the reference server (`MAX_HELLO_FIELD`) | `Error { None, BadRequest }`, close with code 1, before the token is checked. Both arrive unauthenticated and `client` is logged; a server MUST NOT log it unbounded or unescaped |
 
 `max_subs` is counted **per connection** in the reference server, not summed per token across
 connections ([B.5](#appendix-b-findings)); a client MUST NOT rely on
