@@ -476,6 +476,8 @@ impl Config {
     /// would win, silently. This is a three-way merge at the TOML level: only the keys that
     /// differ between `base` (what this window loaded) and `self` (what it holds now) are
     /// written over the file as it stands, so untouched keys keep the file's values.
+    /// `engine_profile` is merged by name rather than replaced; if both windows edited the
+    /// same profile, this save wins for that profile.
     pub fn save_merged(&self, base: &Config, path: &Path) -> Result<(), ConfigError> {
         if self == base && path.exists() {
             return Ok(());
@@ -557,7 +559,8 @@ impl Config {
 /// Applies the `previous → current` difference onto `file`, leaving everything else alone.
 ///
 /// Recursing per key rather than replacing whole tables is the point: two windows editing
-/// different keys of the same `[analysis]` table must both survive.
+/// different keys of the same `[analysis]` table must both survive. `engine_profile` is an
+/// array, so it is merged by `name` instead — see [`merge_profiles`].
 fn overlay(previous: &toml::Value, current: &toml::Value, file: &mut toml::Value) {
     if previous == current {
         return;
@@ -571,6 +574,10 @@ fn overlay(previous: &toml::Value, current: &toml::Value, file: &mut toml::Value
         return;
     };
     for (name, value) in cur {
+        if name == "engine_profile" {
+            apply_profile_merge(prev.get(name), value, out);
+            continue;
+        }
         match (prev.get(name), out.get_mut(name)) {
             (Some(before), Some(target)) => overlay(before, value, target),
             // Untouched by this window but absent from the file: nothing to preserve.
@@ -581,10 +588,125 @@ fn overlay(previous: &toml::Value, current: &toml::Value, file: &mut toml::Value
         }
     }
     for name in prev.keys() {
-        if !cur.contains_key(name) {
-            out.remove(name);
+        if cur.contains_key(name) {
+            continue;
+        }
+        if name == "engine_profile" {
+            let empty = toml::Value::Array(Vec::new());
+            apply_profile_merge(prev.get(name), &empty, out);
+            continue;
+        }
+        out.remove(name);
+    }
+}
+
+fn apply_profile_merge(
+    base: Option<&toml::Value>,
+    current: &toml::Value,
+    out: &mut toml::map::Map<String, toml::Value>,
+) {
+    let empty = toml::Value::Array(Vec::new());
+    let base = base.cloned().unwrap_or_else(|| empty.clone());
+    let file = out.get("engine_profile").cloned().unwrap_or(empty);
+    let merged = merge_profiles(&base, current, &file);
+    if merged.as_array().is_some_and(|items| items.is_empty()) {
+        out.remove("engine_profile");
+    } else {
+        out.insert("engine_profile".to_string(), merged);
+    }
+}
+
+/// Three-way merge of the `engine_profile` array, keyed by `name`.
+///
+/// A profile this window changed or added (`current` differs from `base`) is written.
+/// One it removed (present in `base`, absent from `current`) is deleted from the file.
+/// One it did not touch keeps whatever the file has, including a profile only the file
+/// has. A rename is a removal of the old name plus an addition of the new one. File
+/// order is preserved; names this window added are appended.
+///
+/// If both windows edited the same profile, this save wins for that name. The other
+/// window's edit of that profile is lost; edits of other profiles are not.
+///
+/// A repeated name is ambiguous: [`index_profiles`] keeps only the last table, so an
+/// edit of an earlier duplicate would be dropped. If `base`, `current` or the file
+/// repeats a name, this window's whole array is written instead — the old
+/// replace-the-list behaviour, which at least does not invent a merge.
+fn merge_profiles(base: &toml::Value, current: &toml::Value, file: &toml::Value) -> toml::Value {
+    if has_duplicate_names(base) || has_duplicate_names(current) || has_duplicate_names(file) {
+        return current.clone();
+    }
+    let base_by = index_profiles(base);
+    let current_by = index_profiles(current);
+    let mut out = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+
+    if let Some(items) = file.as_array() {
+        for item in items {
+            let Some(name) = profile_name(item) else {
+                out.push(item.clone());
+                continue;
+            };
+            if base_by.contains_key(name) && !current_by.contains_key(name) {
+                continue;
+            }
+            if let Some(mine) = current_by.get(name)
+                && base_by.get(name) != Some(mine)
+            {
+                out.push(mine.clone());
+                seen.insert(name.to_string());
+                continue;
+            }
+            out.push(item.clone());
+            seen.insert(name.to_string());
         }
     }
+    if let Some(items) = current.as_array() {
+        for item in items {
+            let Some(name) = profile_name(item) else {
+                continue;
+            };
+            if seen.contains(name) {
+                continue;
+            }
+            // Absent from the file and unchanged here: the other window deleted it.
+            if base_by.get(name) != Some(item) {
+                out.push(item.clone());
+            }
+        }
+    }
+    toml::Value::Array(out)
+}
+
+fn profile_name(value: &toml::Value) -> Option<&str> {
+    value.get("name").and_then(toml::Value::as_str)
+}
+
+fn has_duplicate_names(value: &toml::Value) -> bool {
+    let mut seen = std::collections::BTreeSet::new();
+    let Some(items) = value.as_array() else {
+        return false;
+    };
+    for item in items {
+        let Some(name) = profile_name(item) else {
+            continue;
+        };
+        if !seen.insert(name) {
+            return true;
+        }
+    }
+    false
+}
+
+fn index_profiles(value: &toml::Value) -> std::collections::BTreeMap<String, toml::Value> {
+    let mut out = std::collections::BTreeMap::new();
+    if let Some(items) = value.as_array() {
+        for item in items {
+            if let Some(name) = profile_name(item) {
+                out.insert(name.to_string(), item.clone());
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -812,6 +934,158 @@ mod tests {
             .expect_err("a directory is not a missing config");
         assert!(matches!(err, ConfigError::Io(..)), "{err}");
         assert!(dir.is_dir());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn remote(name: &str, url: &str) -> EngineProfile {
+        EngineProfile {
+            name: name.into(),
+            kind: ProfileKind::Remote {
+                url: url.into(),
+                token: "t".into(),
+                engine: None,
+                cert_sha256: None,
+            },
+        }
+    }
+
+    fn profile_names(cfg: &Config) -> Vec<&str> {
+        cfg.engine_profiles
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect()
+    }
+
+    fn profile_url(cfg: &Config, name: &str) -> String {
+        match &cfg.profile(name).unwrap().kind {
+            ProfileKind::Remote { url, .. } => url.clone(),
+            other => panic!("{name} is not remote: {other:?}"),
+        }
+    }
+
+    /// Two windows that each add a profile must not replace each other's list.
+    #[test]
+    fn two_windows_adding_profiles_both_survive() {
+        let dir = std::env::temp_dir().join(format!("mirai-cfg-add-{}", std::process::id()));
+        let path = dir.join("merge.toml");
+        let _ = std::fs::remove_dir_all(&dir);
+        let base = Config::default();
+        base.save(&path).unwrap();
+
+        let mut left = base.clone();
+        left.engine_profiles.push(remote("alpha", "mirai://a"));
+        left.save_merged(&base, &path).unwrap();
+
+        let mut right = base.clone();
+        right.engine_profiles.push(remote("beta", "mirai://b"));
+        right.save_merged(&base, &path).unwrap();
+
+        let loaded = Config::load(&path).unwrap();
+        assert_eq!(profile_names(&loaded), ["alpha", "beta"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A deletion in this window must not drop a profile the other window added.
+    #[test]
+    fn a_deletion_keeps_a_profile_another_window_added() {
+        let dir = std::env::temp_dir().join(format!("mirai-cfg-del-{}", std::process::id()));
+        let path = dir.join("merge.toml");
+        let _ = std::fs::remove_dir_all(&dir);
+        let base = Config {
+            engine_profiles: vec![remote("keep", "mirai://k")],
+            ..Config::default()
+        };
+        base.save(&path).unwrap();
+
+        let mut other = base.clone();
+        other.engine_profiles.push(remote("added", "mirai://a"));
+        other.save_merged(&base, &path).unwrap();
+
+        let mut mine = base.clone();
+        mine.engine_profiles.clear();
+        mine.save_merged(&base, &path).unwrap();
+
+        let loaded = Config::load(&path).unwrap();
+        assert_eq!(profile_names(&loaded), ["added"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Editing different profiles must not replace the whole list.
+    #[test]
+    fn editing_different_profiles_keeps_both_edits() {
+        let dir = std::env::temp_dir().join(format!("mirai-cfg-edit-{}", std::process::id()));
+        let path = dir.join("merge.toml");
+        let _ = std::fs::remove_dir_all(&dir);
+        let base = Config {
+            engine_profiles: vec![remote("alpha", "mirai://a1"), remote("beta", "mirai://b1")],
+            ..Config::default()
+        };
+        base.save(&path).unwrap();
+
+        let mut left = base.clone();
+        left.engine_profiles[0] = remote("alpha", "mirai://a2");
+        left.save_merged(&base, &path).unwrap();
+
+        let mut right = base.clone();
+        right.engine_profiles[1] = remote("beta", "mirai://b2");
+        right.save_merged(&base, &path).unwrap();
+
+        let loaded = Config::load(&path).unwrap();
+        assert_eq!(profile_url(&loaded, "alpha"), "mirai://a2");
+        assert_eq!(profile_url(&loaded, "beta"), "mirai://b2");
+        assert_eq!(profile_names(&loaded), ["alpha", "beta"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A hand-edited file can repeat a name. The keyed merge keeps only the last
+    /// table, so an edit of the earlier one used to vanish. This window's whole
+    /// list is what must be written instead.
+    #[test]
+    fn duplicate_profile_names_keep_this_windows_whole_list() {
+        let dir = std::env::temp_dir().join(format!("mirai-cfg-dup-{}", std::process::id()));
+        let path = dir.join("merge.toml");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            &path,
+            "\
+[[engine_profile]]
+name = \"alpha\"
+kind = \"remote\"
+url = \"mirai://first\"
+token = \"t\"
+
+[[engine_profile]]
+name = \"alpha\"
+kind = \"remote\"
+url = \"mirai://second\"
+token = \"t\"
+",
+        )
+        .unwrap();
+        let base = Config::load(&path).unwrap();
+        assert_eq!(base.engine_profiles.len(), 2);
+
+        let mut mine = base.clone();
+        mine.engine_profiles[0] = remote("alpha", "mirai://edited");
+        mine.save_merged(&base, &path).unwrap();
+
+        let loaded = Config::load(&path).unwrap();
+        assert_eq!(loaded.engine_profiles.len(), 2);
+        assert_eq!(
+            match &loaded.engine_profiles[0].kind {
+                ProfileKind::Remote { url, .. } => url.as_str(),
+                other => panic!("{other:?}"),
+            },
+            "mirai://edited"
+        );
+        assert_eq!(
+            match &loaded.engine_profiles[1].kind {
+                ProfileKind::Remote { url, .. } => url.as_str(),
+                other => panic!("{other:?}"),
+            },
+            "mirai://second"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
