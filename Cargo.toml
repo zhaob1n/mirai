@@ -17,8 +17,10 @@ license = "GPL-3.0-or-later"
 
 [workspace.dependencies]
 mirai-core = { path = "crates/mirai-core" }
-mirai-proto = { path = "crates/mirai-proto" }
-mirai-engine = { path = "crates/mirai-engine" }
+# Off by default: stable Cargo refuses a member's `default-features = false` when the
+# workspace entry leaves defaults on, so each member names the features it uses.
+mirai-proto = { path = "crates/mirai-proto", default-features = false }
+mirai-engine = { path = "crates/mirai-engine", default-features = false }
 mirai-client = { path = "crates/mirai-client" }
 
 gtk = { package = "gtk4", version = "0.11.4", features = ["blueprint", "gnome_50"] }
