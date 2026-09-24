@@ -812,7 +812,8 @@ impl AppState {
 
         let (max_visits, report_every, want) = {
             let cfg = self.config();
-            let mut want = Want::OWNERSHIP | Want::PV_VISITS;
+            // Nothing reads pv_visits; asking for them only fattens every report.
+            let mut want = Want::OWNERSHIP;
             if self.policy_overlay() {
                 want |= Want::POLICY;
             }
