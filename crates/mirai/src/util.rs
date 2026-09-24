@@ -2,18 +2,6 @@
 // Copyright (C) 2026 Huang Zhaobin
 //! Small shared helpers.
 
-use mirai_core::NodeAnalysis;
-use mirai_engine::Report;
-
-/// Converts a wire [`Report`] into the dequantised, Black-perspective [`NodeAnalysis`]
-/// that the tree stores and the SGF writer persists.
-///
-/// `max_candidates` is an already-resolved limit — see
-/// [`crate::config::AnalysisSettings::stored_suggestion_limit`], which never yields zero.
-pub fn analysis_of(report: &Report, max_candidates: usize) -> NodeAnalysis {
-    mirai_client::analysis_of(report, max_candidates)
-}
-
 /// `true` when a newly arrived evaluation should replace what the node already stores.
 ///
 /// Live analysis streams from a handful of visits up. Writing every snapshot would

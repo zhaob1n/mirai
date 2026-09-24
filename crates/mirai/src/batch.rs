@@ -38,10 +38,6 @@ pub struct Blunder {
     pub best: Option<Point>,
 }
 
-pub fn in_flight(analysis_threads: u16) -> usize {
-    mirai_client::batch::in_flight(analysis_threads)
-}
-
 pub fn blunders(tree: &GameTree, epoch: TreeEpoch) -> Vec<Blunder> {
     mirai_client::batch::blunders(tree)
         .into_iter()
@@ -149,7 +145,8 @@ impl BatchAnalysis {
             planned.req.priority = 0;
             planned.req.max_candidates = u8::try_from(max_candidates).ok();
         }
-        let workers = in_flight(engine.describe().analysis_threads).min(plan.len());
+        let workers =
+            mirai_client::batch::in_flight(engine.describe().analysis_threads).min(plan.len());
 
         self.running.set(true);
         self.epoch.set(epoch);
@@ -236,7 +233,7 @@ impl BatchAnalysis {
                     id: node,
                 });
                 let stored = id.is_some_and(|id| {
-                    let analysis = crate::util::analysis_of(&report, max_candidates);
+                    let analysis = mirai_client::analysis_of(&report, max_candidates);
                     self.state.set_analysis_at(
                         id,
                         self.start_position_revision.get(),

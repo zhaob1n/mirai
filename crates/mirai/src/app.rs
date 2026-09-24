@@ -875,7 +875,7 @@ impl AppState {
         // Everything above only reads the report, so the analysis is built before the tree
         // is borrowed and the `Arc` moves into the cell last instead of being cloned into
         // it. The dispatcher below is the first thing that can observe either.
-        let analysis = crate::util::analysis_of(&report, max);
+        let analysis = mirai_client::analysis_of(&report, max);
         {
             let mut session = self.imp().session.borrow_mut();
             let existing = session
