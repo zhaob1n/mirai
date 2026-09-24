@@ -108,10 +108,17 @@ impl Size {
     }
 
     /// GTP / KataGo coordinate, e.g. `A19` for `Point(0)` on 19x19. `PASS` renders `"pass"`.
+    ///
+    /// A point this size does not contain renders `"?"`: labels are drawn from analysis a
+    /// file or a server supplied, and a bad one must read as nonsense, not panic.
     pub fn to_gtp(self, p: Point) -> ArrayString<4> {
         let mut s = ArrayString::new();
         if p.is_pass() {
             s.push_str("pass");
+            return s;
+        }
+        if !self.contains(p) {
+            s.push('?');
             return s;
         }
         let (x, y) = self.xy(p);
@@ -403,6 +410,16 @@ mod tests {
         assert_eq!(s.xy(s.point(5, 7)), (5, 7));
         assert_eq!(Size::new(20, 19), None);
         assert_eq!(Size::new(1, 19), None);
+    }
+
+    #[test]
+    fn a_point_off_the_board_labels_as_a_placeholder() {
+        // Analysis from a file or a server can name any `u16`; rendering it must not panic.
+        let s = Size::new(19, 13).unwrap();
+        assert_eq!(&*s.to_gtp(Point(247)), "?");
+        assert_eq!(&*s.to_gtp(Point(Point::PASS.0 - 1)), "?");
+        assert_eq!(&*Size::square(9).to_gtp(Point(80)), "J1");
+        assert_eq!(&*Size::square(9).to_gtp(Point(81)), "?");
     }
 
     #[test]
