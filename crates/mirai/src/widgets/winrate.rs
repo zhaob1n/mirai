@@ -154,7 +154,8 @@ const PAD_T: f32 = 7.0;
 const PAD_B: f32 = 3.0;
 const STRIP_H: f32 = 10.0;
 const STRIP_GAP: f32 = 2.0;
-const NAT_HEIGHT: i32 = 140;
+/// The shortest the user may drag the graph: the three axis labels and the blunder strip.
+const MIN_HEIGHT: i32 = 80;
 
 impl Geom {
     fn new(width: f32, height: f32, samples: usize, left: f32, right_pad: f32) -> Geom {
@@ -226,6 +227,12 @@ mod imp {
         pub(super) projection: RefCell<GraphProjection>,
         pub(super) render_cache: RefCell<Option<(RenderKey, gsk::RenderNode)>>,
         pub(super) axis_metrics: Cell<Option<AxisMetrics>>,
+        /// The configured height until the first allocation, then whatever the user last
+        /// dragged the paned to, so a graph hidden and shown again comes back at that size.
+        pub(super) preferred_height: Cell<i32>,
+        /// Whether the minimum request is `preferred_height` rather than [`MIN_HEIGHT`]; see
+        /// [`super::WinrateGraph::pin`].
+        pub(super) pinned: Cell<bool>,
     }
     #[glib::object_subclass]
     impl ObjectSubclass for WinrateGraph {
@@ -239,11 +246,30 @@ mod imp {
     impl WidgetImpl for WinrateGraph {
         fn measure(&self, orientation: gtk::Orientation, _for_size: i32) -> (i32, i32, i32, i32) {
             match orientation {
-                gtk::Orientation::Vertical => (NAT_HEIGHT, NAT_HEIGHT, -1, -1),
+                gtk::Orientation::Vertical => {
+                    let height = if self.pinned.get() {
+                        self.preferred_height.get().max(MIN_HEIGHT)
+                    } else {
+                        MIN_HEIGHT
+                    };
+                    (height, height, -1, -1)
+                }
                 _ => {
                     let minimum = self.obj().axis_metrics().minimum_width();
                     (minimum, minimum.max(240), -1, -1)
                 }
+            }
+        }
+
+        fn size_allocate(&self, _width: i32, height: i32, _baseline: i32) {
+            self.preferred_height.set(height.max(MIN_HEIGHT));
+            if self.pinned.get() {
+                let weak = self.obj().downgrade();
+                glib::idle_add_local_once(move || {
+                    if let Some(graph) = weak.upgrade() {
+                        graph.release();
+                    }
+                });
             }
         }
 
@@ -267,6 +293,10 @@ impl WinrateGraph {
             .set(state.clone())
             .expect("a fresh WinrateGraph cannot already hold a state");
         this.add_css_class("mirai-winrate");
+        this.imp()
+            .preferred_height
+            .set(i32::from(state.config().ui.graph_height));
+        this.imp().pinned.set(true);
         this.set_hexpand(true);
         this.set_tooltip_text(Some(
             "Black win rate (solid) and Black score lead (dashed) over the main line",
@@ -333,6 +363,36 @@ impl WinrateGraph {
             .get()
             .expect("WinrateGraph was built without a state")
     }
+
+    /// The height the graph was last given, or the configured one if it has not been shown.
+    pub fn preferred_height(&self) -> i32 {
+        self.imp().preferred_height.get()
+    }
+
+    /// Asks the parent `gtk::Paned` for [`Self::preferred_height`] on the next layout.
+    ///
+    /// A paned with no divider position sizes a child that does not resize by its *minimum*,
+    /// and a shrinkable child is clipped rather than laid out smaller, so the only way to get
+    /// a given height from it is to request that height as the minimum. The caller clears
+    /// the paned's `position-set`; once laid out, [`Self::release`] keeps the divider where
+    /// the paned put it and lowers the minimum again, so the graph stays draggable.
+    pub fn pin(&self) {
+        self.imp().pinned.set(true);
+        self.queue_resize();
+    }
+
+    fn release(&self) {
+        if !self.imp().pinned.replace(false) {
+            return;
+        }
+        if let Some(paned) = self.parent().and_downcast::<gtk::Paned>()
+            && !paned.is_position_set()
+        {
+            paned.set_position(paned.position());
+        }
+        self.queue_resize();
+    }
+
     fn axis_metrics(&self) -> AxisMetrics {
         let context = self.pango_context();
         let serial = context.serial();

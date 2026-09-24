@@ -743,8 +743,12 @@ shows the panel (`update_analysis_page`, also after Tree, Cursor, Report and Eng
 `MRAI` is enough. Speed is not invented for a cache hit.
 
 The graph `Paned` sets `resize-end-child: false` and does not shrink either child. Extra space
-goes to the board. `present` gives `WinrateGraph` a height request (`set_size_request(-1, 170)`)
-rather than a hardcoded paned position. The sidebar header must keep `show-title` at its
+goes to the board. There is no hardcoded paned position: a paned with no position sizes the
+graph by its *minimum* request (and would clip a shrinkable child rather than lay it out
+smaller), so `WinrateGraph` starts *pinned*, requesting `ui.graph_height` as its minimum,
+and after its first allocation `release` fixes the divider where it landed and drops the
+minimum to 80 px, so the handle drags both ways. The graph records every allocated height;
+`Ui`'s drop writes it back to `ui.graph_height`. The sidebar header must keep `show-title` at its
 default: clearing it hides the title widget, which is the `Adw.InlineViewSwitcher`. Sidebar
 width follows `win.toggle-candidate-details`: 300 sp for the five common columns, 386 sp
 with Loss and Prior, including when the split collapses at 926 sp. The rank badge keeps

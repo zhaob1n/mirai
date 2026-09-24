@@ -173,6 +173,9 @@ impl Drop for Ui {
         self.play.stop();
         self.state.cancel_tasks();
         self.state.set_live_analysis(false);
+        // A plain value by now: the graph recorded its height on its last allocation.
+        self.state.config_mut().ui.graph_height =
+            u16::try_from(self.winrate.preferred_height()).unwrap_or(u16::MAX);
         self.state.save_config();
         self.state.set_engine(None);
         // `autosave` deletes its file as it drops, with the rest of the fields.
@@ -229,7 +232,6 @@ pub fn present(
     board.set_hexpand(true);
     board.set_vexpand(true);
     winrate.set_hexpand(true);
-    winrate.set_size_request(-1, 170);
     let content = window.content_paned();
     content.set_start_child(Some(&board));
     content.set_end_child(Some(&winrate));

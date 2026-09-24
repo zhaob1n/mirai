@@ -23,10 +23,6 @@
   font-feature-settings: "tnum";
 }
 
-.mirai-winrate {
-  min-height: 120px;
-}
-
 /* Depth runs down the move tree, so the lane axis — the one a tiny tree leaves empty — is the
    width. */
 .mirai-movetree {

@@ -46,6 +46,9 @@ enum Step {
     Set(String, f64),
     /// Fill the first visible Entry or SearchEntry whose placeholder contains this text.
     Fill(String, String),
+    /// Move the board/graph divider so the graph is this many pixels tall, through the same
+    /// `set_position` a drag of the handle ends in.
+    Divider(i32),
     /// Write a PNG of the whole window, or of the one widget whose Blueprint id is given —
     /// a 300x100 strip of the list you changed instead of a 1500x1600 window.
     Shot(String, Option<String>),
@@ -81,6 +84,7 @@ fn parse(script: &str) -> Vec<Step> {
                 "press" => Some(Step::Press(rest.to_string())),
                 "page" => Some(Step::Page(rest.to_string())),
                 "stack" => Some(Step::Stack(rest.to_string())),
+                "divider" => rest.parse().ok().map(Step::Divider),
                 "sort" => Some(Step::Sort(rest.to_string())),
                 "select" => rest.rsplit_once('=').and_then(|(title, index)| {
                     index
@@ -202,6 +206,14 @@ pub fn install(app: &adw::Application) {
                     eprintln!(
                         "harness: stack {title:?} -> {}",
                         if done { "ok" } else { "NOT FOUND" }
+                    );
+                    glib::timeout_future(Duration::from_millis(250)).await;
+                }
+                Step::Divider(height) => {
+                    let done = drag_divider(&app, height);
+                    eprintln!(
+                        "harness: divider {height} -> {}",
+                        if done { "ok" } else { "NOT LAID OUT" }
                     );
                     glib::timeout_future(Duration::from_millis(250)).await;
                 }
@@ -464,6 +476,25 @@ fn show_stack_page(app: &adw::Application, needle: &str) -> bool {
         Some(w) => walk(w.upcast_ref::<gtk::Widget>(), needle),
         None => false,
     }
+}
+
+/// Moves the board/graph divider so the graph is `height` pixels tall, clamped by the paned
+/// exactly as a drag of the handle is: a drag ends in the same `gtk::Paned::set_position`.
+/// Fails while the graph is hidden or not laid out yet; a negative position would unset the
+/// divider rather than clamp it.
+fn drag_divider(app: &adw::Application, height: i32) -> bool {
+    let Some(window) = app
+        .active_window()
+        .and_downcast::<crate::window_shell::MiraiWindow>()
+    else {
+        return false;
+    };
+    let paned = window.content_paned();
+    let Some(graph) = paned.end_child().filter(|graph| graph.height() > 0) else {
+        return false;
+    };
+    paned.set_position((paned.position() + graph.height() - height).max(0));
+    true
 }
 
 /// Sorts the first `gtk::ColumnView` by the column whose title contains `needle`, which is
