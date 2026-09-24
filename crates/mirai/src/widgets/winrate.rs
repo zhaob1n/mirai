@@ -143,7 +143,7 @@ struct Geom {
     left: f32,
     right: f32,
     top: f32,
-    /// Bottom of the curve area (the blunder strip lives below it).
+    /// Bottom of the curve area: the 0 % line. The blunder strip hangs from it.
     bottom: f32,
     strip_top: f32,
     strip_bottom: f32,
@@ -153,7 +153,6 @@ struct Geom {
 const PAD_T: f32 = 7.0;
 const PAD_B: f32 = 3.0;
 const STRIP_H: f32 = 10.0;
-const STRIP_GAP: f32 = 2.0;
 /// The shortest the user may drag the graph: the three axis labels and the blunder strip.
 const MIN_HEIGHT: i32 = 80;
 
@@ -161,7 +160,8 @@ impl Geom {
     fn new(width: f32, height: f32, samples: usize, left: f32, right_pad: f32) -> Geom {
         let strip_bottom = (height - PAD_B).max(PAD_T + 1.0);
         let strip_top = (strip_bottom - STRIP_H).max(PAD_T + 1.0);
-        let bottom = (strip_top - STRIP_GAP).max(PAD_T + 1.0);
+        // The 0 % line is 1 px centred on `bottom`, so the strip starts at its lower edge.
+        let bottom = (strip_top - 0.5).max(PAD_T + 1.0);
         let right = (width - right_pad).max(left + 1.0);
         let span = right - left;
         let step = if samples > 1 {
@@ -720,7 +720,8 @@ impl WinrateGraph {
         let x = geom.x(cursor_index);
         snapshot.append_color(
             &with_alpha(accent, 0.85),
-            &graphene::Rect::new(x - 0.5, geom.top, 1.0, geom.strip_bottom - geom.top),
+            // Down to the 0 % line only: the strip below it is the blunders', not the cursor's.
+            &graphene::Rect::new(x - 0.5, geom.top, 1.0, geom.bottom + 0.5 - geom.top),
         );
         if let Some(winrate) = samples[cursor_index].winrate {
             fill_disc(snapshot, x, geom.y_winrate(winrate), 3.0, &accent);
