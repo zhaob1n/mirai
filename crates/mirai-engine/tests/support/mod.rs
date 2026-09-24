@@ -17,10 +17,11 @@ use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use mirai_core::Point;
 use mirai_proto::frame::{self, FrameBuf, SUB_STREAM_LEVEL, SubStreamEncoder};
 use mirai_proto::msg::{ClientMsg, ErrCode, OwnershipDelta, ServerMsg, SubMsg, SubMsgRef};
 use mirai_proto::transport;
-use mirai_proto::types::{AnalyzeReq, EngineDesc, PROTO_VERSION, Report};
+use mirai_proto::types::{AnalyzeReq, EngineDesc, MoveInfo, PROTO_VERSION, Report};
 use quinn::VarInt;
 use tokio::sync::mpsc;
 
@@ -163,6 +164,29 @@ impl TestServer {
     pub fn report_with_ownership(&self, sub: u32, visits: u32, ownership: Vec<i8>) {
         let mut report = report_of(visits);
         report.ownership = Some(ownership);
+        let _ = self.cmd.send(Cmd::Sub(sub, SubMsg::Report(report)));
+    }
+
+    /// An intermediate report of `visits` whose one candidate is `mv`, followed by `pv`.
+    pub fn report_with_move(&self, sub: u32, visits: u32, mv: Point, pv: Vec<Point>) {
+        let mut report = report_of(visits);
+        report.moves.push(MoveInfo {
+            mv,
+            visits,
+            edge_visits: visits,
+            winrate: 0,
+            prior: 0,
+            lcb: 0,
+            utility: 0,
+            utility_lcb: 0,
+            score_lead: 0,
+            score_selfplay: 0,
+            score_stdev: 0,
+            order: 0,
+            play_value: 0,
+            pv,
+            pv_visits: Vec::new(),
+        });
         let _ = self.cmd.send(Cmd::Sub(sub, SubMsg::Report(report)));
     }
 

@@ -23,10 +23,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
+use mirai_core::Size;
 use mirai_proto::frame::{self, FrameBuf, FrameError, SubStreamDecoder};
 use mirai_proto::msg::{ClientMsg, OwnershipDelta, ServerMsg, SubMsg};
 use mirai_proto::transport::{self, TransportError};
-use mirai_proto::types::PROTO_VERSION;
+use mirai_proto::types::{PROTO_VERSION, Report};
 use quinn::{Connection, RecvStream, SendStream, VarInt};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinSet;
@@ -390,6 +391,8 @@ enum Int {
 struct SubState {
     tx: watch::Sender<SubEvent>,
     stop: Option<oneshot::Sender<()>>,
+    /// The requested board: every point a report names must lie on it.
+    size: Size,
 }
 
 enum Outcome {
@@ -497,7 +500,14 @@ async fn handle_cmd(
 ) -> Result<(), String> {
     match cmd {
         Cmd::Open { sub, tx, req } => {
-            subs.insert(sub, SubState { tx, stop: None });
+            subs.insert(
+                sub,
+                SubState {
+                    tx,
+                    stop: None,
+                    size: req.size,
+                },
+            );
             let msg = ClientMsg::Open {
                 sub,
                 engine: peer.engine.clone(),
@@ -563,24 +573,45 @@ fn handle_int(int: Int, subs: &mut HashMap<u32, SubState>) -> Option<String> {
             }
         },
 
-        Int::Sub { sub, msg } => match msg {
-            SubMsg::Report(r) => {
-                if let Some(st) = subs.get(&sub) {
-                    st.tx.send_replace(SubEvent::Report(Arc::new(r)));
-                }
-            }
-            SubMsg::Done(r) => {
+        Int::Sub { sub, msg } => {
+            let unfit = match (&msg, subs.get(&sub)) {
+                (SubMsg::Report(r) | SubMsg::Done(r), Some(st)) => misfit(r, st.size),
+                _ => None,
+            };
+            if let Some(why) = unfit {
+                // Consumers label and index by these points and arrays, so a report that
+                // does not fit the board is never delivered: the subscription fails and its
+                // stream is stopped, as on a cancel (§8.4).
                 if let Some(st) = subs.remove(&sub) {
-                    st.tx.send_replace(SubEvent::Done(Arc::new(r)));
-                }
-            }
-            SubMsg::Failed(why) => {
-                if let Some(st) = subs.remove(&sub) {
+                    if let Some(stop) = st.stop {
+                        let _ = stop.send(());
+                    }
                     st.tx
-                        .send_replace(SubEvent::Failed(EngineError::Query(why)));
+                        .send_replace(SubEvent::Failed(EngineError::Protocol(format!(
+                            "the server sent a report that {why}"
+                        ))));
+                }
+                return None;
+            }
+            match msg {
+                SubMsg::Report(r) => {
+                    if let Some(st) = subs.get(&sub) {
+                        st.tx.send_replace(SubEvent::Report(Arc::new(r)));
+                    }
+                }
+                SubMsg::Done(r) => {
+                    if let Some(st) = subs.remove(&sub) {
+                        st.tx.send_replace(SubEvent::Done(Arc::new(r)));
+                    }
+                }
+                SubMsg::Failed(why) => {
+                    if let Some(st) = subs.remove(&sub) {
+                        st.tx
+                            .send_replace(SubEvent::Failed(EngineError::Query(why)));
+                    }
                 }
             }
-        },
+        }
 
         Int::SubEnd { sub } => {
             if let Some(st) = subs.remove(&sub) {
@@ -592,6 +623,39 @@ fn handle_int(int: Int, subs: &mut HashMap<u32, SubState>) -> Option<String> {
         }
 
         Int::Lost(why) => return Some(why),
+    }
+    None
+}
+
+/// Why `report` cannot describe a `size` board (PROTOCOL.md §7.1), if it cannot.
+fn misfit(report: &Report, size: Size) -> Option<String> {
+    let points = size.points();
+    if let Some(p) = report
+        .moves
+        .iter()
+        .flat_map(|m| std::iter::once(&m.mv).chain(&m.pv))
+        .find(|p| !p.is_pass() && !size.contains(**p))
+    {
+        return Some(format!(
+            "names point {} on a {}x{} board",
+            p.0, size.w, size.h
+        ));
+    }
+    if let Some(own) = &report.ownership
+        && own.len() != points
+    {
+        return Some(format!(
+            "has {} ownership entries for {points} points",
+            own.len()
+        ));
+    }
+    if let Some(policy) = &report.policy
+        && policy.len() != points + 1
+    {
+        return Some(format!(
+            "has {} policy entries for {points} points and pass",
+            policy.len()
+        ));
     }
     None
 }

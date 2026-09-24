@@ -16,12 +16,13 @@
 //! * §9.1 — `Error { Some(sub) }` fails that subscription only; the connection survives.
 //! * §8.4 — cancelling sends `STOP_SENDING` *and* `Cancel`.
 //! * §7.11 — ownership sent as changes arrives as the map itself, report after report.
+//! * §7.1 — a report that does not fit the requested board fails its subscription.
 //! * §8.6 — connection loss fails every live subscription and replays nothing.
 #![cfg(feature = "remote")]
 
 use std::time::Duration;
 
-use mirai_core::{RuleSet, Size};
+use mirai_core::{Point, RuleSet, Size};
 use mirai_engine::{AnalyzeReq, Engine, EngineError, RemoteEngine, SubEvent};
 use mirai_proto::msg::{ErrCode, ServerMsg};
 
@@ -305,6 +306,60 @@ async fn ownership_arrives_whole_although_the_stream_sends_changes() {
         };
         assert_eq!(got.ownership.as_deref(), Some(&map[..]), "report {k}");
     }
+}
+
+/// §7.1: a server can put any `u16` in a report, and the GUI labels and indexes by it. A
+/// report that does not fit the requested board is never delivered: its subscription fails
+/// and its stream is stopped, while the connection and a well-formed search carry on.
+#[tokio::test]
+async fn a_report_that_does_not_fit_the_board_fails_its_subscription() {
+    let mut server = TestServer::start(Script::offering(&["default"])).await;
+    let engine = connect(&server).await.expect("handshake failed");
+    let _hello = server.next().await;
+
+    let open = async |server: &mut TestServer| {
+        let sub = engine.subscribe(a_request());
+        let (id, _req) = server.next_open().await;
+        server.control(ServerMsg::Opened { sub: id });
+        server.open_stream(id);
+        (sub, id)
+    };
+
+    let (sub, id) = open(&mut server).await;
+    server.report_with_move(id, 1, Point(360), vec![Point(360), Point::PASS]);
+    server.done(id, 2);
+    assert_eq!(finish(sub).await.expect("a fitting report was refused"), 2);
+
+    for bad in 0..3 {
+        let (sub, id) = open(&mut server).await;
+        match bad {
+            0 => server.report_with_move(id, 1, Point(361), vec![Point(361)]),
+            1 => server.report_with_move(id, 1, Point(0), vec![Point(0), Point(u16::MAX - 1)]),
+            _ => server.report_with_ownership(id, 1, vec![0; 360]),
+        }
+        let err = finish(sub)
+            .await
+            .expect_err("a report off the board was delivered");
+        assert!(matches!(err, EngineError::Protocol(_)), "case {bad}: {err}");
+        // Only `STOP_SENDING` is sent here, and a write only fails once it has arrived.
+        let deadline = tokio::time::Instant::now() + PATIENCE;
+        loop {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "case {bad}: stream never stopped"
+            );
+            server.report(id, 3);
+            match tokio::time::timeout(Duration::from_millis(200), server.next()).await {
+                Ok(Seen::Stopped { sub: s, code }) => {
+                    assert_eq!((s, code), (id, 1), "case {bad}");
+                    break;
+                }
+                Ok(Seen::Control(_)) | Err(_) => {}
+                Ok(Seen::Gone) => panic!("case {bad}: the connection died"),
+            }
+        }
+    }
+    assert!(engine.connected());
 }
 
 /// §8.6: "On connection loss both endpoints treat every live subscription on it as failed"
