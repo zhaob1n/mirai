@@ -94,7 +94,7 @@ repeat the analysis numbers.
 
 | Region | What it shows |
 |---|---|
-| **Header bar** | Left: **Open** (its menu is *Open File…*, *Paste SGF* and *Download from Fox…*) and **New Game**, then the engine button and the live-analysis toggle. The engine button shows the profile's name and KataGo version, and shrinks rather than duplicating that name in the subtitle; its tooltip is `Analysis Engine —` plus the full label, and its menu is the profiles plus *Preferences…*. Centre: the record title, with `•` while unsaved, and a status subtitle only when there is one. A saved record is named by its file; one that has never been saved is `Black vs White` from the record, then the event, then `Untitled`. Right: sidebar toggle and Main Menu. *Clear Board* is only in the Main Menu |
+| **Header bar** | Left: **Download from Fox** is the main half of a split button; its arrow menu offers *Open File…* and *Paste SGF*. **New Game**, the engine button and the live-analysis toggle follow. The engine button shows the profile's name and KataGo version, and shrinks rather than duplicating that name in the subtitle; its tooltip is `Analysis Engine —` plus the full label, and its menu is the profiles plus *Preferences…*. Centre: the record title, with `•` while unsaved, and a status subtitle only when there is one. A saved record is named by its file; one that has never been saved is `Black vs White` from the record, then the event, then `Untitled`. Right: sidebar toggle and Main Menu. *Clear Board* is only in the Main Menu |
 | **Board** | wood, grid, star points, optional coordinates, stones. The last move is a red dot, or — when move numbers are on — its number in red. SGF marks (triangle, square, circle, cross, text labels) are drawn |
 | **Editor toolbar** | Collapsed by default. Open it with **Editing Tools** on the board navigation bar, or Main Menu → *View* → *Editing Tools*. It holds undo/redo, Play, black and white setup, marks and the mark eraser. The larger foreground stone in Play shows the side to move. An active game forces it closed and disables the toggle; choosing a mark or setup tool opens it. Closing it returns to Play |
 | **Win-rate graph** | Always Black's view. Solid curve = Black win rate (left axis 0/50/100); dashed curve = Black score lead (right axis, never tighter than ±5). The cursor reads `Black 54.2%`. Coloured bars along the bottom are the blunder strip. Tooltip: Black win rate and Black score lead over the main line |
@@ -231,15 +231,16 @@ to KataGo's own score lead. Works whether or not live analysis is on.
 
 ## 5. Reviewing a game
 
-**Opening.** <kbd>Ctrl</kbd>+<kbd>O</kbd>, the Open button, or a file on the command line. If
-the file holds several games a dialog lists them — players, size, moves, result, date — and
+**Opening.** <kbd>Ctrl</kbd>+<kbd>O</kbd>, *Open File…* in the Fox button's arrow menu,
+or a file on the command line. If the file holds several games a dialog lists them —
+players, size, moves, result, date — and
 you choose. <kbd>Ctrl</kbd>+<kbd>V</kbd> pastes a record from the clipboard,
 <kbd>Ctrl</kbd>+<kbd>C</kbd> copies the current one out. Anything mirai does not understand in
 an SGF file is kept verbatim and written back, so files from other programs survive a round
 trip.
 
-**Downloading from Fox.** Open's menu → *Download from Fox…*, or
-<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>. There is no separate Fox button in the header.
+**Downloading from Fox.** Click the main **Download from Fox** half of the split button,
+or press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>.
 Enter an exact Fox nickname or numeric UID. The list shows at most the latest 200 public
 records, which is the service's fixed history window; players who hide their records are not
 bypassed. A successful search is cached: opening the dialog again restores the last query and

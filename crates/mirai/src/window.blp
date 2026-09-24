@@ -18,13 +18,14 @@ template $MiraiWindow: Adw.ApplicationWindow {
 
         [start]
         Adw.SplitButton {
-          icon-name: "document-open-symbolic";
-          tooltip-text: _("Open an SGF Game Record (Ctrl+O)");
-          action-name: "win.open";
+          icon-name: "folder-download-symbolic";
+          tooltip-text: _("Download a Public Game Record from Fox (Ctrl+Shift+O)");
+          dropdown-tooltip: _("Open a File or Paste SGF");
+          action-name: "win.download-fox";
           menu-model: open_menu;
 
           accessibility {
-            label: _("Open Game Record");
+            label: _("Download from Fox");
           }
         }
 
@@ -508,7 +509,6 @@ menu open_menu {
   section {
     item ("_Open File…", "win.open")
     item ("_Paste SGF", "win.paste-sgf")
-    item ("_Download from Fox…", "win.download-fox")
   }
 }
 
