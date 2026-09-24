@@ -9,15 +9,12 @@
 mod config;
 mod session;
 
-use std::fmt::Write as _;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::Parser;
-use mirai_core::SplitMix64;
 use mirai_engine::{Engine, LocalEngine};
 use mirai_proto::transport;
 use tokio::sync::Semaphore;
@@ -60,8 +57,16 @@ fn main() -> ExitCode {
     // Deliberately before anything that needs a config file or a runtime: this is what a
     // fresh install runs first.
     if args.generate_token {
-        println!("{}", generate_token());
-        return ExitCode::SUCCESS;
+        match generate_token() {
+            Ok(token) => {
+                println!("{token}");
+                return ExitCode::SUCCESS;
+            }
+            Err(e) => {
+                eprintln!("mirai-server: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
     }
 
     init_tracing();
@@ -252,20 +257,18 @@ fn cert_hostnames(listen: SocketAddr) -> Vec<String> {
     names
 }
 
-/// A 64-hex-character token: four SplitMix64 outputs seeded from the wall clock and the
-/// process id.
-fn generate_token() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0);
-    let pid = std::process::id() as u64;
-    let mut rng = SplitMix64(nanos ^ pid.wrapping_mul(0x9E37_79B9_7F4A_7C15));
-    let mut out = String::with_capacity(64);
-    for _ in 0..4 {
-        let _ = write!(out, "{:016x}", rng.next_u64());
-    }
-    out
+/// A 64-hex-character token: 32 bytes from the OS CSPRNG, hex-encoded.
+///
+/// PROTOCOL §8.2 asks for at least 128 bits. Seeding SplitMix64 from the wall
+/// clock and the pid is 64 bits and guessable, so a failure here is reported
+/// rather than papered over with that generator.
+fn generate_token() -> Result<String, &'static str> {
+    let mut buf = [0u8; 32];
+    rustls::crypto::ring::default_provider()
+        .secure_random
+        .fill(&mut buf)
+        .map_err(|_| "the operating system's random number generator failed")?;
+    Ok(mirai_proto::sha256::hex(&buf))
 }
 
 fn default_config_path() -> PathBuf {
@@ -303,7 +306,7 @@ mod tests {
 
     #[test]
     fn a_generated_token_is_64_lowercase_hex_characters() {
-        let t = generate_token();
+        let t = generate_token().expect("OS random number generator");
         assert_eq!(t.len(), 64);
         assert!(
             t.bytes()
@@ -314,10 +317,10 @@ mod tests {
 
     #[test]
     fn generated_tokens_differ_between_calls() {
-        // Two calls in the same process share a pid, so the clock has to carry the
-        // difference — if it does not, every install would share one token.
-        let a = generate_token();
-        let b = generate_token();
+        // Same process, back to back. A generator stuck on one value — or seeded
+        // from a constant — would hand every install the same token.
+        let a = generate_token().expect("OS random number generator");
+        let b = generate_token().expect("OS random number generator");
         assert_ne!(a, b);
     }
 
