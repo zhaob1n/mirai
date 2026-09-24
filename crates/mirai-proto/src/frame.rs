@@ -41,7 +41,11 @@ const ZSTD_LEVEL: i32 = 1;
 
 /// Compression level of a subscription stream. The sender's choice alone: a decoder
 /// accepts any level.
-pub const SUB_STREAM_LEVEL: i32 = 3;
+///
+/// Measured with `wire_bench` on a 20 s KataGo capture of a 19×19 opening (196 reports,
+/// capped at 10 candidates): mean framed bytes per report 212 at level 1, 206 at 3, 198 at
+/// 6, 197 at 9, and 7–14 µs to encode one. 6 is the lowest level within 3% of the best.
+pub const SUB_STREAM_LEVEL: i32 = 6;
 
 /// A subscription stream's zstd window, as a power of two: 64 KiB, several times the
 /// largest report, so the previous report is always in reach. It is also the decoder's
