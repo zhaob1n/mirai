@@ -12,13 +12,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use mirai_core::Size;
 use mirai_engine::{Engine, SubEvent, Subscription};
 use mirai_proto::frame::{self, FrameBuf, FrameError, SUB_STREAM_LEVEL, SubStreamEncoder};
 use mirai_proto::msg::{ClientMsg, ErrCode, OwnershipDelta, ServerMsg, SubMsgRef};
 use mirai_proto::types::{AnalyzeReq, EngineDesc, PROTO_VERSION};
-use quinn::{Connection, SendStream, VarInt};
+use quinn::{Connection, Incoming, SendStream, VarInt};
 use subtle::ConstantTimeEq;
 use tokio::sync::oneshot;
 use tracing::{debug, info, warn};
@@ -34,6 +35,19 @@ const CODE_CANCELLED: u32 = 1;
 
 /// Requests are clamped into this band so one client cannot starve the others.
 const PRIORITY_RANGE: std::ops::RangeInclusive<i8> = -8..=8;
+
+/// How long a peer may hold a session slot before it has sent `Hello`.
+///
+/// The accept loop takes the slot before the handshake. A QUIC keep-alive
+/// resets the idle timer, so a silent peer would otherwise hold the slot until
+/// the process exits, and 32 of them refuse every real client. One clock covers
+/// the handshake, opening the control stream and the first Hello frame. After
+/// Hello the slot is a session and this bound no longer applies.
+pub const PREAUTH_DEADLINE: Duration = Duration::from_secs(10);
+
+/// Close reason when [`PREAUTH_DEADLINE`] expires. There may be no control
+/// stream to write an `Error` frame on, so the close itself is the signal.
+const PREAUTH_CLOSE_REASON: &[u8] = b"pre-authentication deadline";
 
 static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 
@@ -106,28 +120,85 @@ fn request_geometry_error(req: &AnalyzeReq) -> Option<&'static str> {
     None
 }
 
-pub async fn serve(host: Arc<Host>, conn: Connection) {
-    let peer = conn.remote_address();
+/// Serves one incoming connection.
+///
+/// `preauth` bounds only the unauthenticated prefix. Once `Hello` has been read
+/// the session runs until the peer leaves. On expiry the connection is closed
+/// and this returns, so the caller's session permit is released. After the
+/// handshake that close is application code 1; before 1-RTT keys exist it is a
+/// transport `APPLICATION_ERROR`.
+pub async fn serve(host: Arc<Host>, incoming: Incoming, preauth: Duration) {
+    let peer = incoming.remote_address();
+    // One clock for the handshake, the control stream and the first Hello. A
+    // fresh timeout on each step would let a slow peer consume the bound three
+    // times, and a QUIC keep-alive would otherwise renew the slot forever.
+    let deadline = tokio::time::Instant::now() + preauth;
+    let conn = match tokio::time::timeout_at(deadline, incoming.into_future()).await {
+        Ok(Ok(conn)) => conn,
+        Ok(Err(e)) => {
+            warn!(%peer, "handshake failed: {e}");
+            return;
+        }
+        Err(_) => {
+            // No 1-RTT keys yet, so close_preauth cannot be delivered: quinn
+            // encodes an application close in the handshake spaces as a
+            // transport APPLICATION_ERROR with an empty reason. Dropping the
+            // Connecting is that close. Returning releases the permit.
+            warn!(%peer, "pre-authentication deadline exceeded during handshake");
+            return;
+        }
+    };
+
     let session = NEXT_SESSION.fetch_add(1, Ordering::Relaxed);
     info!(session, %peer, "connection open");
-    let outcome = session_loop(&host, &conn, session).await;
+    let outcome = session_loop(&host, &conn, session, deadline).await;
     match outcome {
         Ok(()) => info!(session, %peer, "connection closed"),
         Err(e) => info!(session, %peer, error = %e, "connection closed"),
     }
+    // A pre-authentication close has already been sent; quinn ignores a second one.
     conn.close(VarInt::from_u32(0), b"bye");
 }
 
-async fn session_loop(host: &Host, conn: &Connection, session: u64) -> anyhow::Result<()> {
-    let (mut tx, mut rx) = conn.accept_bi().await?;
+fn close_preauth(conn: &Connection) {
+    conn.close(VarInt::from_u32(CODE_REJECTED), PREAUTH_CLOSE_REASON);
+}
+
+async fn session_loop(
+    host: &Host,
+    conn: &Connection,
+    session: u64,
+    preauth_deadline: tokio::time::Instant,
+) -> anyhow::Result<()> {
+    let (mut tx, mut rx) = match tokio::time::timeout_at(preauth_deadline, conn.accept_bi()).await {
+        Ok(Ok(streams)) => streams,
+        Ok(Err(e)) => return Err(e.into()),
+        Err(_) => {
+            close_preauth(conn);
+            anyhow::bail!("pre-authentication deadline exceeded waiting for the control stream");
+        }
+    };
     let mut wbuf = FrameBuf::new();
     let mut rbuf = FrameBuf::new();
 
+    let first = match tokio::time::timeout_at(
+        preauth_deadline,
+        frame::read_msg::<_, ClientMsg>(&mut rx, &mut rbuf),
+    )
+    .await
+    {
+        Ok(Ok(msg)) => msg,
+        Ok(Err(e)) => return Err(e.into()),
+        Err(_) => {
+            close_preauth(conn);
+            anyhow::bail!("pre-authentication deadline exceeded waiting for Hello");
+        }
+    };
     let ClientMsg::Hello {
         proto,
         token,
         client,
-    } = frame::read_msg::<_, ClientMsg>(&mut rx, &mut rbuf).await?
+    } = first
     else {
         reject(
             &mut tx,
@@ -531,5 +602,164 @@ mod tests {
         assert_eq!(clamp(-128), -8);
         assert_eq!(clamp(4), 4);
         assert_eq!(clamp(0), 0);
+    }
+
+    /// A client that finishes the handshake and then stays silent must not hold a
+    /// session slot. QUIC keep-alives would otherwise keep the connection alive past
+    /// the idle timeout; the close has to be ours, and the slot has to come back.
+    #[tokio::test]
+    async fn a_client_that_never_opens_the_control_stream_releases_its_slot() {
+        silent_client_is_closed(false).await;
+    }
+
+    /// Opening the control stream and then sending nothing is the same hold: the
+    /// first Hello read is under the same deadline as waiting for the stream.
+    #[tokio::test]
+    async fn a_client_that_never_sends_hello_releases_its_slot() {
+        silent_client_is_closed(true).await;
+    }
+
+    async fn silent_client_is_closed(open_control_stream: bool) {
+        // Far below the 30 s idle timeout and the 5 s keep-alive, so a close here
+        // is the pre-authentication deadline and not QUIC giving up.
+        let deadline = Duration::from_millis(500);
+        let sessions = Arc::new(tokio::sync::Semaphore::new(1));
+        let (endpoint, fp, dir) = test_endpoint("silent");
+        let addr = endpoint.local_addr().expect("bound");
+        let accepting = endpoint.clone();
+        let slots = Arc::clone(&sessions);
+
+        let served = tokio::spawn(async move {
+            let incoming = tokio::time::timeout(Duration::from_secs(2), accepting.accept())
+                .await
+                .expect("the client never connected")
+                .expect("endpoint closed");
+            let permit = slots.try_acquire_owned().expect("session slot");
+            let _permit = permit;
+            serve(
+                Arc::new(Host {
+                    engines: Vec::new(),
+                    tokens: Vec::new(),
+                }),
+                incoming,
+                deadline,
+            )
+            .await;
+        });
+
+        let (conn, _) = mirai_proto::transport::connect(&format!("mirai://{addr}"), Some(fp))
+            .await
+            .expect("handshake");
+        // Hold the stream open and write nothing. Dropping it would reset the stream,
+        // and the server would then see EOF instead of a silent peer.
+        let held = if open_control_stream {
+            Some(conn.open_bi().await.expect("control stream"))
+        } else {
+            None
+        };
+
+        let closed = tokio::time::timeout(Duration::from_secs(2), conn.closed())
+            .await
+            .expect("silent client was not closed within the deadline");
+        match closed {
+            quinn::ConnectionError::ApplicationClosed(close) => {
+                assert_eq!(close.error_code, VarInt::from_u32(1));
+                assert_eq!(close.reason.as_ref(), b"pre-authentication deadline");
+            }
+            other => panic!("expected an application close, got {other}"),
+        }
+        drop(held);
+
+        tokio::time::timeout(Duration::from_secs(1), served)
+            .await
+            .expect("serve did not return after closing")
+            .expect("serve task");
+        assert_eq!(
+            sessions.available_permits(),
+            1,
+            "the silent client still holds a session slot"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A Hello that arrives inside the deadline is authenticated, not closed as late.
+    /// Otherwise the checks above would pass for a server that refuses every connection.
+    #[tokio::test]
+    async fn a_prompt_hello_is_not_closed_as_late() {
+        let (endpoint, fp, dir) = test_endpoint("prompt");
+        let addr = endpoint.local_addr().expect("bound");
+        let accepting = endpoint.clone();
+        let served = tokio::spawn(async move {
+            let incoming = accepting.accept().await.expect("incoming");
+            serve(
+                Arc::new(Host {
+                    engines: Vec::new(),
+                    tokens: vec![Token {
+                        value: "secret".into(),
+                        name: "test".into(),
+                        max_subs: 1,
+                    }],
+                }),
+                incoming,
+                Duration::from_secs(2),
+            )
+            .await;
+        });
+
+        let (conn, _) = mirai_proto::transport::connect(&format!("mirai://{addr}"), Some(fp))
+            .await
+            .expect("handshake");
+        let (mut tx, mut rx) = conn.open_bi().await.expect("control stream");
+        let mut buf = FrameBuf::new();
+        frame::write_msg(
+            &mut tx,
+            &mut buf,
+            &ClientMsg::Hello {
+                proto: PROTO_VERSION,
+                token: "secret".into(),
+                client: "test".into(),
+            },
+        )
+        .await
+        .expect("write Hello");
+        let msg: ServerMsg =
+            tokio::time::timeout(Duration::from_secs(2), frame::read_msg(&mut rx, &mut buf))
+                .await
+                .expect("a prompt Hello was not answered")
+                .expect("read Welcome");
+        assert!(
+            matches!(msg, ServerMsg::Welcome { .. }),
+            "a prompt Hello was not welcomed: {msg:?}"
+        );
+        assert!(conn.close_reason().is_none(), "a prompt Hello was closed");
+        conn.close(VarInt::from_u32(0), b"bye");
+        tokio::time::timeout(Duration::from_secs(2), served)
+            .await
+            .expect("serve did not finish after the client left")
+            .expect("serve task");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn test_endpoint(tag: &str) -> (quinn::Endpoint, String, std::path::PathBuf) {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        static NTH: AtomicU32 = AtomicU32::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "mirai-server-preauth-{}-{}-{tag}",
+            std::process::id(),
+            NTH.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let (certs, key) = mirai_proto::transport::load_or_generate_cert(
+            &dir.join("cert.pem"),
+            &dir.join("key.pem"),
+            &["localhost".into()],
+        )
+        .expect("certificate");
+        let fp = mirai_proto::transport::fingerprint_of(&certs);
+        let listen = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 0));
+        let endpoint =
+            mirai_proto::transport::server_endpoint(listen, certs, key).expect("endpoint");
+        (endpoint, fp, dir)
     }
 }

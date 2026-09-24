@@ -21,6 +21,8 @@ use tokio::sync::Semaphore;
 use tracing::{error, info, warn};
 
 /// Caps pre-authentication frame buffers as well as authenticated sessions.
+/// A slot taken before `Hello` is released when `PREAUTH_DEADLINE` expires,
+/// so silent peers cannot fill this.
 const MAX_SESSIONS: usize = 32;
 
 use config::ServerConfig;
@@ -187,12 +189,11 @@ async fn run(
         };
         let host = Arc::clone(&host);
         tokio::spawn(async move {
-            // Keeping the owned permit in the task releases it on every return and unwind.
+            // Keeping the owned permit in the task releases it on every return
+            // and unwind, including when the pre-authentication deadline closes
+            // a silent peer.
             let _permit = permit;
-            match incoming.await {
-                Ok(conn) => session::serve(host, conn).await,
-                Err(e) => warn!("handshake failed: {e}"),
-            }
+            session::serve(host, incoming, session::PREAUTH_DEADLINE).await;
         });
     }
 

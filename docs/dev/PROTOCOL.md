@@ -648,6 +648,23 @@ with `BadVersion` and close; a client MUST treat `Welcome.proto != 2` as unusabl
 send `Open`. There is no other feature negotiation — capabilities MUST NOT be inferred from the
 `client`/`server` identification strings.
 
+**Pre-authentication bound.** The reference server takes a session slot before the
+handshake (32, `MAX_SESSIONS` in `mirai-server`). A peer that finishes the handshake
+and then stays silent would otherwise hold that slot for the life of the connection:
+QUIC keep-alives reset the idle timer. The server releases the slot if `Hello` has
+not arrived within 10 s of the slot being taken (`PREAUTH_DEADLINE` in `session.rs`).
+The clock covers the handshake, opening the control stream and the first frame. A
+client SHOULD send `Hello` immediately after the handshake; a server MAY enforce its
+own bound.
+
+Once the handshake has completed, expiry closes with application code 1 and reason
+`pre-authentication deadline`, and no `Error` frame — there may be no control stream
+to write one on. That is not an authentication failure. If the handshake itself has
+not finished, there are no 1-RTT keys, so an application close cannot be sent.
+Dropping the attempt is a transport `CONNECTION_CLOSE` with `APPLICATION_ERROR` and
+an empty reason. A client that has not sent `Hello` SHOULD treat either close as the
+connection ending and MAY retry.
+
 ### 8.2 Authentication
 
 The credential is the opaque UTF-8 `Hello.token`, checked against a server-side list
@@ -767,11 +784,17 @@ signal — a server MAY close without sending one.
 | Where | Code | Meaning |
 |---|---|---|
 | connection close, either side | 0 (`bye`) | orderly shutdown |
-| connection close, server | 1 | handshake rejected — see the `Error` frame sent just before |
+| connection close, server | 1 | `Error` frame, then close: `BadVersion`, `Unauthorized`, or a first control message that was not `Hello` |
+| connection close, server | 1 | reason `pre-authentication deadline`, no `Error` frame: handshake finished, `Hello` not received in time |
 | `RESET_STREAM` on a subscription stream (server) | 1 | subscription cancelled |
 | `STOP_SENDING` on a subscription stream (client) | 1 | subscription cancelled |
 
 No other code carries meaning beyond "the peer is gone".
+
+If `PREAUTH_DEADLINE` expires before the handshake finishes, the reference server does
+not send application code 1. There are no 1-RTT keys, so an application close would be
+rewritten as a transport `CONNECTION_CLOSE` with `APPLICATION_ERROR` and an empty
+reason. Dropping the attempt is that close. It is not an authentication failure.
 
 ### 9.3 Limits
 
@@ -784,6 +807,7 @@ No other code carries meaning beyond "the peer is gone".
 | `AnalyzeReq.priority` | clamped to `-8..=8` | server MUST clamp, not reject |
 | Board size | `2..=19` per dimension | receiver MUST reject anything else |
 | Control streams | exactly 1 bidirectional | client MUST NOT open more |
+| Time to `Hello` | 10 s on the reference server (`PREAUTH_DEADLINE`) | frees the slot; keep-alives do not extend it. After the handshake: application code 1, reason `pre-authentication deadline`, no `Error` frame. During the handshake: transport `APPLICATION_ERROR`. A client SHOULD send `Hello` immediately |
 
 `max_subs` is counted **per connection** in the reference server, not summed per token across
 connections ([B.5](#appendix-b-findings)); a client MUST NOT rely on
@@ -952,6 +976,11 @@ KataGo falls from two busy cores to 0 % CPU within 250 ms.
 34. Sort `Report.moves` ascending by `order` before sending.
 35. Set `report_every_ms` only when a live view is wanted, so the server does not serialise
     reports nobody reads.
+36. (Client) Send `Hello` immediately after the handshake. The reference server frees
+    the session slot if it has not arrived within 10 s, and keep-alives do not extend
+    that. After the handshake the close is application code 1 with reason
+    `pre-authentication deadline`; during the handshake it is a transport
+    `APPLICATION_ERROR`.
 
 ---
 
