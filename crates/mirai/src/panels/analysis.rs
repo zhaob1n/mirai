@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! The Analysis sidebar page: the root readout, the candidate list and the blunder list.
+//! The Analysis sidebar page: a one-line search status, the candidate list and the blunder list.
 //! Step 10 / Step 12.
 //!
 //! Candidate objects are updated in place at report rate; expression bindings preserve row
@@ -185,8 +185,8 @@ fn grade_rows(rows: &mut [Row]) {
 /// `pub` because it appears in a `pub` field of the `imp` struct, which the
 /// `ObjectSubclass` impl makes publicly reachable; its own fields stay private.
 pub struct Inner {
-    readout: gtk::Label,
-    metrics: gtk::Label,
+    status: gtk::Box,
+    to_move: gtk::Label,
     detail: gtk::Label,
     start_actions: gtk::Box,
     analyse_game_button: gtk::Button,
@@ -212,9 +212,9 @@ mod imp {
     #[template(file = "src/panels/analysis.blp")]
     pub struct AnalysisPanel {
         #[template_child]
-        pub readout: TemplateChild<gtk::Label>,
+        pub status: TemplateChild<gtk::Box>,
         #[template_child]
-        pub metrics: TemplateChild<gtk::Label>,
+        pub to_move: TemplateChild<gtk::Label>,
         #[template_child]
         pub detail: TemplateChild<gtk::Label>,
         #[template_child]
@@ -302,8 +302,8 @@ impl AnalysisPanel {
 
     fn build(&self) {
         let imp = self.imp();
-        let readout = imp.readout.get();
-        let metrics = imp.metrics.get();
+        let status = imp.status.get();
+        let to_move = imp.to_move.get();
         let detail = imp.detail.get();
         let columns = imp.columns.get();
         let blunder_group = imp.blunder_group.get();
@@ -443,8 +443,8 @@ impl AnalysisPanel {
         ));
 
         let _ = self.imp().inner.set(Inner {
-            readout,
-            metrics,
+            status,
+            to_move,
             detail,
             start_actions: imp.start_actions.get(),
             analyse_game_button: imp.analyse_game_button.get(),
@@ -498,8 +498,6 @@ impl AnalysisPanel {
                 let head = Headline {
                     color: mover,
                     visits: report.root.visits,
-                    winrate: report.root.winrate_for(mover),
-                    score: report.root.score_lead_for(mover),
                     stdev: report.root.score_stdev_f32(),
                     // Only a live search has a speed; the cached branch below never does.
                     speed: state.analysis_speed(),
@@ -536,8 +534,6 @@ impl AnalysisPanel {
                         let head = Headline {
                             color: to_play,
                             visits: a.visits,
-                            winrate: to_play.winrate_for(a.winrate),
-                            score: a.score_lead * to_play.sign(),
                             stdev: a.score_stdev,
                             speed: None,
                         };
@@ -570,30 +566,35 @@ impl AnalysisPanel {
         let inner = self.inner();
         match headline {
             Some(h) => {
+                let name = match h.color {
+                    Color::Black => "Black to play",
+                    Color::White => "White to play",
+                };
+                inner.to_move.set_label(stone(h.color));
+                inner.to_move.set_visible(true);
                 inner
-                    .readout
-                    .set_label(&format!("{} to Play", h.color.name()));
-                inner.metrics.set_label(&format!(
-                    "{}% · {} points",
-                    pct1(h.winrate),
-                    signed1(h.score),
-                ));
-                inner.metrics.set_visible(true);
-                inner.start_actions.set_visible(false);
-                inner.detail.set_visible(true);
+                    .to_move
+                    .update_property(&[gtk::accessible::Property::Label(name)]);
                 let speed = match h.speed {
                     Some(rate) => format!(" · {}", visits_per_second(rate)),
                     None => String::new(),
                 };
-                inner.detail.set_label(&format!(
-                    "{} visits{speed} · ±{:.1} points",
-                    si_visits(h.visits),
-                    h.stdev,
-                ));
+                inner
+                    .detail
+                    .set_label(&format!("{} visits{speed}", si_visits(h.visits)));
+                inner.detail.set_visible(true);
+                // KataGo's spread of the final score is easily read as the error of the
+                // lead, so it stays out of the line and is there for whoever asks.
+                inner.status.set_tooltip_text(Some(&format!(
+                    "{name} · final score spread ±{:.1} points",
+                    h.stdev
+                )));
+                inner.status.set_visible(true);
+                inner.start_actions.set_visible(false);
             }
             None => {
-                inner.readout.set_label("No Analysis");
-                inner.metrics.set_visible(false);
+                inner.to_move.set_visible(false);
+                inner.status.set_tooltip_text(None);
                 let live = self.state().live_analysis();
                 let engine = self.state().engine_state();
                 // A whole-game sweep needs the engine itself, so it is offered once it is up.
@@ -608,10 +609,12 @@ impl AnalysisPanel {
                     _ if live => ("Analysing…".to_string(), false),
                     // Live analysis may be asked for early: it starts once the net loads.
                     EngineState::Starting { profile } => (format!("Starting {profile}…"), true),
+                    // The buttons say it all.
                     EngineState::Ready { .. } => (String::new(), true),
                 };
                 inner.detail.set_visible(!detail.is_empty());
                 inner.detail.set_label(&detail);
+                inner.status.set_visible(!detail.is_empty());
                 inner.start_actions.set_visible(offer);
             }
         }
@@ -760,12 +763,10 @@ fn update_blunder_row(row: &adw::ActionRow, b: Blunder, size: Size) {
         ))]);
 }
 
-/// The root numbers, already in the mover's perspective.
+/// The root reading the status line needs. The root's win rate and lead are the graph's.
 struct Headline {
     color: Color,
     visits: u32,
-    winrate: f32,
-    score: f32,
     stdev: f32,
     /// Visits per second, when a live search is producing the numbers.
     speed: Option<f32>,

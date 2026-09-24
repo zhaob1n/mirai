@@ -279,7 +279,7 @@ depend on is [§1](#1-the-system). User settings and shortcuts are
 | show or hide the editor toolbar | `crates/mirai/src/window.blp`, `crates/mirai/src/window.rs` | `editor_revealer` starts collapsed. `set_editor_visible` is the only writer; `win.toggle-editor` projects it |
 | where the board menu pops up | `crates/mirai/src/window.rs`, `crates/mirai/src/widgets/board.rs` | button bounds become `BoardView` coordinates; `BoardView::show_menu` right-aligns to that rectangle. Shift+right-click anchors to the intersection. Never pass no anchor |
 | the move-tree layout | `crates/mirai/src/widgets/tree.rs` | `lay_out`. Depth runs down the sidebar |
-| the win-rate graph | `crates/mirai/src/widgets/winrate.rs` | `WinrateGraph::refresh`. Cursor text and tooltip are Black-perspective; the sidebar headline is side-to-move |
+| the win-rate graph | `crates/mirai/src/widgets/winrate.rs` | `WinrateGraph::refresh`. Cursor text and tooltip are Black-perspective; the sidebar's candidate rows are side-to-move |
 | blunder colour, or the list row | `crates/mirai/src/widgets/winrate.rs`, `crates/mirai/src/panels/analysis.rs` | `Severity::color`, `severity_of_drop`, `update_blunder_row`. One emoji line; the title carries the severity colour |
 | the analysis sidebar | `crates/mirai/src/panels/analysis.rs`, `crates/mirai/src/panels/analysis.blp` | `refresh`, `set_detailed_columns`, `set_blunders`. Default columns are `# / Move / Win / Score / Visits`; Loss and Prior start hidden |
 | the static window, or another Blueprint template | `crates/mirai/src/window.blp` | template `MiraiWindow`, bound in `crates/mirai/src/window_shell.rs`. Also `crates/mirai/src/panels/analysis.blp`, `crates/mirai/src/preferences.blp`, `crates/mirai/src/profile_editor.blp`, `crates/mirai/src/new_game.blp`, `crates/mirai/src/label_editor.blp`, `crates/mirai/src/fox_picker.blp` |
@@ -717,9 +717,11 @@ Existing rows are updated in place; only the tail is appended or removed, so hov
 activation survive a refill.
 
 The graph is always Black-perspective: the cursor reads `Black {:.1}%`, and the tooltip names
-Black win rate and Black score lead. The sidebar headline is the side to move. A White-to-play
-position can show about 9.9% in the sidebar and about 90.1% on the graph; that is the same
-stored value, not a calculation error.
+Black win rate and Black score lead. It is the only root readout. The Analysis panel's status
+line is the side-to-move stone, visits, and speed while a live search runs, with the score
+spread in its tooltip; its rows are side-to-move. Showing the root again in the panel would
+put one number in two perspectives on screen at once, which is what used to need a paragraph
+explaining it.
 
 ### Widget tree
 

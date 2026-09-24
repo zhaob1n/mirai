@@ -135,8 +135,8 @@ rule.
 the position *after* the move. They are not what the sort used.
 
 Root `winrate` is an average over **all** visits, so it is smoother than
-`moves[0]` and can disagree with it. The panel headline is the root; the first
-row is the pick.
+`moves[0]` and can disagree with it. The graph plots the root; the panel's first
+row is the pick. The panel shows no root win rate of its own.
 
 ---
 

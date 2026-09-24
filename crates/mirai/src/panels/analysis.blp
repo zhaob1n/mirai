@@ -7,44 +7,40 @@ template $MiraiAnalysisPanel: Gtk.Box {
 
   Gtk.Box {
     orientation: vertical;
-    spacing: 2;
     hexpand: true;
     margin-start: 12;
     margin-end: 12;
-    margin-top: 8;
-    margin-bottom: 8;
+    margin-top: 6;
+    margin-bottom: 6;
 
-    Gtk.Label readout {
-      label: _("No Analysis");
-      xalign: 0;
-      hexpand: true;
+    // One line: whose moves these are, as a stone, and how far the search has got. The
+    // position's own win rate is the graph's; the pick's numbers are the first row.
+    Gtk.Box status {
+      spacing: 4;
 
-      styles [
-        "heading",
-      ]
-    }
+      // The blunder rows' emoji stones, kept out of `detail` so dim-label does not fade them.
+      // An image to assistive technology: a label would read out the emoji, not its name.
+      Gtk.Label to_move {
+        visible: false;
+        accessible-role: img;
 
-    Gtk.Label metrics {
-      visible: false;
-      xalign: 0;
-      hexpand: true;
+        styles [
+          "caption",
+        ]
+      }
 
-      styles [
-        "title-4",
-        "mirai-position",
-      ]
-    }
+      Gtk.Label detail {
+        xalign: 0;
+        hexpand: true;
+        wrap: true;
+        wrap-mode: word_char;
 
-    Gtk.Label detail {
-      xalign: 0;
-      hexpand: true;
-      wrap: true;
-      wrap-mode: word_char;
-
-      styles [
-        "caption",
-        "dim-label",
-      ]
+        styles [
+          "caption",
+          "dim-label",
+          "mirai-position",
+        ]
+      }
     }
 
     // What the panel is empty of, offered as the two ways to fill it rather than described.

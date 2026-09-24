@@ -135,9 +135,9 @@ Click the graph, or drag along it, to move along the main line.
 Moving the cursor restarts the search on the new position; the old one is abandoned at once.
 The search runs up to **Maximum Visits** and the display refreshes every **Report Interval**.
 
-The sidebar is the side to move: *Black to Play* or *White to Play*, then that side's win
-rate and score lead. The graph is always Black. On White's turn a sidebar `90.1%` and a graph
-`Black 9.9%` are the same position, not two calculations. A stored analysis on the current
+The graph reads the position, always from Black's side: the cursor label is Black's win rate.
+The sidebar lists the moves for the side to move, from that side's point of view; a small
+black or white stone at its top says which side that is. A stored analysis on the current
 node is shown even with no engine configured; visits per second appear only while a live
 search is producing them.
 
@@ -200,11 +200,12 @@ blobs and the move the engine would play stay on that order. Selecting a row pin
 variation on the board; the pin survives the next report. Double-click, or Enter on the list,
 plays the move.
 
-Above the list: the side to move, `{win}% · {score} points`, then `{visits} visits · ±{stdev}
-points`. While a live search is running, the visits line also shows the speed, such as
-`1.4k/s`. A cached reading has no speed. High prior with few visits means the network liked
-it and the search did not; low prior with many visits means the search found something the
-network nearly missed. Those two columns are the detailed view.
+Above the list, one line: the stone of the side to move, `{visits} visits`, and while a live
+search is running its speed, such as `1.4k/s`. A cached reading has no speed. Hover the line
+for KataGo's spread of the final score. The position's own win rate is the graph's cursor
+label; the pick's win rate and lead are the first row. High prior with few visits means the
+network liked it and the search did not; low prior with many visits means the search found
+something the network nearly missed. Those two columns are the detailed view.
 
 ### Previewing a variation
 

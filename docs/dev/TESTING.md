@@ -235,8 +235,9 @@ one is running or being scored, the graph, `nav` and the sidebar are hidden.
 The sidebar's candidate list shows `# / Move / Win / Score / Visits`. Loss and
 Prior stay hidden until `action:win.toggle-candidate-details`. The graph is
 always Black's (`Black 36.0%` on the cursor; tooltip names Black win rate and
-Black score lead). The sidebar headline is the side to move. Those two readings
-are complements on White's turn; that is not a calculation error.
+Black score lead). The sidebar opens with one status line — the side-to-move
+stone, visits, and speed while a live search runs — and its rows are the side
+to move.
 
 Action names are whatever `window::install_actions` registers. A typo logs
 `MISSING`. The recipes below name the actions they need. `win.open` and
