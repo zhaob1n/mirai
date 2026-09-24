@@ -675,7 +675,7 @@ keyboard focus.
 
 | Path | What |
 |---|---|
-| `~/.config/mirai/config.toml` | settings and engine profiles |
+| `~/.config/mirai/config.toml` | settings and engine profiles, remote tokens included, so it is written readable by you alone (`0600`, in a `0700` directory when mirai creates it) |
 | `~/.local/share/mirai/autosave-*.sgf` | the record each open window is looking at, one file per window |
 | `~/.local/share/mirai/fox-last-search.json` | last Fox search query and game list, restored the next time the download dialog opens |
 | `~/.local/share/mirai/katago-logs/` | KataGo's own logs, one file per engine start, and the generated `katago-analysis-*.cfg` |

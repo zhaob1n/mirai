@@ -460,13 +460,12 @@ impl Config {
         }
     }
 
+    /// Writes the configuration over whatever `path` holds. It carries every remote
+    /// profile's bearer token, so the file is written `0600` and a directory this creates
+    /// is `0700` (see [`write_private`]).
     pub fn save(&self, path: &Path) -> Result<(), ConfigError> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| ConfigError::Io(dir.to_path_buf(), e))?;
-        }
         let text = toml::to_string_pretty(self)?;
-        mirai_proto::atomic::write_atomic(path, text.as_bytes())
-            .map_err(|e| ConfigError::Io(path.to_path_buf(), e))
+        write_private(path, &text)
     }
 
     /// Writes the configuration, keeping edits another window has made meanwhile.
@@ -499,12 +498,8 @@ impl Config {
         };
         overlay(&previous, &current, &mut merged);
 
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| ConfigError::Io(dir.to_path_buf(), e))?;
-        }
         let text = toml::to_string_pretty(&merged)?;
-        mirai_proto::atomic::write_atomic(path, text.as_bytes())
-            .map_err(|e| ConfigError::Io(path.to_path_buf(), e))
+        write_private(path, &text)
     }
 
     /// A first-run configuration: a working local profile if a KataGo installation can be
@@ -554,6 +549,24 @@ impl Config {
             *cert_sha256 = Some(fingerprint.to_string());
         }
     }
+}
+
+/// Writes `config.toml` readable by its owner alone. Every remote profile's bearer token
+/// is in it, and the umask default (usually `0644`) let any local user read them; an
+/// existing file left that wide is tightened here too. A missing config directory is
+/// created `0700`, the XDG base-directory default.
+fn write_private(path: &Path, text: &str) -> Result<(), ConfigError> {
+    if let Some(dir) = path.parent() {
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        builder
+            .create(dir)
+            .map_err(|e| ConfigError::Io(dir.to_path_buf(), e))?;
+    }
+    mirai_proto::atomic::write_atomic_private(path, text.as_bytes())
+        .map_err(|e| ConfigError::Io(path.to_path_buf(), e))
 }
 
 /// Applies the `previous → current` difference onto `file`, leaving everything else alone.
@@ -872,6 +885,58 @@ mod tests {
             "the other edit was reverted"
         );
         assert_eq!(merged.ui.show_coordinates, mine.ui.show_coordinates);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    fn unix_mode(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    /// config.toml holds every remote profile's bearer token. A first save must not leave
+    /// it, or the directory it creates, readable by other users.
+    #[cfg(unix)]
+    #[test]
+    fn a_new_config_is_readable_by_its_owner_alone() {
+        let base = std::env::temp_dir().join(format!("mirai-cfg-new-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let dir = base.join("mirai");
+        let path = dir.join("config.toml");
+
+        Config::default().save(&path).expect("first save");
+
+        assert_eq!(unix_mode(&path), 0o600);
+        assert_eq!(unix_mode(&dir), 0o700);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A config an older mirai wrote with the umask default is tightened by the next save,
+    /// through either save path.
+    #[cfg(unix)]
+    #[test]
+    fn an_existing_world_readable_config_is_tightened_on_save() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("mirai-cfg-wide-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        let widen = || {
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        };
+
+        std::fs::write(&path, "").unwrap();
+        widen();
+        Config::default().save(&path).expect("save");
+        assert_eq!(unix_mode(&path), 0o600, "save");
+
+        widen();
+        let base = Config::default();
+        let mut edited = base.clone();
+        edited.analysis.live_max_visits = 4242;
+        edited.save_merged(&base, &path).expect("merged save");
+        assert_eq!(unix_mode(&path), 0o600, "save_merged");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
