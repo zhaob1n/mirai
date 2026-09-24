@@ -47,9 +47,19 @@ fn temp_path(target: &Path, n: u64) -> PathBuf {
 ///
 /// A symlink is followed, including a dangling one: the link text is resolved against
 /// the link's directory, and the bytes land on that target. An existing file keeps its
-/// mode; `std::fs::write` did both, and a `0600` config holds remote tokens.
+/// mode; `std::fs::write` did both. A file that holds secrets goes through
+/// [`write_atomic_private`] instead.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     replace(path, bytes, None)
+}
+
+/// [`write_atomic`] for a file only its owner may read, such as a config holding remote
+/// bearer tokens: on Unix the result is `0600` whether the file is new or not, so an
+/// existing file left wider — by the umask when it was first written, or by hand — is
+/// tightened by the next write. The temporary file is created `0600`, so the bytes are
+/// never readable by anyone else, not even while they are staged.
+pub fn write_atomic_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    replace(path, bytes, Some(0o600))
 }
 
 /// Stages `bytes` beside `target` and returns the temporary path. The caller renames it
@@ -128,14 +138,17 @@ fn persist(tmp: PathBuf, target: &Path) -> io::Result<()> {
 fn replace(path: &Path, bytes: &[u8], mode: Option<u32>) -> io::Result<()> {
     let target = follow(path)?;
     let existing = existing_permissions(&target)?;
-    // Create the temporary file no wider than the file it replaces. Staging with the
-    // umask default and narrowing afterwards left a `0600` config — remote tokens —
+    // Create the temporary file no wider than the file it replaces, or at the mode asked
+    // for. Staging with the umask default and narrowing afterwards left a private file
     // readable by other users for as long as the write took. The umask can only narrow
     // these bits further; the exact ones are set before the rename.
     let create_mode = mode.or_else(|| existing.as_ref().and_then(unix_mode));
     let staged = stage(&target, bytes, create_mode)?;
-    if mode.is_none()
-        && let Some(permissions) = existing
+    let exact = match mode {
+        Some(mode) => mode_permissions(mode),
+        None => existing,
+    };
+    if let Some(permissions) = exact
         && let Err(error) = std::fs::set_permissions(&staged, permissions)
     {
         let _ = std::fs::remove_file(&staged);
@@ -192,6 +205,17 @@ fn unix_mode(permissions: &std::fs::Permissions) -> Option<u32> {
 
 #[cfg(not(unix))]
 fn unix_mode(_permissions: &std::fs::Permissions) -> Option<u32> {
+    None
+}
+
+#[cfg(unix)]
+fn mode_permissions(mode: u32) -> Option<std::fs::Permissions> {
+    use std::os::unix::fs::PermissionsExt;
+    Some(std::fs::Permissions::from_mode(mode))
+}
+
+#[cfg(not(unix))]
+fn mode_permissions(_mode: u32) -> Option<std::fs::Permissions> {
     None
 }
 
