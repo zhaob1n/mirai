@@ -60,7 +60,7 @@ const SUB_TABLE_LOG: u32 = 14;
 pub enum FrameError {
     #[error("i/o error: {0}")]
     Io(#[from] io::Error),
-    #[error("frame of {0} bytes exceeds the {MAX_FRAME} byte limit")]
+    #[error("frame of {0} bytes exceeds its size limit")]
     TooLarge(u64),
     #[error("malformed frame: {0}")]
     Codec(String),
@@ -86,7 +86,7 @@ impl FrameBuf {
     }
 }
 
-/// The decompression-bomb guard: nothing may inflate past [`MAX_FRAME`].
+/// Bounds a compressed frame being encoded to [`MAX_FRAME`].
 fn bounded(out: &mut Vec<u8>) -> BoundedWriter<'_> {
     BoundedWriter::new(out, MAX_FRAME, "frame")
 }
@@ -121,7 +121,7 @@ pub fn encode<'b, T: Serialize + ?Sized>(
 /// Decodes one complete frame (header included) into `T`.
 pub fn decode<T: DeserializeOwned>(buf: &mut FrameBuf, frame: &[u8]) -> Result<T, FrameError> {
     let (flags, payload) = split_frame(frame)?;
-    decode_payload(buf, flags, payload)
+    decode_payload(buf, flags, payload, MAX_FRAME)
 }
 
 /// One complete frame's flags and payload.
@@ -136,10 +136,12 @@ fn split_frame(frame: &[u8]) -> Result<(u8, &[u8]), FrameError> {
     Ok((frame[4], &frame[5..5 + len]))
 }
 
+/// Decodes a control-stream payload whose plaintext may not exceed `limit` bytes.
 fn decode_payload<T: DeserializeOwned>(
     buf: &mut FrameBuf,
     flags: u8,
     payload: &[u8],
+    limit: usize,
 ) -> Result<T, FrameError> {
     // Postcard is positional and the header has no other extension point, so an unknown
     // flag means the sender is speaking a dialect we would silently misparse. Reject it.
@@ -149,8 +151,17 @@ fn decode_payload<T: DeserializeOwned>(
         )));
     }
     let bytes: &[u8] = if flags & FLAG_ZSTD != 0 {
+        // The decompression-bomb guard: inflating stops one byte past `limit`, whatever
+        // content size the zstd frame claims.
         buf.plain.clear();
-        zstd::stream::copy_decode(payload, bounded(&mut buf.plain))?;
+        let mut z = zstd::stream::read::Decoder::with_buffer(payload)?;
+        io::Read::read_to_end(
+            &mut io::Read::take(&mut z, limit as u64 + 1),
+            &mut buf.plain,
+        )?;
+        if buf.plain.len() > limit {
+            return Err(FrameError::TooLarge(buf.plain.len() as u64));
+        }
         &buf.plain
     } else {
         payload
@@ -190,16 +201,37 @@ where
     R: AsyncRead + Unpin,
     T: DeserializeOwned,
 {
-    let flags = read_frame(r, &mut buf.wire).await?;
+    read_msg_within(r, buf, MAX_FRAME).await
+}
+
+/// [`read_msg`] for a peer not yet trusted with [`MAX_FRAME`]: a payload, or its
+/// decompressed plaintext, over `limit` bytes is [`FrameError::TooLarge`], and nothing
+/// larger than `limit` is allocated for it. `limit` above `MAX_FRAME` is `MAX_FRAME`.
+pub async fn read_msg_within<R, T>(
+    r: &mut R,
+    buf: &mut FrameBuf,
+    limit: usize,
+) -> Result<T, FrameError>
+where
+    R: AsyncRead + Unpin,
+    T: DeserializeOwned,
+{
+    let limit = limit.min(MAX_FRAME);
+    let flags = read_frame(r, &mut buf.wire, limit).await?;
     let payload = std::mem::take(&mut buf.wire);
-    let out = decode_payload(buf, flags, &payload);
+    let out = decode_payload(buf, flags, &payload, limit);
     buf.wire = payload;
     out
 }
 
 /// Reads one frame's payload into `wire` and returns its flags. The length is checked
-/// before anything is allocated; a clean end of stream is [`FrameError::Eof`].
-async fn read_frame<R: AsyncRead + Unpin>(r: &mut R, wire: &mut Vec<u8>) -> Result<u8, FrameError> {
+/// against `limit` before anything is allocated; a clean end of stream is
+/// [`FrameError::Eof`].
+async fn read_frame<R: AsyncRead + Unpin>(
+    r: &mut R,
+    wire: &mut Vec<u8>,
+    limit: usize,
+) -> Result<u8, FrameError> {
     let mut header = [0u8; 5];
     match r.read_exact(&mut header).await {
         Ok(_) => {}
@@ -207,7 +239,7 @@ async fn read_frame<R: AsyncRead + Unpin>(r: &mut R, wire: &mut Vec<u8>) -> Resu
         Err(e) => return Err(e.into()),
     }
     let len = u32::from_le_bytes([header[0], header[1], header[2], header[3]]) as usize;
-    if len > MAX_FRAME {
+    if len > limit {
         return Err(FrameError::TooLarge(len as u64));
     }
     wire.clear();
@@ -343,7 +375,7 @@ impl SubStreamDecoder {
         R: AsyncRead + Unpin,
         T: DeserializeOwned,
     {
-        let flags = read_frame(r, &mut self.wire).await?;
+        let flags = read_frame(r, &mut self.wire, MAX_FRAME).await?;
         let payload = std::mem::take(&mut self.wire);
         let out = self.decode_payload(flags, &payload);
         self.wire = payload;
@@ -436,6 +468,45 @@ mod tests {
         let mut buf = FrameBuf::new();
         let r: Result<u32, _> = read_msg(&mut rd, &mut buf).await;
         assert!(matches!(r, Err(FrameError::TooLarge(_))));
+    }
+
+    /// A control frame carrying `plain` zstd-compressed, whatever its size.
+    fn zstd_frame(plain: &[u8]) -> Vec<u8> {
+        let body = zstd::encode_all(plain, ZSTD_LEVEL).unwrap();
+        let mut frame = (body.len() as u32).to_le_bytes().to_vec();
+        frame.push(FLAG_ZSTD);
+        frame.extend_from_slice(&body);
+        frame
+    }
+
+    /// The limit bounds the plaintext, not just the wire: a small compressed frame is
+    /// refused once it inflates past the limit, and inflating stops there.
+    #[tokio::test]
+    async fn a_bounded_read_stops_inflating_at_its_limit() {
+        let big = vec![7u8; 1 << 20];
+        let frame = zstd_frame(&postcard::to_stdvec(&big).unwrap());
+        let limit = 1024;
+        assert!(
+            frame.len() - 5 <= limit,
+            "{} bytes on the wire",
+            frame.len()
+        );
+
+        let mut buf = FrameBuf::new();
+        let r: Result<Vec<u8>, _> = read_msg_within(&mut &frame[..], &mut buf, limit).await;
+        assert!(matches!(r, Err(FrameError::TooLarge(_))), "got {r:?}");
+        assert!(
+            buf.plain.capacity() < 4 * limit,
+            "inflated {}",
+            buf.plain.capacity()
+        );
+
+        let r: Vec<u8> = read_msg(&mut &frame[..], &mut buf).await.unwrap();
+        assert_eq!(r, big);
+
+        let bomb = zstd_frame(&vec![0u8; MAX_FRAME + 1]);
+        let r: Result<Vec<u8>, _> = read_msg(&mut &bomb[..], &mut buf).await;
+        assert!(matches!(r, Err(FrameError::TooLarge(_))), "got {r:?}");
     }
 
     #[tokio::test]

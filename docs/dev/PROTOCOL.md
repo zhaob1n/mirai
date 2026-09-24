@@ -193,7 +193,7 @@ subscription window 2^16 (`SUB_WINDOW_LOG`) · `SUB_STREAM_LEVEL`, the reference
 |---|---|---|
 | 1 | Never emit `len > MAX_FRAME`. | MUST NOT |
 | 2 | Read the 5-byte header first and reject `len > MAX_FRAME` **before** reading or allocating the body. | MUST |
-| 3 | **Decompression-bomb guard:** bound each frame's decompressed size and abort as soon as the plaintext would exceed `MAX_FRAME`. Never trust a content-size field inside the zstd frame. (`frame.rs` — `bounded` on the control stream, `SubStreamDecoder::inflate` on subscription streams.) | MUST |
+| 3 | **Decompression-bomb guard:** bound each frame's decompressed size and abort as soon as the plaintext would exceed `MAX_FRAME`. Never trust a content-size field inside the zstd frame. (`frame.rs` — `decode_payload` on the control stream, `SubStreamDecoder::inflate` on subscription streams.) A receiver MAY apply a smaller bound where it expects a small message (`read_msg_within`, [§9.3](#93-limits)). | MUST |
 | 4 | Reject a `flags` value the stream does not allow. | MUST |
 | 5 | A payload decodes to exactly one message; reject trailing bytes after it. | MUST |
 | 6 | Control stream: compress iff the postcard payload is **strictly greater than** `COMPRESS_THRESHOLD`. Interop does not depend on it: receivers MUST accept either form at any size, so a minimal implementation MAY always send `flags = 0x00`. | SHOULD / MUST |
