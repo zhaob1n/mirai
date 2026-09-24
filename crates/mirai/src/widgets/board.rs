@@ -237,6 +237,56 @@ struct BoardProjection {
     policy_overlay: bool,
     ownership_texture: Option<gdk::Texture>,
     policy_texture: Option<gdk::Texture>,
+    /// Identity of this projection. Bumped on every rebuild so a PV cache built
+    /// against the previous position cannot be drawn after the board moves.
+    id: u64,
+}
+
+/// A candidate PV replayed onto the current position: the board it produces and the
+/// move number of each stone it placed. Built outside `snapshot` (INV-9).
+struct CachedPv {
+    /// `hover` or, failing that, the pin. The editor tool is not part of the key:
+    /// [`BoardView::active_preview`] applies that gate when drawing, so returning to
+    /// Play does not replay the line.
+    index: usize,
+    /// `Arc::as_ptr` of the report the PV was taken from. Each report is a new
+    /// allocation, so pointer identity is the invalidation key.
+    report: usize,
+    /// [`BoardProjection::id`] this was built against. A projection rebuild can keep
+    /// the same report pointer while the position underneath it changes.
+    proj: u64,
+    board: Board,
+    numbers: Box<[u16]>,
+}
+
+/// Replays `pv` from `to_play` onto a clone of `board`.
+///
+/// A pass advances the colour and the count but occupies nothing. An off-board or
+/// illegal move stops the line; stones already placed stay, which is what a reviewer
+/// sees when the reading runs into the position.
+fn preview_board(
+    board: &Board,
+    to_play: Color,
+    rules: &Rules,
+    pv: &[Point],
+) -> (Board, Box<[u16]>) {
+    let size = board.size;
+    let mut board = board.clone();
+    let mut color = to_play;
+    let mut seq = vec![0u16; size.points()];
+    let mut n = 0u16;
+    for &p in pv {
+        n += 1;
+        if p.is_pass() {
+            color = color.other();
+        } else if !size.contains(p) || board.play(color, p, rules).is_err() {
+            break;
+        } else {
+            seq[p.index()] = n;
+            color = color.other();
+        }
+    }
+    (board, seq.into_boxed_slice())
 }
 
 mod imp {
@@ -280,6 +330,11 @@ mod imp {
         pub dead: RefCell<Option<DeadSet>>,
         pub territory: RefCell<Option<Box<[Option<Color>]>>>,
         pub(super) projection: RefCell<Option<BoardProjection>>,
+        /// PV preview projection. Rebuilt when the hover index, pin, report or
+        /// projection changes; `snapshot` only draws it.
+        pub(super) pv_preview: RefCell<Option<CachedPv>>,
+        /// Source of [`BoardProjection::id`].
+        pub proj_seq: Cell<u64>,
         /// `Layout::cell` of the previous snapshot, and `None` before the first one.
         ///
         /// Labels are pango glyphs sized to `cell`, and GSK keys its glyph cache on the
@@ -523,37 +578,31 @@ mod imp {
                 snapshot.append_scaled_texture(texture, gsk::ScalingFilter::Nearest, &heat);
             }
 
-            let preview = self.obj().active_preview();
-            if let Some(idx) = preview
-                && let Some(report) = projection.report.as_ref()
-                && let Some(info) = report.moves.get(idx)
-            {
-                let mut board = projection.position.board.clone();
-                let mut color = projection.position.to_play;
-                let mut seq = vec![0u16; size.points()];
-                let mut n = 0u16;
-                for &p in &info.pv {
-                    n += 1;
-                    if p.is_pass() {
-                        color = color.other();
-                        continue;
-                    }
-                    if !size.contains(p) || board.play(color, p, &projection.rules).is_err() {
-                        break;
-                    }
-                    seq[p.index()] = n;
-                    color = color.other();
+            // The replay (board clone, move-number vec, rules) lives in `sync_pv_preview`.
+            // Doing it here made every unrelated redraw — a sidebar fold, a spin — pay for
+            // a position the pointer had not moved. The editor-tool gate stays in
+            // `active_preview`: a mark tool must not draw a line that is still pinned.
+            if let Some(idx) = self.obj().active_preview() {
+                let cached = self.pv_preview.borrow();
+                if let Some(cached) = cached.as_ref()
+                    && cached.index == idx
+                    && cached.proj == projection.id
+                    && projection
+                        .report
+                        .as_ref()
+                        .is_some_and(|report| Arc::as_ptr(report) as usize == cached.report)
+                {
+                    let scene = Scene {
+                        l,
+                        size,
+                        board: &cached.board,
+                        dark,
+                        labels,
+                    };
+                    self.draw_stones(snapshot, scene, None);
+                    self.draw_numbers(snapshot, scene, &cached.numbers, None, None);
+                    return;
                 }
-                let scene = Scene {
-                    l,
-                    size,
-                    board: &board,
-                    dark,
-                    labels,
-                };
-                self.draw_stones(snapshot, scene, None);
-                self.draw_numbers(snapshot, scene, &seq, None, None);
-                return;
             }
 
             let scene = Scene {
@@ -1205,6 +1254,7 @@ impl BoardView {
         let hover = self.imp().hover.replace(None);
         let pinned = self.imp().pinned.replace(None);
         if hover.is_some() || pinned.is_some() {
+            self.sync_pv_preview();
             self.queue_draw();
         }
     }
@@ -1227,6 +1277,7 @@ impl BoardView {
             return;
         }
         self.imp().pinned.set(index);
+        self.sync_pv_preview();
         self.queue_draw();
     }
 
@@ -1235,6 +1286,59 @@ impl BoardView {
         if self.imp().play_locked.replace(locked) != locked {
             self.queue_draw();
         }
+    }
+
+    /// Rebuilds the cached PV board when the hover index, the pin, the report or the
+    /// projection changed. `snapshot` only draws the result.
+    ///
+    /// The editor-tool gate stays in [`Self::active_preview`] rather than here: a tool
+    /// change must not replay a line that is still pinned, and returning to Play must
+    /// not replay one that was built while the tool was away.
+    fn sync_pv_preview(&self) {
+        let Some(next) = self.projected_pv() else {
+            return;
+        };
+        *self.imp().pv_preview.borrow_mut() = next;
+    }
+
+    /// `None` means the cache already matches. `Some(None)` clears it.
+    fn projected_pv(&self) -> Option<Option<CachedPv>> {
+        let imp = self.imp();
+        let index = imp.hover.get().or(imp.pinned.get());
+        let projection = imp.projection.borrow();
+        let Some(projection) = projection.as_ref() else {
+            return Some(None);
+        };
+        let Some(index) = index else {
+            return Some(None);
+        };
+        let Some(report) = projection.report.as_ref() else {
+            return Some(None);
+        };
+        let report_ptr = Arc::as_ptr(report) as usize;
+        let proj = projection.id;
+        if imp.pv_preview.borrow().as_ref().is_some_and(|cached| {
+            cached.index == index && cached.report == report_ptr && cached.proj == proj
+        }) {
+            return None;
+        }
+        let Some(info) = report.moves.get(index) else {
+            return Some(None);
+        };
+        let _t = crate::render_probe::Timer::new("board-pv");
+        let (board, numbers) = preview_board(
+            &projection.position.board,
+            projection.position.to_play,
+            &projection.rules,
+            &info.pv,
+        );
+        Some(Some(CachedPv {
+            index,
+            report: report_ptr,
+            proj,
+            board,
+            numbers,
+        }))
     }
 
     /// The stone a primary click at the pointer would place, drawn translucent before it
@@ -1322,15 +1426,20 @@ impl BoardView {
 
     pub(crate) fn refresh_report(&self) {
         let state = self.state();
-        if let Some(projection) = self.imp().projection.borrow_mut().as_mut() {
+        let existed = if let Some(projection) = self.imp().projection.borrow_mut().as_mut() {
             projection.report = state.last_report();
             projection.suggestion_limit = state.config().analysis.suggestion_limit();
+            true
         } else {
+            false
+        };
+        if !existed {
             self.rebuild_projection(state);
             self.queue_draw();
             return;
         }
         self.rebuild_overlay_textures();
+        self.sync_pv_preview();
         self.queue_draw();
     }
 
@@ -1351,6 +1460,8 @@ impl BoardView {
             (size, rules, marks, last, next, move_numbers)
         };
         let marked = mark_mask(size, &marks);
+        let id = self.imp().proj_seq.get().wrapping_add(1);
+        self.imp().proj_seq.set(id);
         self.imp().projection.replace(Some(BoardProjection {
             size,
             rules,
@@ -1367,8 +1478,10 @@ impl BoardView {
             policy_overlay: state.policy_overlay(),
             ownership_texture: None,
             policy_texture: None,
+            id,
         }));
         self.rebuild_overlay_textures();
+        self.sync_pv_preview();
     }
 
     fn rebuild_overlay_textures(&self) {
@@ -1552,6 +1665,9 @@ impl BoardView {
             None
         };
         let hovered = self.imp().hover.replace(idx) != idx;
+        if hovered {
+            self.sync_pv_preview();
+        }
         if (ghost && old != new) || hovered {
             self.queue_draw();
         }
@@ -1711,5 +1827,74 @@ mod tests {
         assert!((bare.origin_x - right).abs() < 0.01);
         // The whole board, plus its padding, fits.
         assert!(with_coords.origin_x - with_coords.cell * (EDGE_PAD + COORD_PAD) >= -0.01);
+    }
+
+    /// The preview snapshot used to replay inside `snapshot`. A pass must advance the
+    /// count without occupying a point, and an illegal continuation must leave the
+    /// stones already placed — including a capture the rules actually take.
+    #[test]
+    fn pv_preview_numbers_passes_and_stops_when_the_line_becomes_illegal() {
+        let size = Size::square(9);
+        let rules = RuleSet::default().rules();
+        let board = Board::new(size);
+        let p = |x: u8, y: u8| size.point(x, y);
+
+        let (played, nums) = preview_board(
+            &board,
+            Color::Black,
+            &rules,
+            &[p(2, 2), Point::PASS, p(6, 6)],
+        );
+        assert_eq!(played.at(p(2, 2)), Some(Color::Black));
+        assert_eq!(nums[p(2, 2).index()], 1);
+        assert_eq!(
+            played.at(p(6, 6)),
+            Some(Color::Black),
+            "a pass flips the colour, so the third move is Black again"
+        );
+        assert_eq!(nums[p(6, 6).index()], 3, "the pass still consumes a number");
+        assert_eq!(
+            nums.iter().filter(|&&n| n == 2).count(),
+            0,
+            "a pass occupies nothing"
+        );
+
+        let (stopped, nums) =
+            preview_board(&board, Color::Black, &rules, &[p(2, 2), p(2, 2), p(4, 4)]);
+        assert_eq!(stopped.at(p(2, 2)), Some(Color::Black));
+        assert_eq!(nums[p(2, 2).index()], 1);
+        assert_eq!(
+            stopped.at(p(4, 4)),
+            None,
+            "an occupied point stops the line"
+        );
+        assert_eq!(nums[p(4, 4).index()], 0);
+
+        // White at tengen, surrounded. The last Black move captures; a painter that
+        // only dropped stones would leave White on the board.
+        let (captured, nums) = preview_board(
+            &board,
+            Color::Black,
+            &rules,
+            &[
+                p(3, 4),
+                p(4, 4),
+                p(5, 4),
+                Point::PASS,
+                p(4, 3),
+                Point::PASS,
+                p(4, 5),
+            ],
+        );
+        assert_eq!(
+            captured.at(p(4, 4)),
+            None,
+            "the surrounded stone is captured"
+        );
+        assert_eq!(captured.at(p(4, 5)), Some(Color::Black));
+        assert_eq!(nums[p(4, 5).index()], 7);
+        // The number is left in the vec; `draw_numbers` skips an empty point, which is
+        // what the old in-snapshot replay did too.
+        assert_eq!(nums[p(4, 4).index()], 2);
     }
 }
