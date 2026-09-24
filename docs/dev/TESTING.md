@@ -34,7 +34,7 @@ link separately.
 crates/mirai/src/new_game.blp crates/mirai/src/label_editor.blp
 crates/mirai/src/preferences.blp crates/mirai/src/profile_editor.blp
 crates/mirai/src/fox_picker.blp crates/mirai/src/panels/analysis.blp`, and the clippy line above are quiet under the current
-nightly. Between full runs, `cargo fmt` and `cargo clippy -p <crate>` on what you touched are
+stable toolchain. Between full runs, `cargo fmt` and `cargo clippy -p <crate>` on what you touched are
 enough. A toolchain bump that lights up untouched code is its own change.
 
 | Never run casually | Why |

@@ -11,7 +11,9 @@ members = [
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.99"
+# The oldest compiler the tree is known to build with. Raise it whenever a dependency
+# update needs a newer one; there is no other reason to hold it back or to push it.
+rust-version = "1.92"
 version = "0.1.0"
 license = "GPL-3.0-or-later"
 

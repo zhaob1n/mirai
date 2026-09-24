@@ -183,8 +183,11 @@ Full detail, including how to drive the GUI headlessly and verify against a real
 
 ### Toolchain
 
-Current Rust nightly 1.99 (edition 2024, `rust-version = "1.99"`), selected by
-`rust-toolchain.toml`. Let-chains (`if let Some(x) = a && cond`) are used throughout and are
+Rust stable, selected by `rust-toolchain.toml`; the minimum is `rust-version` in the root
+`Cargo.toml`, currently 1.92 (edition 2024). No nightly feature is used, and none should be
+added. Raise `rust-version` whenever a dependency update needs a newer compiler — that is its
+only reason to move — and check the new floor with `cargo +<version> check --workspace
+--all-targets`. Let-chains (`if let Some(x) = a && cond`) are used throughout and are
 expected. GTK 4.22+, libadwaita 1.9+ and Blueprint Compiler 0.22+ are required to build `mirai`.
 
 ### Testing expectations
