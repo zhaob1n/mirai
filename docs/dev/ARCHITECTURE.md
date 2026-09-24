@@ -139,8 +139,9 @@ uses that file as it stands.
   VRAM. Dropping/aborting it still follows INV-3: the in-flight `Subscription` is dropped, then
   the temporary engine exits. mirai also owns a config file on disk, in the
   profile's log directory. That directory must be the user's alone — `write_to` creates it
-  `0700` and refuses one another user owns or can write, and replaces rather than follows a
-  symlink at the file's name (`atomic::private_dir`, `write_atomic_generated`) — because
+  `0700` and refuses one another user owns or can write, or that is reached through a
+  directory they could rename it out of (sticky `/tmp` excepted), and replaces rather than
+  follows a symlink at the file's name (`atomic::private_dir`, `write_atomic_generated`) — because
   the name is predictable and KataGo reads the file back later. Its name carries the
   four values (`katago-analysis-a4-s16-b64-c20.cfg`), so profiles tuned differently cannot race
   each other through one path — engines start concurrently, one per window — while an identical

@@ -36,8 +36,8 @@ search_threads   = 16              # numSearchThreadsPerAnalysisThread
 # nn_cache_size_power_of_two = 20  # nnCacheSizePowerOfTwo: 2^N evaluations, ~3 KiB each
 # log_dir = "katago-logs"          # KataGo's logDir, also where a generated config goes;
 #                                  # defaults to ~/.local/share/mirai/katago-logs. Must be
-#                                  # yours and not writable by other users, or the server
-#                                  # refuses to generate a config into it
+#                                  # yours, and neither it nor a directory above it writable by
+#                                  # other users, or the server refuses to use it
 # startup_timeout_s = 180          # raise this if first-run OpenCL tuning times out
 
 # One [[token]] block per client. A token is a bearer secret compared in constant time;

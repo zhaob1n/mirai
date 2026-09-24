@@ -678,7 +678,7 @@ keyboard focus.
 | `~/.config/mirai/config.toml` | settings and engine profiles, remote tokens included, so it is written readable by you alone (`0600`, in a `0700` directory when mirai creates it) |
 | `~/.local/share/mirai/autosave-*.sgf` | the record each open window is looking at, one file per window |
 | `~/.local/share/mirai/fox-last-search.json` | last Fox search query and game list, restored the next time the download dialog opens |
-| `~/.local/share/mirai/katago-logs/` | KataGo's own logs, one file per engine start, and the generated `katago-analysis-*.cfg`; also `mirai-server`'s, for an `[[engine]]` without `log_dir`. Created private; a directory for generated configs is refused if another user owns it or can write to it |
+| `~/.local/share/mirai/katago-logs/` | KataGo's own logs, one file per engine start, and the generated `katago-analysis-*.cfg`; also `mirai-server`'s, for an `[[engine]]` without `log_dir`. Created private; a directory for generated configs is refused if another user owns it or can write to it, or to a directory on the way to it (a sticky one such as `/tmp` excepted) |
 | `~/.config/mirai/server.toml` | `mirai-server`'s settings, on the machine running it |
 
 (`$XDG_CONFIG_HOME` and `$XDG_DATA_HOME` are honoured if set.)

@@ -72,14 +72,16 @@ enum Links {
     Replace,
 }
 
-/// Creates `dir`, and any missing parent, readable only by this user, and refuses an
-/// existing directory that another user owns or can write to.
+/// Creates `dir`, and any missing parent, readable only by this user, and refuses a
+/// directory that another user could replace or write into.
 ///
 /// mirai writes generated files into such a directory and KataGo reads them back later.
 /// `create_dir_all` happily accepts a directory another local user created first under a
 /// predictable name, and whoever can write to the directory can swap a file in it
-/// between mirai's write and KataGo's read. On other platforms the directory is only
-/// created.
+/// between mirai's write and KataGo's read. Whoever can write to any directory on the
+/// way there can rename the whole subtree aside and put their own in its place, so every
+/// ancestor is checked too, through each symlink the path takes. On other platforms the
+/// directory is only created.
 pub fn private_dir(dir: &Path) -> io::Result<()> {
     #[cfg(unix)]
     {
@@ -94,27 +96,82 @@ pub fn private_dir(dir: &Path) -> io::Result<()> {
     std::fs::create_dir_all(dir)
 }
 
-/// The ownership and mode half of [`private_dir`]. A symlinked directory is accepted only
-/// when the link is this user's too: a link someone else owns can be repointed after the
-/// check.
+/// The ownership and mode half of [`private_dir`].
+///
+/// Walks `dir` from the root one component at a time, following symlinks by hand so the
+/// directory holding each link is checked as well as the directories it leads through.
+/// Every directory passed through must belong to this user or root, and nobody else may
+/// write to it — except a sticky directory such as `/tmp`, where others may create
+/// entries but cannot rename or delete one of ours, so it is trusted only when the entry
+/// the path takes next is this user's. The final directory must be this user's and
+/// writable by nobody else.
 #[cfg(unix)]
 fn check_private_dir(dir: &Path) -> io::Result<()> {
     use std::os::unix::fs::MetadataExt;
+    use std::path::Component;
 
     let me = euid();
-    let mut meta = std::fs::symlink_metadata(dir)?;
-    if meta.file_type().is_symlink() {
-        if meta.uid() != me {
+    let absolute = if dir.is_absolute() {
+        dir.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(dir)
+    };
+    // Components still to walk, last first, so a symlink's target can be pushed in front.
+    let mut pending: Vec<std::ffi::OsString> = Vec::new();
+    push_components(&mut pending, &absolute);
+    let mut current = PathBuf::from("/");
+    let mut links = 0;
+    while let Some(name) = pending.pop() {
+        match Path::new(&name).components().next() {
+            Some(Component::RootDir) => {
+                current = PathBuf::from("/");
+                continue;
+            }
+            Some(Component::ParentDir) => {
+                current.pop();
+                continue;
+            }
+            Some(Component::Normal(_)) => {}
+            _ => continue,
+        }
+        let next = current.join(&name);
+        let entry = std::fs::symlink_metadata(&next)?;
+        let parent = std::fs::metadata(&current)?;
+        let mode = parent.mode() & 0o7777;
+        if parent.uid() != me && parent.uid() != 0 {
             return Err(refuse(
                 dir,
                 &format!(
-                    "it is a symlink owned by uid {}, not this user (uid {me})",
-                    meta.uid()
+                    "{} on its path is owned by uid {}, neither this user (uid {me}) nor root",
+                    current.display(),
+                    parent.uid()
                 ),
             ));
         }
-        meta = std::fs::metadata(dir)?;
+        if mode & 0o022 != 0 && !(mode & 0o1000 != 0 && entry.uid() == me) {
+            return Err(refuse(
+                dir,
+                &format!(
+                    "{} on its path has mode {mode:04o}, so other users can replace {}",
+                    current.display(),
+                    next.display()
+                ),
+            ));
+        }
+        if entry.file_type().is_symlink() {
+            links += 1;
+            if links > 40 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "too many symlinks",
+                ));
+            }
+            push_components(&mut pending, &std::fs::read_link(&next)?);
+        } else {
+            current = next;
+        }
     }
+    let meta = std::fs::metadata(&current)?;
     if meta.uid() != me {
         return Err(refuse(
             dir,
@@ -132,6 +189,14 @@ fn check_private_dir(dir: &Path) -> io::Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Queues `path`'s components in front of those already pending, in walking order.
+#[cfg(unix)]
+fn push_components(pending: &mut Vec<std::ffi::OsString>, path: &Path) {
+    let start = pending.len();
+    pending.extend(path.components().map(|c| c.as_os_str().to_os_string()));
+    pending[start..].reverse();
 }
 
 #[cfg(unix)]
@@ -620,5 +685,51 @@ mod tests {
             );
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A private leaf is not enough: whoever can write to its parent can rename it aside
+    /// and put their own directory, or a symlink, in its place.
+    #[cfg(unix)]
+    #[test]
+    fn a_private_dir_under_a_parent_others_can_write_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = scratch("shared-parent");
+        let parent = base.join("shared");
+        let dir = parent.join("mirai-logs");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o777)).unwrap();
+
+        let error = private_dir(&dir).expect_err("a replaceable ancestor is refused");
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().contains("0777"), "{error}");
+
+        // Sticky, like /tmp: others may add entries but cannot move ours.
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o1777)).unwrap();
+        private_dir(&dir).expect("our own entry in a sticky directory is safe");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The path may reach the directory through a symlink; the directories the link
+    /// leads through must pass the same check as those written out in full.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_through_a_writable_directory_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = scratch("linked-parent");
+        let shared = base.join("shared");
+        std::fs::create_dir_all(shared.join("mirai-logs")).unwrap();
+        std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o777)).unwrap();
+        std::os::unix::fs::symlink(&shared, base.join("link")).unwrap();
+        let dir = base.join("link").join("mirai-logs");
+
+        let error = private_dir(&dir).expect_err("the link leads through a shared directory");
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+
+        std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o755)).unwrap();
+        private_dir(&dir).expect("a link through directories only we control is fine");
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
