@@ -540,7 +540,7 @@ impl From<CandidateV1> for Candidate {
     }
 }
 
-fn encode_analysis(entries: &[(u32, NodeAnalysis)]) -> Option<String> {
+fn encode_analysis(entries: &[(u32, &NodeAnalysis)]) -> Option<String> {
     let mut plain = Vec::with_capacity(1024);
     plain.push(MRAI_VERSION);
     plain.append(&mut postcard::to_stdvec(entries).ok()?);
@@ -556,7 +556,7 @@ pub fn write(tree: &GameTree, include_analysis: bool) -> String {
     let mut mrai = None;
     if include_analysis {
         let mut entries = Vec::new();
-        collect_analysis(tree, tree.root(), &mut 0, &mut entries);
+        collect_analysis(tree, &mut entries);
         if !entries.is_empty() {
             mrai = encode_analysis(&entries);
         }
@@ -572,23 +572,30 @@ pub fn write(tree: &GameTree, include_analysis: bool) -> String {
 
 /// Walks in exactly the order [`write_sequence`] emits, so the index recorded for a node
 /// is the [`NodeId`] a reload will give it.
-fn collect_analysis(
-    tree: &GameTree,
-    id: NodeId,
-    next: &mut u32,
-    out: &mut Vec<(u32, NodeAnalysis)>,
-) {
-    let index = *next;
-    *next += 1;
-    if let Some(a) = &tree.node(id).analysis {
-        out.push((index, a.clone()));
-    }
-    for &c in tree.children(id) {
-        collect_analysis(tree, c, next, out);
+///
+/// An explicit stack, not a recursive call per node: saving analysis walks the whole
+/// tree, and a linear main line is as long as the game. [`write_sequence`] only recurses
+/// when a node has more than one child, so its depth is the variation nesting.
+fn collect_analysis<'a>(tree: &'a GameTree, out: &mut Vec<(u32, &'a NodeAnalysis)>) {
+    let mut stack = vec![tree.root()];
+    let mut next = 0u32;
+    while let Some(id) = stack.pop() {
+        let index = next;
+        next += 1;
+        if let Some(analysis) = tree.node(id).analysis.as_ref() {
+            out.push((index, analysis));
+        }
+        // Reverse, so the leftmost child is popped next: the same left-to-right preorder
+        // [`write_sequence`] emits.
+        for &child in tree.children(id).iter().rev() {
+            stack.push(child);
+        }
     }
 }
 
 fn write_sequence(tree: &GameTree, from: NodeId, mrai: Option<&str>, out: &mut String) {
+    // A straight line stays in this loop. Recursion is one frame per variation, which
+    // is the nesting [`MAX_DEPTH`] already refuses to parse — not one frame per node.
     let mut cur = from;
     loop {
         out.push(';');
@@ -960,8 +967,48 @@ mod tests {
             candidates: Vec::new(),
             ownership: Some(vec![0; MAX_ANALYSIS_BYTES].into_boxed_slice()),
         };
-        let blob = encode_analysis(&[(0, analysis)]).expect("compress");
+        let blob = encode_analysis(&[(0, &analysis)]).expect("compress");
         assert!(decode_analysis(&blob).is_none());
+    }
+
+    /// `collect_analysis` used to recurse once per node, so a long main line overflowed
+    /// the thread stack before any bytes were written. The variation is there so the
+    /// walk still has to emit children left to right, not merely walk a chain.
+    #[test]
+    fn a_long_main_line_with_analysis_round_trips() {
+        const NODES: u32 = 200_000;
+        let analysis = NodeAnalysis {
+            visits: 3,
+            winrate: 0.5,
+            score_lead: 1.5,
+            score_stdev: 0.0,
+            candidates: Vec::new(),
+            ownership: None,
+        };
+        let mut tree = GameTree::new(GameInfo::new(Size::square(9), RuleSet::Chinese));
+        let mut id = tree.root();
+        let mut marked = tree.root();
+        for i in 1..NODES {
+            id = tree.add_child(id);
+            if i == 2 {
+                marked = id;
+            }
+        }
+        let variation = tree.add_child(marked);
+        tree.set_analysis(tree.root(), Some(analysis.clone()));
+        tree.set_analysis(marked, Some(analysis.clone()));
+        tree.set_analysis(id, Some(analysis.clone()));
+
+        let back = &parse_str(&write(&tree, true)).expect("long record")[0];
+        assert_eq!(back.len(), tree.len());
+        assert_eq!(back.node(back.root()).analysis.as_ref(), Some(&analysis));
+        assert_eq!(back.node(NodeId(2)).analysis.as_ref(), Some(&analysis));
+        assert_eq!(
+            back.node(NodeId(NODES - 1)).analysis.as_ref(),
+            Some(&analysis)
+        );
+        assert!(back.node(variation).analysis.is_none());
+        assert_eq!(back.children(NodeId(2)).len(), 2);
     }
 
     /// A record mirai itself saved out of a real KataGo search: `examples/selfplay.rs` in
