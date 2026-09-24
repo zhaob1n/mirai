@@ -8,11 +8,12 @@
 //! Depth runs *down*. The widget lives in the sidebar — 340-520 px wide and as tall as the
 //! window — so the axis a 250-move record is 5000 px long on has to be the panel's long
 //! axis, and the wheel then scrolls it without a modifier. Lanes run across instead, where
-//! a handful of variations fit in the width. The layout
-//! is cached and only recomputed when [`GameTree::structure_revision`] moves, because it is
-//! the one part of the widget that is O(tree) rather than O(visible). Deliberately *not*
-//! `GameTree::revision`: that counts a stored analysis as a change too, so a running engine
-//! would invalidate this ten times a second and every navigation step would rebuild.
+//! a handful of variations fit in the width. The layout, including each parent's trunk
+//! span, is cached and only recomputed when [`GameTree::structure_revision`] moves.
+//! `draw` culls edges, trunks and nodes to the scrolled viewport, so a long record does
+//! not repaint nodes the panel cannot see. Deliberately *not* `GameTree::revision`: that
+//! counts a stored analysis as a change too, so a running engine would invalidate this
+//! ten times a second and every navigation step would rebuild.
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::HashMap;
@@ -56,6 +57,11 @@ pub(crate) struct TreeLayout {
     pub depth: u32,
     /// Highest lane in use — the last column.
     pub lanes: u32,
+    /// Horizontal trunk of each parent, `(left_x, right_x)` in widget coordinates,
+    /// seeded with the parent's own x and widened to every child. `None` for a node
+    /// with no children. A zero-width span is not drawn: the ink is translucent, so
+    /// one rectangle per parent is the whole trunk.
+    pub trunks: Vec<Option<(f32, f32)>>,
 }
 
 /// Places every node of `tree` on the grid.
@@ -98,6 +104,15 @@ pub(crate) fn lay_out(tree: &GameTree) -> TreeLayout {
             stack.push((child, depth + 1, lane, Some(slot)));
         }
     }
+    layout.trunks = vec![None; layout.nodes.len()];
+    for node in &layout.nodes {
+        let Some(parent) = node.parent else { continue };
+        let (px, _) = cell_xy(layout.nodes[parent].depth, layout.nodes[parent].lane);
+        let (cx, _) = cell_xy(node.depth, node.lane);
+        let span = layout.trunks[parent].get_or_insert((px, px));
+        span.0 = span.0.min(cx);
+        span.1 = span.1.max(cx);
+    }
     layout
 }
 
@@ -108,6 +123,44 @@ fn cell_xy(depth: u32, lane: u32) -> (f32, f32) {
         MARGIN + RADIUS + lane as f32 * CELL_W,
         MARGIN + RADIUS + depth as f32 * CELL_H,
     )
+}
+
+/// Inclusive depth and lane indexes the scrolled viewport can see, padded by a cell.
+#[derive(Clone, Copy)]
+struct Viewport {
+    depth_lo: u32,
+    depth_hi: u32,
+    lane_lo: u32,
+    lane_hi: u32,
+}
+
+impl Viewport {
+    fn covers_depth(&self, depth: u32) -> bool {
+        depth >= self.depth_lo && depth <= self.depth_hi
+    }
+
+    fn covers_lane(&self, lane: u32) -> bool {
+        lane >= self.lane_lo && lane <= self.lane_hi
+    }
+
+    fn overlaps_x(&self, span: (f32, f32)) -> bool {
+        let (left, right) = span;
+        let (x0, _) = cell_xy(0, self.lane_lo);
+        let (x1, _) = cell_xy(0, self.lane_hi);
+        right >= x0 && left <= x1
+    }
+}
+
+fn axis_lo(start: f64, cell: f32) -> u32 {
+    let origin = MARGIN + RADIUS;
+    ((start as f32 - CELL_W - origin) / cell).floor().max(0.0) as u32
+}
+
+fn axis_hi(start: f64, page: f64, cell: f32) -> u32 {
+    let origin = MARGIN + RADIUS;
+    ((start as f32 + page as f32 + CELL_W - origin) / cell)
+        .ceil()
+        .max(0.0) as u32
 }
 
 mod imp {
@@ -179,12 +232,46 @@ impl MoveTreeView {
     }
 
     /// Wraps the view in the `gtk::ScrolledWindow` the window packs.
+    ///
+    /// [`Self::draw`] culls to the scroller's page, but scrolling only moves this widget's
+    /// allocation and GTK reuses its cached render node. Without a redraw on every
+    /// adjustment change, nodes that scroll or resize into view stay blank.
     pub fn in_scroller(&self) -> gtk::ScrolledWindow {
-        gtk::ScrolledWindow::builder()
+        let scroller = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Automatic)
             .vscrollbar_policy(gtk::PolicyType::Automatic)
             .child(self)
-            .build()
+            .build();
+        self.redraw_on(&scroller.hadjustment());
+        self.redraw_on(&scroller.vadjustment());
+        for property in ["hadjustment", "vadjustment"] {
+            let view = self.downgrade();
+            scroller.connect_notify_local(Some(property), move |scroller, _| {
+                let Some(view) = view.upgrade() else { return };
+                // An adjustment that was replaced is not watched any more; its handler
+                // only holds a weak ref and costs a stray redraw at worst.
+                view.redraw_on(&scroller.hadjustment());
+                view.redraw_on(&scroller.vadjustment());
+            });
+        }
+        scroller
+    }
+
+    /// Scrolling changes `value`; a resized sidebar changes `page-size`, which emits
+    /// `changed`, not `value-changed`.
+    fn redraw_on(&self, adjustment: &gtk::Adjustment) {
+        let view = self.downgrade();
+        adjustment.connect_value_changed(move |_| {
+            if let Some(view) = view.upgrade() {
+                view.queue_draw();
+            }
+        });
+        let view = self.downgrade();
+        adjustment.connect_changed(move |_| {
+            if let Some(view) = view.upgrade() {
+                view.queue_draw();
+            }
+        });
     }
 
     /// Rebuilds the cached layout if the tree changed, then redraws.
@@ -264,6 +351,7 @@ impl MoveTreeView {
     }
 
     fn draw(&self, snapshot: &gtk::Snapshot) {
+        let _t = crate::render_probe::Timer::new("tree-snapshot");
         self.ensure_layout();
         let layout = self.imp().layout.borrow();
         if layout.nodes.is_empty() {
@@ -284,30 +372,44 @@ impl MoveTreeView {
         // axis-aligned, so they are rectangles rather than a stroked path — and one horizontal
         // per parent rather than one per child, because the ink is translucent and overlapping
         // rectangles would blend twice where two children share a trunk. The drops are one per
-        // child and never overlap: siblings always land in different lanes.
-        let mut trunk: Vec<Option<(f32, f32)>> = vec![None; layout.nodes.len()];
+        // child and never overlap: siblings always land in different lanes. Trunk spans were
+        // computed in `lay_out`; this pass only draws what the viewport can see.
+        let view = self.viewport();
         for node in &layout.nodes {
             let Some(parent) = node.parent else { continue };
             let p = layout.nodes[parent];
-            let (px, py) = cell_xy(p.depth, p.lane);
+            if let Some(view) = view
+                && (!view.covers_lane(node.lane)
+                    || !(view.covers_depth(node.depth) || view.covers_depth(p.depth)))
+            {
+                continue;
+            }
+            let (_, py) = cell_xy(p.depth, p.lane);
             let (cx, cy) = cell_xy(node.depth, node.lane);
-            let span = trunk[parent].get_or_insert((px, px));
-            span.0 = span.0.min(cx);
-            span.1 = span.1.max(cx);
             vline(snapshot, cx, py, cy, 1.5, &edge_color);
         }
-        for (index, span) in trunk.iter().enumerate() {
+        for (index, span) in layout.trunks.iter().enumerate() {
             let Some((left, right)) = *span else { continue };
             if right - left < 0.01 {
                 continue;
             }
             let p = layout.nodes[index];
+            if let Some(view) = view
+                && (!view.covers_depth(p.depth) || !view.overlaps_x((left, right)))
+            {
+                continue;
+            }
             let (_, py) = cell_xy(p.depth, p.lane);
             hline(snapshot, left, right, py, 1.5, &edge_color);
         }
 
         // Nodes.
         for node in &layout.nodes {
+            if let Some(view) = view
+                && (!view.covers_depth(node.depth) || !view.covers_lane(node.lane))
+            {
+                continue;
+            }
             let (cx, cy) = cell_xy(node.depth, node.lane);
 
             match node.mv {
@@ -345,6 +447,33 @@ impl MoveTreeView {
                 stroke_disc(snapshot, cx, cy, RADIUS + 2.5, 2.0, &accent);
             }
         }
+    }
+
+    /// Inclusive depth and lane range the scrolled viewport can see.
+    ///
+    /// The tree does not implement `gtk::Scrollable`; the `ScrolledWindow` from
+    /// [`Self::in_scroller`] pans over it, and these are the same adjustments
+    /// [`Self::scroll_to_cursor`] writes. gtk-rs does not expose the snapshot clip.
+    /// `None` means the page size is not known yet — draw everything rather than guess.
+    fn viewport(&self) -> Option<Viewport> {
+        let scroller = self
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .and_then(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())?;
+        let horizontal = scroller.hadjustment();
+        let vertical = scroller.vadjustment();
+        let page_w = horizontal.page_size();
+        let page_h = vertical.page_size();
+        if page_w <= 0.0 || page_h <= 0.0 {
+            return None;
+        }
+        // One cell past the page covers the cursor ring (radius 8.5, stroke 2) and a
+        // drop whose other end sits just outside the clip.
+        Some(Viewport {
+            depth_lo: axis_lo(vertical.value(), CELL_H),
+            depth_hi: axis_hi(vertical.value(), page_h, CELL_H),
+            lane_lo: axis_lo(horizontal.value(), CELL_W),
+            lane_hi: axis_hi(horizontal.value(), page_w, CELL_W),
+        })
     }
 }
 
@@ -465,6 +594,48 @@ mod tests {
             cell_xy(0, 1),
             (origin.0 + CELL_W, origin.1),
             "the next lane is one column across"
+        );
+    }
+
+    /// A parent's trunk is one rectangle from its own lane to its furthest child, including
+    /// a lane no child sits in. Drawing one segment per adjacent pair would leave a gap, and
+    /// overlapping the two would blend twice because the ink is translucent.
+    #[test]
+    fn a_trunk_spans_children_in_non_adjacent_lanes() {
+        let (mut tree, size) = tree19();
+        let p = |x: u8, y: u8| size.point(x, y);
+        let root = tree.root();
+        let main = tree.play(root, Color::Black, p(3, 3)).unwrap();
+        // The first child's variation claims lane 1 at the next depth, which is still
+        // occupied when the root's second child is placed — so that sibling skips it.
+        tree.play(main, Color::White, p(4, 4)).unwrap();
+        let variation = tree.add_variation(main, Color::Black, p(5, 5)).unwrap();
+        let sibling = tree.add_variation(root, Color::Black, p(15, 15)).unwrap();
+
+        let layout = lay_out(&tree);
+        assert_eq!(lane(&layout, main), Some(0));
+        assert_eq!(lane(&layout, variation), Some(1));
+        assert_eq!(lane(&layout, sibling), Some(2), "the gap lane stays empty");
+
+        let span = layout.trunks[layout.index[&root]].expect("the root has children");
+        assert_eq!(span.0, cell_xy(0, 0).0);
+        assert_eq!(
+            span.1,
+            cell_xy(0, 2).0,
+            "the trunk crosses the unoccupied lane instead of stopping at each child"
+        );
+
+        // A straight continuation has a zero-width span, which draw skips.
+        let (mut straight, size) = tree19();
+        let a = straight
+            .play(straight.root(), Color::Black, size.point(3, 3))
+            .unwrap();
+        straight.play(a, Color::White, size.point(15, 15)).unwrap();
+        let straight = lay_out(&straight);
+        let span = straight.trunks[straight.index[&straight.nodes[0].id]].unwrap();
+        assert!(
+            span.1 - span.0 < 0.01,
+            "a child in the parent's lane is not a trunk"
         );
     }
 }
