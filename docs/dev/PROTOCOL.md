@@ -457,11 +457,12 @@ between requests.
 | 7 | `max_visits` | `Option<u32>` | visits | Search cap; absent = engine default. |
 | 8 | `max_time_ms` | `Option<u32>` | **milliseconds** | Wall-clock cap. Forwarded to KataGo as `overrideSettings.maxTime` in seconds. |
 | 9 | `pv_len` | `Option<u8>` | moves | Maximum PV length (`analysisPVLen`). |
-| 10 | `want` | `Want` (1 raw byte) | bit flags | Optional extras ([§7.7](#77-want)). |
-| 11 | `report_every_ms` | `Option<u16>` | **milliseconds** | Intermediate-report interval; absent = only the terminal message. Forwarded as `reportDuringSearchEvery` in seconds. |
-| 12 | `priority` | `i8` (1 raw byte) | | Higher runs first. A server MUST clamp it into `-8..=8` (`session.rs` — `PRIORITY_RANGE`) so one client cannot starve others. |
-| 13 | `avoid` | `Vec<AvoidSpec>` | | Move restrictions ([§7.8](#78-avoidspec)). |
-| 14 | `overrides` | `Vec<(String, String)>` | | Raw per-query KataGo `overrideSettings` entries. Servers SHOULD treat them as untrusted and MAY ignore them. |
+| 10 | `max_candidates` | `Option<u8>` | candidates | Keep only the first `n` candidates by KataGo's `order`; absent = all. The server applies it before quantising, so cut moves are neither decoded nor sent. |
+| 11 | `want` | `Want` (1 raw byte) | bit flags | Optional extras ([§7.7](#77-want)). |
+| 12 | `report_every_ms` | `Option<u16>` | **milliseconds** | Intermediate-report interval; absent = only the terminal message. Forwarded as `reportDuringSearchEvery` in seconds. |
+| 13 | `priority` | `i8` (1 raw byte) | | Higher runs first. A server MUST clamp it into `-8..=8` (`session.rs` — `PRIORITY_RANGE`) so one client cannot starve others. |
+| 14 | `avoid` | `Vec<AvoidSpec>` | | Move restrictions ([§7.8](#78-avoidspec)). |
+| 15 | `overrides` | `Vec<(String, String)>` | | Raw per-query KataGo `overrideSettings` entries. Servers SHOULD treat them as untrusted and MAY ignore them. |
 
 ### 7.4 Komi
 
@@ -799,6 +800,7 @@ the TLS handshake.
 | # | Change |
 |---|---|
 | 1 | ALPN `mirai/2`, `PROTO_VERSION = 2`. |
+| 2 | `AnalyzeReq.max_candidates` ([§7.3](#73-analyzereq)): a client asks for only the candidates it shows. |
 
 ---
 
@@ -809,7 +811,7 @@ Measured by `mirai-proto/tests/wire_size.rs`.
 | Message | Contents | postcard payload | Compressed | **Framed** |
 |---|---|---|---|---|
 | `SubMsg::Report` | 19×19, 50 candidates, 15-move PVs with `pv_visits`, 361-entry ownership, no policy | 4128 B | yes → 2617 B | **2622 B** |
-| `ClientMsg::Open` | 19×19, 200 moves, `want = OWNERSHIP\|PV_VISITS`, `max_visits`, `report_every_ms` | 495 B | no | **500 B** |
+| `ClientMsg::Open` | 19×19, 200 moves, `want = OWNERSHIP\|PV_VISITS`, `max_visits`, `report_every_ms` | 496 B | no | **501 B** |
 | `SubMsg::Report` | 2 candidates, 2-move PVs, no ownership or policy ([Appendix A](#appendix-a-worked-exchange)) | 77 B | no | **82 B** |
 | `ClientMsg::Ping` | one `u64` | 2 B | no | **7 B** |
 
@@ -919,12 +921,13 @@ len=13       flags  ^  ^  ^  "t0k"  ^  "demo/1"
 `max_visits: Some(1000)`, `want: OWNERSHIP`, `report_every_ms: Some(250)`
 
 ```
-16 00 00 00 | 00 | 01 01 00 13 13 01 1e 00 00 00 01 e8 07 00 00 01 01 fa 01 00 00 00
+17 00 00 00 | 00 | 01 01 00 13 13 01 1e 00 00 00 01 e8 07 00 00 00 01 01 fa 01 00 00 00
 
 01 variant 1 = Open · 01 sub = 1 · 00 engine = None (server default)
 13 13 size 19x19 · 01 rules = Chinese · 1e komi_x2: zigzag 30 -> 15 -> komi 7.5
 00 initial_stones: 0 · 00 moves: 0 · 00 initial_player = None (=> Black)
 01 e8 07 max_visits = Some(1000) · 00 max_time_ms = None · 00 pv_len = None
+00 max_candidates = None
 01 want = OWNERSHIP (raw byte) · 01 fa 01 report_every_ms = Some(250)
 00 priority = 0 (raw byte) · 00 avoid: 0 · 00 overrides: 0
 ```

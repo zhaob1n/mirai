@@ -810,7 +810,7 @@ impl AppState {
             return;
         };
 
-        let (max_visits, report_every, want) = {
+        let (max_visits, report_every, max_candidates, want) = {
             let cfg = self.config();
             // Nothing reads pv_visits; asking for them only fattens every report.
             let mut want = Want::OWNERSHIP;
@@ -820,6 +820,8 @@ impl AppState {
             (
                 cfg.analysis.live_max_visits,
                 cfg.analysis.report_interval_ms,
+                // Only what the board and the list show; "All" is `usize::MAX`, so `None`.
+                u8::try_from(cfg.analysis.suggestion_limit()).ok(),
                 want,
             )
         };
@@ -827,6 +829,7 @@ impl AppState {
         let mut req = self.request_for_cursor(Some(max_visits), want);
         req.report_every_ms = Some(report_every);
         req.priority = 4;
+        req.max_candidates = max_candidates;
 
         // The clock starts at dispatch, so the first sample charges the search for the
         // engine's queueing and warm-up too; later samples are pure deltas.

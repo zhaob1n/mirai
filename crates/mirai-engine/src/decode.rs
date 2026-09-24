@@ -87,7 +87,9 @@ impl RawResponse {
 }
 
 /// Turns one analysis response into a [`Report`], quantising every float exactly once.
-pub fn decode_report(size: Size, v: &Value) -> Result<Report, String> {
+///
+/// `max_candidates` keeps the engine's best `n` by `order`; the rest are never decoded.
+pub fn decode_report(size: Size, max_candidates: Option<u8>, v: &Value) -> Result<Report, String> {
     let root_v = v
         .get("rootInfo")
         .ok_or_else(|| "analysis response has no rootInfo".to_string())?;
@@ -119,6 +121,10 @@ pub fn decode_report(size: Size, v: &Value) -> Result<Report, String> {
             // sort key off again.
             let mut ordered: Vec<&Value> = list.iter().collect();
             ordered.sort_by_key(|m| order_of(m));
+            // After the sort: the cap keeps the engine's best, not KataGo's first.
+            if let Some(n) = max_candidates {
+                ordered.truncate(usize::from(n));
+            }
             let mut out = Vec::with_capacity(ordered.len());
             for m in ordered {
                 out.push(decode_move(size, m)?);
@@ -326,7 +332,7 @@ mod tests {
     #[test]
     fn decodes_a_report_in_order_with_black_perspective_values() {
         let size = Size::square(5);
-        let r = decode_report(size, &fixture()).unwrap();
+        let r = decode_report(size, None, &fixture()).unwrap();
 
         assert_eq!(r.turn, 3);
         assert_eq!(r.root.current_player, Color::White);
@@ -364,10 +370,24 @@ mod tests {
         assert_eq!(r.moves[0].pv_visits, vec![120, 40, 3]);
     }
 
+    /// The fixture lists B2 (order 1) before C3 (order 0). A cap applied in KataGo's array
+    /// order would keep B2 and drop the engine's own pick.
+    #[test]
+    fn the_candidate_cap_keeps_the_engines_best_by_order() {
+        let size = Size::square(5);
+        let r = decode_report(size, Some(1), &fixture()).unwrap();
+        assert_eq!(r.moves.len(), 1);
+        assert_eq!(r.moves[0].mv, size.from_gtp("C3").unwrap());
+        assert_eq!(r.moves[0].order, 0);
+    }
+
     #[test]
     fn ownership_keeps_katago_row_major_top_left_order() {
         let size = Size::square(5);
-        let own = decode_report(size, &fixture()).unwrap().ownership.unwrap();
+        let own = decode_report(size, None, &fixture())
+            .unwrap()
+            .ownership
+            .unwrap();
         assert_eq!(own.len(), size.points());
         // Row 0 is the TOP row (A5..E5) and is Black's in the fixture.
         for x in 0..5 {
@@ -380,7 +400,10 @@ mod tests {
     #[test]
     fn policy_has_a_pass_slot_and_marks_illegal_moves() {
         let size = Size::square(5);
-        let policy = decode_report(size, &fixture()).unwrap().policy.unwrap();
+        let policy = decode_report(size, None, &fixture())
+            .unwrap()
+            .policy
+            .unwrap();
         assert_eq!(policy.len(), size.points() + 1);
         let c3 = size.from_gtp("C3").unwrap().index();
         assert!((dq_policy(policy[c3]).unwrap() - 0.875).abs() < 1e-4);
@@ -393,7 +416,7 @@ mod tests {
     fn wrong_length_arrays_are_rejected() {
         let size = Size::square(19);
         // The 5x5 fixture's arrays are the wrong length for a 19x19 board.
-        let err = decode_report(size, &fixture()).unwrap_err();
+        let err = decode_report(size, None, &fixture()).unwrap_err();
         assert!(err.contains("ownership"), "{err}");
     }
 

@@ -147,6 +147,7 @@ impl BatchAnalysis {
         for planned in &mut plan {
             planned.req.report_every_ms = None;
             planned.req.priority = 0;
+            planned.req.max_candidates = u8::try_from(max_candidates).ok();
         }
         let workers = in_flight(engine.describe().analysis_threads).min(plan.len());
 

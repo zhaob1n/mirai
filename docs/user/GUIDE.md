@@ -173,7 +173,8 @@ it falls past **Suggestions Shown** — the outline sits on a dim empty disc. At
 record there is no outline.
 
 **Suggestions Shown** controls how many blobs and list rows appear (10 by default). **All**
-keeps every move the engine searched.
+keeps every move the engine searched. The engine only sends that many, so raising it
+restarts the live search; lowering it does not.
 
 ### The candidate list
 

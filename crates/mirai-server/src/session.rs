@@ -288,6 +288,7 @@ async fn session_loop(host: &Host, conn: &Connection, session: u64) -> anyhow::R
                     engine = %named.name,
                     moves = req.moves.len(),
                     max_visits = ?req.max_visits,
+                    max_candidates = ?req.max_candidates,
                     priority = req.priority,
                     "open subscription"
                 );

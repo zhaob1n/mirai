@@ -78,7 +78,7 @@ fn main() -> Result<()> {
         else {
             continue;
         };
-        let report = decode_report(size, &body).map_err(anyhow::Error::msg)?;
+        let report = decode_report(size, None, &body).map_err(anyhow::Error::msg)?;
         parse += start.elapsed();
         lines += 1;
         json_bytes += line.len();

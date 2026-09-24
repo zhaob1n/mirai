@@ -160,6 +160,9 @@ pub struct AnalyzeReq {
     pub max_visits: Option<u32>,
     pub max_time_ms: Option<u32>,
     pub pv_len: Option<u8>,
+    /// Keep only the first `n` candidates by KataGo's `order`; `None` keeps all. Applied by
+    /// the engine before quantising, so the cut moves are neither decoded nor sent.
+    pub max_candidates: Option<u8>,
     pub want: Want,
     pub report_every_ms: Option<u16>,
     pub priority: i8,
@@ -180,6 +183,7 @@ impl AnalyzeReq {
             max_visits: None,
             max_time_ms: None,
             pv_len: None,
+            max_candidates: None,
             want: Want::empty(),
             report_every_ms: None,
             priority: 0,
