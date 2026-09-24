@@ -723,7 +723,7 @@ Cancellation must *discard* in-flight reports, so it is propagated on both strea
 | Actor | Required actions, in order |
 |---|---|
 | **Client** | 1. `STOP_SENDING` on that subscription's stream with application code 1 — this drops reports already buffered in the receive window instead of decoding and delivering them. 2. Send `ClientMsg::Cancel { sub }` on the control stream. 3. Retire the id and ignore anything further for it. |
-| **Server** | Stop the search and **reset** the subscription stream with application code 1 (`session.rs` — `pump`, `CODE_CANCELLED`). Resetting is REQUIRED: finishing would deliver exactly the stale reports the client just refused. Cancelling an unknown id is not an error and MUST be ignored silently. |
+| **Server** | Stop the search and **reset** the subscription stream with application code 1 (`session.rs` — `pump`, `CODE_CANCELLED`). Resetting is REQUIRED: finishing would deliver exactly the stale reports the client just refused. Stopping MUST NOT wait on the client: a stream it no longer reads is blocked on flow control, and the search must end anyway. Cancelling an unknown id is not an error and MUST be ignored silently. |
 
 A client MAY send only one of the two and a server MUST cope, but doing both is RECOMMENDED:
 `STOP_SENDING` acts in the transport immediately, while `Cancel` waits on the peer's control
@@ -803,7 +803,7 @@ reason. Dropping the attempt is that close. It is not an authentication failure.
 |---|---|---|
 | Frame payload | ≤ `MAX_FRAME` (8 MiB) | sender MUST NOT exceed; receiver MUST reject before allocating |
 | Decompressed payload | ≤ `MAX_FRAME` | receiver MUST abort decompression past the limit |
-| Concurrent subscriptions | per-token `max_subs`, default 4 | server MUST refuse further `Open` with `TooManySubs` |
+| Concurrent subscriptions | per-token `max_subs`, default 4 | server MUST refuse further `Open` with `TooManySubs`. The reference server counts a cancelled subscription until its search has stopped; an `Open` at the limit waits up to 1 s (`CANCEL_GRACE`) for a cancelled one to stop before refusing, so `Cancel` then `Open` at the limit is served |
 | Server-opened uni streams | client's `max_concurrent_uni_streams` | QUIC flow control; client MUST advertise ≥ its intended subscription count |
 | `AnalyzeReq.priority` | clamped to `-8..=8` | server MUST clamp, not reject |
 | Board size | `2..=19` per dimension | receiver MUST reject anything else |

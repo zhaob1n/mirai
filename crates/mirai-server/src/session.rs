@@ -36,6 +36,10 @@ const CODE_CANCELLED: u32 = 1;
 /// Requests are clamped into this band so one client cannot starve the others.
 const PRIORITY_RANGE: std::ops::RangeInclusive<i8> = -8..=8;
 
+/// How long an `Open` at the subscription limit waits for a cancelled subscription to stop.
+/// Stopping one takes a scheduler turn; this only has to cover a loaded host.
+const CANCEL_GRACE: Duration = Duration::from_secs(1);
+
 /// How long a peer may hold a session slot before it has sent `Hello`.
 ///
 /// The accept loop takes the slot before the handshake. A QUIC keep-alive
@@ -257,6 +261,10 @@ async fn session_loop(
     // Dropping this map cancels every subscription of this connection: each entry is the
     // sending half of its pump task's cancel channel.
     let mut subs: HashMap<u32, oneshot::Sender<()>> = HashMap::new();
+    // `max_subs` counts live KataGo queries, not map entries. `Cancel` removes the entry at
+    // once, but the query lives until its pump drops the `Subscription`; each pump holds a
+    // permit until then, so a client cannot cancel-and-reopen past its limit.
+    let slots = Arc::new(tokio::sync::Semaphore::new(max_subs as usize));
 
     loop {
         let msg = match frame::read_msg::<_, ClientMsg>(&mut rx, &mut rbuf).await {
@@ -294,7 +302,7 @@ async fn session_loop(
                 engine,
                 mut req,
             } => {
-                // Finished pumps drop their cancel receiver; reap them before counting.
+                // Finished pumps drop their cancel receiver; reap them before checking ids.
                 subs.retain(|_, cancel| !cancel.is_closed());
 
                 if subs.contains_key(&sub) {
@@ -308,7 +316,21 @@ async fn session_loop(
                     .await?;
                     continue;
                 }
-                if subs.len() as u32 >= max_subs {
+                let held = max_subs as usize - slots.available_permits();
+                let slot = match Arc::clone(&slots).try_acquire_owned() {
+                    Ok(slot) => Some(slot),
+                    // Some slots are held by cancelled subscriptions still stopping. That
+                    // takes their pump a scheduler turn, and a client that cancels and
+                    // reopens at its limit must not lose the race to it.
+                    Err(_) if held > subs.len() => {
+                        tokio::time::timeout(CANCEL_GRACE, Arc::clone(&slots).acquire_owned())
+                            .await
+                            .ok()
+                            .and_then(Result::ok)
+                    }
+                    Err(_) => None,
+                };
+                let Some(slot) = slot else {
                     error_msg(
                         &mut tx,
                         &mut wbuf,
@@ -318,7 +340,7 @@ async fn session_loop(
                     )
                     .await?;
                     continue;
-                }
+                };
                 let Some(named) = host.resolve_engine(engine.as_deref()) else {
                     let wanted = engine.as_deref().unwrap_or("<default>");
                     error_msg(
@@ -355,7 +377,12 @@ async fn session_loop(
                 let (cancel_tx, cancel_rx) = oneshot::channel();
                 subs.insert(sub, cancel_tx);
                 frame::write_msg(&mut tx, &mut wbuf, &ServerMsg::Opened { sub }).await?;
-                tokio::spawn(pump(conn.clone(), session, sub, subscription, cancel_rx));
+                let conn = conn.clone();
+                tokio::spawn(async move {
+                    pump(conn, session, sub, subscription, cancel_rx).await;
+                    // Only now is the query gone: `pump` has dropped the subscription.
+                    drop(slot);
+                });
             }
         }
     }
@@ -365,22 +392,53 @@ async fn session_loop(
 ///
 /// Returning drops `subscription`, which terminates the KataGo query — so every exit path
 /// here, including the connection simply going away, cleans up the engine side.
+///
+/// `cancel` is raced against every await, not only the wait for the next event: opening the
+/// stream waits on the peer's stream limit and a write waits on its flow control, and a
+/// client that stops reading would otherwise keep a cancelled query running.
 async fn pump(
     conn: Connection,
     session: u64,
     sub: u32,
-    mut subscription: Subscription,
+    subscription: Subscription,
     mut cancel: oneshot::Receiver<()>,
 ) {
-    let mut stream = match conn.open_uni().await {
-        Ok(s) => s,
-        Err(e) => {
-            warn!(session, sub, error = %e, "could not open the subscription stream");
+    let mut stream = tokio::select! {
+        biased;
+        _ = &mut cancel => {
+            info!(session, sub, "subscription dropped");
             return;
         }
+        opened = conn.open_uni() => match opened {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(session, sub, error = %e, "could not open the subscription stream");
+                return;
+            }
+        },
     };
+    tokio::select! {
+        biased;
+        _ = cancel => {
+            // The losing branch, and the subscription it owned, is already dropped. Reset
+            // rather than finish: buffered stale reports must never arrive.
+            let _ = stream.reset(VarInt::from_u32(CODE_CANCELLED));
+            info!(session, sub, "subscription dropped");
+        }
+        () = stream_events(&mut stream, session, sub, subscription) => {}
+    }
+}
+
+/// The body of [`pump`] once its stream is open: runs until the subscription is terminal
+/// or the stream fails.
+async fn stream_events(
+    stream: &mut SendStream,
+    session: u64,
+    sub: u32,
+    mut subscription: Subscription,
+) {
     // Stream preamble: the raw 4-byte LE sub id, before any frame.
-    if let Err(e) = tokio::io::AsyncWriteExt::write_all(&mut stream, &sub.to_le_bytes()).await {
+    if let Err(e) = tokio::io::AsyncWriteExt::write_all(stream, &sub.to_le_bytes()).await {
         warn!(session, sub, error = %e, "could not write the subscription preamble");
         return;
     }
@@ -401,49 +459,40 @@ async fn pump(
             SubEvent::Pending => {}
             SubEvent::Report(r) => {
                 let msg = SubMsgRef::Report(own.report(r));
-                if let Err(e) = send(&mut stream, &mut enc, msg).await {
+                if let Err(e) = send(stream, &mut enc, msg).await {
                     debug!(session, sub, error = %e, "subscription stream closed early");
                     info!(session, sub, "subscription dropped");
                     return;
                 }
             }
             SubEvent::Done(r) => {
-                let _ = send(&mut stream, &mut enc, SubMsgRef::Done(own.report(r))).await;
+                let _ = send(stream, &mut enc, SubMsgRef::Done(own.report(r))).await;
                 let _ = stream.finish();
                 info!(session, sub, visits = r.root.visits, "subscription done");
                 return;
             }
             SubEvent::Failed(err) => {
                 let text = err.to_string();
-                let _ = send(&mut stream, &mut enc, SubMsgRef::Failed(&text)).await;
+                let _ = send(stream, &mut enc, SubMsgRef::Failed(&text)).await;
                 let _ = stream.finish();
                 info!(session, sub, error = %text, "subscription failed");
                 return;
             }
         }
 
-        tokio::select! {
-            biased;
-            _ = &mut cancel => {
-                // Reset rather than finish: buffered stale reports must never arrive.
-                let _ = stream.reset(VarInt::from_u32(CODE_CANCELLED));
+        match subscription.next().await {
+            Some(e) => event = e,
+            None => {
+                let _ = send(
+                    stream,
+                    &mut enc,
+                    SubMsgRef::Failed("engine closed the subscription"),
+                )
+                .await;
+                let _ = stream.finish();
                 info!(session, sub, "subscription dropped");
                 return;
             }
-            next = subscription.next() => match next {
-                Some(e) => event = e,
-                None => {
-                    let _ = send(
-                        &mut stream,
-                        &mut enc,
-                        SubMsgRef::Failed("engine closed the subscription"),
-                    )
-                    .await;
-                    let _ = stream.finish();
-                    info!(session, sub, "subscription dropped");
-                    return;
-                }
-            },
         }
     }
 }
@@ -738,6 +787,228 @@ mod tests {
             .expect("serve did not finish after the client left")
             .expect("serve task");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Publishes incompressible reports until its subscription is dropped, so a stream
+    /// nobody reads blocks on flow control within a few reports. Dropping a subscription
+    /// sends on `dropped`, then waits for `gate` to open: a query that is slow to die.
+    struct Flood {
+        dropped: tokio::sync::mpsc::UnboundedSender<()>,
+        gate: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    }
+
+    impl Engine for Flood {
+        fn subscribe(&self, _req: AnalyzeReq) -> Subscription {
+            let (tx, rx) = tokio::sync::watch::channel(SubEvent::Pending);
+            tokio::spawn(async move {
+                let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+                loop {
+                    let mut report = mirai_proto::types::Report::empty(0, Color::Black);
+                    let policy = (0..362).map(|_| {
+                        seed ^= seed << 13;
+                        seed ^= seed >> 7;
+                        seed ^= seed << 17;
+                        seed as u16
+                    });
+                    report.policy = Some(policy.collect());
+                    if tx.send(SubEvent::Report(Arc::new(report))).is_err() {
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            });
+            let dropped = self.dropped.clone();
+            let gate = Arc::clone(&self.gate);
+            Subscription::new(
+                rx,
+                mirai_engine::CancelGuard::new(move || {
+                    let _ = dropped.send(());
+                    let (open, cv) = &*gate;
+                    let mut open = open.lock().unwrap();
+                    while !*open {
+                        open = cv.wait(open).unwrap();
+                    }
+                }),
+            )
+        }
+
+        fn describe(&self) -> EngineDesc {
+            EngineDesc::placeholder("flood")
+        }
+    }
+
+    struct Client {
+        tx: SendStream,
+        rx: quinn::RecvStream,
+        buf: FrameBuf,
+        dropped: tokio::sync::mpsc::UnboundedReceiver<()>,
+        gate: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+        _conn: Connection,
+        _endpoint: quinn::Endpoint,
+        dir: std::path::PathBuf,
+    }
+
+    impl Client {
+        /// A greeted session on a [`Flood`] engine whose drop gate starts `open`.
+        async fn connect(max_subs: u32, open: bool) -> Client {
+            let (endpoint, fp, dir) = test_endpoint("flood");
+            let addr = endpoint.local_addr().expect("bound");
+            let (dropped_tx, dropped) = tokio::sync::mpsc::unbounded_channel();
+            let gate = Arc::new((std::sync::Mutex::new(open), std::sync::Condvar::new()));
+            let host = Arc::new(Host {
+                engines: vec![NamedEngine {
+                    name: "flood".into(),
+                    engine: Arc::new(Flood {
+                        dropped: dropped_tx,
+                        gate: Arc::clone(&gate),
+                    }),
+                }],
+                tokens: vec![Token {
+                    value: "secret".into(),
+                    name: "test".into(),
+                    max_subs,
+                }],
+            });
+            let accepting = endpoint.clone();
+            tokio::spawn(async move {
+                let incoming = accepting.accept().await.expect("incoming");
+                serve(host, incoming, Duration::from_secs(2)).await;
+            });
+
+            let (conn, _) = mirai_proto::transport::connect(&format!("mirai://{addr}"), Some(fp))
+                .await
+                .expect("handshake");
+            let (tx, rx) = conn.open_bi().await.expect("control stream");
+            let mut client = Client {
+                tx,
+                rx,
+                buf: FrameBuf::new(),
+                dropped,
+                gate,
+                _conn: conn,
+                _endpoint: endpoint,
+                dir,
+            };
+            client
+                .send(ClientMsg::Hello {
+                    proto: PROTO_VERSION,
+                    token: "secret".into(),
+                    client: "test".into(),
+                })
+                .await;
+            assert!(matches!(client.recv().await, ServerMsg::Welcome { .. }));
+            client
+        }
+
+        async fn send(&mut self, msg: ClientMsg) {
+            frame::write_msg(&mut self.tx, &mut self.buf, &msg)
+                .await
+                .expect("write");
+        }
+
+        async fn recv(&mut self) -> ServerMsg {
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                frame::read_msg(&mut self.rx, &mut self.buf),
+            )
+            .await
+            .expect("the server did not answer")
+            .expect("read")
+        }
+
+        /// Opens `sub` and returns the answer. The subscription stream is never read.
+        async fn open(&mut self, sub: u32) -> ServerMsg {
+            let req = AnalyzeReq::new(Size::square(19), RuleSet::Chinese, 7.5);
+            self.send(ClientMsg::Open {
+                sub,
+                engine: None,
+                req,
+            })
+            .await;
+            self.recv().await
+        }
+
+        async fn dropped(&mut self) {
+            tokio::time::timeout(Duration::from_secs(1), self.dropped.recv())
+                .await
+                .expect("the cancelled subscription was not dropped")
+                .expect("engine gone");
+        }
+
+        fn open_gate(&self) {
+            let (open, cv) = &*self.gate;
+            *open.lock().unwrap() = true;
+            cv.notify_all();
+        }
+    }
+
+    impl Drop for Client {
+        fn drop(&mut self) {
+            self.open_gate();
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    /// A client that stops reading leaves the pump blocked on flow control. `Cancel` must
+    /// still drop the subscription, or the KataGo query keeps running.
+    #[tokio::test]
+    async fn cancel_drops_a_subscription_whose_stream_is_not_read() {
+        let mut client = Client::connect(4, true).await;
+        assert!(matches!(client.open(1).await, ServerMsg::Opened { sub: 1 }));
+        // Far longer than the flood needs to fill a 16 KiB window.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        client.send(ClientMsg::Cancel { sub: 1 }).await;
+        client.dropped().await;
+    }
+
+    /// Stepping through a game at the limit is `Cancel` then `Open`, back to back. The
+    /// cancelled query has not stopped when the `Open` is read; it must still be served.
+    #[tokio::test]
+    async fn cancel_then_reopen_at_the_limit_is_served() {
+        let mut client = Client::connect(1, true).await;
+        for sub in 1..20 {
+            client.send(ClientMsg::Cancel { sub: sub - 1 }).await;
+            let answer = client.open(sub).await;
+            assert!(
+                matches!(answer, ServerMsg::Opened { .. }),
+                "reopen {sub} was refused: {answer:?}"
+            );
+        }
+    }
+
+    /// `max_subs` counts queries, not ids: a cancelled subscription holds its slot until it
+    /// has actually been dropped.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_cancelled_subscription_holds_its_slot_until_dropped() {
+        let mut client = Client::connect(1, false).await;
+        assert!(matches!(client.open(1).await, ServerMsg::Opened { sub: 1 }));
+        client.send(ClientMsg::Cancel { sub: 1 }).await;
+        client.dropped().await;
+        let refused = client.open(2).await;
+        assert!(
+            matches!(
+                refused,
+                ServerMsg::Error {
+                    sub: Some(2),
+                    code: ErrCode::TooManySubs,
+                    ..
+                }
+            ),
+            "a query still being dropped did not count: {refused:?}"
+        );
+
+        client.open_gate();
+        for sub in 3..100 {
+            match client.open(sub).await {
+                ServerMsg::Opened { .. } => return,
+                ServerMsg::Error {
+                    code: ErrCode::TooManySubs,
+                    ..
+                } => tokio::time::sleep(Duration::from_millis(10)).await,
+                other => panic!("unexpected answer {other:?}"),
+            }
+        }
+        panic!("the slot never came back after the subscription was dropped");
     }
 
     fn test_endpoint(tag: &str) -> (quinn::Endpoint, String, std::path::PathBuf) {
