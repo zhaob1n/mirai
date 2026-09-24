@@ -100,7 +100,7 @@ repeat the analysis numbers.
 | **Win-rate graph** | Always Black's view. Solid curve = Black win rate (left axis 0/50/100); dashed curve = Black score lead (right axis, never tighter than ±5). The cursor reads `Black 54.2%`. Coloured bars along the bottom are the blunder strip. Tooltip: Black win rate and Black score lead over the main line. Drag the divider above it to resize it; the height is remembered |
 | **Sidebar** | **Analysis**, **Moves**, **Comment**. Analysis reads the side to move, not Black. <kbd>F9</kbd>, or Main Menu → *View* → *Sidebar*, hides it at any width. At 926 or narrower the sidebar closes and the same button reopens it as an overlay |
 | **Board navigation** | Under the board only: first / previous / next / last, previous / next variation, the slider, a position such as `12 / 80 · W`, **Editing Tools**, and **Board Menu**. The position tooltip spells out `Move 12 of 80 · White to play`. There is no win-rate readout here |
-| **Play bar** | A second row, only while a game is running. Timed games show both clocks here — `●` Black, `○` White, the side to move in the accent colour — then **Undo**, **Pass**, and, against the engine, **Resign** |
+| **Play bar** | Only while a game is running. Timed games show both clocks here — `●` Black, `○` White, the side to move in the accent colour — then **Undo**, **Pass**, and, against the engine, **Resign**. During a game the graph, board navigation and sidebar are hidden, and the sidebar button is disabled, so the board takes the window; they return when the game ends, the sidebar as you left it |
 
 The Main Menu holds *Clear Board*, *Save*, *Save As…*, *Copy SGF*, *Analyse Game*, *Estimate
 Score*, a *View* submenu — *Sidebar*, *Editing Tools*, *Coordinates*, *Move Numbers*,

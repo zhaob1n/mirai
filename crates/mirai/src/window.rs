@@ -131,6 +131,9 @@ pub struct Ui {
     comment_node: Cell<Option<NodeRef>>,
     scale_guard: Cell<bool>,
     pending_auto_analyse: Cell<bool>,
+    /// `Some(sidebar was shown)` while a game hides the review surfaces; see
+    /// [`sync_play_layout`].
+    play_layout: Cell<Option<bool>>,
     tasks: WindowTasks,
     autosave: Option<AutosaveFile>,
     win_actions: gio::SimpleActionGroup,
@@ -358,6 +361,7 @@ pub fn present(
         comment_node: Cell::new(None),
         scale_guard: Cell::new(false),
         pending_auto_analyse: Cell::new(false),
+        play_layout: Cell::new(None),
         tasks: WindowTasks::default(),
         autosave: next_autosave_file(),
         win_actions: gio::SimpleActionGroup::new(),
@@ -980,6 +984,7 @@ fn update_play_controls(ui: &Ui) {
         .set_visible(in_progress && ui.play.is_human_vs_engine());
     ui.play_bar
         .set_visible(in_progress || ui.clock_box.is_visible());
+    sync_play_layout(ui);
 }
 
 /// The name for a record with no backing file: who played it, else the event it came from.
@@ -1842,6 +1847,43 @@ fn fit_default_size(window: &MiraiWindow, graph: &WinrateGraph) {
     window.set_default_size(width, height);
 }
 
+/// A game shows the board and the play bar only. The graph, the navigation row and the
+/// sidebar are review tools, and the analysis in them would be hints; they return when the
+/// game is over, the sidebar as it was before the game.
+fn sync_play_layout(ui: &Ui) {
+    let playing = matches!(
+        ui.play.play_state(),
+        PlayState::HumanTurn | PlayState::AiThinking | PlayState::Scoring
+    );
+    if playing == ui.play_layout.get().is_some() {
+        return;
+    }
+    let Some(window) = ui.window() else {
+        return;
+    };
+    let split = window.split();
+    ui.winrate.set_visible(!playing);
+    window.nav().set_visible(!playing);
+    // The sidebar is forced shut for the whole game (see `install_actions`), so its toggle
+    // would be a dead button.
+    window.sidebar_toggle().set_sensitive(!playing);
+    if let Some(action) = win_simple(ui, "toggle-sidebar") {
+        action.set_enabled(!playing);
+    }
+    if playing {
+        ui.play_layout.set(Some(split.shows_sidebar()));
+        split.set_show_sidebar(false);
+    } else {
+        // The divider position was the board's height before the game, and the window may
+        // have been resized since; hand the graph its remembered height instead.
+        ui.winrate.pin();
+        window.content_paned().set_property("position-set", false);
+        if let Some(shown) = ui.play_layout.take() {
+            split.set_show_sidebar(shown);
+        }
+    }
+}
+
 fn install_actions(window: &MiraiWindow, ui: &Ui) {
     let group = ui.win_actions.clone();
     let weak = ui.weak_window();
@@ -1924,9 +1966,21 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
         let split = split.clone();
         Box::new(move |_: &Ui| split.set_show_sidebar(!split.shows_sidebar()))
     });
-    split.connect_show_sidebar_notify(move |split| {
-        sidebar.set_state(&split.shows_sidebar().to_variant());
-    });
+    {
+        let weak = weak.clone();
+        split.connect_show_sidebar_notify(move |split| {
+            // Uncollapsing, and a breakpoint unapplying, both show the sidebar again; during
+            // a game it stays shut, since it would show the engine's hints.
+            let in_game = weak
+                .upgrade()
+                .and_then(|window| window.with_ui(|ui| ui.play_layout.get().is_some()));
+            if in_game == Some(true) && split.shows_sidebar() {
+                split.set_show_sidebar(false);
+                return;
+            }
+            sidebar.set_state(&split.shows_sidebar().to_variant());
+        });
+    }
 
     let editor = window.editor_revealer();
     let editor_action = toggle(

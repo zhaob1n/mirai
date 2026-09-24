@@ -430,8 +430,10 @@ template $MiraiWindow: Adw.ApplicationWindow {
             Gtk.Box play_bar {
               visible: false;
               spacing: 12;
+              halign: center;
               margin-start: 8;
               margin-end: 8;
+              margin-top: 4;
               margin-bottom: 4;
               // Clocks sit with the play controls: both exist only while a game is running, and a
               // variable-width element in the header made the title jump mid-game.

@@ -43,6 +43,8 @@ mod imp {
         #[template_child]
         pub board_view: TemplateChild<adw::ToolbarView>,
         #[template_child]
+        pub nav: TemplateChild<gtk::Box>,
+        #[template_child]
         pub editor_revealer: TemplateChild<gtk::Revealer>,
         #[template_child]
         pub editor_toggle: TemplateChild<gtk::ToggleButton>,
@@ -172,6 +174,10 @@ impl MiraiWindow {
 
     pub(crate) fn board_view(&self) -> adw::ToolbarView {
         self.imp().board_view.get()
+    }
+
+    pub(crate) fn nav(&self) -> gtk::Box {
+        self.imp().nav.get()
     }
 
     pub(crate) fn editor_revealer(&self) -> gtk::Revealer {

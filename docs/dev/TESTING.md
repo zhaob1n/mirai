@@ -230,7 +230,8 @@ The window this drives is review-first. The editor toolbar starts collapsed
 Navigation sits under the board only — first/prev/next/last, branch, slider,
 `move_position` (`n / N · B|W`), Editing Tools, Board Menu — not in a
 window-wide bottom bar, and not as a second analysis readout. Clocks, Undo,
-Pass and Resign are a separate `play_bar`, hidden until a game is active.
+Pass and Resign are a separate `play_bar`, hidden until a game is active; while
+one is running or being scored, the graph, `nav` and the sidebar are hidden.
 The sidebar's candidate list shows `# / Move / Win / Score / Visits`. Loss and
 Prior stay hidden until `action:win.toggle-candidate-details`. The graph is
 always Black's (`Black 36.0%` on the cursor; tooltip names Black win rate and

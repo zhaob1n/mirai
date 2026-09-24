@@ -752,7 +752,10 @@ minimum to 80 px, so the handle drags both ways. The graph records every allocat
 the board toolbar and that graph height against the shortest monitor (85 %, at most 960 px
 tall) and makes the window exactly board + sidebar wide, so a floating first window has no
 bare background; a remembered graph too tall for this screen is capped so the board keeps
-the sidebar docked. The sidebar header must keep `show-title` at its
+the sidebar docked. While a game is in progress or being scored, `sync_play_layout` hides the
+graph, the `nav` row and the sidebar (a `show-sidebar` notify keeps it shut through
+breakpoint changes, and its toggle is disabled), and restores them — sidebar as it was, graph
+re-pinned at its remembered height — when the game is over. The sidebar header must keep `show-title` at its
 default: clearing it hides the title widget, which is the `Adw.InlineViewSwitcher`. Sidebar
 width follows `win.toggle-candidate-details`: 300 sp for the five common columns, 386 sp
 with Loss and Prior, including when the split collapses at 926 sp. The rank badge keeps
