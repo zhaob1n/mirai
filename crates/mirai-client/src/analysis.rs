@@ -51,32 +51,17 @@ pub fn request_for_node(
     let mut req = AnalyzeReq::new(tree.info.size, tree.info.rules, tree.info.komi);
 
     let path = tree.path_to(id);
-    let boundary = path.iter().rev().copied().find(|&nid| {
-        let node = tree.node(nid);
-        !node.setup.is_empty() || node.to_play_override.is_some()
-    });
+    let boundary = path
+        .iter()
+        .rev()
+        .copied()
+        .find(|&nid| is_reconstruction_boundary(tree, nid));
 
     if let Some(boundary) = boundary {
-        let (to_play, stones, captures) = {
-            let pos = tree.position(boundary);
-            let stones = pos
-                .board
-                .stones()
-                .iter()
-                .enumerate()
-                .filter_map(|(i, s)| s.map(|c| (c, Point(i as u16))))
-                .collect::<Vec<_>>();
-            (pos.to_play, stones, pos.board.captures)
-        };
-        req.initial_player = Some(to_play);
-        req.initial_stones = stones;
-        if tree.info.rules.rules().scoring == Scoring::Territory && captures != [0, 0] {
-            let black_captures = captures[Color::Black.index()];
-            let white_captures = captures[Color::White.index()];
-            let adjusted = i32::from(req.komi_x2)
-                + 2 * (i32::from(white_captures) - i32::from(black_captures));
-            req.komi_x2 = adjusted.clamp(i16::MIN.into(), i16::MAX.into()) as i16;
-        }
+        let snap = snapshot_boundary(tree, boundary);
+        req.initial_player = Some(snap.initial_player);
+        req.initial_stones = snap.initial_stones;
+        req.komi_x2 = snap.komi_x2;
         for &nid in path.iter().skip_while(|&&nid| nid != boundary).skip(1) {
             if let Some(mv) = tree.node(nid).mv {
                 req.moves.push(mv);
@@ -97,6 +82,49 @@ pub fn request_for_node(
     req.max_visits = Some(max_visits);
     req.pv_len = Some(PV_LEN);
     req
+}
+
+/// A setup or `PL` node: the reconstruction boundary [`request_for_node`] snapshots.
+pub(crate) fn is_reconstruction_boundary(tree: &GameTree, id: NodeId) -> bool {
+    let node = tree.node(id);
+    !node.setup.is_empty() || node.to_play_override.is_some()
+}
+
+/// Stones, side to move, and territory-adjusted komi at a boundary node.
+///
+/// This is the only place those three are derived. A whole-game plan snapshots each boundary
+/// once and reuses the result; [`request_for_node`] does the same for a single node.
+pub(crate) struct BoundarySnapshot {
+    pub initial_player: Color,
+    pub initial_stones: Vec<(Color, Point)>,
+    pub komi_x2: i16,
+}
+
+pub(crate) fn snapshot_boundary(tree: &mut GameTree, boundary: NodeId) -> BoundarySnapshot {
+    let mut komi_x2 = AnalyzeReq::new(tree.info.size, tree.info.rules, tree.info.komi).komi_x2;
+    let (to_play, stones, captures) = {
+        let pos = tree.position(boundary);
+        let stones = pos
+            .board
+            .stones()
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| s.map(|c| (c, Point(i as u16))))
+            .collect::<Vec<_>>();
+        (pos.to_play, stones, pos.board.captures)
+    };
+    if tree.info.rules.rules().scoring == Scoring::Territory && captures != [0, 0] {
+        let black_captures = captures[Color::Black.index()];
+        let white_captures = captures[Color::White.index()];
+        let adjusted =
+            i32::from(komi_x2) + 2 * (i32::from(white_captures) - i32::from(black_captures));
+        komi_x2 = adjusted.clamp(i16::MIN.into(), i16::MAX.into()) as i16;
+    }
+    BoundarySnapshot {
+        initial_player: to_play,
+        initial_stones: stones,
+        komi_x2,
+    }
 }
 
 /// Converts a wire report into the Black-perspective [`NodeAnalysis`] the tree stores.

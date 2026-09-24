@@ -139,11 +139,12 @@ impl BatchAnalysis {
             return;
         }
         // A sweep is background work: it must not preempt the live search the user is
-        // watching, and nobody reads its intermediate reports.
+        // watching, and nobody reads its intermediate reports. These are applied when the
+        // sweep materialises each request, so the plan does not hold N copies of the history.
         for planned in &mut plan {
-            planned.req.report_every_ms = None;
-            planned.req.priority = 0;
-            planned.req.max_candidates = u8::try_from(max_candidates).ok();
+            planned.report_every_ms = None;
+            planned.priority = 0;
+            planned.max_candidates = u8::try_from(max_candidates).ok();
         }
         let workers =
             mirai_client::batch::in_flight(engine.describe().analysis_threads).min(plan.len());
