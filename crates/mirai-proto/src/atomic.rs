@@ -20,11 +20,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// processes, and two threads in one process, never share a name.
 static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
-/// A sibling of `target` whose name includes this process's pid and a process-wide
-/// counter. Hidden by a leading dot so a crash between create and rename does not look
-/// like a second config.
-fn temp_path(target: &Path) -> PathBuf {
-    let n = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
+/// How many names `stage` tries before giving up. Only a crashed process that held this
+/// pid can have left one of ours behind, so a handful covers any real directory.
+const STAGE_ATTEMPTS: u32 = 16;
+
+/// A sibling of `target` whose name includes this process's pid and sequence number `n`.
+/// Hidden by a leading dot so a crash between create and rename does not look like a
+/// second config.
+fn temp_path(target: &Path, n: u64) -> PathBuf {
     let mut name = std::ffi::OsString::from(".");
     name.push(target.file_name().unwrap_or(std::ffi::OsStr::new("mirai")));
     name.push(format!(".{}.{n}.tmp", std::process::id()));
@@ -57,16 +60,42 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// key is `0600` from the moment it exists rather than after a later `chmod`. Other
 /// platforms ignore it.
 pub(crate) fn stage(target: &Path, bytes: &[u8], mode: Option<u32>) -> io::Result<PathBuf> {
-    let tmp = temp_path(target);
-    if let Err(error) = write_synced(&tmp, bytes, mode) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(error);
-    }
-    Ok(tmp)
+    stage_with(target, bytes, mode, || {
+        TEMP_SEQ.fetch_add(1, Ordering::Relaxed)
+    })
 }
 
-fn write_synced(path: &Path, bytes: &[u8], mode: Option<u32>) -> io::Result<()> {
-    let mut file = create_new(path, mode)?;
+/// [`stage`] with the sequence source passed in, so a test can aim at a name it has
+/// already occupied.
+///
+/// A process that crashed between staging and renaming leaves its temporary file
+/// behind, and a later process that is given the same pid would pick the same names.
+/// `AlreadyExists` therefore means "try the next number", never "the write failed" — and
+/// the file that was in the way is not ours to delete.
+fn stage_with(
+    target: &Path,
+    bytes: &[u8],
+    mode: Option<u32>,
+    mut next: impl FnMut() -> u64,
+) -> io::Result<PathBuf> {
+    for _ in 0..STAGE_ATTEMPTS {
+        let tmp = temp_path(target, next());
+        let file = match create_new(&tmp, mode) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        };
+        write_synced(file, &tmp, bytes)?;
+        return Ok(tmp);
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        format!("no free temporary name beside {}", target.display()),
+    ))
+}
+
+/// Writes and syncs a freshly created temporary file, deleting it on failure.
+fn write_synced(mut file: File, path: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
         drop(file);
         let _ = std::fs::remove_file(path);
@@ -98,9 +127,16 @@ fn persist(tmp: PathBuf, target: &Path) -> io::Result<()> {
 
 fn replace(path: &Path, bytes: &[u8], mode: Option<u32>) -> io::Result<()> {
     let target = follow(path)?;
-    let staged = stage(&target, bytes, mode)?;
+    let existing = existing_permissions(&target)?;
+    // Create the temporary file no wider than the file it replaces. Staging with the
+    // umask default and narrowing afterwards left a `0600` config — remote tokens —
+    // readable by other users for as long as the write took. The umask can only narrow
+    // these bits further; the exact ones are set before the rename.
+    let create_mode = mode.or_else(|| existing.as_ref().and_then(unix_mode));
+    let staged = stage(&target, bytes, create_mode)?;
     if mode.is_none()
-        && let Err(error) = copy_mode(&target, &staged)
+        && let Some(permissions) = existing
+        && let Err(error) = std::fs::set_permissions(&staged, permissions)
     {
         let _ = std::fs::remove_file(&staged);
         return Err(error);
@@ -138,12 +174,25 @@ fn follow(path: &Path) -> io::Result<PathBuf> {
     ))
 }
 
-fn copy_mode(from: &Path, to: &Path) -> io::Result<()> {
-    match std::fs::metadata(from) {
-        Ok(meta) => std::fs::set_permissions(to, meta.permissions()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+/// The permissions of the file about to be replaced; `None` if there is none yet, in
+/// which case the new file gets the umask default exactly as `std::fs::write` gave it.
+fn existing_permissions(target: &Path) -> io::Result<Option<std::fs::Permissions>> {
+    match std::fs::metadata(target) {
+        Ok(meta) => Ok(Some(meta.permissions())),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
     }
+}
+
+#[cfg(unix)]
+fn unix_mode(permissions: &std::fs::Permissions) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt;
+    Some(permissions.mode() & 0o7777)
+}
+
+#[cfg(not(unix))]
+fn unix_mode(_permissions: &std::fs::Permissions) -> Option<u32> {
+    None
 }
 
 /// Syncs the directory that contains `path`, so a rename or unlink is durable across
@@ -351,6 +400,25 @@ mod tests {
                 .is_symlink()
         );
         assert_eq!(std::fs::read(dir.join("real.toml")).unwrap(), b"created");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A process that crashed mid-write leaves its temporary file; a later process given
+    /// the same pid picks the same names. That leftover must be stepped over and kept,
+    /// not turn every save of the target into `AlreadyExists`.
+    #[test]
+    fn a_leftover_temporary_name_is_skipped_not_fatal() {
+        let dir = scratch("stale");
+        let target = dir.join("config.toml");
+        let stale = temp_path(&target, 0);
+        std::fs::write(&stale, b"a crashed write").unwrap();
+
+        let mut seq = 0..;
+        let staged = stage_with(&target, b"new", None, || seq.next().unwrap()).unwrap();
+
+        assert_eq!(staged, temp_path(&target, 1));
+        assert_eq!(std::fs::read(&staged).unwrap(), b"new");
+        assert_eq!(std::fs::read(&stale).unwrap(), b"a crashed write");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
