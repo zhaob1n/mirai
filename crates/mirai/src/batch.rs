@@ -80,6 +80,11 @@ pub struct BatchAnalysis {
     total: Cell<u32>,
     done: Cell<u32>,
     analysed: Cell<u32>,
+    /// The graph and blunder list are behind the banner. The window drains this at most
+    /// once per timer tick; finish, cancel and fail refresh immediately via `Change::Tree`.
+    projection_dirty: Cell<bool>,
+    /// Coalescing timer. Removed on drop so a closed window cannot refresh (INV-8).
+    projection_source: RefCell<Option<glib::SourceId>>,
 }
 
 impl BatchAnalysis {
@@ -99,6 +104,8 @@ impl BatchAnalysis {
             total: Cell::new(0),
             done: Cell::new(0),
             analysed: Cell::new(0),
+            projection_dirty: Cell::new(false),
+            projection_source: RefCell::new(None),
         };
         let weak = this.window.clone();
         this.banner.connect_button_clicked(move |_| {
@@ -211,8 +218,9 @@ impl BatchAnalysis {
         }
         self.banner.set_revealed(false);
         self.state.set_busy(false);
-        self.state
-            .notify_batch_progress(self.done.get(), self.total.get());
+        // Tree below is the final graph and blunder refresh. Do not notify here: that
+        // would arm another coalesced tick after the sweep has already ended.
+        self.disarm_projection();
         self.state.changed(Change::Tree);
         self.state.toast(format!(
             "Analysis cancelled after {} positions",
@@ -270,6 +278,8 @@ impl BatchAnalysis {
             self.analysed.set(self.analysed.get() + 1);
         }
         self.update_banner();
+        // The window coalesces the O(main line) graph and blunder rebuild. The banner
+        // count above is the per-result update.
         self.state
             .notify_batch_progress(self.done.get(), self.total.get());
     }
@@ -279,6 +289,7 @@ impl BatchAnalysis {
         self.running.set(false);
         self.banner.set_revealed(false);
         self.state.set_busy(false);
+        self.disarm_projection();
         self.state.changed(Change::Tree);
 
         let n = blunders(&self.state.tree(), self.state.tree_epoch()).len();
@@ -293,10 +304,38 @@ impl BatchAnalysis {
         self.running.set(false);
         self.banner.set_revealed(false);
         self.state.set_busy(false);
-        self.state
-            .notify_batch_progress(self.done.get(), self.total.get());
+        self.disarm_projection();
         self.state.changed(Change::Tree);
         self.state.toast(format!("Analysis stopped: {message}"));
+    }
+
+    /// Marks the graph and blunder list dirty. The caller arms the timer only when this
+    /// returns true; a tick already waiting will see the flag.
+    pub(crate) fn note_projection_dirty(&self) -> bool {
+        self.projection_dirty.set(true);
+        self.projection_source.borrow().is_none()
+    }
+
+    pub(crate) fn store_projection_source(&self, id: glib::SourceId) {
+        if let Some(old) = self.projection_source.borrow_mut().replace(id) {
+            old.remove();
+        }
+    }
+
+    /// The coalescing callback is finishing on its own. Clear the slot without removing it.
+    pub(crate) fn forget_projection_source(&self) {
+        self.projection_source.borrow_mut().take();
+    }
+
+    pub(crate) fn take_projection_dirty(&self) -> bool {
+        self.projection_dirty.replace(false)
+    }
+
+    fn disarm_projection(&self) {
+        self.projection_dirty.set(false);
+        if let Some(id) = self.projection_source.borrow_mut().take() {
+            id.remove();
+        }
     }
 }
 
@@ -304,6 +343,9 @@ impl Drop for BatchAnalysis {
     fn drop(&mut self) {
         if let Some(task) = self.task.get_mut().take() {
             task.abort();
+        }
+        if let Some(id) = self.projection_source.get_mut().take() {
+            id.remove();
         }
     }
 }

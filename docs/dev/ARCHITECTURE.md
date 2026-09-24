@@ -687,7 +687,7 @@ refresh. This avoids several independently ordered signal callbacks observing ha
 | `Engine` | engine-state transitions and profile edits | rebuild the engine menu, choose the analysis page, refresh the panel, update the subtitle |
 | `Toast(String)` | `AppState::toast` | add one `adw::Toast` |
 | `Play` | `notify_play_changed` | refresh clocks and play controls. Active play forces the editor revealer closed and disables its toggle |
-| `BatchProgress` | `notify_batch_progress` | refresh the graph and the blunder list as the sweep lands. Completion, cancel and failure also emit `Tree` |
+| `BatchProgress` | `notify_batch_progress` | the banner count is already current. The graph and blunder list refresh at most once per 250 ms while results land. Completion, cancel and failure emit `Tree`, which is the final refresh |
 
 Ordering remains explicit: cursor state is current before `Report`, and every tree borrow is
 released before `changed` enters window code.

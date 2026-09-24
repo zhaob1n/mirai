@@ -548,10 +548,7 @@ fn handle_change(ui: &Ui, change: Change) {
             );
             update_editor_actions(ui);
         }
-        Change::BatchProgress(_, _) => {
-            ui.winrate.refresh();
-            refresh_blunders(ui);
-        }
+        Change::BatchProgress(_, _) => schedule_batch_projection(ui),
     }
 }
 
@@ -1054,6 +1051,34 @@ fn update_analysis_page(ui: &Ui) {
 fn refresh_blunders(ui: &Ui) {
     let rows = crate::batch::blunders(&ui.state.tree(), ui.state.tree_epoch());
     ui.analysis.set_blunders(rows);
+}
+
+/// How long a burst of sweep results may wait before the graph and blunder list catch up.
+/// One rebuild of the main line per tick, not one per result.
+const BATCH_PROJECTION_MS: u64 = 250;
+
+fn schedule_batch_projection(ui: &Ui) {
+    if !ui.batch.note_projection_dirty() {
+        return;
+    }
+    let weak = ui.weak_window();
+    let id = glib::timeout_add_local(
+        std::time::Duration::from_millis(BATCH_PROJECTION_MS),
+        move || {
+            with_window_ui(&weak, flush_batch_projection);
+            glib::ControlFlow::Break
+        },
+    );
+    ui.batch.store_projection_source(id);
+}
+
+fn flush_batch_projection(ui: &Ui) {
+    // The source is completing; removing it again would warn.
+    ui.batch.forget_projection_source();
+    if ui.batch.take_projection_dirty() {
+        ui.winrate.refresh();
+        refresh_blunders(ui);
+    }
 }
 
 // -- comment pane -----------------------------------------------------------------------
