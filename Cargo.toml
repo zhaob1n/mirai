@@ -55,7 +55,8 @@ rustls = { version = "0.23.43", default-features = false, features = [
     "std",
     "logging",
 ] }
-rcgen = { version = "0.14.9", default-features = false, features = ["crypto", "pem", "ring"] }
+# 0.14.10 moved to pem 4, which shares our base64 0.23 instead of pulling 0.22.
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
 subtle = "2.6.1"
 
 serde = { version = "1.0.229", features = ["derive"] }
