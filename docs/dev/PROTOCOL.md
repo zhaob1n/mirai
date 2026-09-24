@@ -855,29 +855,45 @@ the TLS handshake.
 
 ## 11. Reference figures
 
-Measured by `mirai-proto/tests/wire_size.rs`.
+Two sources. `mirai-proto/tests/wire_size.rs` pins single messages on synthetic data and
+fails `cargo test` if they grow; `mirai-engine/examples/wire_bench.rs` measures a real
+search ([TESTING.md §4](TESTING.md#4-verifying-against-a-real-engine)).
 
 | Message | Contents | postcard payload | Compressed | **Framed** |
 |---|---|---|---|---|
-| `SubMsg::Report` | 19×19, 50 candidates, 15-move PVs with `pv_visits`, 361-entry ownership, no policy; first frame of a subscription stream | 4128 B | yes → 2605 B | **2610 B** |
+| `SubMsg::Report` | 19×19, 50 candidates, 15-move PVs with `pv_visits`, 361-entry ownership, no policy; first frame of a subscription stream | 4128 B | yes → 2587 B | **2592 B** |
 | `ClientMsg::Open` | 19×19, 200 moves, `want = OWNERSHIP\|PV_VISITS`, `max_visits`, `report_every_ms` | 496 B | no | **501 B** |
 | `SubMsg::Report` | 2 candidates, 2-move PVs, no ownership or policy ([Appendix A](#appendix-a-worked-exchange)) | 77 B | no | **82 B** |
 | `ClientMsg::Ping` | one `u64` | 2 B | no | **7 B** |
 
+A real search: `katago analysis` on an 18-move 19×19 opening, 20 s at
+`reportDuringSearchEvery = 0.1`, 196 reports of 63 candidates on average. KataGo's JSON for
+one report averaged **33.6 KB**, and 240 µs to parse and quantise. Mean framed bytes per
+report, each row adding one change to the one above:
+
+| Wire | Policy off | Policy on |
+|---|---|---|
+| MRP/1, as live analysis requested it (every candidate, `pv_visits`) | 2318 B | 2656 B |
+| without `pv_visits`, which no client reads | 2185 B | 2594 B |
+| `max_candidates = 10`, what the board shows by default | 738 B | 1147 B |
+| one zstd stream per subscription ([§4.1](#41-subscription-streams-one-zstd-stream)) | 198 B | 197 B |
+| ownership as changes ([§7.11](#711-report)) — **MRP/2** | **148 B** | **148 B** |
+
 What to expect from those numbers:
 
-* A live 19×19 analysis at `report_every_ms = 100` costs roughly **26 KB/s** per subscription.
-  The equivalent KataGo JSON is put at ~45 KB per report by the `mirai-proto` crate docs
-  (~17× larger); that figure is a project claim, not measured by this specification.
-* Ownership dominates a report: `w*h` raw bytes before compression. `POLICY` adds `w*h + 1`
-  varints of 1–3 bytes each.
-* A report crosses the 4096-byte compression threshold at roughly 50 candidates with full PVs
-  plus ownership; smaller reports go out uncompressed, so an implementation that never
-  compresses interoperates and is only larger on the biggest frames.
-* `MAX_FRAME` is ~2000× a full report. It is a safety ceiling, not a working budget.
+* A live 19×19 analysis at `report_every_ms = 100` costs about **1.5 KB/s** per subscription,
+  against 23 KB/s under MRP/1 and 336 KB/s for KataGo's own JSON.
+* The first frame of a stream has nothing to be compressed against, and costs what the report
+  costs alone (654 B here). A client that steps through a game opens a new stream per move,
+  so browsing pays that; pondering one position pays the stream rate.
+* An unchanged policy costs one back-reference, which is why the overlay adds nothing once a
+  stream is running.
+* Encoding a report takes about 14 µs at `SUB_STREAM_LEVEL` and decoding about 3 µs.
+* `MAX_FRAME` is ~3000× a full report. It is a safety ceiling, not a working budget.
 
-Verified end to end against KataGo 1.16.4, locally and through `mirai-server`; a client SIGINT
-makes the server drop the subscription in under 1 ms and KataGo falls to 0 % CPU.
+Verified end to end against KataGo 1.18.0, locally and through `mirai-server`. A client
+SIGINT makes the server drop the subscription within 50 µs of the connection closing, and
+KataGo falls from two busy cores to 0 % CPU within 250 ms.
 
 ---
 

@@ -4,8 +4,8 @@
 //!
 //! Quantisation is part of the type: every float that crosses the wire is stored as a
 //! fixed-point integer, and the conversion helpers live here so that the local KataGo
-//! decoder and the remote server quantise identically. A live report is ~2.5 KB instead
-//! of the ~45 KB of equivalent KataGo JSON.
+//! decoder and the remote server quantise identically. A live report crosses the wire in a
+//! few hundred bytes where KataGo's JSON for it runs to 34 KB (`PROTOCOL.md` §11).
 //!
 //! All values are from **Black's** perspective (mirai always launches KataGo with
 //! `reportAnalysisWinratesAs = BLACK`).

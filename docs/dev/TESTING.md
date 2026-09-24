@@ -52,8 +52,8 @@ needed, `cargo test -p <crate> -- --list`.
 | Crate | Behaviour the suite proves | Command / fixture |
 |---|---|---|
 | `mirai-core` | INV-1 geometry; each ruleset's KataGo string; ko, suicide, captures, Zobrist; positional versus situational superko, and that edits keep `NodeId`s; scoring totals (territory **plus the prisoners that side holds**), not the margin alone; SGF escaping, collections, branches, and a corrupt `MRAI` ignored rather than fatal | `cargo test -p mirai-core`. Parser fixtures: `crates/mirai-core/tests/data/katago-selfplay.sgf` (mirai's writer; regenerate in §4) and `lizzieyzy-autoGame1.sgf` (another writer's bytes, vendored) |
-| `mirai-proto` | INV-6 quantisation and the INV-2 flip; the frame length cap enforced *before* allocate; cert reuse; a mismatched pin refused as a mismatch, not as a generic failure | `cargo test -p mirai-proto`. The byte budget is the `wire_size` command in §1 — read the printed numbers, do not copy them into this table |
-| `mirai-engine` | The JSON handed to KataGo (empty `avoidMoves` dropped, never `analyzeTurns`, `terminate` behind INV-3); decode order and Black-perspective values; reporting perspective forced on the command line; a comma in an override path is an error; the generated analysis config carries every key KataGo demands and is not rewritten when unchanged; calibration selects the measured winner and covers the thread product; a dead remote address fails instead of hanging | `cargo test -p mirai-engine`. These tests never start KataGo. A real engine is §4 |
+| `mirai-proto` | INV-6 quantisation and the INV-2 flip; the frame length cap enforced *before* allocate; trailing bytes and a flag the stream does not allow refused; a subscription stream decodes frame by frame, compresses a repeat to a back-reference, refuses a bomb and an oversized window, and restores ownership sent as changes; a stream cannot run more than one window ahead of its reader; cert reuse; a mismatched pin refused as a mismatch, not as a generic failure | `cargo test -p mirai-proto`. The byte budget is the `wire_size` command in §1 — read the printed numbers, do not copy them into this table |
+| `mirai-engine` | The JSON handed to KataGo (empty `avoidMoves` dropped, never `analyzeTurns`, `terminate` behind INV-3); decode order and Black-perspective values; a candidate cap keeps the engine's best, not KataGo's first; reporting perspective forced on the command line; a comma in an override path is an error; the generated analysis config carries every key KataGo demands and is not rewritten when unchanged; calibration selects the measured winner and covers the thread product; a dead remote address fails instead of hanging; the MRP/2 session rules against a scripted server | `cargo test -p mirai-engine`. These tests never start KataGo. A real engine is §4 |
 | `mirai-client` | A request built from the last setup/`PL` boundary, with territory komi taken from that boundary; a sweep hands back a result before the rest of the plan is dispatched; blunder drop measured from the mover, above the 2% noise floor; an illegal move changes nothing; dirty is a document token; TOFU waits until trusted; temperature 0 is deterministic and one bad report does not resign; Fox dialect normalised before `sgf::parse` | `cargo test -p mirai-client` |
 | `mirai-server` | Token shape; a misspelled key is an error; relative paths resolve against the config directory; the example config parses; exact-match auth (no `[[token]]` rejects everyone); a client cannot raise its own priority | `cargo test -p mirai-server`. Example: `crates/mirai-server/server.example.toml` |
 | `mirai` | Display-free projections only: config merge and discovery order, Clear Board keeps size/rules/komi, the slider spans the line through the cursor, Fox normalisation, widget geometry lifted out of `snapshot()`, harness grammar. Nothing drawn | `cargo test -p mirai`. What the window looks like is §5 |
@@ -152,6 +152,29 @@ and 5 000 root visits, a 29-move engine self-play record, a decided 9×9 endgame
 and a 9×9 opening. Search depth below ten visits is not a colour, not a label
 and not full opacity (`TRUSTED_VISITS`). A breakpoint moved next should be
 remeasured this way, not reasoned about.
+
+### Measuring the wire
+
+`crates/mirai-engine/examples/wire_bench.rs` prices a report on the wire from a
+real search. Feed it raw `katago analysis` output; it decodes each line with the
+engine's own decoder, frames the reports the MRP/1 way and then the way a
+subscription stream carries them, round-trips every frame, and prints bytes and
+microseconds per report. A change to anything in [`PROTOCOL.md`](PROTOCOL.md)
+§4 or §7 is measured this way before and after, not reasoned about; §11 there
+holds the current figures.
+
+```sh
+Q='{"id":"cap","boardXSize":19,"boardYSize":19,"rules":"chinese","komi":7.5,"moves":[["B","Q16"],["W","D4"],["B","Q4"],["W","D16"],["B","R10"],["W","C10"],["B","K16"],["W","K4"],["B","O17"],["W","F17"],["B","F3"],["W","O3"],["B","C6"],["W","R14"],["B","C14"],["W","R6"],["B","J10"],["W","K10"]],"includeOwnership":true,"includePVVisits":true,"includePolicy":true,"analysisPVLen":15,"reportDuringSearchEvery":0.1,"maxVisits":10000000,"overrideSettings":{"maxTime":20}}'
+printf '%s\n' "$Q" | "$KATA" analysis -model "$MODEL" -config "$CFG" \
+    -override-config reportAnalysisWinratesAs=BLACK > /tmp/mrp-capture.jsonl
+cargo run --release -p mirai-engine --example wire_bench -- /tmp/mrp-capture.jsonl
+cargo run --release -p mirai-engine --example wire_bench -- /tmp/mrp-capture.jsonl --policy
+```
+
+The capture asks for everything (`pvVisits`, policy) so that one file serves
+every row: the bench strips what a row does not send. `--cap` sets the candidate
+cap (10, the default display), `--levels` the zstd levels to compare. The file
+is several megabytes and stays out of the tree.
 
 ### The two SGF fixtures
 
