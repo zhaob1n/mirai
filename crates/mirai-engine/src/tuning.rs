@@ -112,7 +112,13 @@ nnCacheSizePowerOfTwo = {}
     /// left alone, so a config several windows share is never churned underneath a running
     /// KataGo. It reads the file once at startup and never again, but its reported
     /// `numAnalysisThreads` is read back out of it for [`crate::EngineDesc`].
+    ///
+    /// That name is predictable, so `dir` must be this user's alone: it is created
+    /// private, and one another user owns or can write to is refused (see
+    /// [`mirai_proto::atomic::private_dir`]), and a symlink already at the path is
+    /// replaced, never followed.
     pub fn write_to(&self, dir: &Path) -> io::Result<PathBuf> {
+        mirai_proto::atomic::private_dir(dir)?;
         let path = dir.join(format!(
             "katago-analysis-a{}-s{}-b{}-c{}.cfg",
             self.analysis_threads,
@@ -121,13 +127,13 @@ nnCacheSizePowerOfTwo = {}
             self.nn_cache_size_power_of_two
         ));
         let text = self.render();
-        if std::fs::read_to_string(&path).is_ok_and(|old| old == text) {
+        let is_file = std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file());
+        if is_file && std::fs::read_to_string(&path).is_ok_and(|old| old == text) {
             return Ok(path);
         }
-        std::fs::create_dir_all(dir)?;
         // Same tuning shares this path, and two windows may start together. The rename
         // publishes a complete file, so neither writer can leave KataGo a partial config.
-        mirai_proto::atomic::write_atomic(&path, text.as_bytes())?;
+        mirai_proto::atomic::write_atomic_generated(&path, text.as_bytes())?;
         Ok(path)
     }
 }
@@ -224,6 +230,54 @@ mod tests {
                 .unwrap()
                 .contains("numSearchThreadsPerAnalysisThread = 16"),
             "the first config must survive the second untouched"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The config name is predictable. A link planted under it must not steer the write
+    /// onto a file of this user's, and must not be left for KataGo to read through.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_planted_at_the_config_path_is_not_followed() {
+        let base = std::env::temp_dir().join(format!("mirai-tuning-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let dir = base.join("logs");
+        std::fs::create_dir_all(&dir).unwrap();
+        let victim = base.join("victim");
+        std::fs::write(&victim, b"precious").unwrap();
+        let t = EngineTuning::default();
+        let planted = dir.join("katago-analysis-a4-s16-b64-c20.cfg");
+        std::os::unix::fs::symlink(&victim, &planted).unwrap();
+
+        let path = t.write_to(&dir).expect("write the generated config");
+
+        assert_eq!(path, planted);
+        assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
+        assert!(std::fs::symlink_metadata(&path).unwrap().is_file());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), t.render());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A log directory another user can write lets them swap the config KataGo reads.
+    #[cfg(unix)]
+    #[test]
+    fn a_world_writable_directory_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("mirai-tuning-shared-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).unwrap();
+
+        let error = EngineTuning::default()
+            .write_to(&dir)
+            .expect_err("a world-writable directory is refused");
+
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            std::fs::read_dir(&dir).unwrap().count(),
+            0,
+            "nothing written"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
