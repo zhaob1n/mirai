@@ -385,6 +385,11 @@ impl AppState {
     // adds is the observability a window needs. Every borrow is released before `changed`
     // runs, because the dispatcher borrows the tree again (INV-10).
 
+    /// The session's document token. Cursor moves do not change it; edits do.
+    pub fn document_token(&self) -> u64 {
+        self.imp().session.borrow().document_token()
+    }
+
     pub fn tree(&self) -> Ref<'_, GameTree> {
         Ref::map(self.imp().session.borrow(), GameSession::tree)
     }

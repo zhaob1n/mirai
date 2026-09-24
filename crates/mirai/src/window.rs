@@ -9,7 +9,7 @@
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use adw::prelude::*;
@@ -89,12 +89,23 @@ impl Drop for SourceSlot {
 struct WindowTasks {
     score: TaskSlot,
     autosave: SourceSlot,
+    /// Applying an open. Aborted on close so a result cannot land on a window that is gone.
+    load: TaskSlot,
+    /// Waiting for the stale-autosave scan. Aborted on close so this window does not
+    /// consume a leftover another window should be offered.
+    restore: TaskSlot,
+    /// The glib side of an autosave write. The blocking write is gated separately, because
+    /// aborting this future must not cancel a write shutdown still has to wait out.
+    autosave_write: TaskSlot,
 }
 
 impl WindowTasks {
     fn abort_all(&self) {
         self.score.abort();
         self.autosave.remove();
+        self.load.abort();
+        self.restore.abort();
+        self.autosave_write.abort();
     }
 }
 
@@ -136,6 +147,10 @@ pub struct Ui {
     play_layout: Cell<Option<bool>>,
     /// The View menu's Win-Rate Graph switch; see [`sync_graph`].
     show_graph: Cell<bool>,
+    /// Bumped on every open and on every wholesale record replacement. A slower
+    /// earlier read must not replace a later one, or a New Game the user has since
+    /// started. In-place edits are caught separately, by the document token.
+    load_generation: Cell<u64>,
     tasks: WindowTasks,
     autosave: Option<AutosaveFile>,
     win_actions: gio::SimpleActionGroup,
@@ -207,6 +222,9 @@ pub fn present(
     pool: Rc<crate::engines::EnginePool>,
     path: Option<PathBuf>,
 ) {
+    // Reading every leftover autosave is the slow part of the first window. Start it
+    // before the widgets exist so that work is not on the GTK thread.
+    ensure_stale_scan(&runtime);
     let config_path = Config::default_path().unwrap_or_else(|_| PathBuf::from("mirai.toml"));
     let config = match Config::load(&config_path) {
         Ok(c) => c,
@@ -370,6 +388,7 @@ pub fn present(
         pending_auto_analyse: Cell::new(false),
         play_layout: Cell::new(None),
         show_graph: Cell::new(show_graph),
+        load_generation: Cell::new(0),
         tasks: WindowTasks::default(),
         autosave: next_autosave_file(),
         win_actions: gio::SimpleActionGroup::new(),
@@ -416,13 +435,6 @@ pub fn present(
         ui.winrate.refresh();
     });
 
-    // Whatever an earlier run left behind, one record per window, most recent first. A
-    // window that closed cleanly deleted its file, so anything here really is a leftover.
-    let stale_autosave = stale_autosaves()
-        .lock()
-        .ok()
-        .and_then(|mut stale| stale.pop());
-
     window.with_ui(install_autosave);
     connect_close(&window);
 
@@ -440,8 +452,8 @@ pub fn present(
     window.with_ui(|ui| {
         if let Some(path) = path {
             load_sgf(ui, &path, Origin::File);
-        } else if let Some(autosave) = stale_autosave {
-            offer_restore(ui, autosave);
+        } else {
+            offer_stale_when_ready(ui);
         }
     });
 }
@@ -1155,6 +1167,8 @@ fn sgf_text(ui: &Ui) -> String {
 /// marks a record nothing on disk holds — a paste or a download — which must go through
 /// Save As and is dirty from the start.
 fn adopt(ui: &Ui, tree: GameTree, path: Option<PathBuf>, unsaved: bool) {
+    // A replacement the user asked for wins over an open that has not landed.
+    supersede_open(ui);
     ui.play.stop();
     // Batch workers hold node IDs from this tree; stop them before replacing its arena.
     ui.batch.cancel();
@@ -1200,22 +1214,54 @@ enum Origin {
     Recovered,
 }
 
+struct LoadedSgf {
+    path: PathBuf,
+    trees: Vec<GameTree>,
+}
+
 fn load_sgf(ui: &Ui, path: &Path, origin: Origin) {
-    let bytes = match std::fs::read(path) {
-        Ok(b) => b,
-        Err(e) => {
-            ui.state.toast(format!("{}: {e}", path.display()));
-            return;
-        }
-    };
-    let trees = match sgf::parse(&bytes) {
-        Ok(t) => t,
-        Err(e) => {
-            ui.state.toast(format!("{}: {e}", path.display()));
-            return;
-        }
-    };
-    let remembered = (origin == Origin::File).then(|| path.to_path_buf());
+    let generation = ui.load_generation.get().wrapping_add(1);
+    ui.load_generation.set(generation);
+    let document = ui.state.document_token();
+    let path = path.to_path_buf();
+    let runtime = ui.state.runtime();
+    let weak = ui.weak_window();
+    let join = runtime.spawn_blocking(move || -> Result<LoadedSgf, String> {
+        let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let trees = sgf::parse(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        Ok(LoadedSgf { path, trees })
+    });
+    let handle = glib::spawn_future_local(async move {
+        let result = join.await;
+        with_window_ui(&weak, |ui| {
+            if ui.load_generation.get() != generation {
+                return;
+            }
+            ui.tasks.load.0.borrow_mut().take();
+            if ui.state.document_token() != document {
+                ui.state
+                    .toast("The record changed while that file was opening, so it was not loaded");
+                return;
+            }
+            match result {
+                Ok(Ok(loaded)) => finish_load(ui, loaded, origin),
+                Ok(Err(message)) => ui.state.toast(message),
+                Err(error) => tracing::warn!(%error, "reading an SGF failed"),
+            }
+        });
+    });
+    ui.tasks.load.replace(handle);
+}
+
+/// An open that has not landed must not replace a record the user has since asked for.
+fn supersede_open(ui: &Ui) {
+    ui.load_generation
+        .set(ui.load_generation.get().wrapping_add(1));
+}
+
+fn finish_load(ui: &Ui, loaded: LoadedSgf, origin: Origin) {
+    let LoadedSgf { path, trees } = loaded;
+    let remembered = (origin == Origin::File).then(|| path.clone());
     let recovered = origin == Origin::Recovered;
     match trees.len() {
         0 => ui.state.toast("That file holds no game records"),
@@ -1223,7 +1269,7 @@ fn load_sgf(ui: &Ui, path: &Path, origin: Origin) {
             let tree = trees.into_iter().next().expect("length checked");
             let moves = tree.main_line().len().saturating_sub(1);
             adopt(ui, tree, remembered, recovered);
-            let label = file_label(path);
+            let label = file_label(&path);
             ui.state.toast(match origin {
                 Origin::File => format!("Opened {label} ({moves} moves)"),
                 Origin::Recovered => {
@@ -1231,7 +1277,14 @@ fn load_sgf(ui: &Ui, path: &Path, origin: Origin) {
                 }
             });
         }
-        _ => choose_game(ui, trees, remembered, recovered, file_label(path)),
+        _ => choose_game(ui, trees, remembered, recovered, file_label(&path)),
+    }
+    // A restored autosave is deleted only once its record is in this window. Deleting
+    // it any earlier — before the read, or before a superseded or cancelled load has
+    // been dropped — loses the only copy of an unsaved game; left alone, it is offered
+    // again on the next start.
+    if recovered {
+        let _ = std::fs::remove_file(&path);
     }
 }
 
@@ -1442,31 +1495,54 @@ fn do_save_as(ui: &Ui) {
 /// One file per window, not per process: windows used to share `autosave.sgf` and overwrite
 /// each other, and the companion `clean-exit` flag could not say *which* window had exited
 /// cleanly. The path is owned by the window's [`Ui`] and the file is removed when that value
-/// drops, so "a window deletes its own file as it closes" holds for every exit path instead
-/// of only the one that remembers to. Whatever is left on disk is by definition what a crash
-/// left behind.
-struct AutosaveFile(PathBuf);
+/// drops — after any in-flight write has either finished or seen the cancellation — so a
+/// clean close cannot leave a file a crash would be offered. Whatever is left on disk is by
+/// definition what a crash left behind.
+struct AutosaveGate {
+    /// Held for the whole off-thread write. Shutdown takes it after setting `cancel`, so
+    /// the delete cannot race a write that already decided to proceed.
+    lock: Mutex<()>,
+    cancel: AtomicBool,
+    /// Set while a write is in flight. A tick that finds it set skips itself.
+    in_flight: AtomicBool,
+}
+
+struct AutosaveFile {
+    path: PathBuf,
+    gate: Arc<AutosaveGate>,
+}
 
 impl AutosaveFile {
     fn path(&self) -> &Path {
-        &self.0
+        &self.path
     }
 }
 
 impl Drop for AutosaveFile {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        self.gate.cancel.store(true, Ordering::Release);
+        let _guard = self
+            .gate
+            .lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _ = std::fs::remove_file(&self.path);
     }
 }
 
 fn next_autosave_file() -> Option<AutosaveFile> {
     static NEXT: AtomicU32 = AtomicU32::new(0);
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    Some(AutosaveFile(
-        Config::data_dir()
+    Some(AutosaveFile {
+        path: Config::data_dir()
             .ok()?
             .join(format!("{}{n}.sgf", *AUTOSAVE_PREFIX)),
-    ))
+        gate: Arc::new(AutosaveGate {
+            lock: Mutex::new(()),
+            cancel: AtomicBool::new(false),
+            in_flight: AtomicBool::new(false),
+        }),
+    })
 }
 
 /// Identifies this process's autosaves. The start time is in there because a pid alone is
@@ -1481,73 +1557,179 @@ static AUTOSAVE_PREFIX: LazyLock<String> = LazyLock::new(|| {
 
 /// Autosaves left by an earlier run, newest last, each offered to at most one window.
 ///
-/// Scanned once per process. Files that no longer parse, or hold nothing worth restoring,
-/// are deleted here rather than shown.
-fn stale_autosaves() -> &'static Mutex<Vec<PathBuf>> {
-    static STALE: LazyLock<Mutex<Vec<PathBuf>>> = LazyLock::new(|| {
-        let Ok(dir) = Config::data_dir() else {
-            return Mutex::new(Vec::new());
-        };
-        // A pre-per-window autosave is stale exactly when the old clean-exit flag is absent.
-        let legacy = dir.join("autosave.sgf");
-        let flag = dir.join("clean-exit");
-        let mut found: Vec<PathBuf> = Vec::new();
-        if legacy.exists() && !flag.exists() {
-            found.push(legacy);
-        }
-        let _ = std::fs::remove_file(&flag);
+/// Scanned once per process, on the runtime's blocking pool: the first window must not
+/// stall the GTK thread reading and parsing every leftover. Files that no longer parse,
+/// or hold nothing worth restoring, are deleted here rather than shown.
+fn collect_stale_autosaves() -> Vec<PathBuf> {
+    let Ok(dir) = Config::data_dir() else {
+        return Vec::new();
+    };
+    // A pre-per-window autosave is stale exactly when the old clean-exit flag is absent.
+    let legacy = dir.join("autosave.sgf");
+    let flag = dir.join("clean-exit");
+    let mut found: Vec<PathBuf> = Vec::new();
+    if legacy.exists() && !flag.exists() {
+        found.push(legacy);
+    }
+    let _ = std::fs::remove_file(&flag);
 
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                let Some(name) = name.to_str() else { continue };
-                if name.starts_with("autosave-")
-                    && name.ends_with(".sgf")
-                    && !name.starts_with(AUTOSAVE_PREFIX.as_str())
-                {
-                    found.push(entry.path());
-                }
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if name.starts_with("autosave-")
+                && name.ends_with(".sgf")
+                && !name.starts_with(AUTOSAVE_PREFIX.as_str())
+            {
+                found.push(entry.path());
             }
         }
-        found.retain(|path| {
-            match std::fs::read(path)
-                .ok()
-                .and_then(|bytes| sgf::parse(&bytes).ok())
-            {
-                Some(games) => games.iter().any(GameTree::has_content),
-                None => {
-                    let _ = std::fs::remove_file(path);
-                    false
-                }
+    }
+    found.retain(|path| {
+        match std::fs::read(path)
+            .ok()
+            .and_then(|bytes| sgf::parse(&bytes).ok())
+        {
+            Some(games) => games.iter().any(GameTree::has_content),
+            None => {
+                let _ = std::fs::remove_file(path);
+                false
+            }
+        }
+    });
+    found.sort();
+    found
+}
+
+enum StaleScan {
+    Pending(Vec<tokio::sync::oneshot::Sender<()>>),
+    Ready(Vec<PathBuf>),
+}
+
+static STALE: LazyLock<Mutex<StaleScan>> =
+    LazyLock::new(|| Mutex::new(StaleScan::Pending(Vec::new())));
+static STALE_STARTED: AtomicBool = AtomicBool::new(false);
+
+fn ensure_stale_scan(runtime: &tokio::runtime::Handle) {
+    if STALE_STARTED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    runtime.spawn_blocking(|| publish_stale(collect_stale_autosaves()));
+}
+
+fn publish_stale(found: Vec<PathBuf>) {
+    let waiters = {
+        let mut slot = STALE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match std::mem::replace(&mut *slot, StaleScan::Ready(found)) {
+            StaleScan::Pending(waiters) => waiters,
+            StaleScan::Ready(_) => Vec::new(),
+        }
+    };
+    for waiter in waiters {
+        let _ = waiter.send(());
+    }
+}
+
+async fn wait_for_stale_scan() {
+    let rx = {
+        let mut slot = STALE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match &mut *slot {
+            StaleScan::Ready(_) => None,
+            StaleScan::Pending(waiters) => {
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                waiters.push(tx);
+                Some(rx)
+            }
+        }
+    };
+    if let Some(rx) = rx {
+        let _ = rx.await;
+    }
+}
+
+fn pop_stale() -> Option<PathBuf> {
+    let mut slot = STALE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    match &mut *slot {
+        StaleScan::Ready(files) => files.pop(),
+        StaleScan::Pending(_) => None,
+    }
+}
+
+fn offer_stale_when_ready(ui: &Ui) {
+    let weak = ui.weak_window();
+    let handle = glib::spawn_future_local(async move {
+        wait_for_stale_scan().await;
+        with_window_ui(&weak, |ui| {
+            ui.tasks.restore.0.borrow_mut().take();
+            if let Some(autosave) = pop_stale() {
+                offer_restore(ui, autosave);
             }
         });
-        found.sort();
-        Mutex::new(found)
     });
-    &STALE
+    ui.tasks.restore.replace(handle);
 }
 
 fn write_autosave(ui: &Ui) {
-    let Some(autosave) = ui.autosave.as_ref().map(AutosaveFile::path) else {
+    let Some(autosave) = ui.autosave.as_ref() else {
         return;
     };
-    // A record is only worth autosaving if it holds something the user would miss.
-    // Restoring a blank board is pure noise, and it is exactly what a session where the
-    // user did nothing would otherwise leave behind.
+    let gate = &autosave.gate;
+    if gate.cancel.load(Ordering::Acquire) || gate.in_flight.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let path = autosave.path().to_path_buf();
     if !ui.state.tree().has_content() {
-        // Leave no bait for the restore prompt.
-        let _ = std::fs::remove_file(autosave);
+        gate.in_flight.store(false, Ordering::Release);
+        let _ = std::fs::remove_file(&path);
         return;
     }
-    if let Some(dir) = autosave.parent()
-        && let Err(e) = std::fs::create_dir_all(dir)
-    {
-        tracing::warn!(%e, "could not create the data directory");
-        return;
-    }
-    let text = sgf_text(ui);
-    if let Err(e) = mirai_proto::atomic::write_atomic(autosave, text.as_bytes()) {
-        tracing::warn!(%e, "could not write the autosave");
+    // The blocking task cannot borrow the tree. Clone what it needs while this thread
+    // still holds the session; serialise, compress and write off the GTK thread.
+    let include = ui.state.config().ui.save_analysis_in_sgf;
+    let tree = ui.state.tree().clone();
+    let gate = Arc::clone(&autosave.gate);
+    let join = ui.state.runtime().spawn_blocking(move || {
+        let _guard = gate
+            .lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _clear = ClearInFlight(&gate.in_flight);
+        if gate.cancel.load(Ordering::Acquire) {
+            return;
+        }
+        if let Some(dir) = path.parent()
+            && let Err(e) = std::fs::create_dir_all(dir)
+        {
+            tracing::warn!(%e, "could not create the data directory");
+            return;
+        }
+        let text = sgf::write(&tree, include);
+        if gate.cancel.load(Ordering::Acquire) {
+            return;
+        }
+        if let Err(e) = mirai_proto::atomic::write_atomic(&path, text.as_bytes()) {
+            tracing::warn!(%e, "could not write the autosave");
+        }
+    });
+    let handle = glib::spawn_future_local(async move {
+        let _ = join.await;
+    });
+    ui.tasks.autosave_write.replace(handle);
+}
+
+/// Clears the in-flight flag even if serialising panics, so a later tick is not stuck
+/// skipping forever.
+struct ClearInFlight<'a>(&'a AtomicBool);
+
+impl Drop for ClearInFlight<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
     }
 }
 
@@ -1567,8 +1749,9 @@ fn offer_restore(ui: &Ui, autosave: PathBuf) {
     dialog.connect_response(None, move |_, response| {
         if response == "restore" {
             with_window_ui(&weak, |ui| load_sgf(ui, &autosave, Origin::Recovered));
+        } else {
+            let _ = std::fs::remove_file(&autosave);
         }
-        let _ = std::fs::remove_file(&autosave);
     });
     dialog.present(ui.window().as_ref());
 }
@@ -2221,6 +2404,7 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
             let weak = ui.weak_window();
             crate::new_game::present(&window, &ui.state, move |setup| {
                 with_window_ui(&weak, |ui| {
+                    supersede_open(ui);
                     ui.batch.cancel();
                     ui.comment_node.set(None);
                     *ui.file.borrow_mut() = None;

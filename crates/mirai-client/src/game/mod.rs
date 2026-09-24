@@ -99,6 +99,14 @@ impl GameSession {
         self.revision
     }
 
+    /// Identity of this document. Edits bump it; moving the cursor does not.
+    ///
+    /// An open that started against one token must not land on another: a play, a
+    /// comment, a paste or a new game would otherwise be replaced by a slow read.
+    pub fn document_token(&self) -> u64 {
+        self.doc
+    }
+
     /// Bumped only when the record is replaced wholesale, so a frontend can invalidate
     /// node ids it kept across the swap.
     pub fn epoch(&self) -> u64 {
