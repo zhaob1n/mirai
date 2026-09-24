@@ -35,7 +35,14 @@ tokio = { version = "1.53.1", features = [
     "sync",
     "time",
 ] }
-quinn = "0.11.11"
+# quinn's defaults minus `platform-verifier`: mirai verifies the server with its own
+# TOFU pin (`mirai-proto/src/transport.rs`) and never asks the OS for trust roots.
+quinn = { version = "0.11.11", default-features = false, features = [
+    "runtime-tokio",
+    "rustls-ring",
+    "log",
+    "bloom",
+] }
 # `ring` only: enabling rustls' default aws-lc-rs alongside quinn's ring provider would
 # leave two installed providers and make `ClientConfig::builder()` panic at runtime.
 rustls = { version = "0.23.43", default-features = false, features = [
