@@ -499,6 +499,8 @@ fn handle_change(ui: &Ui, change: Change) {
             if ui.state.editor_tool() != EditorTool::Play {
                 ui.board.clear_preview();
             }
+            // The ghost stone under the pointer follows the tool.
+            ui.board.queue_draw();
         }
         Change::Tree => {
             ui.board.close_menu();
@@ -542,6 +544,9 @@ fn handle_change(ui: &Ui, change: Change) {
             update_clocks(ui);
             update_play_controls(ui);
             sync_play_editability(ui);
+            ui.board.set_play_locked(
+                ui.play.is_active() && !matches!(ui.play.play_state(), PlayState::HumanTurn),
+            );
             update_editor_actions(ui);
         }
         Change::BatchProgress(_, _) => {

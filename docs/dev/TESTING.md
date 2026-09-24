@@ -342,7 +342,7 @@ Traps:
 | `stack:<view stack page title>` | Show that `adw::ViewStack` page — `stack:Moves` for the branch graph | 250 ms |
 | `sort:<column title>` | Sort the first `GtkColumnView` by that column, and flip direction if it is already primary | 250 ms |
 | `fill:<placeholder>=<text>` | Fill the first visible `gtk::SearchEntry` or `gtk::Entry` whose placeholder matches | 120 ms |
-| `board:<primary\|secondary\|menu>:<GTP>` | Click the mapped board through its production handler. `menu` is Shift+secondary. Invalid, pass and off-board coordinates fail without editing | 120 ms |
+| `board:<primary\|secondary\|menu\|hover>:<GTP>` | Click the mapped board through its production handler, or with `hover` move the pointer there through the motion handler (ghost stone, candidate preview). `menu` is Shift+secondary. Invalid, pass and off-board coordinates fail without editing | 120 ms |
 | `shot:<path.png>` | Render the active window to PNG | see below |
 | `shot:<path.png>=<widget id>` | Same render, cropped to one widget. Ids are Blueprint's (`blunder_expander`, `nav`, …) | see below |
 | `divider:<px>` | Move the board/graph divider so the graph is that tall, through the `set_position` a drag ends in; the paned clamps it at the graph's minimum (80 once laid out). `NOT LAID OUT` while the graph is hidden or unallocated | 250 ms |

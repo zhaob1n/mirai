@@ -17,7 +17,7 @@
 //! `action:<prefix.name>=<string arg>`, `press:<button text>`, `page:<preferences page>`,
 //! `stack:<view stack page>`, `select:<row title>=<index>`, `set:<row title>=<number>`,
 //! `fill:<entry placeholder>=<text>`, `shot:<path.png>`, `shot:<path.png>=<widget id>`,
-//! `board:<primary|secondary|menu>:<GTP>` enters the board's production hit-test path.
+//! `board:<primary|secondary|menu|hover>:<GTP>` enters the board's production hit-test path.
 //! `close-window`, `quit`.
 
 use std::time::Duration;
@@ -660,6 +660,8 @@ fn board_click(app: &adw::Application, button: &str, coordinate: &str) -> Result
         "primary" => (gdk::BUTTON_PRIMARY, gdk::ModifierType::empty()),
         "secondary" => (gdk::BUTTON_SECONDARY, gdk::ModifierType::empty()),
         "menu" => (gdk::BUTTON_SECONDARY, gdk::ModifierType::SHIFT_MASK),
+        // No button: the pointer's motion handler, as if it had moved onto the point.
+        "hover" => (0, gdk::ModifierType::empty()),
         _ => return Err("unknown button".into()),
     };
     let window = app.active_window().ok_or("no active window")?;
@@ -672,7 +674,11 @@ fn board_click(app: &adw::Application, button: &str, coordinate: &str) -> Result
     let (x, y) = board
         .point_center(point)
         .ok_or("board layout is not ready")?;
-    board.click_at(button, modifiers, x, y);
+    if button == 0 {
+        board.update_hover(Some((x, y)));
+    } else {
+        board.click_at(button, modifiers, x, y);
+    }
     Ok(())
 }
 

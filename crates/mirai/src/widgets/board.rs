@@ -176,6 +176,10 @@ const RECORD_RING_W: f32 = 2.0;
 /// something darker than wood to read against.
 const EMPTY_BLOB: gdk::RGBA = gdk::RGBA::new(0.0, 0.0, 0.0, 0.18);
 
+/// Opacity of the stone previewed under the pointer before a click places it. Lighter than a
+/// played stone, heavier than a dead one (0.35), so it reads as "not yet" rather than "gone".
+const HOVER_STONE_ALPHA: f32 = 0.5;
+
 fn is_dark() -> bool {
     adw::StyleManager::default().is_dark()
 }
@@ -257,6 +261,14 @@ mod imp {
         pub hover: Cell<Option<usize>>,
         /// Candidate index pinned by the analysis list.
         pub pinned: Cell<Option<usize>>,
+        /// Where the pointer is, in widget coordinates, whatever the tool. Coordinates, not a
+        /// `Point`: an index would land on another intersection after a size or layout
+        /// change, and neither emits a motion event. The ghost stone is hit-tested from this
+        /// at draw time so it follows the position, tool and geometry without bookkeeping.
+        pub pointer: Cell<Option<(f64, f64)>>,
+        /// Set while a game is running and a click would not place a stone for the person:
+        /// the engine's turn, scoring, a finished game.
+        pub play_locked: Cell<bool>,
         pub static_layer: RefCell<Option<(StaticKey, gsk::RenderNode)>>,
         pub popover: RefCell<Option<gtk::PopoverMenu>>,
         pub menu_point: Cell<Option<Point>>,
@@ -577,6 +589,13 @@ mod imp {
 
             if let Some(report) = projection.report.as_ref() {
                 self.draw_candidates(snapshot, scene, report, projection);
+            }
+            if let Some((p, color)) = self.obj().hover_stone(projection) {
+                let (x, y) = size.xy(p);
+                let (cx, cy) = l.xy(x, y);
+                snapshot.push_opacity(HOVER_STONE_ALPHA as f64);
+                draw_stone(snapshot, cx, cy, l.stone_r, color, false);
+                snapshot.pop();
             }
             self.draw_marks(snapshot, scene, &projection.marks);
         }
@@ -1211,6 +1230,47 @@ impl BoardView {
         self.queue_draw();
     }
 
+    /// Suppresses the ghost stone while a game is running and a click would place nothing.
+    pub(crate) fn set_play_locked(&self, locked: bool) {
+        if self.imp().play_locked.replace(locked) != locked {
+            self.queue_draw();
+        }
+    }
+
+    /// The stone a primary click at the pointer would place, drawn translucent before it
+    /// lands: the side to play where that move is legal (superko aside, which needs the
+    /// history), or the setup colour on an empty point. Never on a candidate blob: that is
+    /// the PV preview's, and the hover index which drives it is only refreshed by motion.
+    fn hover_stone(&self, projection: &BoardProjection) -> Option<(Point, Color)> {
+        let imp = self.imp();
+        if imp.play_locked.get() {
+            return None;
+        }
+        let (x, y) = imp.pointer.get()?;
+        let p = imp.layout.get().hit(projection.size, x, y)?;
+        let on_candidate = projection.report.as_ref().is_some_and(|report| {
+            report
+                .moves
+                .iter()
+                .take(projection.suggestion_limit)
+                .any(|info| info.mv == p)
+        });
+        if on_candidate {
+            return None;
+        }
+        let board = &projection.position.board;
+        match self.state().editor_tool() {
+            EditorTool::Play => {
+                let color = projection.position.to_play;
+                board
+                    .is_legal(color, p, &projection.rules)
+                    .then_some((p, color))
+            }
+            EditorTool::Setup(color) => board.at(p).is_none().then_some((p, color)),
+            _ => None,
+        }
+    }
+
     /// The candidate whose PV is currently previewed: pointer hover first, then the pin.
     fn active_preview(&self) -> Option<usize> {
         if self.state().editor_tool() != EditorTool::Play {
@@ -1476,17 +1536,23 @@ impl BoardView {
         Some(self.node_for_menu_point().unwrap_or(cursor))
     }
 
-    fn update_hover(&self, pointer: Option<(f64, f64)>) {
-        if self.state().editor_tool() != EditorTool::Play {
-            if self.imp().hover.get().is_some() {
-                self.imp().hover.set(None);
-                self.queue_draw();
-            }
-            return;
-        }
-        let idx = pointer.and_then(|(x, y)| self.candidate_at(x, y));
-        if self.imp().hover.get() != idx {
-            self.imp().hover.set(idx);
+    pub(crate) fn update_hover(&self, pointer: Option<(f64, f64)>) {
+        let old = self
+            .imp()
+            .pointer
+            .replace(pointer)
+            .and_then(|(x, y)| self.point_at(x, y));
+        let new = pointer.and_then(|(x, y)| self.point_at(x, y));
+        let tool = self.state().editor_tool();
+        // Only these tools draw a ghost stone; the others redraw for nothing.
+        let ghost = matches!(tool, EditorTool::Play | EditorTool::Setup(_));
+        let idx = if tool == EditorTool::Play {
+            pointer.and_then(|(x, y)| self.candidate_at(x, y))
+        } else {
+            None
+        };
+        let hovered = self.imp().hover.replace(idx) != idx;
+        if (ghost && old != new) || hovered {
             self.queue_draw();
         }
     }

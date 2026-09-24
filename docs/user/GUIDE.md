@@ -121,6 +121,7 @@ layers at once.
 | Shift+right-click, or **Board Menu** | *Play Here*, *Set as Main Line*, *Delete Branch*, *Copy SGF*, *Black to Play*, *White to Play*. During a game, record-changing items are disabled. **Board Menu** stays on the navigation bar when the editor is collapsed |
 | Scroll wheel | browse back / forward one move without deleting anything |
 | Hover a candidate blob | preview its variation. Non-Play tools clear this preview |
+| Hover an intersection (Play or setup tool) | show a translucent stone where a left-click would place one: the side to play on a legal point, or the setup colour on an empty point. During a game it appears only on your turn |
 
 Drag the divider between the board and the graph to make the graph taller or shorter. mirai
 remembers the height, and opens new windows at a size where the board fills its area.
