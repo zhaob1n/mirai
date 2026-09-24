@@ -658,7 +658,7 @@ before accepting. Switch engines with `action:win.set-engine=<profile>`.
 ```text
 INFO connection open session=1 peer=127.0.0.1:53412
 INFO authenticated session=1 token=laptop max_subs=4
-INFO open subscription session=1 sub=1 engine=default moves=20 max_visits=Some(1000000) priority=4
+INFO open subscription session=1 sub=1 engine=default moves=20 max_visits=Some(1000000) max_candidates=Some(10) priority=4
 INFO subscription done session=1 sub=1 visits=6500
 ```
 
