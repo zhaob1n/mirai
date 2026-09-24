@@ -973,7 +973,6 @@ mod tests {
     /// is `u16::MAX`, so it is the other value a sentinel must not collide with.
     #[test]
     fn a_fresh_row_is_not_already_showing_its_move() {
-        gtk::init().expect("gtk");
         let size = Size::square(19);
         let object = CandidateObject::default();
         assert_eq!(object.imp().point.get(), 0);
