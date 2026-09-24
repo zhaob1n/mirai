@@ -410,7 +410,7 @@ index = y * width + x            y = 0 is the TOP row, x = 0 the LEFT column
 | `Report.ownership`, when present, has exactly `w*h` entries in that order. | MUST |
 | `Report.policy`, when present, has exactly `w*h + 1` entries: the board, then **one pass slot last**. | MUST |
 | Both board dimensions are in `2..=19` (`MIN_DIM`/`MAX_DIM`, KataGo's stock `MAX_LEN`); receivers reject anything else. | MUST |
-| (Client) A report that breaks any rule above fails its subscription, which is then stopped as on a cancel ([§8.4](#84-cancellation-inv-3)); none of it is delivered (`remote.rs` — `misfit`). | MUST |
+| (Client) A report that breaks any rule above fails its subscription, which the client then cancels exactly as in [§8.4](#84-cancellation-inv-3) — `STOP_SENDING` and `Cancel` — so the server stops the search and frees its slot; none of the report is delivered (`remote.rs` — `misfit`). | MUST |
 
 This is KataGo's own ordering, which is the reason for choosing it: `ownership` and `policy`
 index identically to the board array, so overlays need no remapping. Reversing it would

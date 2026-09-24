@@ -478,8 +478,18 @@ async fn serve(
                 let Some(int) = int else {
                     break Outcome::Lost("the connection readers stopped".into());
                 };
-                if let Some(why) = handle_int(int, subs) {
-                    break Outcome::Lost(why);
+                match handle_int(int, subs) {
+                    Routed::Carry => {}
+                    // The same path as a cancel from the consumer (INV-3), so the server
+                    // stops the search and frees its slot instead of running on unseen.
+                    Routed::Reject(sub) => {
+                        if let Err(why) =
+                            handle_cmd(Cmd::Cancel { sub }, peer, subs, &mut send, &mut buf).await
+                        {
+                            break Outcome::Lost(why);
+                        }
+                    }
+                    Routed::Lost(why) => break Outcome::Lost(why),
                 }
             }
         }
@@ -541,8 +551,17 @@ async fn write_ctrl(
         .map_err(|e| format!("control stream: {e}"))
 }
 
-/// Routes one reader-task event. `Some(why)` means the connection is gone.
-fn handle_int(int: Int, subs: &mut HashMap<u32, SubState>) -> Option<String> {
+/// What the connection loop does after [`handle_int`].
+enum Routed {
+    Carry,
+    /// The subscription has been failed; cancel it as the consumer would.
+    Reject(u32),
+    /// The connection is gone.
+    Lost(String),
+}
+
+/// Routes one reader-task event.
+fn handle_int(int: Int, subs: &mut HashMap<u32, SubState>) -> Routed {
     match int {
         Int::Server(msg) => match msg {
             ServerMsg::Error {
@@ -580,18 +599,15 @@ fn handle_int(int: Int, subs: &mut HashMap<u32, SubState>) -> Option<String> {
             };
             if let Some(why) = unfit {
                 // Consumers label and index by these points and arrays, so a report that
-                // does not fit the board is never delivered: the subscription fails and its
-                // stream is stopped, as on a cancel (§8.4).
-                if let Some(st) = subs.remove(&sub) {
-                    if let Some(stop) = st.stop {
-                        let _ = stop.send(());
-                    }
+                // does not fit the board is never delivered: the subscription fails, then is
+                // cancelled (§8.4). `Cancel` is idempotent, so a `Done` is covered as well.
+                if let Some(st) = subs.get(&sub) {
                     st.tx
                         .send_replace(SubEvent::Failed(EngineError::Protocol(format!(
                             "the server sent a report that {why}"
                         ))));
                 }
-                return None;
+                return Routed::Reject(sub);
             }
             match msg {
                 SubMsg::Report(r) => {
@@ -622,9 +638,9 @@ fn handle_int(int: Int, subs: &mut HashMap<u32, SubState>) -> Option<String> {
             }
         }
 
-        Int::Lost(why) => return Some(why),
+        Int::Lost(why) => return Routed::Lost(why),
     }
-    None
+    Routed::Carry
 }
 
 /// Why `report` cannot describe a `size` board (PROTOCOL.md §7.1), if it cannot.

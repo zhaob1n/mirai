@@ -310,7 +310,8 @@ async fn ownership_arrives_whole_although_the_stream_sends_changes() {
 
 /// §7.1: a server can put any `u16` in a report, and the GUI labels and indexes by it. A
 /// report that does not fit the requested board is never delivered: its subscription fails
-/// and its stream is stopped, while the connection and a well-formed search carry on.
+/// and is cancelled as §8.4 cancels, with `STOP_SENDING` and a `Cancel` that lets the server
+/// stop the search and free its slot, while the connection and a well-formed search carry on.
 #[tokio::test]
 async fn a_report_that_does_not_fit_the_board_fails_its_subscription() {
     let mut server = TestServer::start(Script::offering(&["default"])).await;
@@ -341,18 +342,25 @@ async fn a_report_that_does_not_fit_the_board_fails_its_subscription() {
             .await
             .expect_err("a report off the board was delivered");
         assert!(matches!(err, EngineError::Protocol(_)), "case {bad}: {err}");
-        // Only `STOP_SENDING` is sent here, and a write only fails once it has arrived.
+        // A write only fails once `STOP_SENDING` has arrived, so keep reporting until it has.
+        let (mut saw_stop, mut saw_cancel) = (false, false);
         let deadline = tokio::time::Instant::now() + PATIENCE;
-        loop {
+        while !(saw_stop && saw_cancel) {
             assert!(
                 tokio::time::Instant::now() < deadline,
-                "case {bad}: stream never stopped"
+                "case {bad}: stopped {saw_stop}, cancelled {saw_cancel}"
             );
-            server.report(id, 3);
+            if !saw_stop {
+                server.report(id, 3);
+            }
             match tokio::time::timeout(Duration::from_millis(200), server.next()).await {
                 Ok(Seen::Stopped { sub: s, code }) => {
                     assert_eq!((s, code), (id, 1), "case {bad}");
-                    break;
+                    saw_stop = true;
+                }
+                Ok(Seen::Control(mirai_proto::msg::ClientMsg::Cancel { sub: s })) => {
+                    assert_eq!(s, id, "case {bad}");
+                    saw_cancel = true;
                 }
                 Ok(Seen::Control(_)) | Err(_) => {}
                 Ok(Seen::Gone) => panic!("case {bad}: the connection died"),
