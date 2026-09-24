@@ -113,30 +113,75 @@ impl Host {
     }
 }
 
-fn request_geometry_error(req: &AnalyzeReq) -> Option<&'static str> {
+/// Most `moves` plus `initial_stones` one request may carry.
+///
+/// Boards are at most 19×19 and real games end within a few hundred moves, so over ten
+/// full boards of moves is far past any real game. Without it a few kilobytes of zstd
+/// inflate to millions of moves, which the engine turns into one JSON line of tens of
+/// megabytes on KataGo's stdin.
+const MAX_REQUEST_STONES: usize = 4096;
+
+/// Most `AvoidSpec` entries one request may carry. The reference client sends none; a
+/// restriction per player per depth band fits many times over.
+const MAX_AVOID_SPECS: usize = 64;
+
+/// Most points across all of a request's `AvoidSpec` lists. One list per player covering
+/// every point of a 19×19 board, pass included, is 2 × 362.
+const MAX_AVOID_POINTS: usize = 1024;
+
+/// The `overrides` keys forwarded to KataGo: what the reference client sends for play
+/// (`mirai-client` — `play.rs`, `ai_request`). PROTOCOL §7.3 has servers treat overrides as
+/// untrusted and lets them ignore any, and §10.1 forbids rejecting unknown keys, so every
+/// other key is dropped: an arbitrary `overrideSettings` entry (`maxVisits`,
+/// `numSearchThreads`, …) can change what a shared search costs.
+const FORWARDED_OVERRIDES: &[&str] = &["wideRootNoise", "humanSLProfile"];
+
+/// Longest forwarded override value. A human profile is a name like `preaz_5k`.
+const MAX_OVERRIDE_VALUE: usize = 64;
+
+fn request_error(req: &AnalyzeReq) -> Option<String> {
     if Size::new(req.size.w, req.size.h).is_none() {
-        return Some("board size is outside 2..=19");
+        return Some("board size is outside 2..=19".into());
     }
 
+    if req.moves.len() + req.initial_stones.len() > MAX_REQUEST_STONES {
+        return Some(format!(
+            "more than {MAX_REQUEST_STONES} moves and initial stones"
+        ));
+    }
     if req
         .moves
         .iter()
         .chain(&req.initial_stones)
         .any(|&(_, point)| !point.is_pass() && !req.size.contains(point))
     {
-        return Some("a move or initial stone is off the board");
+        return Some("a move or initial stone is off the board".into());
     }
 
+    if req.avoid.len() > MAX_AVOID_SPECS
+        || req.avoid.iter().map(|spec| spec.moves.len()).sum::<usize>() > MAX_AVOID_POINTS
+    {
+        return Some(format!(
+            "more than {MAX_AVOID_SPECS} avoid lists or {MAX_AVOID_POINTS} avoid moves"
+        ));
+    }
     if req
         .avoid
         .iter()
         .flat_map(|spec| &spec.moves)
         .any(|&point| !point.is_pass() && !req.size.contains(point))
     {
-        return Some("an avoid move is off the board");
+        return Some("an avoid move is off the board".into());
     }
 
     None
+}
+
+/// Drops every override the server does not forward ([`FORWARDED_OVERRIDES`]).
+fn keep_forwarded_overrides(overrides: &mut Vec<(String, String)>) {
+    overrides.retain(|(key, value)| {
+        FORWARDED_OVERRIDES.contains(&key.as_str()) && value.len() <= MAX_OVERRIDE_VALUE
+    });
 }
 
 /// Serves one incoming connection.
@@ -381,14 +426,15 @@ async fn session_loop(
                     continue;
                 };
 
-                if let Some(msg) = request_geometry_error(&req) {
-                    error_msg(&mut tx, &mut wbuf, Some(sub), ErrCode::BadRequest, msg).await?;
+                if let Some(msg) = request_error(&req) {
+                    error_msg(&mut tx, &mut wbuf, Some(sub), ErrCode::BadRequest, &msg).await?;
                     continue;
                 }
 
                 req.priority = req
                     .priority
                     .clamp(*PRIORITY_RANGE.start(), *PRIORITY_RANGE.end());
+                keep_forwarded_overrides(&mut req.overrides);
                 info!(
                     session,
                     sub,
@@ -643,14 +689,14 @@ mod tests {
             panic!("decoded a different message");
         };
         assert_eq!(
-            request_geometry_error(&req),
+            request_error(&req).as_deref(),
             Some("board size is outside 2..=19")
         );
 
         let mut req = AnalyzeReq::new(Size::square(9), RuleSet::Chinese, 7.5);
         req.moves.push((Color::Black, Point(81)));
         assert_eq!(
-            request_geometry_error(&req),
+            request_error(&req).as_deref(),
             Some("a move or initial stone is off the board")
         );
 
@@ -662,13 +708,155 @@ mod tests {
             allow: false,
         });
         assert_eq!(
-            request_geometry_error(&req),
+            request_error(&req).as_deref(),
             Some("an avoid move is off the board")
         );
 
         req.avoid[0].moves[0] = Point::PASS;
         req.initial_stones.push((Color::Black, Point::PASS));
-        assert_eq!(request_geometry_error(&req), None);
+        assert_eq!(request_error(&req), None);
+    }
+
+    #[test]
+    fn request_sizes_are_bounded_at_their_limits() {
+        let pass = (Color::Black, Point::PASS);
+        let mut req = AnalyzeReq::new(Size::square(19), RuleSet::Chinese, 7.5);
+        // Moves and set-up stones share one budget.
+        req.moves = vec![pass; MAX_REQUEST_STONES - 1];
+        req.initial_stones = vec![pass];
+        assert_eq!(request_error(&req), None);
+        req.initial_stones.push(pass);
+        assert!(request_error(&req).is_some());
+
+        let mut req = AnalyzeReq::new(Size::square(19), RuleSet::Chinese, 7.5);
+        let spec = |n: usize| AvoidSpec {
+            player: Color::White,
+            moves: vec![Point::PASS; n],
+            until_depth: 1,
+            allow: false,
+        };
+        req.avoid = vec![spec(1); MAX_AVOID_SPECS];
+        assert_eq!(request_error(&req), None);
+        req.avoid.push(spec(1));
+        assert!(request_error(&req).is_some());
+
+        // Points are counted across every list, not per list.
+        req.avoid = vec![spec(MAX_AVOID_POINTS / 2), spec(MAX_AVOID_POINTS / 2)];
+        assert_eq!(request_error(&req), None);
+        req.avoid[1].moves.push(Point::PASS);
+        assert!(request_error(&req).is_some());
+    }
+
+    /// An oversized `Open` is refused with `BadRequest` naming its subscription, never
+    /// reaches the engine, and leaves the connection usable; a well-formed one that follows
+    /// reaches the engine with only the forwarded overrides.
+    #[tokio::test]
+    async fn an_oversized_request_is_refused_before_the_engine_sees_it() {
+        use std::sync::Mutex;
+
+        #[derive(Default)]
+        struct Recorder(Mutex<Vec<AnalyzeReq>>);
+        impl Engine for Recorder {
+            fn subscribe(&self, req: AnalyzeReq) -> Subscription {
+                self.0.lock().unwrap().push(req);
+                Subscription::failed(mirai_engine::EngineError::Other("recorded".into()))
+            }
+            fn describe(&self) -> EngineDesc {
+                EngineDesc::placeholder("recorder")
+            }
+        }
+
+        let recorder = Arc::new(Recorder::default());
+        let (endpoint, fp, dir) = test_endpoint("oversized");
+        let addr = endpoint.local_addr().expect("bound");
+        let accepting = endpoint.clone();
+        let engine: Arc<dyn Engine> = recorder.clone();
+        let served = tokio::spawn(async move {
+            let incoming = accepting.accept().await.expect("incoming");
+            serve(
+                Arc::new(Host {
+                    engines: vec![NamedEngine {
+                        name: "recorder".into(),
+                        engine,
+                    }],
+                    tokens: vec![Token {
+                        value: "secret".into(),
+                        name: "test".into(),
+                        max_subs: 4,
+                    }],
+                }),
+                incoming,
+                Duration::from_secs(2),
+            )
+            .await;
+        });
+
+        let (conn, _) = mirai_proto::transport::connect(&format!("mirai://{addr}"), Some(fp))
+            .await
+            .expect("handshake");
+        let (mut tx, mut rx) = conn.open_bi().await.expect("control stream");
+        let mut buf = FrameBuf::new();
+        let mut next = async |tx: &mut SendStream, buf: &mut FrameBuf, msg: ClientMsg| {
+            frame::write_msg(tx, buf, &msg).await.expect("write");
+            tokio::time::timeout(Duration::from_secs(2), frame::read_msg(&mut rx, buf))
+                .await
+                .expect("no answer")
+                .expect("read")
+        };
+
+        let hello = ClientMsg::Hello {
+            proto: PROTO_VERSION,
+            token: "secret".into(),
+            client: "test".into(),
+        };
+        let welcome: ServerMsg = next(&mut tx, &mut buf, hello).await;
+        assert!(matches!(welcome, ServerMsg::Welcome { .. }), "{welcome:?}");
+
+        let mut req = AnalyzeReq::new(Size::square(19), RuleSet::Chinese, 7.5);
+        req.moves = vec![(Color::Black, Point::PASS); MAX_REQUEST_STONES + 1];
+        let open = ClientMsg::Open {
+            sub: 1,
+            engine: None,
+            req,
+        };
+        let refused: ServerMsg = next(&mut tx, &mut buf, open).await;
+        assert!(
+            matches!(
+                refused,
+                ServerMsg::Error {
+                    sub: Some(1),
+                    code: ErrCode::BadRequest,
+                    ..
+                }
+            ),
+            "an oversized request was not refused: {refused:?}"
+        );
+        assert!(recorder.0.lock().unwrap().is_empty());
+
+        let mut req = AnalyzeReq::new(Size::square(19), RuleSet::Chinese, 7.5);
+        req.overrides = vec![
+            ("maxVisits".into(), "1000000000".into()),
+            ("wideRootNoise".into(), "0.0".into()),
+            ("humanSLProfile".into(), "x".repeat(MAX_OVERRIDE_VALUE + 1)),
+        ];
+        let open = ClientMsg::Open {
+            sub: 2,
+            engine: None,
+            req,
+        };
+        let opened: ServerMsg = next(&mut tx, &mut buf, open).await;
+        assert!(matches!(opened, ServerMsg::Opened { sub: 2 }), "{opened:?}");
+        assert_eq!(
+            recorder.0.lock().unwrap()[0].overrides,
+            [("wideRootNoise".to_string(), "0.0".to_string())]
+        );
+
+        conn.close(VarInt::from_u32(0), b"bye");
+        tokio::time::timeout(Duration::from_secs(2), served)
+            .await
+            .expect("serve did not finish after the client left")
+            .expect("serve task");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -378,7 +378,7 @@ At most one terminal message per stream, always the last frame.
 | **1** | `Unauthorized` | `unauthorized` | `Hello.token` matches no configured token. |
 | **2** | `NoSuchEngine` | `no-such-engine` | `Open.engine` names an unknown engine, or is `None` and no engine is configured. |
 | **3** | `TooManySubs` | `too-many-subs` | The token's `max_subs` is already reached. |
-| **4** | `BadRequest` | `bad-request` | First control message was not `Hello`, or exceeds the `Hello` bounds ([§9.3](#93-limits)); a second `Hello`; `Open.sub` duplicates a live id. |
+| **4** | `BadRequest` | `bad-request` | First control message was not `Hello`, or exceeds the `Hello` bounds ([§9.3](#93-limits)); a second `Hello`; `Open.sub` duplicates a live id; `Open.req` is off the board or over a §9.3 request limit. |
 | **5** | `EngineFailed` | `engine-failed` | Reserved. Not emitted by the reference server — engine failures arrive as `SubMsg::Failed` ([B.3](#appendix-b-findings)). |
 | **6** | `Internal` | `internal` | Reserved. Not emitted by the reference server. |
 
@@ -493,7 +493,7 @@ between requests.
 | 12 | `report_every_ms` | `Option<u16>` | **milliseconds** | Intermediate-report interval; absent = only the terminal message. Forwarded as `reportDuringSearchEvery` in seconds. |
 | 13 | `priority` | `i8` (1 raw byte) | | Higher runs first. A server MUST clamp it into `-8..=8` (`session.rs` — `PRIORITY_RANGE`) so one client cannot starve others. |
 | 14 | `avoid` | `Vec<AvoidSpec>` | | Move restrictions ([§7.8](#78-avoidspec)). |
-| 15 | `overrides` | `Vec<(String, String)>` | | Raw per-query KataGo `overrideSettings` entries. Servers SHOULD treat them as untrusted and MAY ignore them. |
+| 15 | `overrides` | `Vec<(String, String)>` | | Raw per-query KataGo `overrideSettings` entries. Servers SHOULD treat them as untrusted and MAY ignore them. The reference server forwards only `wideRootNoise` and `humanSLProfile` with values of at most 64 bytes, and silently drops every other entry ([§9.3](#93-limits)). |
 
 ### 7.4 Komi
 
@@ -770,6 +770,7 @@ watching.
 | `Unauthorized` | `None` | token not recognised | **connection** (code 1) |
 | `BadRequest` | `None` | second `Hello` | nothing |
 | `BadRequest` | `Some(sub)` | `Open.sub` already live | that subscription |
+| `BadRequest` | `Some(sub)` | `Open.req` has a board size, move, stone or avoid point off the board, or exceeds a §9.3 request limit | that subscription |
 | `TooManySubs` | `Some(sub)` | token's `max_subs` reached | that subscription |
 | `NoSuchEngine` | `Some(sub)` | unknown engine, or `None` with none configured | that subscription |
 | `SubMsg::Failed` | sub stream | the search itself failed | that subscription |
@@ -806,6 +807,9 @@ reason. Dropping the attempt is that close. It is not an authentication failure.
 | Concurrent subscriptions | per-token `max_subs`, default 4 | server MUST refuse further `Open` with `TooManySubs`. The reference server counts a cancelled subscription until its search has stopped; an `Open` at the limit waits up to 1 s (`CANCEL_GRACE`) for a cancelled one to stop before refusing, so `Cancel` then `Open` at the limit is served |
 | Server-opened uni streams | client's `max_concurrent_uni_streams` | QUIC flow control; client MUST advertise ≥ its intended subscription count |
 | `AnalyzeReq.priority` | clamped to `-8..=8` | server MUST clamp, not reject |
+| `AnalyzeReq.moves` + `initial_stones` | ≤ 4096 together on the reference server (`MAX_REQUEST_STONES`) | refused with `Error { Some(sub), BadRequest }`. Far past any real game on a 19×19 board; the bound stops a few KB of zstd inflating to millions of moves on the engine's input |
+| `AnalyzeReq.avoid` | ≤ 64 specs and ≤ 1024 points across them on the reference server (`MAX_AVOID_SPECS`, `MAX_AVOID_POINTS`) | refused with `Error { Some(sub), BadRequest }` |
+| `AnalyzeReq.overrides` | only `wideRootNoise` and `humanSLProfile`, values ≤ 64 bytes, on the reference server (`FORWARDED_OVERRIDES`, `MAX_OVERRIDE_VALUE`) | other entries dropped, not rejected ([§10.1](#101-what-a-v2-implementation-must-reject) forbids rejecting unknown keys) |
 | Board size | `2..=19` per dimension | receiver MUST reject anything else |
 | Control streams | exactly 1 bidirectional | client MUST NOT open more |
 | Time to `Hello` | 10 s on the reference server (`PREAUTH_DEADLINE`) | frees the slot; keep-alives do not extend it. After the handshake: application code 1, reason `pre-authentication deadline`, no `Error` frame. During the handshake: transport `APPLICATION_ERROR`. A client SHOULD send `Hello` immediately |
