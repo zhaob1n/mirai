@@ -138,6 +138,21 @@ pub fn application_flags() -> gio::ApplicationFlags {
     }
 }
 
+/// The application id a harnessed run presents itself under.
+///
+/// Wayland focus belongs to the compositor, and a scripted run never needs it: `shot:` asks the
+/// window's own renderer and every other step calls production handlers directly. A distinct
+/// id — the xdg-toplevel `app_id` GTK hands the compositor — lets a window rule keep a harness
+/// window out of the developer's way without also muting the mirai they are using, e.g. on
+/// niri `match app-id="io.github.mirai.Mirai.Harness"` with `open-focused false`. See
+/// `docs/dev/TESTING.md`.
+pub fn application_id(production: &'static str) -> &'static str {
+    match std::env::var_os("MIRAI_HARNESS") {
+        Some(_) => "io.github.mirai.Mirai.Harness",
+        None => production,
+    }
+}
+
 /// Starts the script against `app`, if `MIRAI_HARNESS` is set.
 ///
 /// Called from both `activate` and `open`, and `open` may fire again later, so the script

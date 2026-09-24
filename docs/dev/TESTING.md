@@ -433,10 +433,27 @@ export RUST_LOG=info,mirai=debug
 | The bus name | mirai is a unique `GApplication`. A second launch hands its SGF to the running instance and exits 0, so the script runs nowhere |
 | `~/.config/mirai/config.toml` | close saves config, so a run that changed a display option persists it into the developer's settings. `save_merged` keeps other *windows'* keys, not other people's |
 | `$XDG_DATA_HOME/mirai` | autosaves and `katago-logs` live here. A crash leaves the developer a restore prompt for a record they never opened |
+| Keyboard focus | the compositor focuses a new window. A scripted run takes the developer's focus mid-keystroke, though no step needs it |
 
 With `MIRAI_HARNESS` set, `harness::application_flags` adds `NON_UNIQUE` (debug
-builds only), so a harnessed run is its own primary instance. Redirect the other
-two yourself — `directories::ProjectDirs` honours the XDG variables:
+builds only), so a harnessed run is its own primary instance, and
+`harness::application_id` makes it `io.github.mirai.Mirai.Harness` — the Wayland
+`app_id` a compositor matches. Keep focus with a rule on that id; on niri:
+
+```kdl
+window-rule {
+    match app-id="io.github.mirai.Mirai.Harness"
+    open-floating true
+    open-focused false
+}
+```
+
+`open-on-workspace` a named, unshown workspace keeps the window off screen too, and
+`shot:` still captures it. Not for `MIRAI_FRAMES`: niri throttles frame callbacks
+for windows no output shows.
+
+Redirect the configuration and data yourself — `directories::ProjectDirs` honours the XDG
+variables:
 
 ```sh
 scratch=$(mktemp -d); mkdir -p "$scratch/config/mirai" "$scratch/data"
@@ -448,7 +465,7 @@ rm -rf "$scratch"
 
 `tools/ui/sized-shot.sh WIDTH HEIGHT "<script>" [args…]` does exactly that, and on niri also
 sets the window size: `0 0` keeps the size mirai asked for (needs a window rule that floats
-mirai), a nonzero size floats the window and forces that size.
+the harness id), a nonzero size floats the window and forces that size.
 
 **Never use `dbus-run-session` to get a second instance.** It costs the login
 session its accessibility bus: the GTK client activates `org.a11y.Bus` on the

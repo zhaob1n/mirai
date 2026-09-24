@@ -44,14 +44,20 @@ fn main() -> glib::ExitCode {
     gio::resources_register_include!("mirai.gresource")
         .expect("the compiled resource bundle should be embedded");
 
-    // A harnessed run must never be adopted by an instance the developer is already using; see
-    // `harness::application_flags`.
+    // A harnessed run must never be adopted by an instance the developer is already using,
+    // nor be mistaken for one by the compositor; see `harness::application_flags` and
+    // `harness::application_id`.
     #[cfg(debug_assertions)]
-    let flags = gio::ApplicationFlags::HANDLES_OPEN | harness::application_flags();
+    let (id, flags) = (
+        harness::application_id(APP_ID),
+        gio::ApplicationFlags::HANDLES_OPEN | harness::application_flags(),
+    );
     #[cfg(not(debug_assertions))]
-    let flags = gio::ApplicationFlags::HANDLES_OPEN;
+    let (id, flags) = (APP_ID, gio::ApplicationFlags::HANDLES_OPEN);
 
-    let application = application_shell::MiraiApplication::new(APP_ID, flags);
+    let application = application_shell::MiraiApplication::new(id, flags);
+    // The resource bundle is named for the production id, whatever id this run carries.
+    application.set_resource_base_path(Some(RESOURCE_PREFIX));
 
     application.connect_startup(|_| {
         if let Some(display) = gtk::gdk::Display::default() {
