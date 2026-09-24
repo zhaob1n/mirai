@@ -47,3 +47,8 @@ required-features = ["local", "remote"]
 name = "sweep"
 path = "examples/sweep.rs"
 required-features = ["local"]
+
+[[example]]
+name = "wire_bench"
+path = "examples/wire_bench.rs"
+required-features = ["local"]
