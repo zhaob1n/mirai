@@ -743,10 +743,24 @@ shows the panel (`update_analysis_page`, also after Tree, Cursor, Report and Eng
 `MRAI` is enough. Speed is not invented for a cache hit.
 
 The graph `Paned` sets `resize-end-child: false` and does not shrink either child. Extra space
-goes to the board. `present` gives `WinrateGraph` a height request (`set_size_request(-1, 170)`)
-rather than a hardcoded paned position. The sidebar header must keep `show-title` at its
+goes to the board. There is no hardcoded paned position: a paned with no position sizes the
+graph by its *minimum* request (and would clip a shrinkable child rather than lay it out
+smaller), so `WinrateGraph` starts *pinned*, requesting `ui.graph_height` as its minimum,
+and after its first allocation `release` fixes the divider where it landed and drops the
+minimum to 80 px, so the handle drags both ways. The graph records every allocated height;
+`Ui`'s drop writes it back to `ui.graph_height`. `fit_default_size` measures the header,
+the board toolbar and that graph height against the shortest monitor (85 %, at most 960 px
+tall) and makes the window exactly board + sidebar wide, so a floating first window has no
+bare background; a remembered graph too tall for this screen is capped so the board keeps
+the sidebar docked. While a game is in progress or being scored, `sync_play_layout` hides the
+graph, the `nav` row and the sidebar (a `show-sidebar` notify keeps it shut through
+breakpoint changes, and its toggle is disabled), and restores them — sidebar as it was, graph
+re-pinned at its remembered height — when the game is over. Graph visibility is one rule,
+`sync_graph`: `ui.show_graph` (`win.toggle-graph`, View menu, <kbd>g</kbd>) and no game; a
+hidden graph drops out of `fit_default_size`. The sidebar header must keep `show-title` at its
 default: clearing it hides the title widget, which is the `Adw.InlineViewSwitcher`. Sidebar
-width follows `win.toggle-candidate-details`: 300 sp for the five common columns, 386 sp
+width follows `win.toggle-candidate-details` (View menu, and every candidate column's header
+menu): 300 sp for the five common columns, 386 sp
 with Loss and Prior, including when the split collapses at 926 sp. The rank badge keeps
 its natural width; the visible data columns share the rest equally unless resized by hand.
 Cell width requests stay pinned so new engine numbers do not remeasure the list on every report.

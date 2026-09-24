@@ -400,6 +400,11 @@ pub struct UiSettings {
     pub ownership_overlay: bool,
     pub policy_overlay: bool,
     pub save_analysis_in_sgf: bool,
+    /// Height of the win-rate graph under the board, in logical pixels, as the user last
+    /// dragged it. The window's default size is derived from it, so the board stays square.
+    pub graph_height: u16,
+    /// Main Menu → View → Win-Rate Graph.
+    pub show_graph: bool,
 }
 
 impl Default for UiSettings {
@@ -410,6 +415,8 @@ impl Default for UiSettings {
             ownership_overlay: false,
             policy_overlay: false,
             save_analysis_in_sgf: false,
+            graph_height: 150,
+            show_graph: true,
         }
     }
 }

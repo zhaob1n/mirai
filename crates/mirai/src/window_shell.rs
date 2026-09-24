@@ -21,6 +21,8 @@ mod imp {
         #[template_child]
         pub title: TemplateChild<adw::WindowTitle>,
         #[template_child]
+        pub header_bar: TemplateChild<adw::HeaderBar>,
+        #[template_child]
         pub live_toggle: TemplateChild<gtk::ToggleButton>,
         #[template_child]
         pub engine_menu: TemplateChild<gtk::MenuButton>,
@@ -38,6 +40,10 @@ mod imp {
         pub split: TemplateChild<adw::OverlaySplitView>,
         #[template_child]
         pub banner_slot: TemplateChild<gtk::Box>,
+        #[template_child]
+        pub board_view: TemplateChild<adw::ToolbarView>,
+        #[template_child]
+        pub nav: TemplateChild<gtk::Box>,
         #[template_child]
         pub editor_revealer: TemplateChild<gtk::Revealer>,
         #[template_child]
@@ -160,6 +166,18 @@ impl MiraiWindow {
 
     pub fn banner_slot(&self) -> gtk::Box {
         self.imp().banner_slot.get()
+    }
+
+    pub(crate) fn header_bar(&self) -> adw::HeaderBar {
+        self.imp().header_bar.get()
+    }
+
+    pub(crate) fn board_view(&self) -> adw::ToolbarView {
+        self.imp().board_view.get()
+    }
+
+    pub(crate) fn nav(&self) -> gtk::Box {
+        self.imp().nav.get()
     }
 
     pub(crate) fn editor_revealer(&self) -> gtk::Revealer {

@@ -11,7 +11,7 @@ template $MiraiWindow: Adw.ApplicationWindow {
   content: Adw.ToastOverlay toasts {
     child: Adw.ToolbarView toolbar {
       [top]
-      Adw.HeaderBar {
+      Adw.HeaderBar header_bar {
         title-widget: Adw.WindowTitle title {
           title: _("Untitled");
         };
@@ -430,8 +430,10 @@ template $MiraiWindow: Adw.ApplicationWindow {
             Gtk.Box play_bar {
               visible: false;
               spacing: 12;
+              halign: center;
               margin-start: 8;
               margin-end: 8;
+              margin-top: 4;
               margin-bottom: 4;
               // Clocks sit with the play controls: both exist only while a game is running, and a
               // variable-width element in the header made the title jump mid-game.
@@ -530,7 +532,9 @@ menu primary_menu {
 
     section {
       item ("_Sidebar", "win.toggle-sidebar")
+      item ("_Win-Rate Graph", "win.toggle-graph")
       item ("_Editing Tools", "win.toggle-editor")
+      item ("_Loss and Prior Columns", "win.toggle-candidate-details")
     }
 
     section {

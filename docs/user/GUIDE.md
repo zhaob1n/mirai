@@ -97,14 +97,15 @@ repeat the analysis numbers.
 | **Header bar** | Left: **Download from Fox** is the main half of a split button; its arrow menu offers *Open File…* and *Paste SGF*. **New Game**, the engine button and the live-analysis toggle follow. The engine button shows the profile's name and KataGo version, and shrinks rather than duplicating that name in the subtitle; its tooltip is `Analysis Engine —` plus the full label, and its menu is the profiles plus *Preferences…*. Centre: the record title, with `•` while unsaved, and a status subtitle only when there is one. A saved record is named by its file; one that has never been saved is `Black vs White` from the record, then the event, then `Untitled`. Right: sidebar toggle and Main Menu. *Clear Board* is only in the Main Menu |
 | **Board** | wood, grid, star points, optional coordinates, stones. The last move is a red dot, or — when move numbers are on — its number in red. SGF marks (triangle, square, circle, cross, text labels) are drawn |
 | **Editor toolbar** | Collapsed by default. Open it with **Editing Tools** on the board navigation bar, or Main Menu → *View* → *Editing Tools*. It holds undo/redo, Play, black and white setup, marks and the mark eraser. The larger foreground stone in Play shows the side to move. An active game forces it closed and disables the toggle; choosing a mark or setup tool opens it. Closing it returns to Play |
-| **Win-rate graph** | Always Black's view. Solid curve = Black win rate (left axis 0/50/100); dashed curve = Black score lead (right axis, never tighter than ±5). The cursor reads `Black 54.2%`. Coloured bars along the bottom are the blunder strip. Tooltip: Black win rate and Black score lead over the main line |
+| **Win-rate graph** | Always Black's view. Solid curve = Black win rate (left axis 0/50/100); dashed curve = Black score lead (right axis, never tighter than ±5). The cursor reads `Black 54.2%`. Coloured bars along the bottom are the blunder strip. Tooltip: Black win rate and Black score lead over the main line. Drag the divider above it to resize it; <kbd>g</kbd>, or Main Menu → *View* → *Win-Rate Graph*, hides it. Both are remembered |
 | **Sidebar** | **Analysis**, **Moves**, **Comment**. Analysis reads the side to move, not Black. <kbd>F9</kbd>, or Main Menu → *View* → *Sidebar*, hides it at any width. At 926 or narrower the sidebar closes and the same button reopens it as an overlay |
 | **Board navigation** | Under the board only: first / previous / next / last, previous / next variation, the slider, a position such as `12 / 80 · W`, **Editing Tools**, and **Board Menu**. The position tooltip spells out `Move 12 of 80 · White to play`. There is no win-rate readout here |
-| **Play bar** | A second row, only while a game is running. Timed games show both clocks here — `●` Black, `○` White, the side to move in the accent colour — then **Undo**, **Pass**, and, against the engine, **Resign** |
+| **Play bar** | Only while a game is running. Timed games show both clocks here — `●` Black, `○` White, the side to move in the accent colour — then **Undo**, **Pass**, and, against the engine, **Resign**. During a game the graph, board navigation and sidebar are hidden, and their switches are disabled, so the board takes the window; they return when the game ends, the sidebar as you left it |
 
 The Main Menu holds *Clear Board*, *Save*, *Save As…*, *Copy SGF*, *Analyse Game*, *Estimate
-Score*, a *View* submenu — *Sidebar*, *Editing Tools*, *Coordinates*, *Move Numbers*,
-*Ownership Overlay*, *Policy Overlay* — and *Preferences*, *Keyboard Shortcuts*, *About
+Score*, a *View* submenu — *Sidebar*, *Win-Rate Graph*, *Editing Tools*, *Loss and Prior
+Columns*, *Coordinates*, *Move Numbers*, *Ownership Overlay*, *Policy Overlay* — and
+*Preferences*, *Keyboard Shortcuts*, *About
 mirai*. The two overlay items select the same single overlay as Preferences; they are not two
 layers at once.
 
@@ -121,8 +122,9 @@ layers at once.
 | Scroll wheel | browse back / forward one move without deleting anything |
 | Hover a candidate blob | preview its variation. Non-Play tools clear this preview |
 
-Drag the divider between the board and the graph to make the graph taller. Click the graph,
-or drag along it, to move along the main line.
+Drag the divider between the board and the graph to make the graph taller or shorter. mirai
+remembers the height, and opens new windows at a size where the board fills its area.
+Click the graph, or drag along it, to move along the main line.
 
 ---
 
@@ -184,8 +186,8 @@ By default the list is five columns:
 | **Score** | signed score lead for the side to move, in points |
 | **Visits** | playouts spent on this move |
 
-**Loss** and **Prior** are off until you ask for them. The icon menu at the right of the
-side-to-move heading is **Analysis Options**; tick **Show Detailed Columns**. The order is
+**Loss** and **Prior** are off until you ask for them: Main Menu → *View* → *Loss and Prior
+Columns*, or right-click any column heading. The order is
 then #, Move, Win, Score, Loss, Visits, Prior. Loss is what the move gives away against the
 pick (`0.00` for the pick; `—` when a saved record did not keep it). Prior is what the raw
 network thought before searching. The extra columns may need horizontal scrolling. Hiding
@@ -642,6 +644,7 @@ logs and the generated analysis config live under `$XDG_DATA_HOME/mirai/`.
 | | | <kbd>c</kbd> | coordinates | | | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> | download from Fox |
 | | | <kbd>n</kbd> | move numbers | | | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> | clear board |
 | | | <kbd>F9</kbd> | show/hide sidebar | | | | |
+| | | <kbd>g</kbd> | show/hide win-rate graph | | | | |
 
 <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes back both players' last moves during a game; in review it
 undoes the last edit — a placed stone, a mark, a comment commit — not each keystroke.
@@ -715,9 +718,10 @@ engine.
 | Is **Maximum Visits** low? | the search finishes at once and then sits still. Correct, not a hang |
 | Overlays blank? | they draw nothing until the first report arrives |
 
-When the panel is showing but this move has no report, its detail says which case you are in:
-*"No engine"*, *"Starting …"*, the engine's failure text, or *"Turn on live analysis, or
-analyse the whole game"*.
+When the panel is showing but this move has no report, it says which case you are in:
+*"No engine"*, *"Starting …"*, the engine's failure text, or *"Analysing…"* while live
+analysis waits for its first report. With an engine and nothing running it offers **Analyse
+Position** (live analysis, <kbd>Space</kbd>) and **Analyse Game** (<kbd>Ctrl</kbd>+<kbd>A</kbd>).
 
 ### The remote connection is refused
 
