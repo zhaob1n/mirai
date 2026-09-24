@@ -14,28 +14,14 @@ template $MiraiAnalysisPanel: Gtk.Box {
     margin-top: 8;
     margin-bottom: 8;
 
-    Gtk.Box {
-      spacing: 6;
+    Gtk.Label readout {
+      label: _("No Analysis");
+      xalign: 0;
+      hexpand: true;
 
-      Gtk.Label readout {
-        label: _("No Analysis");
-        xalign: 0;
-        hexpand: true;
-
-        styles [
-          "heading",
-        ]
-      }
-
-      Gtk.MenuButton {
-        icon-name: "view-more-symbolic";
-        tooltip-text: _("Analysis Options");
-        menu-model: analysis_options;
-
-        accessibility {
-          label: _("Analysis Options");
-        }
-      }
+      styles [
+        "heading",
+      ]
     }
 
     Gtk.Label metrics {
@@ -59,6 +45,31 @@ template $MiraiAnalysisPanel: Gtk.Box {
         "caption",
         "dim-label",
       ]
+    }
+
+    // What the panel is empty of, offered as the two ways to fill it rather than described.
+    // Stacked: side by side their labels need more than the 300 sp sidebar.
+    Gtk.Box start_actions {
+      visible: false;
+      orientation: vertical;
+      spacing: 6;
+      margin-top: 6;
+
+      Gtk.Button {
+        label: _("Analyse Position");
+        action-name: "win.toggle-analysis";
+        tooltip-text: _("Analyse this position and each one you move to (Space)");
+
+        styles [
+          "suggested-action",
+        ]
+      }
+
+      Gtk.Button analyse_game_button {
+        label: _("Analyse Game");
+        action-name: "win.analyse-game";
+        tooltip-text: _("Analyse every move of the main line (Ctrl+A)");
+      }
     }
   }
 
@@ -106,8 +117,8 @@ template $MiraiAnalysisPanel: Gtk.Box {
   }
 }
 
-menu analysis_options {
+menu column_menu {
   section {
-    item ("Show Detailed Columns", "win.toggle-candidate-details")
+    item ("_Loss and Prior Columns", "win.toggle-candidate-details")
   }
 }

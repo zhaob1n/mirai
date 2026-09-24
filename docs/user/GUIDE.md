@@ -103,7 +103,8 @@ repeat the analysis numbers.
 | **Play bar** | Only while a game is running. Timed games show both clocks here — `●` Black, `○` White, the side to move in the accent colour — then **Undo**, **Pass**, and, against the engine, **Resign**. During a game the graph, board navigation and sidebar are hidden, and their switches are disabled, so the board takes the window; they return when the game ends, the sidebar as you left it |
 
 The Main Menu holds *Clear Board*, *Save*, *Save As…*, *Copy SGF*, *Analyse Game*, *Estimate
-Score*, a *View* submenu — *Sidebar*, *Win-Rate Graph*, *Editing Tools*, *Coordinates*, *Move Numbers*, *Ownership Overlay*, *Policy Overlay* — and
+Score*, a *View* submenu — *Sidebar*, *Win-Rate Graph*, *Editing Tools*, *Loss and Prior
+Columns*, *Coordinates*, *Move Numbers*, *Ownership Overlay*, *Policy Overlay* — and
 *Preferences*, *Keyboard Shortcuts*, *About
 mirai*. The two overlay items select the same single overlay as Preferences; they are not two
 layers at once.
@@ -185,8 +186,8 @@ By default the list is five columns:
 | **Score** | signed score lead for the side to move, in points |
 | **Visits** | playouts spent on this move |
 
-**Loss** and **Prior** are off until you ask for them. The icon menu at the right of the
-side-to-move heading is **Analysis Options**; tick **Show Detailed Columns**. The order is
+**Loss** and **Prior** are off until you ask for them: Main Menu → *View* → *Loss and Prior
+Columns*, or right-click any column heading. The order is
 then #, Move, Win, Score, Loss, Visits, Prior. Loss is what the move gives away against the
 pick (`0.00` for the pick; `—` when a saved record did not keep it). Prior is what the raw
 network thought before searching. The extra columns may need horizontal scrolling. Hiding
@@ -717,9 +718,10 @@ engine.
 | Is **Maximum Visits** low? | the search finishes at once and then sits still. Correct, not a hang |
 | Overlays blank? | they draw nothing until the first report arrives |
 
-When the panel is showing but this move has no report, its detail says which case you are in:
-*"No engine"*, *"Starting …"*, the engine's failure text, or *"Turn on live analysis, or
-analyse the whole game"*.
+When the panel is showing but this move has no report, it says which case you are in:
+*"No engine"*, *"Starting …"*, the engine's failure text, or *"Analysing…"* while live
+analysis waits for its first report. With an engine and nothing running it offers **Analyse
+Position** (live analysis, <kbd>Space</kbd>) and **Analyse Game** (<kbd>Ctrl</kbd>+<kbd>A</kbd>).
 
 ### The remote connection is refused
 

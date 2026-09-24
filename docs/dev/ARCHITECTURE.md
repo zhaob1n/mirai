@@ -759,7 +759,8 @@ re-pinned at its remembered height — when the game is over. Graph visibility i
 `sync_graph`: `ui.show_graph` (`win.toggle-graph`, View menu, <kbd>g</kbd>) and no game; a
 hidden graph drops out of `fit_default_size`. The sidebar header must keep `show-title` at its
 default: clearing it hides the title widget, which is the `Adw.InlineViewSwitcher`. Sidebar
-width follows `win.toggle-candidate-details`: 300 sp for the five common columns, 386 sp
+width follows `win.toggle-candidate-details` (View menu, and every candidate column's header
+menu): 300 sp for the five common columns, 386 sp
 with Loss and Prior, including when the split collapses at 926 sp. The rank badge keeps
 its natural width; the visible data columns share the rest equally unless resized by hand.
 Cell width requests stay pinned so new engine numbers do not remeasure the list on every report.

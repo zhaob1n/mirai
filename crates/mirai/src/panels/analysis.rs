@@ -188,6 +188,8 @@ pub struct Inner {
     readout: gtk::Label,
     metrics: gtk::Label,
     detail: gtk::Label,
+    start_actions: gtk::Box,
+    analyse_game_button: gtk::Button,
     columns: gtk::ColumnView,
     rank_column: gtk::ColumnViewColumn,
     loss_column: gtk::ColumnViewColumn,
@@ -215,6 +217,12 @@ mod imp {
         pub metrics: TemplateChild<gtk::Label>,
         #[template_child]
         pub detail: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub start_actions: TemplateChild<gtk::Box>,
+        #[template_child]
+        pub analyse_game_button: TemplateChild<gtk::Button>,
+        #[template_child]
+        pub column_menu: TemplateChild<gio::MenuModel>,
         #[template_child]
         pub columns: TemplateChild<gtk::ColumnView>,
         #[template_child]
@@ -383,6 +391,18 @@ impl AnalysisPanel {
         );
         prior_column.set_visible(false);
         columns.append_column(&prior_column);
+        // Which columns to show is a question about the columns, so it is asked on their
+        // headers (right-click) as well as in Main Menu → View.
+        let column_menu = imp.column_menu.get();
+        for column in columns.columns().iter::<gtk::ColumnViewColumn>().flatten() {
+            column.set_header_menu(Some(&column_menu));
+        }
+        // Turning live analysis on is what empties the panel of its start buttons.
+        self.state().connect_live_analysis_notify(clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.refresh()
+        ));
 
         // Selecting a row pins the PV preview; activating it plays the move. The model is
         // never replaced, so a selection change is always the user's.
@@ -426,6 +446,8 @@ impl AnalysisPanel {
             readout,
             metrics,
             detail,
+            start_actions: imp.start_actions.get(),
+            analyse_game_button: imp.analyse_game_button.get(),
             columns,
             rank_column,
             loss_column,
@@ -557,6 +579,8 @@ impl AnalysisPanel {
                     signed1(h.score),
                 ));
                 inner.metrics.set_visible(true);
+                inner.start_actions.set_visible(false);
+                inner.detail.set_visible(true);
                 let speed = match h.speed {
                     Some(rate) => format!(" · {}", visits_per_second(rate)),
                     None => String::new(),
@@ -570,15 +594,25 @@ impl AnalysisPanel {
             None => {
                 inner.readout.set_label("No Analysis");
                 inner.metrics.set_visible(false);
-                let detail = match self.state().engine_state() {
-                    EngineState::Starting { profile } => format!("Starting {profile}…"),
-                    EngineState::Failed { message, .. } => message,
-                    EngineState::Ready { .. } => {
-                        "Turn on live analysis, or analyse the whole game".to_string()
-                    }
-                    EngineState::None => "No engine".to_string(),
+                let live = self.state().live_analysis();
+                let engine = self.state().engine_state();
+                // A whole-game sweep needs the engine itself, so it is offered once it is up.
+                inner
+                    .analyse_game_button
+                    .set_visible(matches!(engine, EngineState::Ready { .. }));
+                let (detail, offer) = match engine {
+                    // A failed or missing engine says so even with live analysis on: it was
+                    // likely turned on while the engine was still starting.
+                    EngineState::Failed { message, .. } => (message, false),
+                    EngineState::None => ("No engine".to_string(), false),
+                    _ if live => ("Analysing…".to_string(), false),
+                    // Live analysis may be asked for early: it starts once the net loads.
+                    EngineState::Starting { profile } => (format!("Starting {profile}…"), true),
+                    EngineState::Ready { .. } => (String::new(), true),
                 };
+                inner.detail.set_visible(!detail.is_empty());
                 inner.detail.set_label(&detail);
+                inner.start_actions.set_visible(offer);
             }
         }
 
