@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use mirai_proto::frame::{self, FrameBuf, FrameError, SubStreamDecoder};
-use mirai_proto::msg::{ClientMsg, ServerMsg, SubMsg};
+use mirai_proto::msg::{ClientMsg, OwnershipDelta, ServerMsg, SubMsg};
 use mirai_proto::transport::{self, TransportError};
 use mirai_proto::types::PROTO_VERSION;
 use quinn::{Connection, RecvStream, SendStream, VarInt};
@@ -657,13 +657,15 @@ async fn sub_reader(mut recv: RecvStream, int: mpsc::UnboundedSender<Int>) {
             return;
         }
     };
+    let mut own = OwnershipDelta::default();
     loop {
         // `read` is not cancel-safe, which is fine: the only thing that cancels it is a
         // cancellation, after which the stream is abandoned anyway.
         let stopped = tokio::select! {
             _ = &mut stop_rx => true,
             read = dec.read::<_, SubMsg>(&mut recv) => match read {
-                Ok(msg) => {
+                Ok(mut msg) => {
+                    own.restore(&mut msg);
                     if int.send(Int::Sub { sub, msg }).is_err() {
                         return;
                     }

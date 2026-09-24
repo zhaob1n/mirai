@@ -18,7 +18,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use mirai_proto::frame::{self, FrameBuf, SUB_STREAM_LEVEL, SubStreamEncoder};
-use mirai_proto::msg::{ClientMsg, ErrCode, ServerMsg, SubMsg};
+use mirai_proto::msg::{ClientMsg, ErrCode, OwnershipDelta, ServerMsg, SubMsg, SubMsgRef};
 use mirai_proto::transport;
 use mirai_proto::types::{AnalyzeReq, EngineDesc, PROTO_VERSION, Report};
 use quinn::VarInt;
@@ -158,6 +158,14 @@ impl TestServer {
             .send(Cmd::Sub(sub, SubMsg::Report(report_of(visits))));
     }
 
+    /// An intermediate report of `visits` carrying `ownership`, which the stream sends as
+    /// the change from its previous map, as a real server does.
+    pub fn report_with_ownership(&self, sub: u32, visits: u32, ownership: Vec<i8>) {
+        let mut report = report_of(visits);
+        report.ownership = Some(ownership);
+        let _ = self.cmd.send(Cmd::Sub(sub, SubMsg::Report(report)));
+    }
+
     pub fn done(&self, sub: u32, visits: u32) {
         let _ = self
             .cmd
@@ -273,8 +281,7 @@ async fn serve(
         }
     });
 
-    // Each subscription stream is its own zstd stream, so each gets its own encoder.
-    let mut streams: HashMap<u32, (quinn::SendStream, SubStreamEncoder)> = HashMap::new();
+    let mut streams: HashMap<u32, SubStream> = HashMap::new();
 
     while let Some(command) = cmd.recv().await {
         match command {
@@ -291,13 +298,14 @@ async fn serve(
                     break;
                 }
                 let enc = SubStreamEncoder::new(SUB_STREAM_LEVEL).expect("stream encoder");
-                streams.insert(sub, (stream, enc));
+                let own = OwnershipDelta::default();
+                streams.insert(sub, SubStream { stream, enc, own });
             }
             Cmd::Sub(sub, msg) => {
-                let Some((stream, enc)) = streams.get_mut(&sub) else {
+                let Some(s) = streams.get_mut(&sub) else {
                     continue;
                 };
-                if let Err(quinn::WriteError::Stopped(code)) = frame_sub(stream, enc, &msg).await {
+                if let Err(quinn::WriteError::Stopped(code)) = frame_sub(s, &msg).await {
                     let _ = seen.send(Seen::Stopped {
                         sub,
                         code: code.into_inner(),
@@ -306,7 +314,7 @@ async fn serve(
                 }
             }
             Cmd::Finish(sub) => {
-                if let Some((mut stream, _)) = streams.remove(&sub) {
+                if let Some(SubStream { mut stream, .. }) = streams.remove(&sub) {
                     let _ = stream.finish();
                 }
             }
@@ -320,12 +328,21 @@ async fn serve(
     reader.abort();
 }
 
+/// One subscription stream's sending end. Each stream is its own zstd stream and carries
+/// its own ownership deltas, so each has its own encoder and delta state.
+struct SubStream {
+    stream: quinn::SendStream,
+    enc: SubStreamEncoder,
+    own: OwnershipDelta,
+}
+
 /// Writes one `SubMsg`, surfacing `STOP_SENDING` as a `WriteError` the caller can report.
-async fn frame_sub(
-    stream: &mut quinn::SendStream,
-    enc: &mut SubStreamEncoder,
-    msg: &SubMsg,
-) -> Result<(), quinn::WriteError> {
-    let frame = enc.encode(msg).expect("encode SubMsg");
-    stream.write_all(frame).await
+async fn frame_sub(s: &mut SubStream, msg: &SubMsg) -> Result<(), quinn::WriteError> {
+    let wire = match msg {
+        SubMsg::Report(r) => SubMsgRef::Report(s.own.report(r)),
+        SubMsg::Done(r) => SubMsgRef::Done(s.own.report(r)),
+        SubMsg::Failed(why) => SubMsgRef::Failed(why),
+    };
+    let frame = s.enc.encode(&wire).expect("encode SubMsg");
+    s.stream.write_all(frame).await
 }

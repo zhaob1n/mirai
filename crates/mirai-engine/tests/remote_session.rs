@@ -9,12 +9,13 @@
 //! and that a client cannot get right by accident:
 //!
 //! * §8.1/5 — messages before `Welcome` are ignored, not fatal.
-//! * §8.1 — `Welcome.proto != 1` is unusable and no `Open` follows.
+//! * §8.1 — a `Welcome.proto` other than this client's is unusable and no `Open` follows.
 //! * §8.2, §8.6 — `Unauthorized` is `Failed`, never a healthy session.
 //! * §8.3 — `Opened` and the subscription stream are independent, in either order.
 //! * §8.3 — a clean EOF with no `Done`/`Failed` fails the subscription.
 //! * §9.1 — `Error { Some(sub) }` fails that subscription only; the connection survives.
 //! * §8.4 — cancelling sends `STOP_SENDING` *and* `Cancel`.
+//! * §7.11 — ownership sent as changes arrives as the map itself, report after report.
 //! * §8.6 — connection loss fails every live subscription and replays nothing.
 #![cfg(feature = "remote")]
 
@@ -267,6 +268,42 @@ async fn cancelling_stops_the_stream_and_tells_the_server() {
             Seen::Control(_) => {}
             Seen::Gone => panic!("the connection died instead of cancelling one subscription"),
         }
+    }
+}
+
+/// §7.11: a subscription stream carries each ownership map as the change from the one
+/// before it. What a subscriber sees must be the map itself, every time.
+#[tokio::test]
+async fn ownership_arrives_whole_although_the_stream_sends_changes() {
+    let mut server = TestServer::start(Script::offering(&["default"])).await;
+    let engine = connect(&server).await.expect("handshake failed");
+    let _hello = server.next().await;
+
+    let mut sub = engine.subscribe(a_request());
+    let (id, _req) = server.next_open().await;
+    server.control(ServerMsg::Opened { sub: id });
+    server.open_stream(id);
+
+    for k in 0..3u32 {
+        let map: Vec<i8> = (0..361u32)
+            .map(|i| (((i * 7 + k * 50) % 255) as i16 - 127) as i8)
+            .collect();
+        server.report_with_ownership(id, k + 1, map.clone());
+        // One at a time: the subscription keeps only the newest report.
+        let deadline = tokio::time::Instant::now() + PATIENCE;
+        let got = loop {
+            if let SubEvent::Report(r) = sub.current()
+                && r.root.visits == k + 1
+            {
+                break r;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "report {k} never arrived"
+            );
+            let _ = tokio::time::timeout(Duration::from_millis(200), sub.next()).await;
+        };
+        assert_eq!(got.ownership.as_deref(), Some(&map[..]), "report {k}");
     }
 }
 

@@ -594,12 +594,27 @@ Intermediate and final reports have the same shape; only the wrapping `SubMsg` v
 | 1 | `turn` | `u16` varint | Turn of the analysed position: 0 = before the first move, else the request's move count. |
 | 2 | `root` | `RootInfo` | Root statistics. |
 | 3 | `moves` | `Vec<MoveInfo>` | Candidates **sorted ascending by `order`**; `moves[0]` is the engine's choice. Servers MUST sort; clients MAY rely on it. |
-| 4 | `ownership` | `Option<Vec<i8>>` | Exactly `w*h` entries when present; any other length MUST be rejected. |
+| 4 | `ownership` | `Option<Vec<i8>>` | Exactly `w*h` entries when present; any other length MUST be rejected. On a subscription stream it may carry changes rather than the map, below. |
 | 5 | `policy` | `Option<Vec<u16>>` | Exactly `w*h + 1` entries when present, pass last; any other length MUST be rejected. |
 
-Once decoded, every report is a complete snapshot, never a delta: a client MAY drop an older
-one the moment a newer arrives. The frames underneath are not independent
-([§4.1](#41-subscription-streams-one-zstd-stream)): the client still decodes every one.
+**Ownership on a subscription stream.** Between two reports of one search most points move by
+a step or two. Sent as those changes, a live report measured a quarter smaller
+([§11](#11-reference-figures)). So both ends of a subscription stream keep the last map the
+stream carried:
+
+| # | Rule | Level |
+|---|---|---|
+| 1 | A report whose `ownership` has the same length as the stream's last map carries `own[i] − last[i]` (wrapping `i8` arithmetic) instead of `own[i]`; any other map goes whole. The receiver restores `last[i] + wire[i]`, wrapping. | MUST |
+| 2 | Either way the map, not the difference, becomes the stream's last map. A report without `ownership` leaves it unchanged. | MUST |
+| 3 | Every other field is sent as is. | — |
+
+Both ends apply the same rule to the same sequence, so they cannot disagree; the state lives
+and dies with the stream (`msg.rs` — `OwnershipDelta`).
+
+Once decoded and restored, every report is a complete snapshot: a client MAY drop an older one
+the moment a newer arrives. The frames underneath are not independent
+([§4.1](#41-subscription-streams-one-zstd-stream), and the ownership rule above): the client
+still decodes every one.
 
 ---
 
@@ -834,6 +849,7 @@ the TLS handshake.
 | 2 | `AnalyzeReq.max_candidates` ([§7.3](#73-analyzereq)): a client asks for only the candidates it shows. |
 | 3 | A subscription stream is one zstd stream, flags `0x02` ([§4.1](#41-subscription-streams-one-zstd-stream)); a report is compressed against those before it. |
 | 4 | Trailing bytes after a message are rejected. MRP/1 already required it, but its reference implementation ignored them: `postcard::from_bytes` does not check. |
+| 5 | On a subscription stream `Report.ownership` carries the change from the stream's last map ([§7.11](#711-report)). |
 
 ---
 
@@ -902,7 +918,8 @@ makes the server drop the subscription in under 1 ms and KataGo falls to 0 % CPU
 24. Treat a subscription stream that reaches EOF without a terminal message as failed.
 25. (Server) Flush the `Error` frame before closing a rejected connection.
 26. Decode and handle all seven `ErrCode` values.
-27. Decode every frame of a subscription stream, in order.
+27. Decode every frame of a subscription stream, in order, and restore ownership from the
+    stream's last map (§7.11).
 
 ### SHOULD
 

@@ -20,7 +20,7 @@ use mirai_core::Size;
 use mirai_engine::Report;
 use mirai_engine::decode::{RawResponse, decode_report};
 use mirai_proto::frame::{self, FrameBuf, SubStreamDecoder, SubStreamEncoder};
-use mirai_proto::msg::SubMsg;
+use mirai_proto::msg::{OwnershipDelta, SubMsg, SubMsgRef};
 use serde_json::Value;
 
 #[derive(Parser, Debug)]
@@ -165,20 +165,28 @@ fn standalone(name: &str, frames: &[Frame]) -> Row {
     row
 }
 
-/// The whole capture as one subscription stream at `level`.
+/// The whole capture as one subscription stream at `level`, sent and read the way the
+/// server and `RemoteEngine` do it: ownership as changes, restored on arrival.
 fn sub_stream(name: &str, frames: &[Frame], level: i32) -> Row {
     let mut enc = SubStreamEncoder::new(level).expect("stream encoder");
     let mut dec = SubStreamDecoder::new().expect("stream decoder");
+    let (mut sent, mut read) = (OwnershipDelta::default(), OwnershipDelta::default());
     let mut row = Row::new(name, frames.len());
     for f in frames {
-        let msg = message(f);
         let start = Instant::now();
-        let wire = enc.encode(&msg).expect("encode");
+        let r = sent.report(&f.report);
+        let out = if f.terminal {
+            SubMsgRef::Done(r)
+        } else {
+            SubMsgRef::Report(r)
+        };
+        let wire = enc.encode(&out).expect("encode");
         row.encode += start.elapsed();
         let start = Instant::now();
-        let back: SubMsg = dec.decode(wire).expect("decode");
+        let mut back: SubMsg = dec.decode(wire).expect("decode");
+        read.restore(&mut back);
         row.decode += start.elapsed();
-        assert_eq!(back, msg, "{name}: a frame did not round-trip");
+        assert_eq!(back, message(f), "{name}: a frame did not round-trip");
         row.sizes.push(wire.len());
     }
     row
