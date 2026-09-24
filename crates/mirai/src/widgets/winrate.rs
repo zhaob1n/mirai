@@ -369,6 +369,16 @@ impl WinrateGraph {
         self.imp().preferred_height.get()
     }
 
+    /// Lowers the remembered height to at most `max` (never below the drag floor) and
+    /// returns the height the graph will now ask for.
+    pub fn limit_height(&self, max: i32) -> i32 {
+        let height = self.preferred_height().min(max).max(MIN_HEIGHT);
+        if self.imp().preferred_height.replace(height) != height {
+            self.queue_resize();
+        }
+        height
+    }
+
     /// Asks the parent `gtk::Paned` for [`Self::preferred_height`] on the next layout.
     ///
     /// A paned with no divider position sizes a child that does not resize by its *minimum*,

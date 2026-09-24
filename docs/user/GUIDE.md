@@ -122,7 +122,7 @@ layers at once.
 | Hover a candidate blob | preview its variation. Non-Play tools clear this preview |
 
 Drag the divider between the board and the graph to make the graph taller or shorter. mirai
-remembers the height.
+remembers the height, and opens new windows at a size where the board fills its area.
 Click the graph, or drag along it, to move along the main line.
 
 ---

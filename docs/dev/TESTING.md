@@ -420,6 +420,10 @@ XDG_CONFIG_HOME="$scratch/config" XDG_DATA_HOME="$scratch/data" \
 rm -rf "$scratch"
 ```
 
+`tools/ui/sized-shot.sh WIDTH HEIGHT "<script>" [args…]` does exactly that, and on niri also
+sets the window size: `0 0` keeps the size mirai asked for (needs a window rule that floats
+mirai), a nonzero size floats the window and forces that size.
+
 **Never use `dbus-run-session` to get a second instance.** It costs the login
 session its accessibility bus: the GTK client activates `org.a11y.Bus` on the
 private bus, `at-spi-bus-launcher` rewrites `$XDG_RUNTIME_DIR/at-spi/bus_0`, and
@@ -679,6 +683,7 @@ A black external screenshot is §5, not a second essay.
 |---|---|---|
 | A `notify::` handler or `bind_property` target silently stopped firing | `explicit_notify` on a **derive-generated** setter. It disables automatic `notify::`. It belongs only on a property whose hand-written setter emits the signal itself. Three properties name a custom setter: `live_analysis`, `ownership_overlay`, `policy_overlay` | `app.rs`, the `#[properties]` block on `imp::AppState` |
 | A widget will not shrink, or one pane eats the window | `gtk::Paned` resize/shrink flags, or a hardcoded position. The graph wants `resize-end-child: false` and no fixed split. An unset paned sizes the graph by its *minimum* request and clips a shrinkable child instead of shrinking it, which is why the graph pins its remembered height as the minimum until the first layout | `window.blp` content paned (`resize-end-child: false`, `shrink-end-child: false`); `WinrateGraph::pin` / `release` |
+| The first window leaves bare background beside or under the board | `fit_default_size` measured the chrome wrong, or the window is tiled: niri ignores the default size unless a window rule floats mirai | `window::fit_default_size`; `mirai::window` debug log `default window size` |
 | The sidebar page switcher is missing, and a stray `✕` sits in its place | `adw::HeaderBar::show_title(false)` hides the *title widget*. That widget **is** the `InlineViewSwitcher`. The `✕` is a second set of window controls | `window.blp` sidebar header: `show-start-title-buttons` / `show-end-title-buttons` false, `show-title` left on |
 | An engine connects, then vanishes seconds later; the server logs a connection with no subscription | Activation race. `activate_profile` is async and a local KataGo takes seconds, so an older activation can finish last | The activation counter in `AppState::activate_profile`. `discarding a superseded engine activation` at debug means the guard worked |
 | Live analysis restarts, but reports keep arriving for the old position | `generation`, bumped by `restart_analysis` and checked before a report is applied | `app.rs` `restart_analysis` |
