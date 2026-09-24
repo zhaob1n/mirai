@@ -424,11 +424,24 @@ fn copy_payload(source: &Node, target: &mut Node) {
     target.children.clear();
 }
 
-fn copy_branch(source: &GameTree, source_id: NodeId, target: &mut GameTree, parent: NodeId) {
-    let id = target.add_child(parent);
-    copy_payload(source.node(source_id), target.node_mut(id));
-    for &child in source.children(source_id) {
-        copy_branch(source, child, target, id);
+/// Copies each `roots` subtree of `source` under `parent` in `target`, in order.
+///
+/// Iterative, not recursive: a Fox main line is one node per move, and this runs on the GTK
+/// main thread, whose stack a frame per move would overflow on a long game. Popping the
+/// stack creates nodes in preorder, so pushing each node's children in reverse still adds
+/// every parent's children in their original order.
+fn copy_branches(source: &GameTree, roots: &[NodeId], target: &mut GameTree, parent: NodeId) {
+    let mut stack: Vec<(NodeId, NodeId)> = roots.iter().rev().map(|&id| (id, parent)).collect();
+    while let Some((source_id, parent)) = stack.pop() {
+        let id = target.add_child(parent);
+        copy_payload(source.node(source_id), target.node_mut(id));
+        stack.extend(
+            source
+                .children(source_id)
+                .iter()
+                .rev()
+                .map(|&child| (child, id)),
+        );
     }
 }
 
@@ -471,9 +484,7 @@ pub fn normalize_handicap(mut tree: GameTree) -> GameTree {
     let count = rebuilt.node(target_root).setup.add_black.len();
     rebuilt.info.handicap = rebuilt.info.handicap.max(count.min(u8::MAX as usize) as u8);
     rebuilt.info.komi = 0.0;
-    for child in continuations {
-        copy_branch(&tree, child, &mut rebuilt, target_root);
-    }
+    copy_branches(&tree, &continuations, &mut rebuilt, target_root);
     rebuilt
 }
 
@@ -620,6 +631,53 @@ mod tests {
         let tree = parse_record(raw).expect("Fox handicap SGF");
         assert_eq!(tree.info.handicap, 3);
         assert_eq!(tree.node(tree.root()).setup.add_black.len(), 3);
+    }
+
+    /// Copying the game after the prefix used to recurse once per node, so a handicap game
+    /// with a long main line overflowed the stack — the GTK main thread's, when the Fox
+    /// dialog opens a record. The variation checks that siblings still come out in order.
+    #[test]
+    fn a_long_handicap_game_is_copied_whole_and_in_order() {
+        use mirai_core::{GameInfo, RuleSet, Size};
+        const MOVES: u32 = 200_000;
+        let size = Size::square(19);
+        let mut tree = GameTree::new(GameInfo::new(size, RuleSet::Chinese));
+        let mut id = tree.root();
+        for stone in [size.point(3, 3), size.point(15, 3)] {
+            id = tree.add_child(id);
+            tree.node_mut(id).setup.add_black.push(stone);
+        }
+        let mut forked = id;
+        for i in 0..MOVES {
+            id = tree.add_child(id);
+            let color = [Color::White, Color::Black][i as usize % 2];
+            let node = tree.node_mut(id);
+            node.mv = Some((color, Point((i % 361) as u16)));
+            node.comment = i.to_string();
+            if i == 2 {
+                forked = id;
+            }
+        }
+        let side = tree.add_child(forked);
+        tree.node_mut(side).comment = "side".into();
+
+        let tree = normalize_handicap(tree);
+        assert_eq!(tree.info.handicap, 2);
+        let mut id = tree.root();
+        assert_eq!(tree.node(id).setup.add_black.len(), 2);
+        for i in 0..MOVES {
+            let children = tree.children(id);
+            assert_eq!(children.len(), if i == 3 { 2 } else { 1 }, "move {i}");
+            id = children[0];
+            let node = tree.node(id);
+            let color = [Color::White, Color::Black][i as usize % 2];
+            assert_eq!(node.mv, Some((color, Point((i % 361) as u16))), "move {i}");
+            assert_eq!(node.comment, i.to_string());
+            if i == 2 {
+                assert_eq!(tree.node(tree.children(id)[1]).comment, "side");
+            }
+        }
+        assert!(tree.children(id).is_empty());
     }
 
     #[test]
