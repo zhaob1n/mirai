@@ -587,14 +587,28 @@ fn build(arena: &[RawNode]) -> Result<GameTree, SgfError> {
         .and_then(|(_, v)| v.first())
         && let Some(entries) = decode_analysis(blob)
     {
-        for (idx, a) in entries {
+        for (idx, mut a) in entries {
             let id = NodeId(idx);
             if tree.contains(id) {
+                keep_on_board(&mut a, size);
                 tree.set_analysis(id, Some(a));
             }
         }
     }
     Ok(tree)
+}
+
+/// Drops the points `size` cannot hold from analysis a file supplied, so nothing downstream
+/// meets a move off the board. A PV is cut at its first such point rather than filtered:
+/// the moves after it were read in a position that cannot exist.
+fn keep_on_board(a: &mut NodeAnalysis, size: Size) {
+    let fits = |p: Point| p.is_pass() || size.contains(p);
+    a.candidates.retain(|c| fits(c.mv));
+    for c in &mut a.candidates {
+        if let Some(bad) = c.pv.iter().position(|&p| !fits(p)) {
+            c.pv.truncate(bad);
+        }
+    }
 }
 
 fn decode_analysis(blob: &str) -> Option<Vec<(u32, NodeAnalysis)>> {
@@ -1190,6 +1204,44 @@ mod tests {
         };
         let blob = encode_analysis(&[(0, &analysis)]).expect("compress");
         assert!(decode_analysis(&blob).is_none());
+    }
+
+    #[test]
+    fn analysis_naming_points_off_the_board_is_trimmed_to_it() {
+        // MRAI is postcard-packed `Point`s, never checked against `SZ`: a crafted or
+        // mismatched file could name any `u16`, which then reached `Size::to_gtp`.
+        let off = Point(81);
+        let candidate = |mv: Point, pv: Vec<Point>| Candidate {
+            mv,
+            visits: 1,
+            winrate: 0.5,
+            score_lead: 0.0,
+            prior: 0.1,
+            pv,
+            utility: None,
+        };
+        let analysis = NodeAnalysis {
+            visits: 2,
+            winrate: 0.5,
+            score_lead: 0.0,
+            score_stdev: 0.0,
+            candidates: vec![
+                candidate(off, vec![off]),
+                candidate(Point(40), vec![Point(40), Point::PASS, off, Point(0)]),
+                candidate(Point::PASS, vec![Point::PASS]),
+            ],
+            ownership: None,
+        };
+        let blob = encode_analysis(&[(0, &analysis)]).expect("compress");
+        let t = &parse_str(&format!("(;SZ[9]MRAI[{blob}];B[aa])")).unwrap()[0];
+        let kept = t.node(t.root()).analysis.as_ref().expect("analysis kept");
+        assert_eq!(
+            kept.candidates,
+            vec![
+                candidate(Point(40), vec![Point(40), Point::PASS]),
+                candidate(Point::PASS, vec![Point::PASS]),
+            ]
+        );
     }
 
     /// `collect_analysis` used to recurse once per node, so a long main line overflowed

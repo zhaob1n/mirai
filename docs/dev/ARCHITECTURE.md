@@ -439,7 +439,7 @@ MRAI[ base64( zstd( MRAI_VERSION ++ postcard(Vec<(u32, NodeAnalysis)>) ) ) ]
 The index contract is load-bearing: `collect_analysis` walks in exactly the order `write_sequence`
 emits and `build` creates nodes in document pre-order, so the recorded index is the `NodeId` a
 reload assigns. Decoding is best-effort — foreign, truncated or future-versioned blobs mean "no
-analysis", and a vanished index is skipped — and writing is opt-in via
+analysis", a vanished index is skipped, and a candidate or PV point off the board is dropped — and writing is opt-in via
 `UiSettings::save_analysis_in_sgf`, off by default. Two parser facts worth knowing before touching
 it: the charset is a collection root's `CA`, found by `sgf::root_property`'s scan of the raw
 bytes — the first game's root wins, a later game's root is used only if that one has none, and a
