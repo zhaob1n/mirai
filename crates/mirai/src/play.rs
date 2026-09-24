@@ -13,7 +13,7 @@
 //! result dialog. Every action mutates `Play` and then calls [`PlayController::sync`],
 
 use std::cell::{Cell, RefCell};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use gtk::glib;
@@ -54,10 +54,11 @@ pub struct PlayController {
     board: RefCell<Option<BoardView>>,
     analyse_hook: RefCell<Option<Box<dyn Fn()>>>,
     started: Cell<Started>,
-    /// The engine current when the turn stalled, if any. A later `Change::Engine`
-    /// retries only when the ready engine is a different one: saving or deleting a
-    /// profile emits that change too, and must not restart the search.
-    stalled_engine: RefCell<Option<Arc<dyn Engine>>>,
+    /// The engine current when the turn stalled, if any. Weak, not strong: the
+    /// pool's entries are weak and KataGo exits with the last window using it, so
+    /// a profile switch while stalled must not keep the old process alive. A dead
+    /// weak counts as a different engine, and the turn retries when a new one is ready.
+    stalled_engine: RefCell<Option<Weak<dyn Engine>>>,
     last_tick: Cell<Instant>,
 }
 impl PlayController {
@@ -329,7 +330,7 @@ impl PlayController {
     fn fail_ai(&self, reason: impl Into<String>) {
         self.abort_thinking();
         self.play.borrow_mut().ai_failed(reason);
-        *self.stalled_engine.borrow_mut() = self.state.engine();
+        *self.stalled_engine.borrow_mut() = self.state.engine().as_ref().map(Arc::downgrade);
         self.started.set(Started::Nothing);
         self.sync();
     }
@@ -354,11 +355,12 @@ impl PlayController {
         let Some(engine) = self.state.engine() else {
             return;
         };
+        let current = Arc::downgrade(&engine);
         if self
             .stalled_engine
             .borrow()
             .as_ref()
-            .is_some_and(|old| Arc::ptr_eq(old, &engine))
+            .is_some_and(|old| Weak::ptr_eq(old, &current))
         {
             return;
         }
