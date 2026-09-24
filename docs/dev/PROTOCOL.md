@@ -93,9 +93,10 @@ QUIC transport parameters (`transport.rs` — `transport_config`), shared by bot
 | `keep_alive_interval` | 5 s | **Advisory.** Any interval, or none. ≤ ⅓ of the peer's idle timeout is RECOMMENDED. |
 | `max_idle_timeout` | 30 s | **Advisory value, normative kind.** QUIC takes the minimum of the two advertised values; an implementation MUST tolerate any peer value. |
 | `max_concurrent_uni_streams` | 256 | **Normative floor.** The server opens one unidirectional stream per subscription, so a client MUST advertise at least its intended concurrent subscription count. |
+| `stream_receive_window` | 16 KiB | **Recommended for clients.** A server writing to a subscription stream blocks once it is one window ahead of what the client has read, and only then can it replace a queued report with a newer one. quinn's 1.25 MB default lets hundreds of stale reports queue on a slow link, all delivered late and in order. |
 | bidirectional streams | 1 per connection | A server MUST permit at least one; a client MUST NOT open a second. |
 
-Flow-control windows, migration and datagrams are implementation choices outside MRP/1.
+Other flow-control windows, migration and datagrams are implementation choices outside MRP/1.
 
 ### 2.2 Certificates: trust on first use
 

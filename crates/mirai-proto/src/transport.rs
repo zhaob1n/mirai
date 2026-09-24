@@ -77,6 +77,18 @@ fn provider() -> Arc<rustls::crypto::CryptoProvider> {
 static TRANSPORT: LazyLock<Arc<quinn::TransportConfig>> =
     LazyLock::new(|| Arc::new(transport_config()));
 
+/// How far a stream may run ahead of what its reader has consumed: the peer's
+/// `stream_receive_window`, which every endpoint here advertises.
+///
+/// A subscription's reports pass through a `watch` that keeps only the newest, so a slow
+/// link sheds stale reports — but only once a write blocks, and a write blocks only when
+/// this window is spent. quinn's default is 1.25 MB, some 500 live reports: on a slow link
+/// every one of them is delivered, late and in order. 16 KiB is a handful of reports:
+/// on a link slower than the reports it bounds the lag to 16 KiB over the link rate, and
+/// it still allows 50 KB/s per stream at a 300 ms round trip, far above what one
+/// subscription produces.
+const STREAM_WINDOW: u32 = 16 * 1024;
+
 /// Shared QUIC tuning. Keep-alives are short so a dead peer is noticed while a user is
 /// still looking at the board.
 pub fn transport_config() -> quinn::TransportConfig {
@@ -88,6 +100,7 @@ pub fn transport_config() -> quinn::TransportConfig {
             .expect("30s is a valid idle timeout"),
     ));
     tc.max_concurrent_uni_streams(quinn::VarInt::from_u32(256));
+    tc.stream_receive_window(quinn::VarInt::from_u32(STREAM_WINDOW));
     tc
 }
 
@@ -391,12 +404,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Starts a real server on an ephemeral port, accepting connections, and returns its
-    /// address and certificate fingerprint.
-    ///
-    /// The accept loop is the point: without it the handshake never progresses, so the client
-    /// never sees a certificate and every failure looks like a timeout.
-    fn a_server(tag: &str) -> (std::net::SocketAddr, String) {
+    /// A server endpoint on an ephemeral port with a fresh certificate, and that
+    /// certificate's fingerprint.
+    fn a_server_endpoint(tag: &str) -> (quinn::Endpoint, String) {
         let dir = std::env::temp_dir().join(format!("mirai-tp-{}-{tag}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let (certs, key) = load_or_generate_cert(
@@ -407,7 +417,19 @@ mod tests {
         .expect("certificate");
         let fp = fingerprint_of(&certs);
         let listen = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 0));
-        let endpoint = server_endpoint(listen, certs, key).expect("server endpoint");
+        (
+            server_endpoint(listen, certs, key).expect("server endpoint"),
+            fp,
+        )
+    }
+
+    /// Starts a real server on an ephemeral port, accepting connections, and returns its
+    /// address and certificate fingerprint.
+    ///
+    /// The accept loop is the point: without it the handshake never progresses, so the client
+    /// never sees a certificate and every failure looks like a timeout.
+    fn a_server(tag: &str) -> (std::net::SocketAddr, String) {
+        let (endpoint, fp) = a_server_endpoint(tag);
         let addr = endpoint.local_addr().expect("bound");
         tokio::spawn(async move {
             while let Some(incoming) = endpoint.accept().await {
@@ -417,6 +439,50 @@ mod tests {
             }
         });
         (addr, fp)
+    }
+
+    /// Both ends of one live connection: the server's, the client's, and the server
+    /// endpoint, which has to outlive them.
+    async fn a_connected_pair(
+        tag: &str,
+    ) -> (quinn::Connection, quinn::Connection, quinn::Endpoint) {
+        let (endpoint, fp) = a_server_endpoint(tag);
+        let addr = endpoint.local_addr().expect("bound");
+        let accepting = endpoint.clone();
+        let accepted = tokio::spawn(async move {
+            let incoming = accepting.accept().await.expect("an incoming connection");
+            incoming.await.expect("server handshake")
+        });
+        let (client, _) = connect(&format!("mirai://{addr}"), Some(fp))
+            .await
+            .expect("client handshake");
+        let server = accepted.await.expect("accept task");
+        (server, client, endpoint)
+    }
+
+    /// A server writing to a stream nobody reads must block after one window. That block is
+    /// the only thing that lets a subscription's `watch` drop stale reports on a slow link;
+    /// without it they queue in the transport and arrive late, in order.
+    #[tokio::test]
+    async fn a_stream_runs_at_most_one_window_ahead_of_its_reader() {
+        let (server, _client, _endpoint) = a_connected_pair("window").await;
+        let mut stream = server.open_uni().await.expect("open a stream");
+
+        let chunk = [0u8; 1024];
+        let mut written = 0usize;
+        while let Ok(result) =
+            tokio::time::timeout(Duration::from_millis(500), stream.write_all(&chunk)).await
+        {
+            result.expect("write");
+            written += chunk.len();
+            assert!(written <= 4 << 20, "the stream never blocked");
+        }
+
+        let window = STREAM_WINDOW as usize;
+        assert!(
+            window / 2 <= written && written <= window + chunk.len(),
+            "the server wrote {written} bytes ahead of a {window}-byte window"
+        );
     }
 
     /// A pin mismatch is rejected inside the TLS handshake, so the transport error is a bare
