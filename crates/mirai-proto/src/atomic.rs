@@ -47,10 +47,113 @@ fn temp_path(target: &Path, n: u64) -> PathBuf {
 ///
 /// A symlink is followed, including a dangling one: the link text is resolved against
 /// the link's directory, and the bytes land on that target. An existing file keeps its
-/// mode; `std::fs::write` did both. A file that holds secrets goes through
-/// [`write_atomic_private`] instead.
+/// mode; `std::fs::write` did both. That suits a file the user placed and may have
+/// linked elsewhere. A file that holds secrets goes through [`write_atomic_private`]; a
+/// file mirai names and generates itself goes through [`write_atomic_generated`].
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    replace(path, bytes, None)
+    replace(path, bytes, None, Links::Follow)
+}
+
+/// [`write_atomic`] for a file mirai generates under a name of its own choosing, such as
+/// KataGo's analysis config.
+///
+/// A symlink at `path` is replaced by the new file, never written through. Whoever can
+/// plant a link under a predictable name would otherwise choose which file this write
+/// clobbers, and resolving the link here, in user space, sidesteps the kernel's
+/// `fs.protected_symlinks` guard. An existing regular file keeps its mode.
+pub fn write_atomic_generated(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    replace(path, bytes, None, Links::Replace)
+}
+
+/// Whether [`replace`] writes through a symlink at the target or replaces the link.
+#[derive(Clone, Copy)]
+enum Links {
+    Follow,
+    Replace,
+}
+
+/// Creates `dir`, and any missing parent, readable only by this user, and refuses an
+/// existing directory that another user owns or can write to.
+///
+/// mirai writes generated files into such a directory and KataGo reads them back later.
+/// `create_dir_all` happily accepts a directory another local user created first under a
+/// predictable name, and whoever can write to the directory can swap a file in it
+/// between mirai's write and KataGo's read. On other platforms the directory is only
+/// created.
+pub fn private_dir(dir: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)?;
+        check_private_dir(dir)
+    }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(dir)
+}
+
+/// The ownership and mode half of [`private_dir`]. A symlinked directory is accepted only
+/// when the link is this user's too: a link someone else owns can be repointed after the
+/// check.
+#[cfg(unix)]
+fn check_private_dir(dir: &Path) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    let me = euid();
+    let mut meta = std::fs::symlink_metadata(dir)?;
+    if meta.file_type().is_symlink() {
+        if meta.uid() != me {
+            return Err(refuse(
+                dir,
+                &format!(
+                    "it is a symlink owned by uid {}, not this user (uid {me})",
+                    meta.uid()
+                ),
+            ));
+        }
+        meta = std::fs::metadata(dir)?;
+    }
+    if meta.uid() != me {
+        return Err(refuse(
+            dir,
+            &format!(
+                "it is owned by uid {}, not this user (uid {me})",
+                meta.uid()
+            ),
+        ));
+    }
+    let mode = meta.mode() & 0o7777;
+    if mode & 0o022 != 0 {
+        return Err(refuse(
+            dir,
+            &format!("its mode {mode:04o} lets other users write to it"),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn refuse(dir: &Path, why: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        format!(
+            "refusing {}: {why}, so another user could replace the files mirai generates \
+             there; use a directory only you can write to",
+            dir.display()
+        ),
+    )
+}
+
+/// This process's effective uid. std exposes none and the workspace takes no `libc`
+/// dependency; `geteuid` is always successful.
+#[cfg(unix)]
+fn euid() -> u32 {
+    unsafe extern "C" {
+        safe fn geteuid() -> u32;
+    }
+    geteuid()
 }
 
 /// [`write_atomic`] for a file only its owner may read, such as a config holding remote
@@ -59,7 +162,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// tightened by the next write. The temporary file is created `0600`, so the bytes are
 /// never readable by anyone else, not even while they are staged.
 pub fn write_atomic_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    replace(path, bytes, Some(0o600))
+    replace(path, bytes, Some(0o600), Links::Follow)
 }
 
 /// Stages `bytes` beside `target` and returns the temporary path. The caller renames it
@@ -135,8 +238,11 @@ fn persist(tmp: PathBuf, target: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn replace(path: &Path, bytes: &[u8], mode: Option<u32>) -> io::Result<()> {
-    let target = follow(path)?;
+fn replace(path: &Path, bytes: &[u8], mode: Option<u32>, links: Links) -> io::Result<()> {
+    let target = match links {
+        Links::Follow => follow(path)?,
+        Links::Replace => path.to_path_buf(),
+    };
     let existing = existing_permissions(&target)?;
     // Create the temporary file no wider than the file it replaces, or at the mode asked
     // for. Staging with the umask default and narrowing afterwards left a private file
@@ -187,10 +293,13 @@ fn follow(path: &Path) -> io::Result<PathBuf> {
     ))
 }
 
-/// The permissions of the file about to be replaced; `None` if there is none yet, in
-/// which case the new file gets the umask default exactly as `std::fs::write` gave it.
+/// The permissions of the regular file about to be replaced; `None` if there is none
+/// yet, in which case the new file gets the umask default exactly as `std::fs::write`
+/// gave it. A symlink left at `target` is about to be replaced rather than followed, so
+/// its target's mode is none of this file's business.
 fn existing_permissions(target: &Path) -> io::Result<Option<std::fs::Permissions>> {
-    match std::fs::metadata(target) {
+    match std::fs::symlink_metadata(target) {
+        Ok(meta) if meta.file_type().is_symlink() => Ok(None),
         Ok(meta) => Ok(Some(meta.permissions())),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
@@ -443,6 +552,73 @@ mod tests {
         assert_eq!(staged, temp_path(&target, 1));
         assert_eq!(std::fs::read(&staged).unwrap(), b"new");
         assert_eq!(std::fs::read(&stale).unwrap(), b"a crashed write");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Another local user who can guess a generated file's name plants a link there to a
+    /// file this user can write. The generated write must replace the link, leaving the
+    /// file it pointed at alone.
+    #[cfg(unix)]
+    #[test]
+    fn a_generated_write_replaces_a_planted_symlink() {
+        let dir = scratch("planted");
+        let victim = dir.join("victim");
+        std::fs::write(&victim, b"precious").unwrap();
+        let generated = dir.join("katago-analysis.cfg");
+        std::os::unix::fs::symlink(&victim, &generated).unwrap();
+
+        write_atomic_generated(&generated, b"generated").unwrap();
+
+        assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
+        let meta = std::fs::symlink_metadata(&generated).unwrap();
+        assert!(
+            meta.is_file(),
+            "the link must be replaced by a regular file"
+        );
+        assert_eq!(std::fs::read(&generated).unwrap(), b"generated");
+        assert!(temps_in(&dir).is_empty(), "staging file left behind");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_private_dir_is_created_for_this_user_alone() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = scratch("private-new");
+        let dir = base.join("state").join("katago-logs");
+        private_dir(&dir).unwrap();
+        for created in [&dir, &base.join("state")] {
+            assert_eq!(
+                std::fs::metadata(created).unwrap().permissions().mode() & 0o777,
+                0o700,
+                "{} must be private",
+                created.display()
+            );
+        }
+        // An existing directory of this user's that nobody else can write stays usable.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        private_dir(&dir).unwrap();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// `/tmp/mirai-katago-logs` created world-writable by whoever got there first must
+    /// not be written into.
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_others_can_write_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = scratch("shared");
+        for mode in [0o777, 0o1777, 0o770] {
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(mode)).unwrap();
+            let error = private_dir(&dir).expect_err("a directory others can write is refused");
+            assert_eq!(
+                error.kind(),
+                io::ErrorKind::PermissionDenied,
+                "mode {mode:o}"
+            );
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
