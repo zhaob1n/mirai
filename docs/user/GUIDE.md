@@ -97,14 +97,14 @@ repeat the analysis numbers.
 | **Header bar** | Left: **Download from Fox** is the main half of a split button; its arrow menu offers *Open File…* and *Paste SGF*. **New Game**, the engine button and the live-analysis toggle follow. The engine button shows the profile's name and KataGo version, and shrinks rather than duplicating that name in the subtitle; its tooltip is `Analysis Engine —` plus the full label, and its menu is the profiles plus *Preferences…*. Centre: the record title, with `•` while unsaved, and a status subtitle only when there is one. A saved record is named by its file; one that has never been saved is `Black vs White` from the record, then the event, then `Untitled`. Right: sidebar toggle and Main Menu. *Clear Board* is only in the Main Menu |
 | **Board** | wood, grid, star points, optional coordinates, stones. The last move is a red dot, or — when move numbers are on — its number in red. SGF marks (triangle, square, circle, cross, text labels) are drawn |
 | **Editor toolbar** | Collapsed by default. Open it with **Editing Tools** on the board navigation bar, or Main Menu → *View* → *Editing Tools*. It holds undo/redo, Play, black and white setup, marks and the mark eraser. The larger foreground stone in Play shows the side to move. An active game forces it closed and disables the toggle; choosing a mark or setup tool opens it. Closing it returns to Play |
-| **Win-rate graph** | Always Black's view. Solid curve = Black win rate (left axis 0/50/100); dashed curve = Black score lead (right axis, never tighter than ±5). The cursor reads `Black 54.2%`. Coloured bars along the bottom are the blunder strip. Tooltip: Black win rate and Black score lead over the main line. Drag the divider above it to resize it; the height is remembered |
+| **Win-rate graph** | Always Black's view. Solid curve = Black win rate (left axis 0/50/100); dashed curve = Black score lead (right axis, never tighter than ±5). The cursor reads `Black 54.2%`. Coloured bars along the bottom are the blunder strip. Tooltip: Black win rate and Black score lead over the main line. Drag the divider above it to resize it; <kbd>g</kbd>, or Main Menu → *View* → *Win-Rate Graph*, hides it. Both are remembered |
 | **Sidebar** | **Analysis**, **Moves**, **Comment**. Analysis reads the side to move, not Black. <kbd>F9</kbd>, or Main Menu → *View* → *Sidebar*, hides it at any width. At 926 or narrower the sidebar closes and the same button reopens it as an overlay |
 | **Board navigation** | Under the board only: first / previous / next / last, previous / next variation, the slider, a position such as `12 / 80 · W`, **Editing Tools**, and **Board Menu**. The position tooltip spells out `Move 12 of 80 · White to play`. There is no win-rate readout here |
-| **Play bar** | Only while a game is running. Timed games show both clocks here — `●` Black, `○` White, the side to move in the accent colour — then **Undo**, **Pass**, and, against the engine, **Resign**. During a game the graph, board navigation and sidebar are hidden, and the sidebar button is disabled, so the board takes the window; they return when the game ends, the sidebar as you left it |
+| **Play bar** | Only while a game is running. Timed games show both clocks here — `●` Black, `○` White, the side to move in the accent colour — then **Undo**, **Pass**, and, against the engine, **Resign**. During a game the graph, board navigation and sidebar are hidden, and their switches are disabled, so the board takes the window; they return when the game ends, the sidebar as you left it |
 
 The Main Menu holds *Clear Board*, *Save*, *Save As…*, *Copy SGF*, *Analyse Game*, *Estimate
-Score*, a *View* submenu — *Sidebar*, *Editing Tools*, *Coordinates*, *Move Numbers*,
-*Ownership Overlay*, *Policy Overlay* — and *Preferences*, *Keyboard Shortcuts*, *About
+Score*, a *View* submenu — *Sidebar*, *Win-Rate Graph*, *Editing Tools*, *Coordinates*, *Move Numbers*, *Ownership Overlay*, *Policy Overlay* — and
+*Preferences*, *Keyboard Shortcuts*, *About
 mirai*. The two overlay items select the same single overlay as Preferences; they are not two
 layers at once.
 
@@ -643,6 +643,7 @@ logs and the generated analysis config live under `$XDG_DATA_HOME/mirai/`.
 | | | <kbd>c</kbd> | coordinates | | | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> | download from Fox |
 | | | <kbd>n</kbd> | move numbers | | | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> | clear board |
 | | | <kbd>F9</kbd> | show/hide sidebar | | | | |
+| | | <kbd>g</kbd> | show/hide win-rate graph | | | | |
 
 <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes back both players' last moves during a game; in review it
 undoes the last edit — a placed stone, a mark, a comment commit — not each keystroke.

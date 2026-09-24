@@ -755,7 +755,9 @@ bare background; a remembered graph too tall for this screen is capped so the bo
 the sidebar docked. While a game is in progress or being scored, `sync_play_layout` hides the
 graph, the `nav` row and the sidebar (a `show-sidebar` notify keeps it shut through
 breakpoint changes, and its toggle is disabled), and restores them — sidebar as it was, graph
-re-pinned at its remembered height — when the game is over. The sidebar header must keep `show-title` at its
+re-pinned at its remembered height — when the game is over. Graph visibility is one rule,
+`sync_graph`: `ui.show_graph` (`win.toggle-graph`, View menu, <kbd>g</kbd>) and no game; a
+hidden graph drops out of `fit_default_size`. The sidebar header must keep `show-title` at its
 default: clearing it hides the title widget, which is the `Adw.InlineViewSwitcher`. Sidebar
 width follows `win.toggle-candidate-details`: 300 sp for the five common columns, 386 sp
 with Loss and Prior, including when the split collapses at 926 sp. The rank badge keeps

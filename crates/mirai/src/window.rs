@@ -134,6 +134,8 @@ pub struct Ui {
     /// `Some(sidebar was shown)` while a game hides the review surfaces; see
     /// [`sync_play_layout`].
     play_layout: Cell<Option<bool>>,
+    /// The View menu's Win-Rate Graph switch; see [`sync_graph`].
+    show_graph: Cell<bool>,
     tasks: WindowTasks,
     autosave: Option<AutosaveFile>,
     win_actions: gio::SimpleActionGroup,
@@ -179,6 +181,7 @@ impl Drop for Ui {
         // A plain value by now: the graph recorded its height on its last allocation.
         self.state.config_mut().ui.graph_height =
             u16::try_from(self.winrate.preferred_height()).unwrap_or(u16::MAX);
+        self.state.config_mut().ui.show_graph = self.show_graph.get();
         self.state.save_config();
         self.state.set_engine(None);
         // `autosave` deletes its file as it drops, with the rest of the fields.
@@ -235,6 +238,8 @@ pub fn present(
     board.set_hexpand(true);
     board.set_vexpand(true);
     winrate.set_hexpand(true);
+    let show_graph = state.config().ui.show_graph;
+    winrate.set_visible(show_graph);
     let content = window.content_paned();
     content.set_start_child(Some(&board));
     content.set_end_child(Some(&winrate));
@@ -362,6 +367,7 @@ pub fn present(
         scale_guard: Cell::new(false),
         pending_auto_analyse: Cell::new(false),
         play_layout: Cell::new(None),
+        show_graph: Cell::new(show_graph),
         tasks: WindowTasks::default(),
         autosave: next_autosave_file(),
         win_actions: gio::SimpleActionGroup::new(),
@@ -1650,6 +1656,7 @@ fn show_shortcuts(ui: &Ui) {
                 ("Coordinates", "win.toggle-coords"),
                 ("Move Numbers", "win.toggle-move-numbers"),
                 ("Sidebar", "win.toggle-sidebar"),
+                ("Win-Rate Graph", "win.toggle-graph"),
             ][..],
         ),
         (
@@ -1830,11 +1837,19 @@ fn fit_default_size(window: &MiraiWindow, graph: &WinrateGraph) {
     // A graph remembered from a taller screen may not fit this one. It gets at most a third
     // of what it shares with the board, and no more than leaves the board wide enough to
     // dock the sidebar -- unless that would take it under a quarter, when the sidebar
-    // cannot dock at this height anyway.
-    let graph_height = natural(graph.upcast_ref());
+    // cannot dock at this height anyway. A hidden graph takes no room at all.
+    let graph_height = if graph.is_visible() {
+        natural(graph.upcast_ref())
+    } else {
+        0
+    };
     let room = height - (chrome - graph_height);
     let cap = (room / 3).min((room - docked_side).max(room / 4));
-    let graph_height = graph.limit_height(graph_height.min(cap));
+    let graph_height = if graph.is_visible() {
+        graph.limit_height(graph_height.min(cap))
+    } else {
+        0
+    };
     let side = (room - graph_height).max(1);
     let chrome = height - side;
 
@@ -1862,26 +1877,46 @@ fn sync_play_layout(ui: &Ui) {
         return;
     };
     let split = window.split();
-    ui.winrate.set_visible(!playing);
-    window.nav().set_visible(!playing);
-    // The sidebar is forced shut for the whole game (see `install_actions`), so its toggle
-    // would be a dead button.
-    window.sidebar_toggle().set_sensitive(!playing);
-    if let Some(action) = win_simple(ui, "toggle-sidebar") {
-        action.set_enabled(!playing);
-    }
-    if playing {
+    // `play_layout` is what `sync_graph` and the sidebar guard read, so it changes first.
+    let sidebar_shown = if playing {
         ui.play_layout.set(Some(split.shows_sidebar()));
-        split.set_show_sidebar(false);
+        None
     } else {
-        // The divider position was the board's height before the game, and the window may
-        // have been resized since; hand the graph its remembered height instead.
-        ui.winrate.pin();
-        window.content_paned().set_property("position-set", false);
-        if let Some(shown) = ui.play_layout.take() {
-            split.set_show_sidebar(shown);
+        ui.play_layout.take()
+    };
+    sync_graph(ui, &window);
+    window.nav().set_visible(!playing);
+    // The sidebar is forced shut for the whole game (see `install_actions`), and the graph
+    // hidden, so their toggles would be dead controls.
+    window.sidebar_toggle().set_sensitive(!playing);
+    for name in ["toggle-sidebar", "toggle-graph"] {
+        if let Some(action) = win_simple(ui, name) {
+            action.set_enabled(!playing);
         }
     }
+    if playing {
+        split.set_show_sidebar(false);
+    } else if let Some(shown) = sidebar_shown {
+        split.set_show_sidebar(shown);
+    }
+}
+
+/// The graph shows when the View menu asks for it and no game hides it.
+fn sync_graph(ui: &Ui, window: &MiraiWindow) {
+    let visible = ui.show_graph.get() && ui.play_layout.get().is_none();
+    if let Some(action) = win_simple(ui, "toggle-graph") {
+        action.set_state(&ui.show_graph.get().to_variant());
+    }
+    if visible == ui.winrate.is_visible() {
+        return;
+    }
+    if visible {
+        // The divider position was the board's height when the graph went away, and the
+        // window may have been resized since; hand the graph its remembered height instead.
+        ui.winrate.pin();
+        window.content_paned().set_property("position-set", false);
+    }
+    ui.winrate.set_visible(visible);
 }
 
 fn install_actions(window: &MiraiWindow, ui: &Ui) {
@@ -1981,6 +2016,17 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
             sidebar.set_state(&split.shows_sidebar().to_variant());
         });
     }
+
+    toggle(
+        "toggle-graph",
+        ui.show_graph.get(),
+        Box::new(|ui| {
+            ui.show_graph.set(!ui.show_graph.get());
+            if let Some(window) = ui.window() {
+                sync_graph(ui, &window);
+            }
+        }),
+    );
 
     let editor = window.editor_revealer();
     let editor_action = toggle(
@@ -2280,6 +2326,7 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
             ("win.toggle-coords", &["c"]),
             ("win.toggle-move-numbers", &["n"]),
             ("win.toggle-sidebar", &["F9"]),
+            ("win.toggle-graph", &["g"]),
             ("win.analyse-game", &["<Control>a"]),
             ("win.new-game", &["<Control>n"]),
             ("win.score", &["<Control>e"]),
