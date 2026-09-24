@@ -483,11 +483,17 @@ impl Config {
         let previous = toml::Value::try_from(base)?;
         // `toml::from_str`, not `str::parse`: the latter reads a bare value, so a whole
         // document silently comes back as an error and every other window's edit with it.
-        let mut merged = std::fs::read_to_string(path)
-            .ok()
-            .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
-            // A missing or unreadable file is simply one with nothing to preserve.
-            .unwrap_or_else(|| toml::Value::Table(toml::map::Map::new()));
+        // Only a missing file is an empty merge base. A parse error or any other I/O
+        // error must surface — swallowing it used to overwrite a hand-edited file.
+        let mut merged = match std::fs::read_to_string(path) {
+            Ok(text) => {
+                toml::from_str(&text).map_err(|e| ConfigError::Parse(path.to_path_buf(), e))?
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                toml::Value::Table(toml::map::Map::new())
+            }
+            Err(e) => return Err(ConfigError::Io(path.to_path_buf(), e)),
+        };
         overlay(&previous, &current, &mut merged);
 
         if let Some(dir) = path.parent() {
@@ -776,6 +782,34 @@ mod tests {
                 .engine_profiles
                 .is_empty()
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A hand-edited file that does not parse must not be replaced by this window's
+    /// settings. Only a missing file is an empty merge base.
+    #[test]
+    fn a_malformed_config_is_left_untouched() {
+        let dir = std::env::temp_dir().join(format!("mirai-cfg-bad-{}", std::process::id()));
+        let path = dir.join("merge.toml");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let original = "active_engine = [unclosed";
+        std::fs::write(&path, original).unwrap();
+
+        let base = Config::default();
+        let mut mine = base.clone();
+        mine.ui.show_coordinates = !base.ui.show_coordinates;
+        let err = mine
+            .save_merged(&base, &path)
+            .expect_err("a malformed file must not be saved over");
+        assert!(matches!(err, ConfigError::Parse(..)), "{err}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+
+        let err = mine
+            .save_merged(&base, &dir)
+            .expect_err("a directory is not a missing config");
+        assert!(matches!(err, ConfigError::Io(..)), "{err}");
+        assert!(dir.is_dir());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

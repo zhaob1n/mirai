@@ -606,7 +606,8 @@ does not delete engine profiles.
 
 `~/.config/mirai/config.toml` (strictly `$XDG_CONFIG_HOME`). Plain text, editable by hand
 while mirai is closed. A missing file is fine; a malformed one makes mirai fall back to a
-seeded first-run configuration rather than start with half of one. Preferences is the normal
+seeded first-run configuration rather than start with half of one. Saving does not repair
+that file: the error is reported and the text is left as it is. Preferences is the normal
 editor. A hand-written file only needs the profile you are adding; every omitted analysis,
 play and display key uses the default in the tables above.
 
