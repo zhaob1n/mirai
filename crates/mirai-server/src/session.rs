@@ -60,11 +60,12 @@ const PREAUTH_CLOSE_REASON: &[u8] = b"pre-authentication deadline";
 /// leaves room for any hand-made one while keeping every pre-authentication log line short.
 pub const MAX_HELLO_FIELD: usize = 256;
 
-/// Largest first control frame, in bytes of payload.
+/// Largest first control frame, in bytes of payload and again of decompressed plaintext.
 ///
 /// A `Hello` at [`MAX_HELLO_FIELD`] is about 520 bytes of postcard, and compressing a
 /// payload that small adds only a few bytes. Anything larger is not a `Hello` a real client
-/// sends, so the unauthenticated peer never gets to make the server allocate `MAX_FRAME`.
+/// sends, so the unauthenticated peer never gets to make the server allocate `MAX_FRAME`,
+/// neither for the frame nor for what a few hundred bytes of zstd inflate to.
 const MAX_HELLO_FRAME: usize = 1024;
 
 static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
@@ -199,20 +200,24 @@ async fn session_loop(
     let mut wbuf = FrameBuf::new();
     let mut rbuf = FrameBuf::new();
 
-    let first =
-        match tokio::time::timeout_at(preauth_deadline, read_hello(&mut rx, &mut rbuf)).await {
-            Ok(Ok(msg)) => msg,
-            Ok(Err(FrameError::TooLarge(len))) => {
-                let msg = format!("a first frame of {len} bytes exceeds {MAX_HELLO_FRAME}");
-                reject(&mut tx, &mut wbuf, conn, ErrCode::BadRequest, &msg).await;
-                anyhow::bail!("{msg}");
-            }
-            Ok(Err(e)) => return Err(e.into()),
-            Err(_) => {
-                close_preauth(conn);
-                anyhow::bail!("pre-authentication deadline exceeded waiting for Hello");
-            }
-        };
+    let first = match tokio::time::timeout_at(
+        preauth_deadline,
+        frame::read_msg_within::<_, ClientMsg>(&mut rx, &mut rbuf, MAX_HELLO_FRAME),
+    )
+    .await
+    {
+        Ok(Ok(msg)) => msg,
+        Ok(Err(FrameError::TooLarge(_))) => {
+            let msg = format!("the first frame exceeds {MAX_HELLO_FRAME} bytes");
+            reject(&mut tx, &mut wbuf, conn, ErrCode::BadRequest, &msg).await;
+            anyhow::bail!("{msg}");
+        }
+        Ok(Err(e)) => return Err(e.into()),
+        Err(_) => {
+            close_preauth(conn);
+            anyhow::bail!("pre-authentication deadline exceeded waiting for Hello");
+        }
+    };
     let ClientMsg::Hello {
         proto,
         token,
@@ -408,30 +413,6 @@ async fn session_loop(
             }
         }
     }
-}
-
-/// Reads the first control message under [`MAX_HELLO_FRAME`] rather than `MAX_FRAME`.
-///
-/// The length is checked before the body is read, into a buffer on the stack; an oversized
-/// frame is [`FrameError::TooLarge`].
-async fn read_hello<R: tokio::io::AsyncRead + Unpin>(
-    rx: &mut R,
-    rbuf: &mut FrameBuf,
-) -> Result<ClientMsg, FrameError> {
-    use tokio::io::AsyncReadExt;
-
-    let mut frame = [0u8; 5 + MAX_HELLO_FRAME];
-    match rx.read_exact(&mut frame[..5]).await {
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Err(FrameError::Eof),
-        Err(e) => return Err(e.into()),
-    }
-    let len = u32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
-    if len > MAX_HELLO_FRAME {
-        return Err(FrameError::TooLarge(len as u64));
-    }
-    rx.read_exact(&mut frame[5..5 + len]).await?;
-    frame::decode(rbuf, &frame[..5 + len])
 }
 
 /// Streams one subscription's events down its own unidirectional stream.
@@ -1135,14 +1116,32 @@ mod tests {
         );
     }
 
-    /// A few hundred bytes of zstd inflate to a megabyte `client`. Before authentication
-    /// that string must not reach the log, whatever the token.
+    /// A few hundred bytes of zstd inflate to a megabyte `client`. The first frame's bound
+    /// covers the plaintext, so inflating stops at the bound and the frame is refused as too
+    /// large before anything is deserialised or the token is looked at.
     #[tokio::test]
-    async fn an_oversized_hello_field_is_refused_and_kept_out_of_the_log() {
+    async fn a_compressed_oversized_hello_is_refused_before_inflating() {
         for token in ["wrong", "secret"] {
             let client = "A".repeat(1 << 20);
             let first = hello_frame(token, &client);
-            assert!(first.len() <= MAX_HELLO_FRAME, "{} bytes", first.len());
+            assert!(first.len() - 5 <= MAX_HELLO_FRAME, "{} bytes", first.len());
+            let (reply, error) = first_frame_exchange(first).await;
+            assert_bad_request(&reply);
+            assert_eq!(
+                error,
+                format!("the first frame exceeds {MAX_HELLO_FRAME} bytes")
+            );
+        }
+    }
+
+    /// Fields over [`MAX_HELLO_FIELD`] in a frame within the bound are refused too, and the
+    /// oversized `client` stays out of the log whatever the token.
+    #[tokio::test]
+    async fn an_oversized_hello_field_is_refused_and_kept_out_of_the_log() {
+        for token in ["wrong", "secret"] {
+            let client = "A".repeat(MAX_HELLO_FIELD + 1);
+            let first = hello_frame(token, &client);
+            assert!(first.len() - 5 <= MAX_HELLO_FRAME, "{} bytes", first.len());
             let (reply, error) = first_frame_exchange(first).await;
             assert_bad_request(&reply);
             assert!(error.len() < 200, "{} bytes of error text", error.len());

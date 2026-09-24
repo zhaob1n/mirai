@@ -809,7 +809,7 @@ reason. Dropping the attempt is that close. It is not an authentication failure.
 | Board size | `2..=19` per dimension | receiver MUST reject anything else |
 | Control streams | exactly 1 bidirectional | client MUST NOT open more |
 | Time to `Hello` | 10 s on the reference server (`PREAUTH_DEADLINE`) | frees the slot; keep-alives do not extend it. After the handshake: application code 1, reason `pre-authentication deadline`, no `Error` frame. During the handshake: transport `APPLICATION_ERROR`. A client SHOULD send `Hello` immediately |
-| First control frame | payload ≤ 1024 bytes on the reference server (`MAX_HELLO_FRAME`) | checked on the header, before the body is read: `Error { None, BadRequest }`, close with code 1. A `Hello` within the field bounds is about 520 bytes |
+| First control frame | payload ≤ 1024 bytes, and zstd plaintext ≤ 1024 bytes, on the reference server (`MAX_HELLO_FRAME`) | the length is checked on the header, before the body is read, and inflating stops at the bound: `Error { None, BadRequest }`, close with code 1. A `Hello` within the field bounds is about 520 bytes of postcard |
 | `Hello.token`, `Hello.client` | ≤ 256 bytes each on the reference server (`MAX_HELLO_FIELD`) | `Error { None, BadRequest }`, close with code 1, before the token is checked. Both arrive unauthenticated and `client` is logged; a server MUST NOT log it unbounded or unescaped |
 
 `max_subs` is counted **per connection** in the reference server, not summed per token across
