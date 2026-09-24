@@ -13,11 +13,17 @@ pub fn replaces_stored_analysis(existing_visits: Option<u32>, new_visits: u32) -
 
 /// SI-abbreviated visit count: `947`, `1.2k`, `34k`, `1.1m`.
 pub fn si_visits(v: u32) -> String {
+    let mut s = String::new();
+    let _ = write_si_visits(&mut s, v);
+    s
+}
+
+pub(crate) fn write_si_visits(out: &mut impl std::fmt::Write, v: u32) -> std::fmt::Result {
     match v {
-        0..=999 => v.to_string(),
-        1_000..=9_999 => format!("{:.1}k", v as f32 / 1000.0),
-        10_000..=999_999 => format!("{}k", v / 1000),
-        _ => format!("{:.1}m", v as f32 / 1_000_000.0),
+        0..=999 => write!(out, "{v}"),
+        1_000..=9_999 => write!(out, "{:.1}k", v as f32 / 1000.0),
+        10_000..=999_999 => write!(out, "{}k", v / 1000),
+        _ => write!(out, "{:.1}m", v as f32 / 1_000_000.0),
     }
 }
 
@@ -29,12 +35,24 @@ pub fn visits_per_second(v: f32) -> String {
 
 /// `56.3` — a win rate as a one-decimal percentage.
 pub fn pct1(v: f32) -> String {
-    format!("{:.1}", v * 100.0)
+    let mut s = String::new();
+    let _ = write_pct1(&mut s, v);
+    s
+}
+
+pub(crate) fn write_pct1(out: &mut impl std::fmt::Write, v: f32) -> std::fmt::Result {
+    write!(out, "{:.1}", v * 100.0)
 }
 
 /// `+3.4` / `-0.8` — a signed score lead with one decimal.
 pub fn signed1(v: f32) -> String {
-    format!("{v:+.1}")
+    let mut s = String::new();
+    let _ = write_signed1(&mut s, v);
+    s
+}
+
+pub(crate) fn write_signed1(out: &mut impl std::fmt::Write, v: f32) -> std::fmt::Result {
+    write!(out, "{v:+.1}")
 }
 
 #[cfg(test)]

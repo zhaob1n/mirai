@@ -60,6 +60,10 @@ mod candidate_imp {
 
         /// Not a GObject property: the plain point behind `mv`.
         pub point: Cell<u16>,
+        /// `(width, height, point)` last written into `mv`. `None` until the first
+        /// apply: a fresh object's point is 0, which is a real intersection, and
+        /// [`Point::PASS`] is the other end of `u16`, so neither can be the unset mark.
+        pub mv_key: Cell<Option<(u8, u8, u16)>>,
         /// The first move of the PV, which is what activating the row plays.
         pub pv_first: Cell<u16>,
     }
@@ -127,7 +131,8 @@ impl Row {
     ///
     /// The derive-generated setters notify unconditionally, and every notify re-evaluates a
     /// column expression and re-measures a label; a report that leaves a value alone should
-    /// cost nothing. `mv` and `pv` are compared before the string is even built.
+    /// cost nothing. The GTP string is built only when the point or the board size changed:
+    /// `object.mv()` allocates a `GString`, and `to_gtp` allocates the coordinate.
     fn apply(&self, object: &CandidateObject, size: mirai_core::Size) {
         if object.rank() != self.rank {
             object.set_rank(self.rank);
@@ -135,9 +140,10 @@ impl Row {
         if object.grade() != self.grade {
             object.set_grade(self.grade);
         }
-        let mv = size.to_gtp(self.point);
-        if object.mv() != mv.as_str() {
-            object.set_mv(mv.as_str());
+        let key = (size.w, size.h, self.point.0);
+        if object.imp().mv_key.get() != Some(key) {
+            object.set_mv(size.to_gtp(self.point).as_str());
+            object.imp().mv_key.set(Some(key));
         }
         if object.winrate() != self.winrate as f64 {
             object.set_winrate(self.winrate as f64);
@@ -941,4 +947,48 @@ fn rank_column() -> gtk::ColumnViewColumn {
     );
     this.set_sorter(Some(&gtk::NumericSorter::new(Some(expr))));
     this
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(point: Point) -> Row {
+        Row {
+            rank: 1,
+            grade: 0,
+            point,
+            pv_first: point,
+            winrate: 0.5,
+            score: 1.5,
+            utility: None,
+            loss: 0.0,
+            visits: 20,
+            prior: 0.1,
+        }
+    }
+
+    /// A fresh `CandidateObject` stores point 0, which is also the top-left intersection.
+    /// Comparing that cell before the first apply would skip the GTP string. [`Point::PASS`]
+    /// is `u16::MAX`, so it is the other value a sentinel must not collide with.
+    #[test]
+    fn a_fresh_row_is_not_already_showing_its_move() {
+        gtk::init().expect("gtk");
+        let size = Size::square(19);
+        let object = CandidateObject::default();
+        assert_eq!(object.imp().point.get(), 0);
+        assert!(object.mv().is_empty());
+
+        row(size.point(0, 0)).apply(&object, size);
+        assert_eq!(object.mv().as_str(), "A19");
+
+        row(Point::PASS).apply(&object, size);
+        assert_eq!(object.mv().as_str(), "pass");
+
+        // The same index on a smaller board is a different coordinate. Objects are reused
+        // across refreshes, so the size is part of the key.
+        let nine = Size::square(9);
+        row(nine.point(0, 0)).apply(&object, nine);
+        assert_eq!(object.mv().as_str(), "A9");
+    }
 }

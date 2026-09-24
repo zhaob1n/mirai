@@ -932,31 +932,42 @@ mod imp {
                 }
 
                 let fg = text_on(over(blob, wood_color(dark)));
-                let mut lines: Vec<(String, f32)> = Vec::with_capacity(3);
-                lines.push((crate::util::pct1(info.winrate_for(to_play)), 0.22));
+                // Three lines, formatted into stack buffers. A `Vec<(String, f32)>` here
+                // allocated once per labelled candidate per snapshot.
+                let mut lines = [StackLabel::new(); 3];
+                let mut scales = [0.0f32; 3];
+                let mut n = 0usize;
+                lines[n].write(|buf| crate::util::write_pct1(buf, info.winrate_for(to_play)));
+                scales[n] = 0.22;
+                n += 1;
                 if l.cell >= 26.0 {
-                    lines.push((crate::util::signed1(info.score_lead_for(to_play)), 0.19));
+                    lines[n]
+                        .write(|buf| crate::util::write_signed1(buf, info.score_lead_for(to_play)));
+                    scales[n] = 0.19;
+                    n += 1;
                 }
                 if l.cell >= 34.0 {
-                    lines.push((crate::util::si_visits(info.visits), 0.17));
+                    lines[n].write(|buf| crate::util::write_si_visits(buf, info.visits));
+                    scales[n] = 0.17;
+                    n += 1;
                 }
 
                 // Measure, then draw, through one layout: the three lines have to be
                 // centred as a block, so the heights are needed before the first glyph.
                 let mut heights = [0.0f32; 3];
                 let mut total = 0.0f32;
-                for (i, (text, scale)) in lines.iter().enumerate() {
-                    fd.set_absolute_size((l.cell * scale) as f64 * pango::SCALE as f64);
-                    layout.set_text(text);
+                for i in 0..n {
+                    fd.set_absolute_size((l.cell * scales[i]) as f64 * pango::SCALE as f64);
+                    layout.set_text(lines[i].as_str());
                     layout.set_font_description(Some(&fd));
                     let h = layout.pixel_size().1 as f32;
                     heights[i] = h;
                     total += h;
                 }
                 let mut ty = cy - total * 0.5;
-                for (i, (text, scale)) in lines.iter().enumerate() {
-                    fd.set_absolute_size((l.cell * scale) as f64 * pango::SCALE as f64);
-                    layout.set_text(text);
+                for i in 0..n {
+                    fd.set_absolute_size((l.cell * scales[i]) as f64 * pango::SCALE as f64);
+                    layout.set_text(lines[i].as_str());
                     layout.set_font_description(Some(&fd));
                     draw_text(snapshot, &layout, cx, ty + heights[i] * 0.5, &fg);
                     ty += heights[i];
@@ -1070,6 +1081,47 @@ fn policy_texture(report: &mirai_engine::Report, size: Size) -> Option<gdk::Text
         pixel[3] = (alpha * 255.0) as u8;
     }
     Some(texture(buf, size))
+}
+
+/// One candidate label, formatted in place. Three of these replace the
+/// `Vec<(String, f32)>` a labelled blob used to allocate on every snapshot.
+/// 24 bytes covers the longest `pct1` / `signed1` / `si_visits` (`+1024.0`, `4295.0m`).
+#[derive(Clone, Copy)]
+struct StackLabel {
+    bytes: [u8; 24],
+    len: u8,
+}
+
+impl StackLabel {
+    fn new() -> Self {
+        Self {
+            bytes: [0; 24],
+            len: 0,
+        }
+    }
+
+    fn write(&mut self, f: impl FnOnce(&mut Self) -> std::fmt::Result) {
+        self.len = 0;
+        f(self).expect("a candidate label fits in 24 bytes");
+    }
+
+    fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.bytes[..self.len as usize]).expect("a candidate label is utf-8")
+    }
+}
+
+impl std::fmt::Write for StackLabel {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        let incoming = s.as_bytes();
+        let start = self.len as usize;
+        let end = start + incoming.len();
+        if end > self.bytes.len() {
+            return Err(std::fmt::Error);
+        }
+        self.bytes[start..end].copy_from_slice(incoming);
+        self.len = end as u8;
+        Ok(())
+    }
 }
 
 fn draw_text(
