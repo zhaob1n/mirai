@@ -106,15 +106,17 @@ async fn get_body(url: &str) -> Result<String, FoxError> {
     let mut last_error = "request failed".to_string();
     for attempt in 1..=RETRIES {
         let file = gio::File::for_uri(url);
-        match glib::future_with_timeout(REQUEST_TIMEOUT, file.load_contents_future()).await {
-            Ok(Ok((bytes, _))) if bytes.len() > MAX_RESPONSE_BYTES => {
-                last_error = "response was unexpectedly large".to_string();
-            }
-            Ok(Ok((bytes, _))) => match String::from_utf8(bytes.to_vec()) {
+        match glib::future_with_timeout(REQUEST_TIMEOUT, read_capped(&file, MAX_RESPONSE_BYTES))
+            .await
+        {
+            Ok(Ok(body)) => match String::from_utf8(body) {
                 Ok(text) => return Ok(text),
                 Err(error) => last_error = format!("response was not UTF-8 ({error})"),
             },
-            Ok(Err(error)) => last_error = error.to_string(),
+            Ok(Err(BodyError::TooLarge)) => {
+                last_error = "response was unexpectedly large".to_string();
+            }
+            Ok(Err(BodyError::Io(error))) => last_error = error.to_string(),
             Err(_) => last_error = "request timed out".to_string(),
         }
         if attempt < RETRIES {
@@ -122,6 +124,38 @@ async fn get_body(url: &str) -> Result<String, FoxError> {
         }
     }
     Err(FoxError::Request(last_error))
+}
+
+#[derive(Debug)]
+enum BodyError {
+    TooLarge,
+    Io(glib::Error),
+}
+
+/// Reads `file` whole, giving up as soon as it has seen more than `cap` bytes.
+///
+/// Streamed rather than `load_contents`, which buffers the entire body before its size can
+/// be checked: an endless or hostile response must cost at most `cap` bytes of memory.
+async fn read_capped(file: &gio::File, cap: usize) -> Result<Vec<u8>, BodyError> {
+    const CHUNK: usize = 64 * 1024;
+    let stream = file
+        .read_future(glib::Priority::DEFAULT)
+        .await
+        .map_err(BodyError::Io)?;
+    let mut body = Vec::new();
+    loop {
+        let chunk = stream
+            .read_bytes_future(CHUNK, glib::Priority::DEFAULT)
+            .await
+            .map_err(BodyError::Io)?;
+        if chunk.is_empty() {
+            return Ok(body);
+        }
+        if chunk.len() > cap - body.len() {
+            return Err(BodyError::TooLarge);
+        }
+        body.extend_from_slice(&chunk);
+    }
 }
 
 async fn search_games(query: &str) -> Result<Games, FoxError> {
@@ -485,5 +519,29 @@ mod tests {
             "a corrupt cache must be ignored, not fatal"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_endless_response_is_cut_off_at_the_cap() {
+        // `/dev/zero` never ends: buffering it whole before checking its size would run the
+        // process out of memory. The capped reader must stop once it passes the cap.
+        let context = glib::MainContext::new();
+        let endless = gio::File::for_path("/dev/zero");
+        let result = context.block_on(read_capped(&endless, 1024 * 1024));
+        assert!(matches!(result, Err(BodyError::TooLarge)), "{result:?}");
+    }
+
+    #[test]
+    fn a_body_within_the_cap_is_returned_whole() {
+        let path = std::env::temp_dir().join(format!("mirai-fox-body-{}", std::process::id()));
+        let body: Vec<u8> = (0..200_000u32).map(|i| i as u8).collect();
+        std::fs::write(&path, &body).unwrap();
+        let context = glib::MainContext::new();
+        let file = gio::File::for_path(&path);
+        let exact = context.block_on(read_capped(&file, body.len()));
+        let over = context.block_on(read_capped(&file, body.len() - 1));
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(exact.expect("a body exactly at the cap is accepted"), body);
+        assert!(matches!(over, Err(BodyError::TooLarge)), "{over:?}");
     }
 }
