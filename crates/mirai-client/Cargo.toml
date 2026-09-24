@@ -10,10 +10,8 @@ mirai-core.workspace = true
 # Remote analysis only: a client never spawns KataGo.
 mirai-engine = { workspace = true, default-features = false, features = ["remote"] }
 tokio.workspace = true
-tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-thiserror.workspace = true
 
 [dev-dependencies]
 anyhow.workspace = true
