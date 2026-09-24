@@ -60,7 +60,8 @@ pub struct EngineCfg {
     /// A KataGo analysis config. Omit it and the server writes one into `log_dir` from
     /// the tuning below, the same file the desktop application generates.
     pub config: Option<PathBuf>,
-    /// KataGo's `logDir`. Defaults to the temp directory.
+    /// KataGo's `logDir`, which also holds a generated config. Defaults to the directory
+    /// `main` passes to [`EngineCfg::to_local_config`], this user's own data directory.
     pub log_dir: Option<PathBuf>,
     /// `numAnalysisThreads` — how many positions this engine searches at once.
     pub analysis_threads: Option<u16>,
@@ -155,11 +156,26 @@ impl ServerConfig {
 }
 
 impl EngineCfg {
-    pub fn to_local_config(&self) -> anyhow::Result<LocalEngineConfig> {
-        let log_dir = self
-            .log_dir
-            .clone()
-            .unwrap_or_else(|| std::env::temp_dir().join("mirai-katago-logs"));
+    /// `default_log_dir` is where an engine without `log_dir` keeps KataGo's logs and its
+    /// generated config; `None` when this user has no home directory to put it in. It is
+    /// created private, and used only if nobody else can write to it: the temp directory
+    /// this once defaulted to let another local user pre-create the directory and swap or
+    /// redirect the generated config.
+    pub fn to_local_config(
+        &self,
+        default_log_dir: Option<&Path>,
+    ) -> anyhow::Result<LocalEngineConfig> {
+        let log_dir = match (&self.log_dir, default_log_dir) {
+            (Some(dir), _) => dir.clone(),
+            (None, Some(dir)) => {
+                mirai_proto::atomic::private_dir(dir)
+                    .with_context(|| format!("preparing the log directory {}", dir.display()))?;
+                dir.to_path_buf()
+            }
+            (None, None) => {
+                bail!("no home directory to keep KataGo's logs in; set log_dir in this [[engine]]")
+            }
+        };
         // No config file given: write the one mirai would generate, with this block's
         // tuning applied over the defaults.
         let config = match &self.config {
@@ -275,7 +291,9 @@ mod tests {
         assert_eq!(cfg.engines.len(), 2);
         // `Open { engine: None }` must pick the first block in file order.
         assert_eq!(cfg.engines[0].name, "default");
-        let lc = cfg.engines[0].to_local_config().unwrap();
+        let logs = std::env::temp_dir().join(format!("mirai-server-rt-{}", std::process::id()));
+        let lc = cfg.engines[0].to_local_config(Some(&logs)).unwrap();
+        let _ = std::fs::remove_dir_all(&logs);
         assert_eq!(lc.analysis_threads, Some(4));
         assert_eq!(lc.search_threads, Some(8));
     }
@@ -294,7 +312,7 @@ mod tests {
         let cfg = parse(&text).unwrap();
         assert!(cfg.engines[0].config.is_none());
 
-        let lc = cfg.engines[0].to_local_config().unwrap();
+        let lc = cfg.engines[0].to_local_config(None).unwrap();
         let written = std::fs::read_to_string(&lc.config).expect("the config was written");
         assert!(written.contains("numSearchThreadsPerAnalysisThread = 12"));
         assert!(
@@ -307,6 +325,38 @@ mod tests {
             "a generated config is the only source of truth for its own keys"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// With no `log_dir`, the logs and the generated config go to the default directory,
+    /// which is created for this user alone; with no default either there is nowhere
+    /// safe to put them, and the engine is refused rather than sent to a shared one.
+    #[cfg(unix)]
+    #[test]
+    fn an_engine_without_a_log_dir_uses_a_private_default() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = std::env::temp_dir().join(format!("mirai-server-logdir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let default = base.join("mirai").join("katago-logs");
+        let cfg = parse("[[engine]]\nname='a'\nkatago='k'\nmodel='m'\n").unwrap();
+
+        let lc = cfg.engines[0].to_local_config(Some(&default)).unwrap();
+
+        assert_eq!(lc.log_dir, default);
+        assert_eq!(lc.config.parent(), Some(default.as_path()));
+        assert_eq!(
+            std::fs::metadata(&default).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert!(cfg.engines[0].to_local_config(None).is_err());
+
+        std::fs::set_permissions(&default, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let error = cfg.engines[0].to_local_config(Some(&default)).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("other users write"),
+            "the refusal must say why: {error:#}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

@@ -204,6 +204,7 @@ async fn run(
 /// Starts every configured engine. A failure is logged and skipped, never fatal on its
 /// own: one broken GPU config should not take a working engine offline with it.
 async fn start_engines(cfg: &ServerConfig) -> Vec<NamedEngine> {
+    let default_log_dir = default_log_dir();
     let mut out = Vec::with_capacity(cfg.engines.len());
     for e in &cfg.engines {
         info!(
@@ -212,7 +213,7 @@ async fn start_engines(cfg: &ServerConfig) -> Vec<NamedEngine> {
             model = %e.model.display(),
             "starting engine"
         );
-        let local = match e.to_local_config() {
+        let local = match e.to_local_config(default_log_dir.as_deref()) {
             Ok(local) => local,
             Err(err) => {
                 error!(engine = %e.name, "engine is not usable, continuing without it: {err:#}");
@@ -276,6 +277,13 @@ fn default_config_path() -> PathBuf {
     directories::ProjectDirs::from("io.github", "mirai", "mirai")
         .map(|d| d.config_dir().join("server.toml"))
         .unwrap_or_else(|| PathBuf::from("server.toml"))
+}
+
+/// KataGo's log directory for an `[[engine]]` without `log_dir`: the one the desktop
+/// application uses, in this user's own data directory, never the shared temp directory.
+fn default_log_dir() -> Option<PathBuf> {
+    directories::ProjectDirs::from("io.github", "mirai", "mirai")
+        .map(|d| d.data_dir().join("katago-logs"))
 }
 
 fn report_missing_config(path: &std::path::Path) {
