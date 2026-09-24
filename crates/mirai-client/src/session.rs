@@ -9,9 +9,12 @@
 //!
 //! [`Session`] is that policy. On a first connection to an unpinned server it reaches
 //! [`SessionState::AwaitingTrust`] and **refuses to dispatch analysis** until [`Session::trust`]
-//! is called. That is the whole trust-on-first-use flow, expressed once for every frontend:
-//! a GUI shows the fingerprint in a dialog, a phone shows it in a sheet, and neither can
-//! forget to gate on it, because the engine is not reachable until they do.
+//! is called on that fingerprint. A click while the handshake is still running, or after a
+//! newer connect has replaced the one on screen, is ignored — it must not authorise a
+//! certificate the user has not seen. That is the whole trust-on-first-use flow, expressed
+//! once for every frontend: a GUI shows the fingerprint in a dialog, a phone shows it in a
+//! sheet, and neither can forget to gate on it, because the engine is not reachable until
+//! they do.
 //!
 //! There are no locks here. The state lives in one task; everything else is a channel.
 
@@ -164,6 +167,9 @@ impl Session {
 
     /// Accepts the fingerprint currently shown in [`SessionState::AwaitingTrust`].
     ///
+    /// A click while still connecting, or after a newer [`Session::connect`] has replaced
+    /// the attempt the user was looking at, is ignored: there is no fingerprint on screen
+    /// to accept, and the click must not authorise whatever handshake finishes next.
     /// Callers persist [`Peer::fingerprint`] themselves — this crate does not touch files —
     /// and pass it back as [`SessionConfig::pin`] next time.
     pub fn trust(&self) {
@@ -244,6 +250,12 @@ fn fold(status: &RemoteStatus, peer: &Peer, trusted: bool) -> SessionState {
     }
 }
 
+struct Inflight {
+    fut: Pin<Box<dyn Future<Output = Result<Link, EngineError>> + Send>>,
+    /// A pin was configured, so a successful handshake is already trusted.
+    pinned: bool,
+}
+
 async fn run(
     connector: Box<dyn Connector>,
     mut cmd: mpsc::UnboundedReceiver<Cmd>,
@@ -252,44 +264,49 @@ async fn run(
 ) {
     let mut link: Option<Link> = None;
     let mut trusted = false;
+    let mut inflight: Option<Inflight> = None;
 
     loop {
         // Only wait on a status change when there is a link to watch; otherwise this task
-        // must not spin.
+        // must not spin. The connect future is polled beside commands so Disconnect, Trust
+        // and a newer Connect are not stuck behind DNS, QUIC or auth.
         let changed = async {
             match link.as_mut() {
                 Some(l) => l.status.changed().await.is_ok(),
                 None => pending().await,
             }
         };
+        let connect_done = async {
+            match inflight.as_mut() {
+                Some(attempt) => (&mut attempt.fut).await,
+                None => pending().await,
+            }
+        };
 
         tokio::select! {
+            // A command already queued wins over a handshake that finished in the same
+            // poll. Otherwise a superseded attempt becomes usable for one turn of the loop.
+            biased;
             command = cmd.recv() => match command {
                 None => return,
                 Some(Cmd::Connect(config)) => {
-                    // Dropping the old link is what closes the old connection.
+                    // Dropping the old link closes it. Dropping the future cancels the
+                    // handshake; its result is never observed.
                     link = None;
                     trusted = false;
+                    drop(inflight.take());
                     let _ = engine.send(None);
                     let _ = state.send(SessionState::Connecting);
-
-                    match connector.connect(config.clone()).await {
-                        Ok(fresh) => {
-                            // A configured pin means the user already agreed to this
-                            // certificate; the transport enforced it during the handshake.
-                            trusted = config.pin.is_some();
-                            if trusted {
-                                let _ = engine.send(Some(fresh.engine.clone()));
-                            }
-                            let _ = state.send(fold(&fresh.status.borrow(), &fresh.peer, trusted));
-                            link = Some(fresh);
-                        }
-                        Err(e) => {
-                            let _ = state.send(SessionState::Failed(e.to_string()));
-                        }
-                    }
+                    let pinned = config.pin.is_some();
+                    inflight = Some(Inflight {
+                        fut: connector.connect(config),
+                        pinned,
+                    });
                 }
                 Some(Cmd::Trust) => {
+                    // Only the fingerprint in AwaitingTrust. A click during Connecting, or
+                    // one meant for a link a newer Connect has already replaced, must not
+                    // authorise the handshake that finishes next.
                     if let Some(l) = link.as_ref()
                         && !trusted
                     {
@@ -299,10 +316,29 @@ async fn run(
                     }
                 }
                 Some(Cmd::Disconnect) => {
+                    inflight = None;
                     link = None;
                     trusted = false;
                     let _ = engine.send(None);
                     let _ = state.send(SessionState::Offline);
+                }
+            },
+            result = connect_done => {
+                let pinned = inflight.take().is_some_and(|attempt| attempt.pinned);
+                match result {
+                    Ok(fresh) => {
+                        // A configured pin means the user already agreed to this
+                        // certificate; the transport enforced it during the handshake.
+                        trusted = pinned;
+                        if trusted {
+                            let _ = engine.send(Some(fresh.engine.clone()));
+                        }
+                        let _ = state.send(fold(&fresh.status.borrow(), &fresh.peer, trusted));
+                        link = Some(fresh);
+                    }
+                    Err(e) => {
+                        let _ = state.send(SessionState::Failed(e.to_string()));
+                    }
                 }
             },
             alive = changed => {
@@ -335,6 +371,7 @@ async fn run(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use mirai_core::{RuleSet, Size};
@@ -364,24 +401,62 @@ mod tests {
         status: watch::Sender<RemoteStatus>,
         /// Set to fail every connection attempt.
         refuse: AtomicBool,
+        /// Keyed by `SessionConfig::engine`. `None` waits forever; `Some(d)` sleeps.
+        /// Absent means the attempt completes immediately, which is what the other tests use.
+        delays: Mutex<std::collections::HashMap<String, Option<std::time::Duration>>>,
+        /// Engine names whose connect future returned a link. A dropped attempt never appears.
+        finished: Mutex<Vec<String>>,
+    }
+
+    struct Named {
+        name: String,
+        inner: Arc<Recorder>,
+    }
+
+    impl Engine for Named {
+        fn subscribe(&self, req: AnalyzeReq) -> Subscription {
+            self.inner.subscribe(req)
+        }
+
+        fn describe(&self) -> EngineDesc {
+            EngineDesc::placeholder(&self.name)
+        }
     }
 
     impl Connector for Arc<Fake> {
         fn connect(
             &self,
-            _config: SessionConfig,
+            config: SessionConfig,
         ) -> Pin<Box<dyn Future<Output = Result<Link, EngineError>> + Send>> {
             let this = self.clone();
             Box::pin(async move {
+                let delay = config
+                    .engine
+                    .as_deref()
+                    .and_then(|name| this.delays.lock().expect("delays").get(name).copied());
+                match delay {
+                    Some(None) => pending::<()>().await,
+                    Some(Some(d)) => tokio::time::sleep(d).await,
+                    None => {}
+                }
                 if this.refuse.load(Ordering::Relaxed) {
                     return Err(EngineError::Disconnected("unauthorized".into()));
                 }
+                let name = config.engine.clone().unwrap_or_else(|| "fake".into());
+                this.finished.lock().expect("finished").push(name.clone());
+                let engine: Arc<dyn Engine> = match &config.engine {
+                    Some(name) => Arc::new(Named {
+                        name: name.clone(),
+                        inner: this.engine.clone(),
+                    }),
+                    None => this.engine.clone(),
+                };
                 Ok(Link {
-                    engine: this.engine.clone(),
+                    engine,
                     peer: Peer {
                         fingerprint: "a".repeat(64),
                         server: "mirai-test/1".into(),
-                        engine: "fake".into(),
+                        engine: name,
                     },
                     status: this.status.subscribe(),
                 })
@@ -398,6 +473,8 @@ mod tests {
                 engine: Arc::new(Recorder { asked }),
                 status,
                 refuse: AtomicBool::new(false),
+                delays: Mutex::new(std::collections::HashMap::new()),
+                finished: Mutex::new(Vec::new()),
             }),
             seen,
         )
@@ -579,6 +656,147 @@ mod tests {
         session.disconnect();
         until(&session, |s| matches!(s, SessionState::Offline)).await;
 
+        let mut sub = session.subscribe(a_request());
+        assert!(matches!(
+            sub.next().await.expect("refusal"),
+            SubEvent::Failed(_)
+        ));
+        assert_eq!(dispatched(&mut seen), 0);
+    }
+
+    fn config(engine: Option<&str>) -> SessionConfig {
+        SessionConfig {
+            url: "mirai://test:9678".into(),
+            token: "tok".into(),
+            engine: engine.map(str::to_string),
+            pin: Some("a".repeat(64)),
+        }
+    }
+
+    /// A connect that never finishes must not swallow Disconnect.
+    #[tokio::test]
+    async fn disconnect_during_connect_goes_offline_without_waiting() {
+        let (backend, _) = fake();
+        backend
+            .delays
+            .lock()
+            .expect("delays")
+            .insert("hang".into(), None);
+        let session = Session::new(backend);
+        session.connect(config(Some("hang")));
+        until(&session, |s| matches!(s, SessionState::Connecting)).await;
+
+        session.disconnect();
+        tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            until(&session, |s| matches!(s, SessionState::Offline)),
+        )
+        .await
+        .expect("disconnect did not cancel the in-flight connect");
+    }
+
+    /// Connect B must replace A. A's engine is never published, even after A would have finished.
+    #[tokio::test]
+    async fn a_newer_connect_drops_the_one_still_in_flight() {
+        let (backend, _) = fake();
+        {
+            let mut delays = backend.delays.lock().expect("delays");
+            delays.insert("A".into(), Some(std::time::Duration::from_millis(400)));
+            delays.insert("B".into(), Some(std::time::Duration::from_millis(20)));
+        }
+        let session = Session::new(backend.clone());
+        let mut rx = session.watch();
+        session.connect(config(Some("A")));
+        session.connect(config(Some("B")));
+
+        let mut published = Vec::new();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            let state = rx.borrow_and_update().clone();
+            if let SessionState::Connected(peer) = &state {
+                published.push(peer.engine.clone());
+                if peer.engine == "B" {
+                    break;
+                }
+            }
+            tokio::time::timeout_at(deadline, rx.changed())
+                .await
+                .expect("B never became the connected engine")
+                .expect("session task ended");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        assert!(
+            matches!(session.state(), SessionState::Connected(peer) if peer.engine == "B"),
+            "{:?}",
+            session.state()
+        );
+        assert!(
+            !published.iter().any(|name| name == "A"),
+            "a superseded connect was published: {published:?}"
+        );
+        assert_eq!(
+            backend.finished.lock().expect("finished").as_slice(),
+            ["B".to_string()]
+        );
+        assert_eq!(session.describe().name, "B");
+    }
+
+    fn unpinned(engine: &str) -> SessionConfig {
+        SessionConfig {
+            pin: None,
+            ..config(Some(engine))
+        }
+    }
+
+    /// Trust during Connecting has no fingerprint to accept. The handshake that
+    /// then finishes must still wait.
+    #[tokio::test]
+    async fn trust_during_connect_does_not_accept_an_unseen_certificate() {
+        let (backend, mut seen) = fake();
+        backend
+            .delays
+            .lock()
+            .expect("delays")
+            .insert("slow".into(), Some(std::time::Duration::from_millis(80)));
+        let session = Session::new(backend);
+        session.connect(unpinned("slow"));
+        until(&session, |s| matches!(s, SessionState::Connecting)).await;
+        session.trust();
+
+        let state = until(&session, |s| matches!(s, SessionState::AwaitingTrust(_))).await;
+        assert!(!state.is_usable());
+        assert_eq!(session.describe().name, "");
+        let mut sub = session.subscribe(a_request());
+        assert!(matches!(
+            sub.next().await.expect("refusal"),
+            SubEvent::Failed(_)
+        ));
+        assert_eq!(dispatched(&mut seen), 0);
+    }
+
+    /// A Trust meant for the fingerprint on screen must not authorise the Connect
+    /// that replaced it.
+    #[tokio::test]
+    async fn trust_after_a_superseding_connect_waits_for_the_new_fingerprint() {
+        let (backend, mut seen) = fake();
+        backend
+            .delays
+            .lock()
+            .expect("delays")
+            .insert("B".into(), Some(std::time::Duration::from_millis(80)));
+        let session = Session::new(backend);
+        session.connect(unpinned("A"));
+        until(&session, |s| matches!(s, SessionState::AwaitingTrust(_))).await;
+        session.connect(unpinned("B"));
+        session.trust();
+
+        let state = until(
+            &session,
+            |s| matches!(s, SessionState::AwaitingTrust(peer) if peer.engine == "B"),
+        )
+        .await;
+        assert!(!state.is_usable());
+        assert_eq!(session.describe().name, "");
         let mut sub = session.subscribe(a_request());
         assert!(matches!(
             sub.next().await.expect("refusal"),
