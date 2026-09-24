@@ -134,6 +134,8 @@ Click the graph, or drag along it, to move along the main line.
 <kbd>Space</kbd> (or the header toggle) starts the engine on the position under the cursor.
 Moving the cursor restarts the search on the new position; the old one is abandoned at once.
 The search runs up to **Maximum Visits** and the display refreshes every **Report Interval**.
+Changing either while a search is running restarts it, once the row has stopped moving; the
+number itself is saved at once.
 
 The graph reads the position, always from Black's side: the cursor label is Black's win rate.
 The sidebar lists the moves for the side to move, from that side's point of view; a small
@@ -571,9 +573,12 @@ to persist and activate them. The neural-net cache is not changed.
 | **Visits per Move** | 100 | 100 – 100 000 | reviewing: 100 is quick, 5 000 is thorough |
 | **Analyse on Open** | off | on / off | turn on to start a whole-game sweep whenever a record is opened, pasted or downloaded |
 
-The numeric rows accept typing, scrolling and the keyboard's arrow keys. Each page ends with
-**Restore Defaults**. Its toast offers **Undo**. Restoring a page does not delete engine
-profiles.
+Changing **Maximum Visits** or **Report Interval** restarts a search that is already running,
+after a brief pause so dragging or key-repeating the row does not restart on every step.
+**Suggestions Shown** restarts only when the cap grows. The number is written to disk
+immediately either way. The numeric rows accept typing, scrolling and the keyboard's arrow
+keys. Each page ends with **Restore Defaults**. Its toast offers **Undo**. Restoring a page
+does not delete engine profiles.
 
 ### Play
 

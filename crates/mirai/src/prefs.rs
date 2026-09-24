@@ -9,6 +9,7 @@
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::Duration;
 
 use adw::prelude::*;
 use gtk::{gio, glib};
@@ -1361,6 +1362,48 @@ fn commit_profile(state: &AppState, profile: EngineProfile, editing: Option<&str
 
 // -- Analysis ---------------------------------------------------------------------------
 
+/// How long a visit-cap or report-interval edit must sit still before the live search
+/// restarts. A spin row notifies on every step of a drag or key repeat; restarting KataGo
+/// for each of those would throw away a search that was about to be replaced again.
+const ANALYSIS_RESTART_DEBOUNCE: Duration = Duration::from_millis(300);
+
+/// One pending restart for the two rows that change a running search's limits.
+///
+/// The timeout holds only a [`glib::WeakRef`] to [`AppState`]. The dialog's handlers own
+/// this value; when they drop, [`Drop`] removes a restart that has not fired yet. A timeout
+/// that is already queued keeps the `Rc` alive until it fires, so closing Preferences in
+/// that window still applies the value just saved.
+struct AnalysisRestart {
+    source: Cell<Option<glib::SourceId>>,
+}
+
+impl AnalysisRestart {
+    fn schedule(self: &Rc<Self>, state: &AppState) {
+        if let Some(id) = self.source.take() {
+            id.remove();
+        }
+        let weak = state.downgrade();
+        let this = Rc::clone(self);
+        let id = glib::timeout_add_local(ANALYSIS_RESTART_DEBOUNCE, move || {
+            // The source is running; removing it again would target an id glib has freed.
+            this.source.take();
+            if let Some(state) = weak.upgrade() {
+                state.restart_analysis();
+            }
+            glib::ControlFlow::Break
+        });
+        self.source.set(Some(id));
+    }
+}
+
+impl Drop for AnalysisRestart {
+    fn drop(&mut self) {
+        if let Some(id) = self.source.take() {
+            id.remove();
+        }
+    }
+}
+
 fn connect_analysis(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state: &AppState) {
     // Loading a whole page back into its rows must not be mistaken for the user editing
     // them: the value handlers persist, and a half-loaded page would be persisted too.
@@ -1402,8 +1445,13 @@ fn connect_analysis(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, st
 
     load_analysis(widgets, state, &syncing);
 
+    let restart = Rc::new(AnalysisRestart {
+        source: Cell::new(None),
+    });
+
     let visits_state = state.clone();
     let visits_syncing = syncing.clone();
+    let visits_restart = Rc::clone(&restart);
     widgets
         .analysis_visits_row
         .connect_value_notify(move |row| {
@@ -1412,10 +1460,13 @@ fn connect_analysis(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, st
             }
             visits_state.config_mut().analysis.live_max_visits = row.value() as u32;
             visits_state.save_config();
+            // The running search is still holding the previous cap.
+            visits_restart.schedule(&visits_state);
         });
 
     let interval_state = state.clone();
     let interval_syncing = syncing.clone();
+    let interval_restart = restart;
     widgets
         .analysis_interval_row
         .connect_value_notify(move |row| {
@@ -1424,6 +1475,8 @@ fn connect_analysis(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, st
             }
             interval_state.config_mut().analysis.report_interval_ms = row.value() as u16;
             interval_state.save_config();
+            // The running search is still reporting at the previous interval.
+            interval_restart.schedule(&interval_state);
         });
 
     let suggestions_state = state.clone();
