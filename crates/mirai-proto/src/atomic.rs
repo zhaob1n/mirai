@@ -104,13 +104,14 @@ pub fn private_dir(dir: &Path) -> io::Result<()> {
 /// write to it — except a sticky directory such as `/tmp`, where others may create
 /// entries but cannot rename or delete one of ours, so it is trusted only when the entry
 /// the path takes next is this user's. The final directory must be this user's and
-/// writable by nobody else.
+/// writable by nobody else. "Nobody else" is judged by [`others_can_write`].
 #[cfg(unix)]
 fn check_private_dir(dir: &Path) -> io::Result<()> {
     use std::os::unix::fs::MetadataExt;
     use std::path::Component;
 
     let me = euid();
+    let group = egid();
     let absolute = if dir.is_absolute() {
         dir.to_path_buf()
     } else {
@@ -148,7 +149,7 @@ fn check_private_dir(dir: &Path) -> io::Result<()> {
                 ),
             ));
         }
-        if mode & 0o022 != 0 && !(mode & 0o1000 != 0 && entry.uid() == me) {
+        if others_can_write(&parent, me, group) && !(mode & 0o1000 != 0 && entry.uid() == me) {
             return Err(refuse(
                 dir,
                 &format!(
@@ -182,7 +183,7 @@ fn check_private_dir(dir: &Path) -> io::Result<()> {
         ));
     }
     let mode = meta.mode() & 0o7777;
-    if mode & 0o022 != 0 {
+    if others_can_write(&meta, me, group) {
         return Err(refuse(
             dir,
             &format!("its mode {mode:04o} lets other users write to it"),
@@ -197,6 +198,23 @@ fn push_components(pending: &mut Vec<std::ffi::OsString>, path: &Path) {
     let start = pending.len();
     pending.extend(path.components().map(|c| c.as_os_str().to_os_string()));
     pending[start..].reverse();
+}
+
+/// Whether a user other than `me` may write to the directory `meta` describes.
+///
+/// World write always counts. Group write does not when the directory is this user's
+/// and its group is this process's effective group: that is the user-private-group
+/// convention (umask 002, a group per user), under which `~/.local` and `~/.local/share`
+/// are `0775` on Ubuntu and Fedora, and refusing it would stop every local engine there.
+/// The trust this leaves is in members of our own primary group — normally nobody but
+/// us, and anyone an administrator added to it was given our files on purpose.
+#[cfg(unix)]
+fn others_can_write(meta: &std::fs::Metadata, me: u32, group: u32) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    let mode = meta.mode();
+    let own_group = meta.uid() == me && meta.gid() == group;
+    mode & 0o002 != 0 || (mode & 0o020 != 0 && !own_group)
 }
 
 #[cfg(unix)]
@@ -219,6 +237,15 @@ fn euid() -> u32 {
         safe fn geteuid() -> u32;
     }
     geteuid()
+}
+
+/// This process's effective gid; see [`euid`].
+#[cfg(unix)]
+fn egid() -> u32 {
+    unsafe extern "C" {
+        safe fn getegid() -> u32;
+    }
+    getegid()
 }
 
 /// [`write_atomic`] for a file only its owner may read, such as a config holding remote
@@ -675,7 +702,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = scratch("shared");
-        for mode in [0o777, 0o1777, 0o770] {
+        for mode in [0o777, 0o1777, 0o757] {
             std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(mode)).unwrap();
             let error = private_dir(&dir).expect_err("a directory others can write is refused");
             assert_eq!(
@@ -730,6 +757,39 @@ mod tests {
 
         std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o755)).unwrap();
         private_dir(&dir).expect("a link through directories only we control is fine");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// User-private groups (umask 002) leave `~/.local` and `~/.local/share` at `0775`.
+    /// That must not stop every local engine; a group-writable directory whose group is
+    /// anyone else's must still be refused.
+    #[cfg(unix)]
+    #[test]
+    fn only_our_own_group_may_share_write_access() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let base = scratch("group");
+        let parent = base.join("local");
+        let dir = parent.join("share").join("katago-logs");
+        std::fs::create_dir_all(&dir).unwrap();
+        let group_writable = std::fs::Permissions::from_mode(0o775);
+        std::os::unix::fs::chown(&parent, None, Some(egid())).unwrap();
+        std::fs::set_permissions(&parent, group_writable.clone()).unwrap();
+        private_dir(&dir).expect("a 0775 directory in our own group is ours");
+
+        // Any other group this user belongs to can be assigned without root.
+        let groups = std::process::Command::new("id").arg("-G").output().unwrap();
+        let foreign = String::from_utf8_lossy(&groups.stdout)
+            .split_whitespace()
+            .filter_map(|g| g.parse::<u32>().ok())
+            .find(|&g| g != egid());
+        if let Some(foreign) = foreign {
+            std::os::unix::fs::chown(&parent, None, Some(foreign)).unwrap();
+            std::fs::set_permissions(&parent, group_writable).unwrap();
+            assert_eq!(std::fs::metadata(&parent).unwrap().gid(), foreign);
+            let error = private_dir(&dir).expect_err("another group can replace the path");
+            assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        }
         let _ = std::fs::remove_dir_all(&base);
     }
 }
