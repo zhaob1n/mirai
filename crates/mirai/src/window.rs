@@ -17,7 +17,8 @@ use gtk::gdk;
 use gtk::gio;
 use gtk::glib;
 
-use mirai_core::{Color, DeadSet, GameInfo, GameTree, MarkKind, NodeId, Point, sgf};
+use mirai_client::dead_from_ownership;
+use mirai_core::{Color, GameInfo, GameTree, MarkKind, NodeId, Point, sgf};
 use mirai_engine::{Report, SubEvent, Want};
 
 use crate::app::{AppState, Change, EditorTool, NodeRef};
@@ -34,8 +35,6 @@ use crate::window_shell::MiraiWindow;
 const AUTOSAVE_SECS: u32 = 30;
 /// Visit cap for the one-off score-estimate query.
 const SCORE_VISITS: u32 = 400;
-/// Ownership magnitude above which a stone counts as dead, matching KataGo's own default.
-const DEAD_THRESHOLD: f32 = 0.4;
 #[derive(Default)]
 struct TaskSlot(RefCell<Option<glib::JoinHandle<()>>>);
 
@@ -1599,13 +1598,7 @@ fn do_score(ui: &Ui) {
 fn show_estimate(ui: &Ui, report: &Report) {
     let position = ui.state.position();
     let board = &position.board;
-    let dead = match report.ownership.as_ref() {
-        Some(o) if o.len() == board.size.points() => {
-            let owner: Vec<f32> = o.iter().map(|&v| v as f32 / 127.0).collect();
-            DeadSet::from_ownership(board, &owner, DEAD_THRESHOLD)
-        }
-        _ => DeadSet::empty(board.size),
-    };
+    let dead = dead_from_ownership(board, report.ownership.as_deref().unwrap_or(&[]));
     let (rules, komi, handicap) = {
         let tree = ui.state.tree();
         (tree.info.rules.rules(), tree.info.komi, tree.info.handicap)
