@@ -12,7 +12,7 @@ path = "src/main.rs"
 [dependencies]
 mirai-core.workspace = true
 mirai-client.workspace = true
-mirai-engine.workspace = true
+mirai-engine = { workspace = true, features = ["local", "remote"] }
 mirai-proto.workspace = true
 gtk.workspace = true
 adw.workspace = true
@@ -25,7 +25,6 @@ serde_json.workspace = true
 directories.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-anyhow.workspace = true
 thiserror.workspace = true
 
 [build-dependencies]

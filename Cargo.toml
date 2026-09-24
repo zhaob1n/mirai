@@ -11,14 +11,18 @@ members = [
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.99"
+# The oldest compiler the tree is known to build with. Raise it whenever a dependency
+# update needs a newer one; there is no other reason to hold it back or to push it.
+rust-version = "1.92"
 version = "0.1.0"
 license = "GPL-3.0-or-later"
 
 [workspace.dependencies]
 mirai-core = { path = "crates/mirai-core" }
-mirai-proto = { path = "crates/mirai-proto" }
-mirai-engine = { path = "crates/mirai-engine" }
+# Off by default: stable Cargo refuses a member's `default-features = false` when the
+# workspace entry leaves defaults on, so each member names the features it uses.
+mirai-proto = { path = "crates/mirai-proto", default-features = false }
+mirai-engine = { path = "crates/mirai-engine", default-features = false }
 mirai-client = { path = "crates/mirai-client" }
 
 gtk = { package = "gtk4", version = "0.11.4", features = ["blueprint", "gnome_50"] }
@@ -35,16 +39,24 @@ tokio = { version = "1.53.1", features = [
     "sync",
     "time",
 ] }
-quinn = "0.11.11"
+# quinn's defaults minus `platform-verifier`: mirai verifies the server with its own
+# TOFU pin (`mirai-proto/src/transport.rs`) and never asks the OS for trust roots.
+quinn = { version = "0.11.11", default-features = false, features = [
+    "runtime-tokio",
+    "rustls-ring",
+    "log",
+    "bloom",
+] }
 # `ring` only: enabling rustls' default aws-lc-rs alongside quinn's ring provider would
 # leave two installed providers and make `ClientConfig::builder()` panic at runtime.
+# No `tls12`: QUIC is TLS 1.3 only (RFC 9001), and both endpoints pin TLS13.
 rustls = { version = "0.23.43", default-features = false, features = [
     "ring",
     "std",
-    "tls12",
     "logging",
 ] }
-rcgen = { version = "0.14.9", default-features = false, features = ["crypto", "pem", "ring"] }
+# 0.14.10 moved to pem 4, which shares our base64 0.23 instead of pulling 0.22.
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
 subtle = "2.6.1"
 
 serde = { version = "1.0.229", features = ["derive"] }
@@ -57,7 +69,6 @@ bitflags = { version = "2.13.1", features = ["serde"] }
 zstd = { version = "0.13.3", default-features = false, features = ["arrays"] }
 base64 = "0.23.1"
 
-dashmap = "6.2.1"
 arrayvec = "0.7.8"
 smallvec = { version = "1.15.2", features = ["union"] }
 

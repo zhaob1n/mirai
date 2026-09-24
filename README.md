@@ -41,7 +41,7 @@ refused.
 
 ## Requirements
 
-- Current Rust nightly 1.99 or newer (edition 2024), selected by `rust-toolchain.toml`.
+- Rust 1.92 or newer (edition 2024). `rust-toolchain.toml` selects the current stable.
 - GTK 4.22+, libadwaita 1.9+, and Blueprint Compiler 0.22+ with their development packages.
 - A KataGo binary and a network model. Any recent KataGo works; mirai uses the JSON analysis
   engine (`katago analysis`), never GTP, and writes the analysis config itself unless you
