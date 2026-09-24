@@ -114,7 +114,8 @@ The client pins the key directly — the SSH host-key model.
 | Still verify the TLS 1.3 `CertificateVerify` signature against the leaf's public key. Pinning replaces chain validation, not proof of key possession. | MUST |
 | Normalise a user-supplied pin — trim, lowercase, strip `:` — so a fingerprint pasted from `openssl x509 -fingerprint -sha256` works. | SHOULD |
 
-Reference: `transport.rs` — `TofuVerifier` compares fingerprints and delegates signature
+Reference: `transport.rs` — `normalize_fingerprint` canonicalises a pin once before
+`connect` builds the verifier; `TofuVerifier` compares that pin and delegates signature
 checking to rustls; `fingerprint_of` / `sha256.rs` — `fingerprint` produce the pin.
 
 **SNI.** rustls requires a syntactically valid server name, so a client whose URL host is an IP

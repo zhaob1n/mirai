@@ -198,9 +198,11 @@ pub fn server_endpoint(
 
 /// Trust-on-first-use certificate verification.
 ///
-/// With `expected` set, only that fingerprint is accepted. With `expected` unset, whatever
-/// the server offers is accepted **and recorded** in `observed`; the caller is responsible
-/// for showing it to the user and persisting it.
+/// With `expected` set, only that fingerprint is accepted. The pin is normalised
+/// first — trim, lowercase, strip `:` — so a value pasted from `openssl x509
+/// -fingerprint` matches the lowercase hex the server prints. With `expected`
+/// unset, whatever the server offers is accepted **and recorded** in `observed`;
+/// the caller is responsible for showing it to the user and persisting it.
 #[derive(Debug)]
 pub struct TofuVerifier {
     expected: Option<String>,
@@ -210,10 +212,18 @@ pub struct TofuVerifier {
 impl TofuVerifier {
     pub fn new(expected: Option<String>, observed: Arc<Mutex<Option<String>>>) -> TofuVerifier {
         TofuVerifier {
-            expected: expected.map(|s| s.trim().to_ascii_lowercase().replace(':', "")),
+            expected: expected.as_deref().map(normalize_fingerprint),
             observed,
         }
     }
+}
+
+/// A user-supplied pin in the form every comparison uses.
+///
+/// `openssl x509 -fingerprint -sha256` prints uppercase hex with colons, often
+/// with surrounding whitespace. The pin itself is lowercase hex, no separators.
+fn normalize_fingerprint(raw: &str) -> String {
+    raw.trim().to_ascii_lowercase().replace(':', "")
 }
 
 impl ServerCertVerifier for TofuVerifier {
@@ -303,14 +313,19 @@ pub fn client_endpoint(
 /// Resolves `mirai://host:port` and opens a QUIC connection.
 ///
 /// Returns the connection and the server's certificate fingerprint, which the caller
-/// should persist on a first (unpinned) connection.
+/// should persist on a first (unpinned) connection. A supplied pin is normalised once
+/// here, before the verifier is built, and that value is what every later comparison
+/// and error uses.
 pub async fn connect(
     url: &str,
     expected_fingerprint: Option<String>,
 ) -> Result<(quinn::Connection, String), TransportError> {
     let (host, port) = parse_url(url)?;
+    // Normalise before the verifier, and keep that string: the check after the
+    // handshake used to compare the raw pin and report a match as a mismatch.
+    let expected = expected_fingerprint.as_deref().map(normalize_fingerprint);
     let observed = Arc::new(Mutex::new(None));
-    let endpoint = client_endpoint(expected_fingerprint.clone(), observed.clone())?;
+    let endpoint = client_endpoint(expected.clone(), observed.clone())?;
 
     let addr = tokio::task::spawn_blocking({
         let host = host.clone();
@@ -348,11 +363,14 @@ pub async fn connect(
         Ok(conn) => conn,
         Err(e) => {
             let got = observed_fingerprint();
-            if let Some(expected) = expected_fingerprint
+            if let Some(expected) = expected.as_ref()
                 && !got.is_empty()
-                && expected != got
+                && expected != &got
             {
-                return Err(TransportError::FingerprintMismatch { expected, got });
+                return Err(TransportError::FingerprintMismatch {
+                    expected: expected.clone(),
+                    got,
+                });
             }
             return Err(TransportError::Connect(e.to_string()));
         }
@@ -361,7 +379,7 @@ pub async fn connect(
     // Defence in depth: a handshake that somehow succeeded against the wrong certificate
     // must still not be used.
     let fp = observed_fingerprint();
-    if let Some(expected) = expected_fingerprint
+    if let Some(expected) = expected
         && expected != fp
     {
         return Err(TransportError::FingerprintMismatch { expected, got: fp });
@@ -515,6 +533,38 @@ mod tests {
         let (_conn, fp) = connect(&format!("mirai://{addr}"), Some(real.clone()))
             .await
             .expect("the pinned certificate was refused");
+        assert_eq!(fp, real);
+    }
+
+    /// Uppercase hex with colons and surrounding whitespace, as pasted from
+    /// `openssl x509 -fingerprint -sha256`.
+    fn openssl_fingerprint(fp: &str) -> String {
+        let pairs: Vec<_> = fp
+            .as_bytes()
+            .chunks(2)
+            .map(|pair| {
+                std::str::from_utf8(pair)
+                    .expect("fingerprint is hex")
+                    .to_ascii_uppercase()
+            })
+            .collect();
+        format!(" {}\n", pairs.join(":"))
+    }
+
+    /// A pin pasted in openssl's form must connect. The handshake accepts it; the
+    /// comparison after the handshake must use that same normalised pin.
+    #[tokio::test]
+    async fn an_uppercase_colon_separated_pin_connects() {
+        let (addr, real) = a_server("openssl-pin");
+        let pasted = openssl_fingerprint(&real);
+        assert_ne!(
+            pasted, real,
+            "the pasted form must not already be canonical"
+        );
+
+        let (_conn, fp) = connect(&format!("mirai://{addr}"), Some(pasted))
+            .await
+            .expect("an openssl-style pin of the real certificate was refused");
         assert_eq!(fp, real);
     }
 
