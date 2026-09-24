@@ -110,6 +110,12 @@ pub fn transport_config() -> quinn::TransportConfig {
 
 /// Loads `cert_path`/`key_path`, generating a self-signed pair for `hostnames` if either
 /// file is missing.
+///
+/// Generation replaces both files. They are staged first, then the stale cert is
+/// removed and that directory synced, then the key is renamed and its directory
+/// synced, then the cert. A crash or power loss at any of those points leaves either
+/// a complete pair or at least one file missing — which regenerates both — and never
+/// a new key beside an old cert, even when the two files are in different directories.
 pub fn load_or_generate_cert(
     cert_path: &Path,
     key_path: &Path,
@@ -136,22 +142,12 @@ pub fn load_or_generate_cert(
         if let Some(dir) = key_path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(cert_path, ck.cert.pem())?;
-        #[cfg(unix)]
-        {
-            use std::io::Write as _;
-            use std::os::unix::fs::OpenOptionsExt;
-
-            let mut key = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(0o600)
-                .open(key_path)?;
-            key.write_all(ck.signing_key.serialize_pem().as_bytes())?;
-        }
-        #[cfg(not(unix))]
-        std::fs::write(key_path, ck.signing_key.serialize_pem())?;
+        install_generated_pair(
+            cert_path,
+            key_path,
+            ck.cert.pem(),
+            ck.signing_key.serialize_pem(),
+        )?;
     }
 
     let certs = CertificateDer::pem_file_iter(cert_path)
@@ -167,6 +163,58 @@ pub fn load_or_generate_cert(
     let key =
         PrivateKeyDer::from_pem_file(key_path).map_err(|e| TransportError::Cert(e.to_string()))?;
     Ok((certs, key))
+}
+
+/// Stages both halves, then installs them so a power loss cannot pair a new key with
+/// an old cert.
+///
+/// The stale cert is removed and that directory is synced before the key is renamed.
+/// The key directory is synced after that rename and before the cert is renamed. A
+/// crash or power loss at any point leaves a complete pair or at least one file
+/// missing — which regenerates both — never a new key beside an old cert. The cert
+/// and the key may live in different directories.
+fn install_generated_pair(
+    cert_path: &Path,
+    key_path: &Path,
+    cert_pem: String,
+    key_pem: String,
+) -> Result<(), TransportError> {
+    #[cfg(unix)]
+    let key_mode = Some(0o600);
+    #[cfg(not(unix))]
+    let key_mode = None;
+    let key_tmp = crate::atomic::stage(key_path, key_pem.as_bytes(), key_mode)?;
+    let cert_tmp = match crate::atomic::stage(cert_path, cert_pem.as_bytes(), None) {
+        Ok(path) => path,
+        Err(error) => {
+            let _ = std::fs::remove_file(&key_tmp);
+            return Err(error.into());
+        }
+    };
+    let installed = (|| -> std::io::Result<()> {
+        remove_if_present(cert_path)?;
+        crate::atomic::sync_parent(cert_path)?;
+        remove_if_present(key_path)?;
+        std::fs::rename(&key_tmp, key_path)?;
+        crate::atomic::sync_parent(key_path)?;
+        std::fs::rename(&cert_tmp, cert_path)?;
+        crate::atomic::sync_parent(cert_path)?;
+        Ok(())
+    })();
+    if let Err(error) = installed {
+        let _ = std::fs::remove_file(&cert_tmp);
+        let _ = std::fs::remove_file(&key_tmp);
+        return Err(error.into());
+    }
+    Ok(())
+}
+
+fn remove_if_present(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 /// The fingerprint clients pin: lowercase hex SHA-256 of the leaf certificate's DER.
@@ -410,6 +458,11 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt;
 
+            assert_eq!(
+                std::fs::metadata(&key).unwrap().permissions().mode() & 0o777,
+                0o600,
+                "a generated key must be private from the moment it is created"
+            );
             std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o644)).unwrap();
             let (_c3, _k3) =
                 load_or_generate_cert(&cert, &key, &["mirai.test".into()]).expect("tighten");

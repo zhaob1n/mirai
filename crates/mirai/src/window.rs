@@ -1380,7 +1380,7 @@ fn do_clear_board(ui: &Ui) {
 
 fn write_to(ui: &Ui, path: &Path) {
     let text = sgf_text(ui);
-    match std::fs::write(path, text) {
+    match mirai_proto::atomic::write_atomic(path, text.as_bytes()) {
         Ok(()) => {
             *ui.file.borrow_mut() = Some(path.to_path_buf());
             ui.state.saved_to(path.display().to_string());
@@ -1546,7 +1546,7 @@ fn write_autosave(ui: &Ui) {
         return;
     }
     let text = sgf_text(ui);
-    if let Err(e) = std::fs::write(autosave, text) {
+    if let Err(e) = mirai_proto::atomic::write_atomic(autosave, text.as_bytes()) {
         tracing::warn!(%e, "could not write the autosave");
     }
 }

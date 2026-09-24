@@ -125,7 +125,9 @@ nnCacheSizePowerOfTwo = {}
             return Ok(path);
         }
         std::fs::create_dir_all(dir)?;
-        std::fs::write(&path, text)?;
+        // Same tuning shares this path, and two windows may start together. The rename
+        // publishes a complete file, so neither writer can leave KataGo a partial config.
+        mirai_proto::atomic::write_atomic(&path, text.as_bytes())?;
         Ok(path)
     }
 }

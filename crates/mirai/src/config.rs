@@ -465,7 +465,8 @@ impl Config {
             std::fs::create_dir_all(dir).map_err(|e| ConfigError::Io(dir.to_path_buf(), e))?;
         }
         let text = toml::to_string_pretty(self)?;
-        std::fs::write(path, text).map_err(|e| ConfigError::Io(path.to_path_buf(), e))
+        mirai_proto::atomic::write_atomic(path, text.as_bytes())
+            .map_err(|e| ConfigError::Io(path.to_path_buf(), e))
     }
 
     /// Writes the configuration, keeping edits another window has made meanwhile.
@@ -500,7 +501,8 @@ impl Config {
             std::fs::create_dir_all(dir).map_err(|e| ConfigError::Io(dir.to_path_buf(), e))?;
         }
         let text = toml::to_string_pretty(&merged)?;
-        std::fs::write(path, text).map_err(|e| ConfigError::Io(path.to_path_buf(), e))
+        mirai_proto::atomic::write_atomic(path, text.as_bytes())
+            .map_err(|e| ConfigError::Io(path.to_path_buf(), e))
     }
 
     /// A first-run configuration: a working local profile if a KataGo installation can be

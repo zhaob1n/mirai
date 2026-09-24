@@ -7,10 +7,13 @@
 //! * [`frame`] — length-prefixed, optionally zstd-compressed postcard framing over any
 //!   `AsyncRead + AsyncWrite`.
 //! * [`endpoint`] — ALPN, default port and `mirai://` URL parsing.
+//! * [`atomic`] — crash-safe replacement of a durable file. Not behind `quinn-transport`:
+//!   `mirai-engine` writes a KataGo config through it with default features off.
 //! * [`transport`] — the Quinn QUIC client and server that carry those frames; behind the
 //!   default `quinn-transport` feature, so a peer that drives a platform QUIC stack can
 //!   depend on the codec alone.
 
+pub mod atomic;
 pub mod endpoint;
 pub mod frame;
 pub mod msg;

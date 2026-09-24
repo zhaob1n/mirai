@@ -77,7 +77,7 @@ fn write_last_search(path: &Path, search: &LastSearch) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
     }
     let text = serde_json::to_string(search).map_err(|error| error.to_string())?;
-    std::fs::write(path, text).map_err(|error| error.to_string())
+    mirai_proto::atomic::write_atomic(path, text.as_bytes()).map_err(|error| error.to_string())
 }
 
 fn cached_search() -> Option<LastSearch> {
