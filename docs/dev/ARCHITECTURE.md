@@ -56,7 +56,7 @@ flowchart TB
 |---|---|---|---|
 | `mirai-core` | geometry, rulesets, legality, superko, scoring, game tree, SGF, time control | serde, smallvec, arrayvec, encoding_rs, base64, zstd, postcard | any workspace crate; GTK; tokio; anything doing real I/O |
 | `mirai-proto` | MRP/2 value types, messages, frame codec, QUIC transport, SHA-256 for cert pins | `mirai-core`, quinn, rustls, rcgen, postcard, zstd, bitflags, tokio | `mirai-engine`, `mirai`, serde_json, **anything KataGo-specific** |
-| `mirai-engine` | the `Engine` trait and its two implementations; KataGo query building and response decoding | `mirai-core`, `mirai-proto`, tokio, serde_json, dashmap, quinn | GTK/glib/adw, `mirai`, `mirai-server` |
+| `mirai-engine` | the `Engine` trait and its two implementations; KataGo query building and response decoding | `mirai-core`, `mirai-proto`, tokio, serde_json, quinn | GTK/glib/adw, `mirai`, `mirai-server` |
 | `mirai-client` | shared application layer: analysis requests, sweep planning, play, Fox, TOFU session | `mirai-core`, `mirai-engine` (`remote` only), tokio, serde_json | GTK/glib/adw, `mirai`, `mirai-server`, KataGo JSON |
 | `mirai-server` | headless host: one KataGo per configured engine, multiplexed across clients, token auth | `mirai-core`, `mirai-engine`, `mirai-proto`, clap, toml, subtle, quinn | GTK, `mirai` |
 | `mirai` | `AppState`, window, custom `gsk` widgets, GTK adapters over `mirai-client`, preferences, config | all four libraries, gtk4, libadwaita, glib, tokio, toml, directories | — |
@@ -600,10 +600,15 @@ oneshot: on handle drop it waits a short grace period and then kills, and on exi
 engine dead and fails every live subscription. The *stderr drain* logs each line and keeps a
 bounded ring for error messages.
 
-**Routing.** A `DashMap` from a monotonic query id to the `watch::Sender` plus the three facts
-needed to decode that query's responses (size, turn, side to move). The id is stringified into the
-query and echoed back by KataGo. `DashMap` rather than a mutex because `subscribe` runs on the GTK
-thread while the reader task delivers. A terminal event removes the entry before sending; `cancel`
+**Routing.** A `Mutex<HashMap>` from a monotonic query id to the `watch::Sender` plus the three
+facts needed to decode that query's responses (size, turn, side to move). The id is stringified
+into the query and echoed back by KataGo. The table is shared across threads — `subscribe` and
+`cancel` run on the GTK thread or a runtime worker while the reader task delivers — but holds a
+handful of entries, is read about ten times a second per live query and written once per query
+start and end, and no lock spans an `.await`. Measured that way, a lookup costs about 18 ns
+under a plain mutex against 20 ns in a sharded `DashMap`, with writers at up to 1000/s; the
+sharded map only wins under a writer that never stops, which nothing here is, and a whole
+report line takes tens of microseconds to parse. A terminal event removes the entry before sending; `cancel`
 instead *keeps* the entry and marks it terminating, so the tail of a terminated search is still
 routed and discarded correctly, and a response for an unknown id is a trace, not an error. A
 terminated query that never searched still terminates cleanly, as an empty `Done`.
@@ -637,7 +642,7 @@ that gains engines later cannot silently switch the client to a different one.
 | | LocalEngine | RemoteEngine |
 |---|---|---|
 | transport | subprocess stdio, one JSON line per message | QUIC: one bidi control stream + one uni stream per subscription |
-| routing | `DashMap` keyed by query id | `HashMap` owned by the connection task, keyed by subscription id |
+| routing | `Mutex<HashMap>` keyed by query id | `HashMap` owned by the connection task, keyed by subscription id |
 | cancel | `terminate` action | `Cancel` message **and** `stop_sending` |
 | one query fails | KataGo per-query error | `SubMsg::Failed` / `ServerMsg::Error` with a sub id |
 | engine fails | process exit → fail all | connection loss → fail all, then reconnect |

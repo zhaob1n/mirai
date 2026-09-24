@@ -12,7 +12,6 @@ license.workspace = true
 default = ["local", "remote"]
 local = [
     "dep:serde_json",
-    "dep:dashmap",
     "tokio/process",
     "tokio/io-util",
 ]
@@ -27,7 +26,6 @@ tracing.workspace = true
 thiserror.workspace = true
 
 serde_json = { workspace = true, optional = true }
-dashmap = { workspace = true, optional = true }
 quinn = { workspace = true, optional = true }
 
 [dev-dependencies]
