@@ -1036,6 +1036,7 @@ fn ownership_texture(report: &mirai_engine::Report, size: Size) -> Option<gdk::T
     if ownership.len() != size.points() {
         return None;
     }
+    let _t = crate::render_probe::Timer::new("board-ownership");
     let mut buf = vec![0u8; size.points() * 4];
     for (i, &value) in ownership.iter().enumerate() {
         let alpha = (value.unsigned_abs() as f32 / 127.0) * 0.45;
@@ -1054,6 +1055,7 @@ fn policy_texture(report: &mirai_engine::Report, size: Size) -> Option<gdk::Text
     if policy.len() != size.points() + 1 {
         return None;
     }
+    let _t = crate::render_probe::Timer::new("board-policy");
     let accent = adw::StyleManager::default().accent_color_rgba();
     let mut buf = vec![0u8; size.points() * 4];
     for i in 0..size.points() {
@@ -1489,14 +1491,27 @@ impl BoardView {
         let Some(projection) = projection.as_mut() else {
             return;
         };
-        projection.ownership_texture = projection
-            .report
-            .as_deref()
-            .and_then(|report| ownership_texture(report, projection.size));
-        projection.policy_texture = projection
-            .report
-            .as_deref()
-            .and_then(|report| policy_texture(report, projection.size));
+        // Live analysis always asks for ownership, and a report arrives about ten times a
+        // second. Converting that buffer and uploading a texture the overlay is not drawing
+        // is pure waste; the toggle's notify already rebuilds this projection, so turning
+        // the overlay on builds the texture from the report already in hand, and turning it
+        // off drops it. What the engine is asked for is unchanged.
+        projection.ownership_texture = if projection.ownership_overlay {
+            projection
+                .report
+                .as_deref()
+                .and_then(|report| ownership_texture(report, projection.size))
+        } else {
+            None
+        };
+        projection.policy_texture = if projection.policy_overlay {
+            projection
+                .report
+                .as_deref()
+                .and_then(|report| policy_texture(report, projection.size))
+        } else {
+            None
+        };
     }
 
     fn install_controllers(&self) {

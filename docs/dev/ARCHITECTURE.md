@@ -224,8 +224,10 @@ Board, win-rate graph and move tree are `gtk::Widget` subclasses drawing in `sna
 - **Rationale.** `snapshot` builds a retained render-node tree for the GPU; `DrawingArea`
   rasterises through cairo on the CPU every frame. At 10 Hz with dozens of candidate blobs and
   three text lines each, that is structural rather than a micro-optimisation.
-- **Buys.** The static board is cached as one `gsk::RenderNode`; ownership and policy buffers
-  are uploaded once per report as `gdk::MemoryTexture`s; the win-rate graph caches its base
+- **Buys.** The static board is cached as one `gsk::RenderNode`; an ownership or policy
+  buffer is uploaded as a `gdk::MemoryTexture` only while that overlay is on, and dropped
+  when it is turned off — live analysis still requests ownership either way, because the
+  score estimate and the stored analysis use it. The win-rate graph caches its base
   render node and redraws only the cursor marker while navigating. Widgets consume pushed
   projections, so `snapshot()` does not walk `AppState` or rebuild tree-derived data.
 - **Costs.** No cairo conveniences: a circle is a colour node inside a rounded clip
@@ -897,9 +899,11 @@ projection/cache state; it does not borrow `AppState` or replay the game tree.
    copy `policy_overlay` exactly. Otherwise use the derive-generated setter and **do not** add the
    flag.
 3. Add the request bit in `AppState::restart_analysis`.
-4. Build any per-point RGBA8 premultiplied texture when the report projection refreshes, indexed
-   directly by `Point` with no remapping (INV-1). `snapshot()` should only append the cached
-   texture.
+4. Build the per-point RGBA8 premultiplied texture only while the overlay is on: when the
+   report projection refreshes, and when the toggle turns on (its notify already rebuilds
+   the projection). Drop it when the toggle turns off. Index directly by `Point` with no
+   remapping (INV-1). `snapshot()` should only append the cached texture. Do not stop
+   requesting data that another surface still reads.
 5. Add the property name to `BoardView::observe` so toggling rebuilds the projection.
 6. Add a `win.toggle-*` action and accelerator in `install_actions`, and a `UiSettings` field so it
    survives a restart.
