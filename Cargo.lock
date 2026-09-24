@@ -1009,7 +1009,6 @@ dependencies = [
 name = "mirai"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "directories",
  "glib",
  "glib-build-tools",
