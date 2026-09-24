@@ -63,6 +63,11 @@ mod imp {
 
     impl MiraiApplication {
         /// Drops the shared engines and stops the runtime. Idempotent: both are taken.
+        ///
+        /// The pool goes first. Dropping it aborts any start still in flight, which drops
+        /// that start's receiver before the runtime stops, so the engine is dropped on the
+        /// runtime side and KataGo's stdin is closed. Reversing the two leaves the child
+        /// to `kill_on_drop`.
         fn release(&self) {
             self.engines.borrow_mut().take();
             if let Some(runtime) = self.runtime.borrow_mut().take() {
