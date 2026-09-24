@@ -244,16 +244,18 @@ impl MoveTreeView {
             .build();
         self.redraw_on(&scroller.hadjustment());
         self.redraw_on(&scroller.vadjustment());
-        for property in ["hadjustment", "vadjustment"] {
-            let view = self.downgrade();
-            scroller.connect_notify_local(Some(property), move |scroller, _| {
-                let Some(view) = view.upgrade() else { return };
-                // An adjustment that was replaced is not watched any more; its handler
-                // only holds a weak ref and costs a stray redraw at worst.
+        let view = self.downgrade();
+        scroller.connect_hadjustment_notify(move |scroller| {
+            if let Some(view) = view.upgrade() {
                 view.redraw_on(&scroller.hadjustment());
+            }
+        });
+        let view = self.downgrade();
+        scroller.connect_vadjustment_notify(move |scroller| {
+            if let Some(view) = view.upgrade() {
                 view.redraw_on(&scroller.vadjustment());
-            });
-        }
+            }
+        });
         scroller
     }
 
