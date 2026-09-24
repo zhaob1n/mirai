@@ -964,13 +964,13 @@ exactly. `|` marks the header/payload boundary for readability only.
 with SHA-256, render 64 lowercase hex characters, compare with the stored pin. No pin stored ⇒
 record and ask the user; mismatch ⇒ abort before any frame is sent.
 
-**1 — `Hello { proto: 1, token: "t0k", client: "demo/1" }`**
+**1 — `Hello { proto: 2, token: "t0k", client: "demo/1" }`**
 
 ```
-0d 00 00 00 | 00 | 00 01 03 74 30 6b 06 64 65 6d 6f 2f 31
+0d 00 00 00 | 00 | 00 02 03 74 30 6b 06 64 65 6d 6f 2f 31
 len=13       flags  ^  ^  ^  "t0k"  ^  "demo/1"
                     |  |  len 3     len 6
-                    |  proto = 1
+                    |  proto = 2
                     variant 0 = Hello
 ```
 
@@ -978,11 +978,11 @@ len=13       flags  ^  ^  ^  "t0k"  ^  "demo/1"
 `{ "default", "1.16.4", "b18c384nbt", 4 threads, 19×19, no human model }`
 
 ```
-35 00 00 00 | 00 | 00 01 12 6d 69 72 61 69 2d 73 65 72 76 65 72 2f 30 2e 31 2e 30
+35 00 00 00 | 00 | 00 02 12 6d 69 72 61 69 2d 73 65 72 76 65 72 2f 30 2e 31 2e 30
                    01 01 07 64 65 66 61 75 6c 74 06 31 2e 31 36 2e 34
                    0a 62 31 38 63 33 38 34 6e 62 74 04 13 13 00
 
-00 variant 0 = Welcome · 01 proto · 12 "mirai-server/0.1.0" (len 18) · 01 session = 1
+00 variant 0 = Welcome · 02 proto · 12 "mirai-server/0.1.0" (len 18) · 01 session = 1
 01 engines: 1 element · 07 "default" · 06 "1.16.4" · 0a "b18c384nbt"
 04 analysis_threads · 13 13 max_board 19x19 (raw u8) · 00 has_human_model = false
 ```
@@ -1010,7 +1010,10 @@ len=13       flags  ^  ^  ^  "t0k"  ^  "demo/1"
 ```
 
 **5 — one intermediate `Report`**: 1000 root visits, root winrate 0.4837 and lead −1.5 points
-(Black), two candidates with 2-move PVs, no ownership yet, no policy.
+(Black), two candidates with 2-move PVs, no ownership yet, no policy. It is shown as an
+uncompressed `0x00` frame, which a subscription stream accepts
+([§4.1](#41-subscription-streams-one-zstd-stream)); the reference server sends the same bytes
+compressed into the stream's zstd stream, flags `0x02`.
 
 ```
 4d 00 00 00 | 00 | 00 00 e8 07 d3 f7 01 5f 53 c0 03 d7 07 00 00 00 00 02
