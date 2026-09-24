@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Huang Zhaobin
 //! Connecting to a `mirai-server`, and the trust decision in front of it.
 //!
-//! [`mirai_engine::RemoteEngine`] already owns the MRP/1 session: handshake, reconnection,
+//! [`mirai_engine::RemoteEngine`] already owns the MRP/2 session: handshake, reconnection,
 //! subscription lifecycle. What it deliberately does not own is *policy* — it will happily
 //! connect with no certificate pin and hand back whatever fingerprint it saw, because only
 //! the application knows whether a human has looked at that fingerprint and agreed to it.
@@ -98,7 +98,7 @@ pub trait Connector: Send + Sync + 'static {
     ) -> Pin<Box<dyn Future<Output = Result<Link, EngineError>> + Send>>;
 }
 
-/// Connects with [`RemoteEngine`] over MRP/1.
+/// Connects with [`RemoteEngine`] over MRP/2.
 pub struct RemoteConnector;
 
 impl Connector for RemoteConnector {

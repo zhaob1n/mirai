@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! Endpoint naming for MRP/1: ALPN, default port, URL scheme and URL parsing.
+//! Endpoint naming for MRP/2: ALPN, default port, URL scheme and URL parsing.
 //!
 //! These are the parts of the transport contract a peer needs even when it does not use
 //! this crate's Quinn client — a HarmonyOS build, for instance, drives the platform QUIC
-//! stack but must still negotiate `mirai/1` and resolve `mirai://host:port`. They live
+//! stack but must still negotiate `mirai/2` and resolve `mirai://host:port`. They live
 //! outside [`transport`](crate::transport) so they survive `--no-default-features`.
 
-pub const ALPN: &[u8] = b"mirai/1";
+pub const ALPN: &[u8] = b"mirai/2";
 pub const DEFAULT_PORT: u16 = 9678;
 pub const URL_SCHEME: &str = "mirai://";
 
@@ -54,7 +54,7 @@ pub fn parse_url(url: &str) -> Result<(String, u16), AddressError> {
 
 /// The SNI name to present for `host`.
 ///
-/// A self-signed certificate is generated for its hostname and MRP/1 verifies the pin, not
+/// A self-signed certificate is generated for its hostname and MRP/2 verifies the pin, not
 /// the name, but a TLS client still needs a syntactically valid server name and an IP
 /// literal is not one.
 pub fn sni_for(host: &str) -> String {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! MRP/1 value types.
+//! MRP/2 value types.
 //!
 //! Quantisation is part of the type: every float that crosses the wire is stored as a
 //! fixed-point integer, and the conversion helpers live here so that the local KataGo
@@ -13,7 +13,7 @@
 use mirai_core::{Color, Point, RuleSet, Size};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-pub const PROTO_VERSION: u16 = 1;
+pub const PROTO_VERSION: u16 = 2;
 
 /// Sentinel stored in `Report::policy` for a move KataGo reported as illegal (`-1`).
 pub const POLICY_ILLEGAL: u16 = u16::MAX;
@@ -26,7 +26,7 @@ pub const STDEV_SCALE: f64 = 32.0;
 /// Steps per unit for [`RootInfo::raw_var_time_left`]. KataGo's `rawVarTimeLeft` is in "no
 /// particular units" and runs to a few hundred, so a quarter-unit step covers it in `u16`.
 ///
-/// It lives here with the other scales rather than beside its decoder: a peer decoding MRP/1
+/// It lives here with the other scales rather than beside its decoder: a peer decoding MRP/2
 /// must be able to learn every scale from this crate alone.
 pub const RAW_VAR_TIME_SCALE: f64 = 4.0;
 

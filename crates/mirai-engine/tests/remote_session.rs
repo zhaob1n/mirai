@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! End-to-end session behaviour of [`RemoteEngine`], driven by a scripted MRP/1 server over
+//! End-to-end session behaviour of [`RemoteEngine`], driven by a scripted MRP/2 server over
 //! the real QUIC transport.
 //!
 //! `remote.rs`'s own unit tests cover what can be checked without a peer: the backoff
@@ -90,7 +90,7 @@ async fn frames_before_welcome_are_ignored_rather_than_fatal() {
     assert!(matches!(server.next().await, Seen::Control(_)));
 }
 
-/// §8.1: a peer that offered `mirai/1` without implementing it must not be analysed against.
+/// §8.1: a peer that offered `mirai/2` without implementing it must not be analysed against.
 #[tokio::test]
 async fn a_welcome_with_the_wrong_protocol_version_is_refused() {
     let script = Script {

@@ -36,7 +36,7 @@ For each candidate KataGo reports (and mirai stores on `MoveInfo`):
 | `visits` / `edgeVisits` | How much search actually went here | Opacity, labels, play-mode temperature sampling's cousin. Not the sort key. |
 | `playSelectionValue` | Visit-like weight, then clipped and LCB-boosted | The quantity `order` is computed from. Play mode samples `play_value ^ (1/T)`. |
 
-Both `utility` and `utilityLcb` travel on MRP/1 (`crates/mirai-proto/src/types.rs`);
+Both `utility` and `utilityLcb` travel on MRP/2 (`crates/mirai-proto/src/types.rs`);
 MRAI v2 caches `utility` on the tree, because that is the one the colour reads.
 
 Colour (`crates/mirai/src/palette.rs` — `colour`) is **loss of `utility`

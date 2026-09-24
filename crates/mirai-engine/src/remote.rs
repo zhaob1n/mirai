@@ -88,7 +88,7 @@ impl TofuStore {
     }
 }
 
-/// A `mirai-server` reached over MRP/1, behaving exactly like a local engine.
+/// A `mirai-server` reached over MRP/2, behaving exactly like a local engine.
 pub struct RemoteEngine {
     peer: Arc<Peer>,
     desc: EngineDesc,

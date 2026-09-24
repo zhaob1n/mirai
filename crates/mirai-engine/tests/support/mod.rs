@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! A scripted MRP/1 server for driving [`RemoteEngine`] through the session rules in
+//! A scripted MRP/2 server for driving [`RemoteEngine`] through the session rules in
 //! `docs/dev/PROTOCOL.md` §8.
 //!
 //! It speaks the real protocol over the real transport — same QUIC endpoint helper, same

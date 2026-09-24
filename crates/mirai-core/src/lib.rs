@@ -58,7 +58,7 @@ impl SplitMix64 {
 }
 
 /// A `std::io::Write` sink that refuses to grow a `Vec` past `limit` — the
-/// decompression-bomb guard both the SGF analysis blob and the MRP/1 frame codec need.
+/// decompression-bomb guard both the SGF analysis blob and the MRP/2 frame codec need.
 pub struct BoundedWriter<'a> {
     out: &'a mut Vec<u8>,
     limit: usize,

@@ -33,7 +33,7 @@ flowchart TB
     gtk["mirai — GTK4 + libadwaita"]
     client["mirai-client — analysis / session"]
     engine["mirai-engine — Local / Remote"]
-    proto["mirai-proto — MRP/1 + QUIC"]
+    proto["mirai-proto — MRP/2 + QUIC"]
     core["mirai-core — rules, tree, SGF"]
     server["mirai-server — headless"]
     katago["katago analysis"]
@@ -48,14 +48,14 @@ flowchart TB
     server --> engine
     server --> core
     engine -->|"spawn / stdio"| katago
-    gtk -->|"QUIC / MRP/1"| server
+    gtk -->|"QUIC / MRP/2"| server
     server --> katago
 ```
 
 | crate | owns | depends on | may **not** depend on |
 |---|---|---|---|
 | `mirai-core` | geometry, rulesets, legality, superko, scoring, game tree, SGF, time control | serde, smallvec, arrayvec, encoding_rs, base64, zstd, postcard | any workspace crate; GTK; tokio; anything doing real I/O |
-| `mirai-proto` | MRP/1 value types, messages, frame codec, QUIC transport, SHA-256 for cert pins | `mirai-core`, quinn, rustls, rcgen, postcard, zstd, bitflags, tokio | `mirai-engine`, `mirai`, serde_json, **anything KataGo-specific** |
+| `mirai-proto` | MRP/2 value types, messages, frame codec, QUIC transport, SHA-256 for cert pins | `mirai-core`, quinn, rustls, rcgen, postcard, zstd, bitflags, tokio | `mirai-engine`, `mirai`, serde_json, **anything KataGo-specific** |
 | `mirai-engine` | the `Engine` trait and its two implementations; KataGo query building and response decoding | `mirai-core`, `mirai-proto`, tokio, serde_json, dashmap, quinn | GTK/glib/adw, `mirai`, `mirai-server` |
 | `mirai-client` | shared application layer: analysis requests, sweep planning, play, Fox, TOFU session | `mirai-core`, `mirai-engine` (`remote` only), tokio, serde_json | GTK/glib/adw, `mirai`, `mirai-server`, KataGo JSON |
 | `mirai-server` | headless host: one KataGo per configured engine, multiplexed across clients, token auth | `mirai-core`, `mirai-engine`, `mirai-proto`, clap, toml, subtle, quinn | GTK, `mirai` |

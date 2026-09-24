@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Huang Zhaobin
 //! One QUIC connection: the control stream, and one task per live subscription.
 //!
-//! Stream topology is MRP/1's (see `mirai_proto::transport`): the client opens a single
+//! Stream topology is MRP/2's (see `mirai_proto::transport`): the client opens a single
 //! bidirectional control stream, and the server opens one unidirectional stream per
 //! subscription, prefixed with the 4-byte LE subscription id.
 //!
