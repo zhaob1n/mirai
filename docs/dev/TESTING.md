@@ -370,6 +370,7 @@ Traps:
 | `shot:<path.png>` | Render the active window to PNG | see below |
 | `shot:<path.png>=<widget id>` | Same render, cropped to one widget. Ids are Blueprint's (`blunder_expander`, `nav`, …) | see below |
 | `divider:<px>` | Move the board/graph divider so the graph is that tall, through the `set_position` a drag ends in; the paned clamps it at the graph's minimum (80 once laid out). `NOT LAID OUT` while the graph is hidden or unallocated | 250 ms |
+| `scroll:<px>` | Scroll the first mapped `ScrolledWindow` that has room to scroll by that many pixels through its vertical adjustment, where the wheel and scrollbar end. Clamped to the range. `NOTHING TO SCROLL` when none is mapped or the content fits | 250 ms |
 | `close-window` | Close only the active window through its normal shutdown path | 250 ms |
 | `quit` | `app.quit()`, ending the script | — |
 

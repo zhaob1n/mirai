@@ -49,6 +49,9 @@ enum Step {
     /// Move the board/graph divider so the graph is this many pixels tall, through the same
     /// `set_position` a drag of the handle ends in.
     Divider(i32),
+    /// Scroll the first mapped `ScrolledWindow` that has somewhere to scroll by this many
+    /// pixels, through its vertical adjustment — what the wheel and scrollbar end in.
+    Scroll(f64),
     /// Write a PNG of the whole window, or of the one widget whose Blueprint id is given —
     /// a 300x100 strip of the list you changed instead of a 1500x1600 window.
     Shot(String, Option<String>),
@@ -85,6 +88,7 @@ fn parse(script: &str) -> Vec<Step> {
                 "page" => Some(Step::Page(rest.to_string())),
                 "stack" => Some(Step::Stack(rest.to_string())),
                 "divider" => rest.parse().ok().map(Step::Divider),
+                "scroll" => rest.parse().ok().map(Step::Scroll),
                 "sort" => Some(Step::Sort(rest.to_string())),
                 "select" => rest.rsplit_once('=').and_then(|(title, index)| {
                     index
@@ -214,6 +218,14 @@ pub fn install(app: &adw::Application) {
                     eprintln!(
                         "harness: divider {height} -> {}",
                         if done { "ok" } else { "NOT LAID OUT" }
+                    );
+                    glib::timeout_future(Duration::from_millis(250)).await;
+                }
+                Step::Scroll(dy) => {
+                    let done = scroll(&app, dy);
+                    eprintln!(
+                        "harness: scroll {dy} -> {}",
+                        if done { "ok" } else { "NOTHING TO SCROLL" }
                     );
                     glib::timeout_future(Duration::from_millis(250)).await;
                 }
@@ -494,6 +506,39 @@ fn drag_divider(app: &adw::Application, height: i32) -> bool {
         return false;
     };
     paned.set_position((paned.position() + graph.height() - height).max(0));
+    true
+}
+
+/// Scrolls the first mapped `gtk::ScrolledWindow` whose content is taller than its page by
+/// `dy` pixels. The wheel, a scrollbar drag and keyboard paging all end in the vertical
+/// adjustment's `value`, so a widget that redraws on that sees exactly what a user's scroll
+/// shows. The adjustment clamps to its range.
+fn scroll(app: &adw::Application, dy: f64) -> bool {
+    fn walk(widget: &gtk::Widget) -> Option<gtk::Adjustment> {
+        if let Some(scroller) = widget.downcast_ref::<gtk::ScrolledWindow>()
+            && scroller.is_mapped()
+        {
+            let adjustment = scroller.vadjustment();
+            if adjustment.upper() - adjustment.lower() > adjustment.page_size() {
+                return Some(adjustment);
+            }
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            if let Some(found) = walk(&current) {
+                return Some(found);
+            }
+            child = current.next_sibling();
+        }
+        None
+    }
+    let Some(window) = app.active_window() else {
+        return false;
+    };
+    let Some(adjustment) = walk(window.upcast_ref()) else {
+        return false;
+    };
+    adjustment.set_value(adjustment.value() + dy);
     true
 }
 
