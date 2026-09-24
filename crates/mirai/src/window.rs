@@ -1262,13 +1262,20 @@ fn supersede_open(ui: &Ui) {
 fn finish_load(ui: &Ui, loaded: LoadedSgf, origin: Origin) {
     let LoadedSgf { path, trees } = loaded;
     let remembered = (origin == Origin::File).then(|| path.clone());
-    let recovered = origin == Origin::Recovered;
+    // A restored autosave is deleted only once its record is in this window. Deleting it
+    // any earlier — before the read, before a superseded or cancelled load has been
+    // dropped, or before a game is picked from a multi-game file — loses the only copy of
+    // an unsaved game; left alone, it is offered again on the next start.
+    let recovered = (origin == Origin::Recovered).then(|| path.clone());
     match trees.len() {
         0 => ui.state.toast("That file holds no game records"),
         1 => {
             let tree = trees.into_iter().next().expect("length checked");
             let moves = tree.main_line().len().saturating_sub(1);
-            adopt(ui, tree, remembered, recovered);
+            adopt(ui, tree, remembered, recovered.is_some());
+            if let Some(autosave) = &recovered {
+                let _ = std::fs::remove_file(autosave);
+            }
             let label = file_label(&path);
             ui.state.toast(match origin {
                 Origin::File => format!("Opened {label} ({moves} moves)"),
@@ -1278,13 +1285,6 @@ fn finish_load(ui: &Ui, loaded: LoadedSgf, origin: Origin) {
             });
         }
         _ => choose_game(ui, trees, remembered, recovered, file_label(&path)),
-    }
-    // A restored autosave is deleted only once its record is in this window. Deleting
-    // it any earlier — before the read, or before a superseded or cancelled load has
-    // been dropped — loses the only copy of an unsaved game; left alone, it is offered
-    // again on the next start.
-    if recovered {
-        let _ = std::fs::remove_file(&path);
     }
 }
 
@@ -1325,11 +1325,13 @@ fn game_row(tree: &GameTree) -> adw::ActionRow {
         .build()
 }
 
+/// `recovered` is the autosave the records came from, deleted only once a game from it
+/// has been adopted: Cancel keeps it for the next start.
 fn choose_game(
     ui: &Ui,
     trees: Vec<GameTree>,
     path: Option<PathBuf>,
-    recovered: bool,
+    recovered: Option<PathBuf>,
     label: String,
 ) {
     let list = gtk::ListBox::new();
@@ -1370,7 +1372,12 @@ fn choose_game(
         if index < trees.len() {
             let tree = trees.remove(index);
             drop(trees);
-            with_window_ui(&weak, |ui| adopt(ui, tree, path.clone(), recovered));
+            with_window_ui(&weak, |ui| {
+                adopt(ui, tree, path.clone(), recovered.is_some());
+                if let Some(autosave) = &recovered {
+                    let _ = std::fs::remove_file(autosave);
+                }
+            });
         }
     });
     dialog.present(ui.window().as_ref());
@@ -1661,12 +1668,21 @@ fn pop_stale() -> Option<PathBuf> {
     }
 }
 
+/// Offers one leftover autosave once the background scan has finished — unless the user
+/// has already moved on. The scan is asynchronous, so a game started or an edit made in
+/// the meantime would otherwise be replaced by accepting a prompt about an older record.
+/// A skipped leftover stays on disk and in the list, for another window or the next start.
 fn offer_stale_when_ready(ui: &Ui) {
     let weak = ui.weak_window();
+    let document = ui.state.document_token();
+    let generation = ui.load_generation.get();
     let handle = glib::spawn_future_local(async move {
         wait_for_stale_scan().await;
         with_window_ui(&weak, |ui| {
             ui.tasks.restore.0.borrow_mut().take();
+            if ui.state.document_token() != document || ui.load_generation.get() != generation {
+                return;
+            }
             if let Some(autosave) = pop_stale() {
                 offer_restore(ui, autosave);
             }
