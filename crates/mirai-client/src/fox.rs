@@ -345,41 +345,6 @@ pub fn normalize_fox_sgf(raw: &str) -> String {
     scale_fox_komi(&out)
 }
 
-/// The byte range of `property`'s first value in the root node, if it has one.
-///
-/// Scoped to the root and skipping property values, because `KM[` also occurs inside a
-/// comment and a naive search finds that one first.
-fn root_property(text: &str, property: &str) -> Option<std::ops::Range<usize>> {
-    let bytes = text.as_bytes();
-    let root = bytes.iter().position(|&b| b == b';')? + 1;
-    let mut end = root;
-    let mut in_value = false;
-    let mut escaped = false;
-    while end < bytes.len() {
-        let byte = bytes[end];
-        if in_value {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == b']' {
-                in_value = false;
-            }
-        } else if byte == b'[' {
-            in_value = true;
-        } else if matches!(byte, b';' | b'(' | b')') {
-            break;
-        }
-        end += 1;
-    }
-
-    let node = &text[root..end];
-    let needle = format!("{property}[");
-    let start = root + node.find(&needle)? + needle.len();
-    let len = text[start..].find(']')?;
-    Some(start..start + len)
-}
-
 /// Fox writes Chinese-rules komi in *zi*, hundredths: `375` is 3¾ zi, which is 7.5 points.
 ///
 /// A value at or beyond ±200 is in hundredths and is divided down. It is then doubled only
@@ -387,7 +352,8 @@ fn root_property(text: &str, property: &str) -> Option<std::ops::Range<usize>> {
 /// zi has. Anything else is already in points and is left exactly alone, so a record that
 /// says 7.5 does not come out as 15.
 fn scale_fox_komi(sgf: &str) -> String {
-    let Some(span) = root_property(sgf, "KM") else {
+    // First root only. A later game's KM is not this record's komi.
+    let Some(span) = sgf::root_property(sgf.as_bytes(), b"KM") else {
         return sgf.to_string();
     };
     let Ok(raw) = sgf[span.clone()].trim().parse::<f32>() else {
@@ -606,6 +572,17 @@ mod tests {
         let out = normalize_fox_sgf(raw);
         assert!(out.contains("中SZ[19]"), "{out}");
         assert!(out.contains("KM[7.5]"), "{out}");
+    }
+
+    /// `KM[` inside a comment that precedes the real property used to be the one
+    /// that was scaled, because the root-node slice was then searched with `find`.
+    #[test]
+    fn a_komi_inside_a_preceding_comment_is_not_rescaled() {
+        let raw = "(;GM[1]FF[4]SZ[19]C[not KM[999]]KM[375])";
+        let out = normalize_fox_sgf(raw);
+        assert!(out.contains("KM[7.5]"), "{out}");
+        assert!(out.contains("KM[999]"), "{out}");
+        assert!(!out.contains("KM[9.99]"), "{out}");
     }
 
     #[test]

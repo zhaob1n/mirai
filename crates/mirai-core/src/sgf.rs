@@ -84,21 +84,148 @@ pub fn parse_str(text: &str) -> Result<Vec<GameTree>, SgfError> {
 
 // ---------------------------------------------------------------------------- encoding
 
+/// Byte range of `ident`'s first value in the first game's root node.
+///
+/// Fox komi uses this, so a later game in the collection is not consulted — that
+/// game's `KM` is not this record's komi. The charset scan continues through later
+/// collection roots when the first has no `CA`.
+///
+/// The walk starts at the first `(`, then the first `;` after it: a `;` in
+/// preamble junk is not a node. An identifier is a maximal run of ASCII letters,
+/// compared in full and case-sensitively, the same rule as the parser, so
+/// `CoPyright[` is not `C` plus a value and `XCA[` is not `CA[`. Every `[...]`
+/// value is skipped, escapes honoured, whether or not the identifier matched.
+/// The next `;`, `(`, or `)` outside a value ends the node, which is why a
+/// `CA[` or `KM[` inside a comment is not a property.
+///
+/// The bounds are the ASCII brackets, so the range is a char boundary in `&str`
+/// as well as in these bytes. `ident` is the property name as written, such as
+/// `b"CA"`.
+pub fn root_property(bytes: &[u8], ident: &[u8]) -> Option<std::ops::Range<usize>> {
+    property_in_collection(bytes, ident, false)
+}
+
 /// `CA` has to be found before the text can be decoded, so it is located in the raw
-/// bytes. The scan only accepts `CA[` that starts a property identifier.
+/// bytes. The first game's root wins; if it has no `CA`, later collection roots are
+/// tried. A `CA` on a non-root node, or inside a variation, is not the file's charset.
 fn find_charset(bytes: &[u8]) -> Option<&[u8]> {
+    let range = property_in_collection(bytes, b"CA", true)?;
+    let v = bytes[range].trim_ascii();
+    (!v.is_empty()).then_some(v)
+}
+
+/// `rest` continues at the next top-level game when this root has no such property.
+fn property_in_collection(
+    bytes: &[u8],
+    ident: &[u8],
+    rest: bool,
+) -> Option<std::ops::Range<usize>> {
     let mut i = 0;
-    while i + 3 <= bytes.len() {
-        if &bytes[i..i + 3] == b"CA["
-            && (i == 0 || !bytes[i - 1].is_ascii_alphabetic())
-            && let Some(end) = bytes[i + 3..].iter().position(|&c| c == b']')
-        {
-            let v = bytes[i + 3..i + 3 + end].trim_ascii();
-            return (!v.is_empty()).then_some(v);
+    loop {
+        let rel = bytes[i..].iter().position(|&b| b == b'(')?;
+        i += rel + 1;
+        let rel = bytes[i..].iter().position(|&b| b == b';')?;
+        i += rel + 1;
+        let found = scan_root_node(bytes, &mut i, ident);
+        if found.is_some() || !rest {
+            return found;
         }
-        i += 1;
+        // `i` sits on the byte that ended the root. Skip the rest of this game,
+        // variations included, so a nested `(;CA[...])` is not the next root.
+        i = skip_rest_of_game(bytes, i);
     }
-    None
+}
+
+/// Scans one root node starting just after its `;`. Leaves `i` on the byte that
+/// ended the node (`;`, `(`, `)`, or `len`).
+fn scan_root_node(bytes: &[u8], i: &mut usize, ident: &[u8]) -> Option<std::ops::Range<usize>> {
+    let mut found = None;
+    while *i < bytes.len() {
+        let byte = bytes[*i];
+        if byte.is_ascii_whitespace() {
+            *i += 1;
+            continue;
+        }
+        if matches!(byte, b';' | b'(' | b')') {
+            break;
+        }
+        if !byte.is_ascii_alphabetic() {
+            *i += 1;
+            continue;
+        }
+        let start = *i;
+        while *i < bytes.len() && bytes[*i].is_ascii_alphabetic() {
+            *i += 1;
+        }
+        let matched = found.is_none() && &bytes[start..*i] == ident;
+        let mut first_value = true;
+        loop {
+            while *i < bytes.len() && bytes[*i].is_ascii_whitespace() {
+                *i += 1;
+            }
+            if *i >= bytes.len() || bytes[*i] != b'[' {
+                break;
+            }
+            *i += 1;
+            let value_start = *i;
+            let mut escaped = false;
+            while *i < bytes.len() {
+                if escaped {
+                    escaped = false;
+                    *i += 1;
+                    continue;
+                }
+                match bytes[*i] {
+                    b'\\' => {
+                        escaped = true;
+                        *i += 1;
+                    }
+                    b']' => break,
+                    _ => *i += 1,
+                }
+            }
+            if matched && first_value {
+                found = Some(value_start..*i);
+            }
+            first_value = false;
+            if *i < bytes.len() && bytes[*i] == b']' {
+                *i += 1;
+            } else {
+                return found;
+            }
+        }
+    }
+    found
+}
+
+/// From the byte that ended the root node, to just past this game's closing `)`.
+/// Depth starts at 1: the opening `(` was already consumed. A `)` inside a value
+/// does not close the game.
+fn skip_rest_of_game(bytes: &[u8], mut i: usize) -> usize {
+    let mut depth = 1u32;
+    let mut in_value = false;
+    let mut escaped = false;
+    while i < bytes.len() && depth > 0 {
+        let byte = bytes[i];
+        i += 1;
+        if in_value {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b']' {
+                in_value = false;
+            }
+            continue;
+        }
+        match byte {
+            b'[' => in_value = true,
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            _ => {}
+        }
+    }
+    i
 }
 
 fn decode_bytes(bytes: &[u8]) -> String {
@@ -803,6 +930,49 @@ mod tests {
         moves
     }
 
+    /// FF[3] identifiers may be mixed case. The whole letter run is the identifier,
+    /// so a `CA[` or `KM[` inside its value is text.
+    #[test]
+    fn root_property_skips_a_mixed_case_identifier_whole() {
+        assert_eq!(
+            root_value("(;CoPyright[see CA[gb2312]]CA[UTF-8])", b"CA").as_deref(),
+            Some("UTF-8")
+        );
+        assert_eq!(
+            root_value("(;CoPyright[KM[999]]KM[375])", b"KM").as_deref(),
+            Some("375")
+        );
+        assert_eq!(
+            root_value("(;ca[gb2312]CA[UTF-8])", b"CA").as_deref(),
+            Some("UTF-8")
+        );
+    }
+
+    /// A `;` before the first `(` is preamble, not a node.
+    #[test]
+    fn root_property_ignores_a_semicolon_before_the_game() {
+        assert_eq!(
+            root_value("note; (;CA[shift_jis]SZ[19])", b"CA").as_deref(),
+            Some("shift_jis")
+        );
+    }
+
+    /// The first root's CA wins. If it has none, the next collection root is used.
+    /// A variation's CA is not a root.
+    #[test]
+    fn a_later_collection_root_supplies_the_charset_a_variation_does_not() {
+        let later = "(;SZ[19])(;CA[windows-1252]C[柯洁])";
+        let trees = parse(later.as_bytes()).expect(later);
+        let decoded = encoding_rs::WINDOWS_1252.decode("柯洁".as_bytes()).0;
+        assert_eq!(trees[1].node(trees[1].root()).comment, decoded.as_ref());
+        assert_ne!(trees[1].node(trees[1].root()).comment, "柯洁");
+
+        let nested = "(;SZ[19](;CA[windows-1252]C[柯洁]))";
+        let trees = parse(nested.as_bytes()).expect(nested);
+        let child = trees[0].children(trees[0].root())[0];
+        assert_eq!(trees[0].node(child).comment, "柯洁");
+    }
+
     #[test]
     fn komi_normalisation() {
         let t = &parse_str("(;SZ[19]KM[750])").unwrap()[0];
@@ -813,6 +983,57 @@ mod tests {
         assert_eq!(t.info.komi, 6.5);
         let t = &parse_str("(;SZ[19]KM[0])").unwrap()[0];
         assert_eq!(t.info.komi, 0.0);
+    }
+
+    /// `CA[` inside a comment is not the file's charset. Decoding as that label
+    /// would turn the UTF-8 that follows into mojibake.
+    #[test]
+    fn a_charset_inside_a_comment_is_not_the_files_encoding() {
+        let sgf = "(;C[see CA[windows-1252]CA[UTF-8]SZ[19];C[柯洁])";
+        let trees = parse(sgf.as_bytes()).expect(sgf);
+        let child = trees[0].children(trees[0].root())[0];
+        assert_eq!(trees[0].node(child).comment, "柯洁");
+    }
+
+    fn root_value(text: &str, ident: &[u8]) -> Option<String> {
+        root_property(text.as_bytes(), ident).map(|r| text[r].to_owned())
+    }
+
+    /// A `CA[` or `KM[` that sits inside a preceding comment is text, not a property.
+    #[test]
+    fn root_property_ignores_a_preceding_comment() {
+        let text = "(;C[see CA[gb2312 and KM[999]CA[UTF-8]KM[7.5])";
+        assert_eq!(root_value(text, b"CA").as_deref(), Some("UTF-8"));
+        assert_eq!(root_value(text, b"KM").as_deref(), Some("7.5"));
+        // And a property on the next node is past the root.
+        assert_eq!(root_value("(;SZ[19];CA[gb2312])", b"CA"), None);
+    }
+
+    /// An escaped `]` does not end the comment, so the `CA[` after it is still text.
+    #[test]
+    fn root_property_honours_an_escaped_bracket() {
+        let text = "(;C[say \\]CA[gb2312]]CA[UTF-8]KM[7.5])";
+        assert_eq!(root_value(text, b"CA").as_deref(), Some("UTF-8"));
+        assert_eq!(root_value(text, b"KM").as_deref(), Some("7.5"));
+    }
+
+    /// `XCA` and `CAB` are different identifiers from `CA`.
+    #[test]
+    fn root_property_matches_the_whole_identifier() {
+        let text = "(;XCA[gb2312]CAB[no]CA[UTF-8])";
+        assert_eq!(root_value(text, b"CA").as_deref(), Some("UTF-8"));
+    }
+
+    /// Several values belong to the property in front of them, not the one after.
+    #[test]
+    fn root_property_skips_every_value_of_the_property_before() {
+        let text = "(;AB[aa][bb] LB[cc:A][dd:B]CA[UTF-8]KM[7.5])";
+        assert_eq!(root_value(text, b"CA").as_deref(), Some("UTF-8"));
+        assert_eq!(root_value(text, b"KM").as_deref(), Some("7.5"));
+        assert_eq!(
+            root_value("(;CA[UTF-8][latin1])", b"CA").as_deref(),
+            Some("UTF-8")
+        );
     }
 
     #[test]

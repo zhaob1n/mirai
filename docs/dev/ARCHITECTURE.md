@@ -435,9 +435,10 @@ emits and `build` creates nodes in document pre-order, so the recorded index is 
 reload assigns. Decoding is best-effort — foreign, truncated or future-versioned blobs mean "no
 analysis", and a vanished index is skipped — and writing is opt-in via
 `UiSettings::save_analysis_in_sgf`, off by default. Two parser facts worth knowing before touching
-it: the charset is located by scanning raw bytes for a `CA[` that starts a property identifier,
-because the text cannot be decoded until it is known; and nesting is capped by `MAX_DEPTH` against
-hostile files.
+it: the charset is a collection root's `CA`, found by `sgf::root_property`'s scan of the raw
+bytes — the first game's root wins, a later game's root is used only if that one has none, and a
+`CA[` inside a comment or a variation is not a property — because the text cannot be decoded until
+it is known; and nesting is capped by `MAX_DEPTH` against hostile files.
 
 ---
 
