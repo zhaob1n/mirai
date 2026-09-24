@@ -117,7 +117,12 @@ impl PlaySession {
     }
 }
 
-/// One 100 ms clock step's outcome.
+/// One clock step's outcome.
+///
+/// A single `dt` may cross several byo-yomi periods. That is still
+/// [`PeriodConsumed`] unless the overshoot also exhausts the last period:
+/// [`Play::tick`] and the GTK ticker treat anything but [`Flag`] as "the game
+/// continues", and the clock display is redrawn either way.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tick {
     Running,
@@ -136,15 +141,19 @@ pub fn tick_clock(
     if *remaining > 0.0 {
         return Tick::Running;
     }
-    if *byo_left > 0 {
+    // The negative remainder is time already spent. Resetting to a full period
+    // here would hand back the overshoot, so a stall spanning several periods
+    // would cost only one and grant time.
+    while *remaining <= 0.0 {
+        if *byo_left == 0 {
+            *remaining = 0.0;
+            return Tick::Flag;
+        }
         *byo_left -= 1;
         *in_byo = true;
-        *remaining = tc.byo_period_s as f32;
-        Tick::PeriodConsumed
-    } else {
-        *remaining = 0.0;
-        Tick::Flag
+        *remaining += tc.byo_period_s as f32;
     }
+    Tick::PeriodConsumed
 }
 
 pub fn resign_check(
@@ -848,6 +857,64 @@ mod tests {
             tick_clock(&tc, &mut remaining, &mut byo_left, &mut in_byo, 30.0),
             Tick::Flag
         );
+    }
+
+    /// A stall whose dt spans several periods must spend each of them. Resetting to a
+    /// full period on the first expiry granted the time the stall had already used.
+    #[test]
+    fn a_stall_spending_two_and_a_half_periods_leaves_half_a_period() {
+        let tc = TimeControl {
+            main_s: 0,
+            byo_periods: 3,
+            byo_period_s: 30,
+            increment_s: 0,
+        };
+        // The current period plus two banked: three periods, 0.5 of the last left.
+        let (mut remaining, mut byo_left, mut in_byo) = (30.0f32, 2u8, true);
+        assert_eq!(
+            tick_clock(&tc, &mut remaining, &mut byo_left, &mut in_byo, 75.0),
+            Tick::PeriodConsumed
+        );
+        assert!(in_byo);
+        assert_eq!(byo_left, 0);
+        assert_eq!(remaining, 15.0);
+    }
+
+    #[test]
+    fn a_stall_longer_than_every_period_loses_on_time() {
+        let tc = TimeControl {
+            main_s: 0,
+            byo_periods: 3,
+            byo_period_s: 30,
+            increment_s: 0,
+        };
+        let (mut remaining, mut byo_left, mut in_byo) = (30.0f32, 2u8, true);
+        assert_eq!(
+            tick_clock(&tc, &mut remaining, &mut byo_left, &mut in_byo, 91.0),
+            Tick::Flag
+        );
+        assert_eq!(remaining, 0.0);
+        assert_eq!(byo_left, 0);
+    }
+
+    /// Main time that runs out mid-step does not start the first period full: the
+    /// overshoot is already time spent in that period.
+    #[test]
+    fn main_time_overshoot_rolls_into_byo_yomi() {
+        let tc = TimeControl {
+            main_s: 10,
+            byo_periods: 3,
+            byo_period_s: 30,
+            increment_s: 0,
+        };
+        let (mut remaining, mut byo_left, mut in_byo) = (10.0f32, 3u8, false);
+        assert_eq!(
+            tick_clock(&tc, &mut remaining, &mut byo_left, &mut in_byo, 25.0),
+            Tick::PeriodConsumed
+        );
+        assert!(in_byo);
+        assert_eq!(byo_left, 2);
+        assert_eq!(remaining, 15.0);
     }
 
     #[test]
