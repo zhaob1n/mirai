@@ -45,10 +45,10 @@ quinn = { version = "0.11.11", default-features = false, features = [
 ] }
 # `ring` only: enabling rustls' default aws-lc-rs alongside quinn's ring provider would
 # leave two installed providers and make `ClientConfig::builder()` panic at runtime.
+# No `tls12`: QUIC is TLS 1.3 only (RFC 9001), and both endpoints pin TLS13.
 rustls = { version = "0.23.43", default-features = false, features = [
     "ring",
     "std",
-    "tls12",
     "logging",
 ] }
 rcgen = { version = "0.14.9", default-features = false, features = ["crypto", "pem", "ring"] }
