@@ -296,58 +296,51 @@ pub async fn fetch_sgf<F: Fetch>(fetch: &F, chess_id: &str) -> Result<String, St
 /// quieter but worse: SGF's own rule is that `\` escapes the next character, so `C[a\nb]`
 /// parses as the comment `anb` — every line break in a Fox comment turned into the letter
 /// `n`. Both cases become real whitespace here, and every other escape is passed through
-/// untouched so the SGF parser still sees `\]` and `\\`.
+/// untouched — the whole next scalar, not the next byte — so the SGF parser still sees
+/// `\]`, `\\` and `\中`.
 pub fn normalize_fox_sgf(raw: &str) -> String {
     let text = raw.strip_prefix('\u{feff}').unwrap_or(raw);
-    let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
-    let mut i = 0;
+    let mut chars = text.chars().peekable();
     let mut in_value = false;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if c == b'\\' && i + 1 < bytes.len() {
-            let whitespace = match bytes[i + 1] {
-                b'r' => Some('\r'),
-                b'n' => Some('\n'),
-                b't' => Some('\t'),
-                _ => None,
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            let Some(next) = chars.peek().copied() else {
+                // A trailing backslash outside a value is Fox noise; inside one it is an
+                // incomplete escape the parser still has to see.
+                if in_value {
+                    out.push('\\');
+                }
+                break;
             };
-            if let Some(ch) = whitespace {
+            if let Some(ch) = match next {
+                'r' => Some('\r'),
+                'n' => Some('\n'),
+                't' => Some('\t'),
+                _ => None,
+            } {
+                chars.next();
                 out.push(ch);
-                i += 2;
                 continue;
             }
             if !in_value {
                 // An escape Fox did not mean: outside a value there is nothing to escape.
-                i += 1;
                 continue;
             }
-            // `\]`, `\\` and friends belong to the parser, not to us.
+            // `\]`, `\\` and a multibyte scalar belong to the parser. Copying one byte
+            // here panics on the next char boundary and writes mojibake.
+            chars.next();
             out.push('\\');
-            out.push(bytes[i + 1] as char);
-            i += 2;
+            out.push(next);
             continue;
         }
-        if !in_value && c == b'\\' {
-            i += 1;
-            continue;
-        }
-        if c == b'[' {
+        if c == '[' {
             in_value = true;
-        } else if c == b']' && in_value {
-            // Every backslash pair above is consumed whole, so a `]` reached here is real.
+        } else if c == ']' && in_value {
+            // Every escape above is consumed whole, so a `]` reached here is real.
             in_value = false;
         }
-        let n = match c {
-            0x00..=0x7f => 1,
-            0xc0..=0xdf => 2,
-            0xe0..=0xef => 3,
-            0xf0..=0xf7 => 4,
-            _ => 1,
-        };
-        let end = (i + n).min(bytes.len());
-        out.push_str(&text[i..end]);
-        i = end;
+        out.push(c);
     }
     scale_fox_komi(&out)
 }
@@ -597,6 +590,22 @@ mod tests {
         let out = normalize_fox_sgf(raw);
         assert!(out.contains("KM[7.5]"), "{out}");
         assert!(out.contains("KM[999]"), "{out}");
+    }
+
+    /// An unknown escape copies the next scalar, not the next byte. Slicing one byte
+    /// off a multibyte UTF-8 character panics on the following char boundary, and the
+    /// byte pushed in its place is mojibake.
+    #[test]
+    fn an_unknown_escape_keeps_a_multibyte_scalar() {
+        let raw = "(;GM[1]FF[4]SZ[19]C[a\\中b\\🙂c])";
+        let out = normalize_fox_sgf(raw);
+        assert!(out.contains("C[a\\中b\\🙂c]"), "{out}");
+
+        // The same escape between properties must not panic either.
+        let raw = "(;GM[1]FF[4]\\中SZ[19]KM[375])";
+        let out = normalize_fox_sgf(raw);
+        assert!(out.contains("中SZ[19]"), "{out}");
+        assert!(out.contains("KM[7.5]"), "{out}");
     }
 
     #[test]
