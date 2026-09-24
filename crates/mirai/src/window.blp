@@ -475,6 +475,17 @@ template $MiraiWindow: Adw.ApplicationWindow {
                   tooltip-text: _("Pass This Turn (P)");
                 }
 
+                Gtk.Button retry_button {
+                  label: _("Retry");
+                  action-name: "win.retry-ai";
+                  tooltip-text: _("Ask the Engine to Move Again");
+                  visible: false;
+
+                  styles [
+                    "suggested-action",
+                  ]
+                }
+
                 Gtk.Button resign_button {
                   label: _("Resign");
                   action-name: "win.resign";

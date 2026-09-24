@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use gtk::glib;
 use gtk::prelude::ObjectExt;
 use mirai_core::Point;
-use mirai_engine::{Report, SubEvent};
+use mirai_engine::{Engine, Report, SubEvent};
 
 use crate::app::AppState;
 use crate::widgets::BoardView;
@@ -54,9 +54,12 @@ pub struct PlayController {
     board: RefCell<Option<BoardView>>,
     analyse_hook: RefCell<Option<Box<dyn Fn()>>>,
     started: Cell<Started>,
+    /// The engine current when the turn stalled, if any. A later `Change::Engine`
+    /// retries only when the ready engine is a different one: saving or deleting a
+    /// profile emits that change too, and must not restart the search.
+    stalled_engine: RefCell<Option<Arc<dyn Engine>>>,
     last_tick: Cell<Instant>,
 }
-
 impl PlayController {
     pub fn new(state: &AppState, window: &MiraiWindow) -> PlayController {
         PlayController {
@@ -68,6 +71,7 @@ impl PlayController {
             board: RefCell::new(None),
             analyse_hook: RefCell::new(None),
             started: Cell::new(Started::Nothing),
+            stalled_engine: RefCell::new(None),
             last_tick: Cell::new(Instant::now()),
         }
     }
@@ -132,6 +136,7 @@ impl PlayController {
         let had = self.play.borrow().is_active();
         self.play.borrow_mut().stop();
         self.started.set(Started::Nothing);
+        self.stalled_engine.borrow_mut().take();
         self.clear_overlay();
         if had {
             self.state
@@ -161,7 +166,9 @@ impl PlayController {
         self.update_status(&state);
         self.state.notify_play_changed();
         match state {
-            PlayState::Idle | PlayState::HumanTurn => self.started.set(Started::Nothing),
+            PlayState::Idle | PlayState::HumanTurn | PlayState::AiStalled(_) => {
+                self.started.set(Started::Nothing);
+            }
             PlayState::AiThinking => {
                 if self.started.replace(Started::Search) != Started::Search {
                     self.ai_turn();
@@ -198,6 +205,7 @@ impl PlayController {
             PlayState::Idle | PlayState::HumanTurn => String::new(),
             // Owned by the search stream and the count; leave whatever they wrote.
             PlayState::AiThinking => return,
+            PlayState::AiStalled(reason) => reason.clone(),
             PlayState::Scoring => match self.play.borrow().result_phrase() {
                 Some(phrase) => format!("{phrase} — click a group to mark it dead"),
                 None => return,
@@ -258,9 +266,7 @@ impl PlayController {
 
     fn ai_turn(&self) {
         let Some(engine) = self.state.engine() else {
-            self.state
-                .toast("No engine is running — start one in Preferences");
-            self.started.set(Started::Nothing);
+            self.fail_ai("No engine is running — start one in Preferences");
             return;
         };
         if self.play.borrow().ai().is_none() {
@@ -297,21 +303,20 @@ impl PlayController {
                         break;
                     }
                     SubEvent::Failed(e) => {
+                        let reason = e.to_string();
                         with_play(&weak, |play| {
-                            play.state.set_status(String::new());
+                            // May clear the engine. Do that before stalling, so the
+                            // engine-changed hook does not immediately retry a dead engine.
                             play.state.on_engine_error(e);
-                            play.give_turn_back();
+                            play.fail_ai(reason);
                         });
                         return;
                     }
                 }
             }
-            with_play(&weak, |play| {
-                play.state.set_status(String::new());
-                match done {
-                    Some(report) => play.apply_ai_move(&report),
-                    None => play.give_turn_back(),
-                }
+            with_play(&weak, |play| match done {
+                Some(report) => play.apply_ai_move(&report),
+                None => play.fail_ai("The engine ended the search without a move"),
             });
         });
         if let Some(old) = self.thinking.borrow_mut().replace(handle) {
@@ -319,12 +324,45 @@ impl PlayController {
         }
     }
 
-    /// The search produced nothing usable. `Play` still believes it is thinking, so hand
-    /// the turn back by passing for it would be wrong — leave the position alone and let
-    /// the person move instead.
-    fn give_turn_back(&self) {
+    /// The search produced nothing usable. Leave the position alone — passing for
+    /// the engine would be a move it did not choose — and wait to be asked again.
+    fn fail_ai(&self, reason: impl Into<String>) {
+        self.abort_thinking();
+        self.play.borrow_mut().ai_failed(reason);
+        *self.stalled_engine.borrow_mut() = self.state.engine();
         self.started.set(Started::Nothing);
-        self.state.notify_play_changed();
+        self.sync();
+    }
+
+    /// Asks the engine for this move again. A no-op unless the turn is stalled.
+    pub(crate) fn retry(&self) {
+        if !matches!(self.play_state(), PlayState::AiStalled(_)) {
+            return;
+        }
+        self.play.borrow_mut().retry_ai();
+        self.state.set_status(String::new());
+        self.sync();
+    }
+
+    /// A stalled turn resumes when a different engine becomes ready. Called from
+    /// the window's `Change::Engine` arm, which also fires when a profile is saved
+    /// or deleted without the running engine changing.
+    pub(crate) fn retry_if_engine_ready(&self) {
+        if !matches!(self.play_state(), PlayState::AiStalled(_)) {
+            return;
+        }
+        let Some(engine) = self.state.engine() else {
+            return;
+        };
+        if self
+            .stalled_engine
+            .borrow()
+            .as_ref()
+            .is_some_and(|old| Arc::ptr_eq(old, &engine))
+        {
+            return;
+        }
+        self.retry();
     }
 
     fn apply_ai_move(&self, report: &Report) {
@@ -372,7 +410,9 @@ impl PlayController {
 
         let active = match self.play_state() {
             PlayState::HumanTurn | PlayState::AiThinking => self.state.to_play(),
-            _ => return,
+            PlayState::Idle | PlayState::AiStalled(_) | PlayState::Scoring | PlayState::Over(_) => {
+                return;
+            }
         };
         let flagged = self
             .state
@@ -471,8 +511,9 @@ impl PlayController {
                 self.human_move(p);
                 true
             }
-            // The engine is searching, or the game is over: the board is read-only.
-            PlayState::AiThinking | PlayState::Over(_) => true,
+            // Searching, stalled, or over: the board is read-only. Undo and Retry
+            // are the way out of a stall, not a click.
+            PlayState::AiThinking | PlayState::AiStalled(_) | PlayState::Over(_) => true,
             PlayState::Scoring => {
                 self.state
                     .with_session_mut(|game| self.play.borrow_mut().toggle_dead(game, p));

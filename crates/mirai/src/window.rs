@@ -122,6 +122,7 @@ pub struct Ui {
     play_controls: gtk::Box,
     pass_button: gtk::Button,
     undo_button: gtk::Button,
+    retry_button: gtk::Button,
     resign_button: gtk::Button,
     analysis_stack: adw::ViewStack,
     /// This window's Fox picker, built the first time it is asked for. One per
@@ -331,6 +332,7 @@ pub fn present(
     let play_controls = window.play_controls();
     let pass_button = window.pass_button();
     let undo_button = window.undo_button();
+    let retry_button = window.retry_button();
     let resign_button = window.resign_button();
     let move_scale = window.move_scale();
     let move_position = window.move_position();
@@ -359,6 +361,7 @@ pub fn present(
         play_controls,
         pass_button,
         undo_button,
+        retry_button,
         resign_button,
         analysis_stack,
         fox_picker: RefCell::new(None),
@@ -537,6 +540,7 @@ fn handle_change(ui: &Ui, change: Change) {
             ui.analysis.refresh();
             update_subtitle(ui);
             maybe_auto_analyse(ui);
+            ui.play.retry_if_engine_ready();
         }
         Change::Toast(text) => ui.toasts.add_toast(adw::Toast::new(&text)),
         Change::Play => {
@@ -982,10 +986,15 @@ fn update_clocks(ui: &Ui) {
 
 fn update_play_controls(ui: &Ui) {
     let state = ui.play.play_state();
-    let in_progress = matches!(state, PlayState::HumanTurn | PlayState::AiThinking);
+    let in_progress = matches!(
+        state,
+        PlayState::HumanTurn | PlayState::AiThinking | PlayState::AiStalled(_)
+    );
     ui.play_controls.set_visible(in_progress);
     ui.pass_button
         .set_sensitive(matches!(state, PlayState::HumanTurn));
+    ui.retry_button
+        .set_visible(matches!(state, PlayState::AiStalled(_)));
     ui.undo_button.set_sensitive(ui.play.is_active());
     ui.resign_button
         .set_visible(in_progress && ui.play.is_human_vs_engine());
@@ -1891,7 +1900,7 @@ fn fit_default_size(window: &MiraiWindow, graph: &WinrateGraph) {
 fn sync_play_layout(ui: &Ui) {
     let playing = matches!(
         ui.play.play_state(),
-        PlayState::HumanTurn | PlayState::AiThinking | PlayState::Scoring
+        PlayState::HumanTurn | PlayState::AiThinking | PlayState::AiStalled(_) | PlayState::Scoring
     );
     if playing == ui.play_layout.get().is_some() {
         return;
@@ -2122,6 +2131,7 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
     add("redo", Box::new(do_redo));
     add("delete-branch", Box::new(delete_branch));
     add("resign", Box::new(|ui| ui.play.resign()));
+    add("retry-ai", Box::new(|ui| ui.play.retry()));
     add(
         "board-menu",
         Box::new(|ui| {

@@ -391,7 +391,10 @@ the same mode names: **Visits**, **Time per move**, **Human-like**.
 ### While the game runs
 
 Click an empty point to move. The board is read-only while the engine thinks (`Thinking… 3.4k
-visits` in the status line) and after the game ends. During a game the editor is forced
+visits` in the status line), while its turn is stalled, and after the game ends. If the engine
+cannot move — none is running, or the search fails — the status line says why. **Retry** in the
+play bar asks again; starting an engine does that on its own. **Undo** and **Resign** still
+work, and the board stays read-only until it is your turn. During a game the editor is forced
 closed, the editing toggle is disabled, ordinary right-click is ignored, redo is disabled,
 and <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes back the whole exchange rather than a document edit.
 *Both (no engine)* is still a game: you play both colours, there is no engine move and no
@@ -411,6 +414,7 @@ Starting a byo-yomi game with zero main time drops you straight into the first p
 | | |
 |---|---|
 | **Pass** | <kbd>p</kbd>, or the play-bar button. Two passes in a row end the game and open scoring |
+| **Retry** | the play-bar button, only when the engine's turn stalled. Asks for the move again |
 | **Undo** | <kbd>Ctrl</kbd>+<kbd>Z</kbd>, or the play-bar button, takes back the whole exchange — the engine's move and yours — cancels any search in progress, and restores both clocks exactly |
 | **Resign** | the play-bar button, only when you are playing the engine. No shortcut, deliberately. The *engine* resigns on its own when its win rate has stayed below **Resign Threshold** for **Resign Streak** consecutive moves *and* the game is past the opening — both conditions, so it never gives up on move 3 |
 

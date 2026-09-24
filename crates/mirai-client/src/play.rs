@@ -40,6 +40,10 @@ pub enum PlayState {
     Idle,
     HumanTurn,
     AiThinking,
+    /// The engine's turn could not be played. The string is the reason a frontend
+    /// shows. Clocks do not run. Undo and resign still apply; [`Play::retry_ai`]
+    /// goes back to [`AiThinking`](PlayState::AiThinking).
+    AiStalled(String),
     Scoring,
     Over(String),
 }
@@ -414,6 +418,29 @@ impl Play {
         matches!(self.state(), PlayState::AiThinking)
     }
 
+    /// The search failed, or there is no engine. Only an in-progress AI turn
+    /// stalls; a late failure after undo or a human move is ignored.
+    pub fn ai_failed(&mut self, reason: impl Into<String>) {
+        let Some(s) = self.session.as_mut() else {
+            return;
+        };
+        if !matches!(s.state, PlayState::AiThinking) {
+            return;
+        }
+        s.state = PlayState::AiStalled(reason.into());
+    }
+
+    /// Asks for the engine's move again after [`Play::ai_failed`].
+    pub fn retry_ai(&mut self) {
+        let Some(s) = self.session.as_mut() else {
+            return;
+        };
+        if !matches!(s.state, PlayState::AiStalled(_)) {
+            return;
+        }
+        s.state = PlayState::AiThinking;
+    }
+
     pub fn ai_request(&mut self, game: &mut GameSession) -> Option<AnalyzeReq> {
         let s = self.session.as_ref()?;
         let ai = s.ai()?;
@@ -579,7 +606,9 @@ impl Play {
     pub fn tick(&mut self, game: &mut GameSession, dt: f32) -> bool {
         let active = match self.state() {
             PlayState::HumanTurn | PlayState::AiThinking => game.to_play(),
-            _ => return false,
+            PlayState::Idle | PlayState::AiStalled(_) | PlayState::Scoring | PlayState::Over(_) => {
+                return false;
+            }
         };
         let Some(s) = self.session.as_mut() else {
             return false;
@@ -938,5 +967,75 @@ mod tests {
         assert_eq!(game.tree().info.handicap, 2);
         assert_eq!(game.to_play(), Color::White);
         assert_eq!(play.state(), PlayState::HumanTurn);
+    }
+
+    fn engine_to_move(tc: TimeControl) -> (GameSession, Play) {
+        let mut game = GameSession::blank();
+        let mut play = Play::new();
+        play.start(
+            &mut game,
+            GameSetup {
+                human: Some(Color::White),
+                tc,
+                ..Default::default()
+            },
+            "KataGo",
+            "2026-08-17",
+        );
+        (game, play)
+    }
+
+    #[test]
+    fn an_engine_failure_stalls_until_retried() {
+        let (mut game, mut play) = engine_to_move(TimeControl::UNLIMITED);
+        assert_eq!(play.state(), PlayState::AiThinking);
+        play.ai_failed("no engine");
+        assert_eq!(play.state(), PlayState::AiStalled("no engine".into()));
+        assert!(!play.needs_ai());
+        let p = game.tree().info.size.point(3, 3);
+        assert!(play.human_play(&mut game, p).is_err());
+        play.retry_ai();
+        assert_eq!(play.state(), PlayState::AiThinking);
+        assert!(play.needs_ai());
+    }
+
+    #[test]
+    fn undo_and_resign_work_from_a_stalled_turn() {
+        let mut game = GameSession::blank();
+        let mut play = Play::new();
+        play.start(&mut game, GameSetup::default(), "KataGo", "2026-08-17");
+        let p = game.tree().info.size.point(3, 3);
+        play.human_play(&mut game, p).expect("the opening move");
+        play.ai_failed("search failed");
+        play.undo(&mut game);
+        assert_eq!(play.state(), PlayState::HumanTurn);
+        assert_eq!(game.cursor(), game.tree().root());
+
+        play.human_play(&mut game, p).expect("the opening move");
+        play.ai_failed("search failed");
+        play.resign(&mut game);
+        assert!(matches!(play.state(), PlayState::Over(_)));
+    }
+
+    #[test]
+    fn the_clock_does_not_run_while_the_engine_is_stalled() {
+        let tc = TimeControl {
+            main_s: 60,
+            byo_periods: 0,
+            byo_period_s: 0,
+            increment_s: 0,
+        };
+        let (mut game, mut play) = engine_to_move(tc);
+        let before = play.clocks();
+        assert!(!play.tick(&mut game, 1.0));
+        let thinking = play.clocks();
+        assert_ne!(before, thinking);
+        play.ai_failed("no engine");
+        let stalled = play.clocks();
+        assert!(!play.tick(&mut game, 30.0));
+        assert_eq!(play.clocks(), stalled);
+        play.retry_ai();
+        assert!(!play.tick(&mut game, 1.0));
+        assert_ne!(play.clocks(), stalled);
     }
 }

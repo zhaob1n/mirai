@@ -73,6 +73,8 @@ mod imp {
         #[template_child]
         pub pass_button: TemplateChild<gtk::Button>,
         #[template_child]
+        pub retry_button: TemplateChild<gtk::Button>,
+        #[template_child]
         pub resign_button: TemplateChild<gtk::Button>,
         #[template_child]
         pub move_scale: TemplateChild<gtk::Scale>,
@@ -246,6 +248,10 @@ impl MiraiWindow {
 
     pub fn pass_button(&self) -> gtk::Button {
         self.imp().pass_button.get()
+    }
+
+    pub fn retry_button(&self) -> gtk::Button {
+        self.imp().retry_button.get()
     }
 
     pub fn resign_button(&self) -> gtk::Button {
