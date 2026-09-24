@@ -481,6 +481,14 @@ impl Config {
         if self == base && path.exists() {
             return Ok(());
         }
+        // Saves run on the runtime's blocking pool, so two windows can be merging at once.
+        // Read-merge-write is only a merge if nobody else writes in between: the second
+        // save would otherwise start from a file without the first one's keys and write
+        // them away again. Serialise within the process; across processes it stays racy.
+        static SAVING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _saving = SAVING
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let current = toml::Value::try_from(self)?;
         let previous = toml::Value::try_from(base)?;
         // `toml::from_str`, not `str::parse`: the latter reads a bare value, so a whole

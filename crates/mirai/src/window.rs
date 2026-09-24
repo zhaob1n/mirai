@@ -197,7 +197,9 @@ impl Drop for Ui {
         self.state.config_mut().ui.graph_height =
             u16::try_from(self.winrate.preferred_height()).unwrap_or(u16::MAX);
         self.state.config_mut().ui.show_graph = self.show_graph.get();
-        self.state.save_config();
+        // Synchronously: the debounced write would fire after this window, and possibly
+        // the process, is gone.
+        self.state.flush_config();
         self.state.set_engine(None);
         // `autosave` deletes its file as it drops, with the rest of the fields.
     }
@@ -225,6 +227,12 @@ pub fn present(
     // Reading every leftover autosave is the slow part of the first window. Start it
     // before the widgets exist so that work is not on the GTK thread.
     ensure_stale_scan(&runtime);
+    // Another window may hold a change it has not written yet; this one must load it.
+    for other in app.windows() {
+        if let Ok(other) = other.downcast::<MiraiWindow>() {
+            other.with_ui(|ui| ui.state.flush_config());
+        }
+    }
     let config_path = Config::default_path().unwrap_or_else(|_| PathBuf::from("mirai.toml"));
     let config = match Config::load(&config_path) {
         Ok(c) => c,

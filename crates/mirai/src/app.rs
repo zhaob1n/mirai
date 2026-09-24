@@ -10,7 +10,7 @@ use std::cell::{Cell, OnceCell, Ref, RefCell, RefMut};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use gtk::glib;
 use gtk::prelude::*;
@@ -20,8 +20,43 @@ use mirai_client::{GameSession, SpeedMeter};
 use mirai_core::{Color, GameTree, IllegalMove, NodeAnalysis, NodeId, Point, Position};
 use mirai_engine::{AnalyzeReq, Engine, EngineDesc, EngineError, Report, SubEvent, Want};
 
-use crate::config::Config;
+use crate::config::{Config, ConfigError};
 use crate::engines::EnginePool;
+
+/// How long settings may keep changing before they are written. A spin row saves on every
+/// step and a drag is dozens of steps; one write when it settles is enough.
+const CONFIG_SAVE_DEBOUNCE: Duration = Duration::from_millis(300);
+
+/// Bookkeeping for [`AppState::save_config`]. Main-thread only.
+#[derive(Default)]
+pub struct ConfigSave {
+    /// The debounce timer; `None` when nothing is pending.
+    timer: Cell<Option<glib::SourceId>>,
+    /// A write is on the blocking pool.
+    in_flight: Cell<bool>,
+    /// The config changed again while a write was in flight.
+    again: Cell<bool>,
+    /// The number given to the latest save started.
+    started: Cell<u64>,
+    /// The latest save whose result became the base.
+    applied: Cell<u64>,
+}
+
+impl ConfigSave {
+    fn next_seq(&self) -> u64 {
+        let seq = self.started.get() + 1;
+        self.started.set(seq);
+        seq
+    }
+}
+
+impl Drop for ConfigSave {
+    fn drop(&mut self) {
+        if let Some(id) = self.timer.take() {
+            id.remove();
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TreeEpoch(pub(crate) u64);
@@ -164,6 +199,8 @@ mod imp {
         /// The configuration as this window loaded it, so a save can tell which keys this
         /// window actually changed and leave another window's edits alone.
         pub config_base: RefCell<Config>,
+        /// Pending, in-flight and applied config saves; see [`super::AppState::save_config`].
+        pub config_save: super::ConfigSave,
         pub config_path: OnceCell<PathBuf>,
         pub engine: RefCell<Option<Arc<dyn Engine>>>,
         /// The application-wide engines, shared with every other window. Installed when
@@ -209,6 +246,7 @@ mod imp {
                 engine_state: RefCell::new(EngineState::None),
                 config: RefCell::new(Config::default()),
                 config_base: RefCell::new(Config::default()),
+                config_save: super::ConfigSave::default(),
                 config_path: OnceCell::new(),
                 engine: RefCell::new(None),
                 pool: OnceCell::new(),
@@ -343,27 +381,115 @@ impl AppState {
             .expect("AppState was built without a configuration path")
     }
 
-    /// Mirrors the current display toggles into the config and writes it out.
+    /// Mirrors the current display toggles into the config and schedules writing it out.
     ///
     /// Only the keys this window changed are written: every window holds its own `Config`,
     /// loaded when it opened, so a plain overwrite would revert whatever another window has
     /// changed since. See [`Config::save_merged`].
+    ///
+    /// The write is debounced and runs on the runtime's blocking pool. It syncs the file
+    /// and its directory, 50–100 ms on an ordinary disk, and a spin row saves on every
+    /// step: done here, each step was a dropped frame. [`Self::flush_config`] writes what
+    /// is pending at once, for the paths that cannot wait.
     pub fn save_config(&self) {
-        {
-            let mut cfg = self.imp().config.borrow_mut();
-            cfg.ui.show_coordinates = self.show_coordinates();
-            cfg.ui.show_move_numbers = self.show_move_numbers();
-            cfg.ui.ownership_overlay = self.ownership_overlay();
-            cfg.ui.policy_overlay = self.policy_overlay();
+        self.capture_display_settings();
+        let save = &self.imp().config_save;
+        if let Some(id) = save.timer.take() {
+            id.remove();
         }
-        let path = self.config_path();
-        let result = {
-            let cfg = self.imp().config.borrow();
-            cfg.save_merged(&self.imp().config_base.borrow(), path)
-        };
+        let weak = self.downgrade();
+        let id = glib::timeout_add_local(CONFIG_SAVE_DEBOUNCE, move || {
+            if let Some(state) = weak.upgrade() {
+                // The source is running; removing it again would target an id glib has freed.
+                state.imp().config_save.timer.take();
+                state.start_config_save();
+            }
+            glib::ControlFlow::Break
+        });
+        save.timer.set(Some(id));
+    }
+
+    /// Writes any pending change now, on this thread. For a closing window, and for a new
+    /// window about to load the file this one has not written yet.
+    pub fn flush_config(&self) {
+        self.capture_display_settings();
+        let imp = self.imp();
+        if let Some(id) = imp.config_save.timer.take() {
+            id.remove();
+        }
+        let (config, base) = (
+            imp.config.borrow().clone(),
+            imp.config_base.borrow().clone(),
+        );
+        if config == base {
+            return;
+        }
+        let seq = imp.config_save.next_seq();
+        let result = config.save_merged(&base, self.config_path());
+        self.finish_config_save(seq, config, result);
+    }
+
+    fn capture_display_settings(&self) {
+        let mut cfg = self.imp().config.borrow_mut();
+        cfg.ui.show_coordinates = self.show_coordinates();
+        cfg.ui.show_move_numbers = self.show_move_numbers();
+        cfg.ui.ownership_overlay = self.ownership_overlay();
+        cfg.ui.policy_overlay = self.policy_overlay();
+    }
+
+    /// Hands a snapshot of the config to the blocking pool. One save per window is in
+    /// flight at a time; a change made meanwhile is written when it lands.
+    fn start_config_save(&self) {
+        let imp = self.imp();
+        if imp.config_save.in_flight.get() {
+            imp.config_save.again.set(true);
+            return;
+        }
+        let (config, base) = (
+            imp.config.borrow().clone(),
+            imp.config_base.borrow().clone(),
+        );
+        if config == base {
+            return;
+        }
+        imp.config_save.in_flight.set(true);
+        let seq = imp.config_save.next_seq();
+        let path = self.config_path().to_path_buf();
+        let job = self.runtime().spawn_blocking(move || {
+            let result = config.save_merged(&base, &path);
+            (config, result)
+        });
+        let weak = self.downgrade();
+        // Finite and transient: it holds only a weak reference, and a window that is gone
+        // by the time the write lands has already flushed synchronously.
+        glib::spawn_future_local(async move {
+            let outcome = job.await;
+            let Some(state) = weak.upgrade() else { return };
+            let save = &state.imp().config_save;
+            save.in_flight.set(false);
+            match outcome {
+                Ok((config, result)) => state.finish_config_save(seq, config, result),
+                Err(e) => tracing::warn!(%e, "the configuration save task failed"),
+            }
+            if save.again.replace(false) {
+                state.start_config_save();
+            }
+        });
+    }
+
+    /// Records a finished save. The config it wrote becomes the base for the next diff —
+    /// unless a later save already finished: a flush on close can overtake a write still on
+    /// the pool, and restoring the older base would re-apply keys another window has since
+    /// changed.
+    fn finish_config_save(&self, seq: u64, written: Config, result: Result<(), ConfigError>) {
+        let imp = self.imp();
         match result {
-            // What this window holds is now the baseline for its next save.
-            Ok(()) => *self.imp().config_base.borrow_mut() = self.imp().config.borrow().clone(),
+            Ok(()) => {
+                if seq > imp.config_save.applied.get() {
+                    imp.config_save.applied.set(seq);
+                    *imp.config_base.borrow_mut() = written;
+                }
+            }
             Err(e) => {
                 tracing::warn!(%e, "could not save the configuration");
                 self.toast(format!("Could not save settings: {e}"));
