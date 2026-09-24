@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use mirai_core::Size;
 use mirai_engine::{Engine, SubEvent, Subscription};
-use mirai_proto::frame::{self, FrameBuf, FrameError};
+use mirai_proto::frame::{self, FrameBuf, FrameError, SUB_STREAM_LEVEL, SubStreamEncoder};
 use mirai_proto::msg::{ClientMsg, ErrCode, ServerMsg};
 use mirai_proto::types::{AnalyzeReq, EngineDesc, PROTO_VERSION, Report};
 use quinn::{Connection, SendStream, VarInt};
@@ -327,27 +327,35 @@ async fn pump(
         return;
     }
 
-    let mut buf = FrameBuf::new();
+    let mut enc = match SubStreamEncoder::new(SUB_STREAM_LEVEL) {
+        Ok(enc) => enc,
+        Err(e) => {
+            // A stream that ends without `Done` or `Failed` fails on the client.
+            warn!(session, sub, error = %e, "could not start the stream's compressor");
+            let _ = stream.finish();
+            return;
+        }
+    };
     let mut event = subscription.current();
     loop {
         match &event {
             SubEvent::Pending => {}
             SubEvent::Report(r) => {
-                if let Err(e) = send(&mut stream, &mut buf, SubMsgRef::Report(r)).await {
+                if let Err(e) = send(&mut stream, &mut enc, SubMsgRef::Report(r)).await {
                     debug!(session, sub, error = %e, "subscription stream closed early");
                     info!(session, sub, "subscription dropped");
                     return;
                 }
             }
             SubEvent::Done(r) => {
-                let _ = send(&mut stream, &mut buf, SubMsgRef::Done(r)).await;
+                let _ = send(&mut stream, &mut enc, SubMsgRef::Done(r)).await;
                 let _ = stream.finish();
                 info!(session, sub, visits = r.root.visits, "subscription done");
                 return;
             }
             SubEvent::Failed(err) => {
                 let text = err.to_string();
-                let _ = send(&mut stream, &mut buf, SubMsgRef::Failed(&text)).await;
+                let _ = send(&mut stream, &mut enc, SubMsgRef::Failed(&text)).await;
                 let _ = stream.finish();
                 info!(session, sub, error = %text, "subscription failed");
                 return;
@@ -367,7 +375,7 @@ async fn pump(
                 None => {
                     let _ = send(
                         &mut stream,
-                        &mut buf,
+                        &mut enc,
                         SubMsgRef::Failed("engine closed the subscription"),
                     )
                     .await;
@@ -382,10 +390,10 @@ async fn pump(
 
 async fn send(
     stream: &mut SendStream,
-    buf: &mut FrameBuf,
+    enc: &mut SubStreamEncoder,
     msg: SubMsgRef<'_>,
 ) -> Result<(), FrameError> {
-    frame::write_msg(stream, buf, &msg).await
+    enc.write(stream, &msg).await
 }
 
 async fn error_msg(
@@ -536,17 +544,22 @@ mod tests {
         assert_eq!(borrowed, owned, "Failed variant");
     }
 
-    /// And it must decode back into the real type, compression path included.
+    /// And it must decode back into the real type through the subscription-stream codec,
+    /// the one reports actually travel by.
     #[test]
     fn a_borrowed_report_round_trips_through_the_frame_codec() {
         let r = sample_report();
-        let mut buf = FrameBuf::new();
-        let bytes = frame::encode(&mut buf, &SubMsgRef::Done(&r))
-            .unwrap()
-            .to_vec();
-        let mut rbuf = FrameBuf::new();
-        let back: SubMsg = frame::decode(&mut rbuf, &bytes).unwrap();
-        assert_eq!(back, SubMsg::Done(r));
+        let mut enc = SubStreamEncoder::new(SUB_STREAM_LEVEL).unwrap();
+        let mut dec = frame::SubStreamDecoder::new().unwrap();
+        for msg in [SubMsgRef::Report(&r), SubMsgRef::Done(&r)] {
+            let bytes = enc.encode(&msg).unwrap().to_vec();
+            let back: SubMsg = dec.decode(&bytes).unwrap();
+            let want = match msg {
+                SubMsgRef::Report(_) => SubMsg::Report(r.clone()),
+                _ => SubMsg::Done(r.clone()),
+            };
+            assert_eq!(back, want);
+        }
     }
 
     #[test]

@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use mirai_proto::frame::{self, FrameBuf};
+use mirai_proto::frame::{self, FrameBuf, SUB_STREAM_LEVEL, SubStreamEncoder};
 use mirai_proto::msg::{ClientMsg, ErrCode, ServerMsg, SubMsg};
 use mirai_proto::transport;
 use mirai_proto::types::{AnalyzeReq, EngineDesc, PROTO_VERSION, Report};
@@ -273,8 +273,8 @@ async fn serve(
         }
     });
 
-    let mut streams: HashMap<u32, quinn::SendStream> = HashMap::new();
-    let mut sbuf = FrameBuf::new();
+    // Each subscription stream is its own zstd stream, so each gets its own encoder.
+    let mut streams: HashMap<u32, (quinn::SendStream, SubStreamEncoder)> = HashMap::new();
 
     while let Some(command) = cmd.recv().await {
         match command {
@@ -290,15 +290,14 @@ async fn serve(
                 if stream.write_all(&sub.to_le_bytes()).await.is_err() {
                     break;
                 }
-                streams.insert(sub, stream);
+                let enc = SubStreamEncoder::new(SUB_STREAM_LEVEL).expect("stream encoder");
+                streams.insert(sub, (stream, enc));
             }
             Cmd::Sub(sub, msg) => {
-                let Some(stream) = streams.get_mut(&sub) else {
+                let Some((stream, enc)) = streams.get_mut(&sub) else {
                     continue;
                 };
-                if let Err(quinn::WriteError::Stopped(code)) =
-                    frame_sub(stream, &mut sbuf, &msg).await
-                {
+                if let Err(quinn::WriteError::Stopped(code)) = frame_sub(stream, enc, &msg).await {
                     let _ = seen.send(Seen::Stopped {
                         sub,
                         code: code.into_inner(),
@@ -307,7 +306,7 @@ async fn serve(
                 }
             }
             Cmd::Finish(sub) => {
-                if let Some(mut stream) = streams.remove(&sub) {
+                if let Some((mut stream, _)) = streams.remove(&sub) {
                     let _ = stream.finish();
                 }
             }
@@ -324,9 +323,9 @@ async fn serve(
 /// Writes one `SubMsg`, surfacing `STOP_SENDING` as a `WriteError` the caller can report.
 async fn frame_sub(
     stream: &mut quinn::SendStream,
-    buf: &mut FrameBuf,
+    enc: &mut SubStreamEncoder,
     msg: &SubMsg,
 ) -> Result<(), quinn::WriteError> {
-    frame::encode(buf, msg).expect("encode SubMsg");
-    stream.write_all(buf.frame()).await
+    let frame = enc.encode(msg).expect("encode SubMsg");
+    stream.write_all(frame).await
 }

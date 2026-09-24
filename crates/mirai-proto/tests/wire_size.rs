@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! The performance claim of MRP/2 is that a live analysis report costs a couple of
-//! kilobytes on the wire instead of the ~45 KB of equivalent KataGo JSON. That is a claim,
-//! so it is measured here rather than asserted in prose.
+//! The performance claim of MRP/2 is that a live analysis report costs well under a
+//! kilobyte on the wire, where KataGo's own JSON for it runs to tens of kilobytes, and that
+//! a subscription stream carries much less than that once it has seen the reports before.
+//! Real-search figures come from `wire_bench` (`docs/dev/TESTING.md` §4); these tests pin
+//! the codec on synthetic reports so that a regression shows up in `cargo test`.
 
 use mirai_core::{Color, Point, RuleSet, Size};
-use mirai_proto::frame::{FrameBuf, encode};
+use mirai_proto::frame::{FrameBuf, SUB_STREAM_LEVEL, SubStreamDecoder, SubStreamEncoder, encode};
 use mirai_proto::msg::SubMsg;
 use mirai_proto::types::*;
 
@@ -61,17 +63,18 @@ fn sample_report(size: Size, candidates: usize, pv_len: usize) -> Report {
     }
 }
 
+/// The first frame of a stream has nothing to be compressed against, so this is the
+/// worst case a report pays.
 #[test]
 fn a_full_live_report_frames_under_4_kb() {
     let size = Size::square(19);
     let report = sample_report(size, 50, 15);
     assert_eq!(report.ownership.as_ref().unwrap().len(), 361);
 
-    let mut buf = FrameBuf::new();
-    let n = encode(&mut buf, &SubMsg::Report(report.clone()))
-        .unwrap()
-        .len();
-    let framed = buf.frame().to_vec();
+    let mut enc = SubStreamEncoder::new(SUB_STREAM_LEVEL).unwrap();
+    let msg = SubMsg::Report(report);
+    let framed = enc.encode(&msg).unwrap().to_vec();
+    let n = framed.len();
     println!("framed SubMsg::Report = {n} bytes (50 candidates, PV 15, pv_visits, 361 ownership)");
     assert!(
         n < 4096,
@@ -79,9 +82,52 @@ fn a_full_live_report_frames_under_4_kb() {
     );
 
     // And it survives the round trip unchanged.
-    let mut rbuf = FrameBuf::new();
-    let back: SubMsg = mirai_proto::frame::decode(&mut rbuf, &framed).unwrap();
-    assert_eq!(back, SubMsg::Report(report));
+    let back: SubMsg = SubStreamDecoder::new().unwrap().decode(&framed).unwrap();
+    assert_eq!(back, msg);
+}
+
+/// One zstd stream per subscription: each report is compressed against those before it.
+/// Consecutive reports of one search differ in a few numbers, so after the first frame a
+/// stream should carry little more than those numbers.
+#[test]
+fn a_report_stream_compresses_each_report_against_the_last() {
+    let size = Size::square(19);
+    let base = sample_report(size, 10, 15);
+    let mut enc = SubStreamEncoder::new(SUB_STREAM_LEVEL).unwrap();
+    let mut dec = SubStreamDecoder::new().unwrap();
+
+    let mut sizes = Vec::new();
+    for k in 0..20u32 {
+        let mut r = base.clone();
+        r.root.visits = 1000 * (k + 1);
+        for (i, m) in r.moves.iter_mut().enumerate() {
+            m.visits += 100 * k;
+            m.winrate = q16(0.52 - 0.004 * i as f64 + 0.0005 * k as f64);
+            m.play_value = m.visits;
+        }
+        for (j, o) in r.ownership.as_mut().unwrap().iter_mut().enumerate() {
+            if (j + k as usize).is_multiple_of(7) {
+                *o = o.saturating_add(1);
+            }
+        }
+        let msg = SubMsg::Report(r);
+        let frame = enc.encode(&msg).unwrap();
+        sizes.push(frame.len());
+        // Decoded as it arrives: nothing may wait for the next frame.
+        let back: SubMsg = dec.decode(frame).unwrap();
+        assert_eq!(back, msg);
+    }
+
+    let later = sizes[1..].iter().sum::<usize>() as f64 / (sizes.len() - 1) as f64;
+    println!(
+        "stream of 20 reports: first frame {} bytes, then {later:.0} on average",
+        sizes[0]
+    );
+    assert!(
+        later <= 0.5 * sizes[0] as f64,
+        "later frames average {later:.0} bytes against a first frame of {}",
+        sizes[0]
+    );
 }
 
 #[test]

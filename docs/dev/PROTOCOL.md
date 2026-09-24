@@ -175,21 +175,50 @@ Every message on every stream is one frame:
 | Field | Type | Meaning |
 |---|---|---|
 | `len` | `u32` little-endian | payload length, **excluding** the 5-byte header |
-| `flags` | `u8` | bit 0 (`0x01`) set ⇒ payload is a zstd frame whose plaintext is the postcard encoding; clear ⇒ payload is the postcard encoding. Bits 1–7 reserved, MUST be 0 |
+| `flags` | `u8` | how the payload is encoded, below. Bits 2–7 reserved, MUST be 0 |
 | `payload` | `len` bytes | [§5](#5-payload-encoding-postcard-v1) |
 
+| `flags` | Allowed on | Payload |
+|---|---|---|
+| `0x00` | every stream | the postcard encoding |
+| `0x01` | the control stream | a standalone zstd frame (RFC 8878) whose plaintext is the postcard encoding |
+| `0x02` | subscription streams | the next chunk of the stream's zstd stream ([§4.1](#41-subscription-streams-one-zstd-stream)), which decompresses to the postcard encoding |
+
 Constants (`mirai-proto/src/frame.rs`): `MAX_FRAME` = 8 MiB = 8388608 · `COMPRESS_THRESHOLD` =
-4096 · `FLAG_ZSTD` = `0x01` · zstd level 1.
+4096 · `FLAG_ZSTD` = `0x01` · `FLAG_SUB_ZSTD` = `0x02` · control-stream zstd level 1 ·
+subscription window 2^16 (`SUB_WINDOW_LOG`) · `SUB_STREAM_LEVEL`, the reference sender's level.
 
 | # | Rule | Level |
 |---|---|---|
 | 1 | Never emit `len > MAX_FRAME`. | MUST NOT |
 | 2 | Read the 5-byte header first and reject `len > MAX_FRAME` **before** reading or allocating the body. | MUST |
-| 3 | **Decompression-bomb guard:** bound the decompressed size and abort as soon as the plaintext would exceed `MAX_FRAME`. Never trust a content-size field inside the zstd frame. (`frame.rs` — `Bounded`, used on both paths.) | MUST |
-| 4 | Compress iff the postcard payload is **strictly greater than** `COMPRESS_THRESHOLD`, to reproduce the byte counts in [§11](#11-reference-figures). Interop does not depend on it: receivers MUST accept either form at any size, so a minimal implementation MAY always send `flags = 0x00`. | SHOULD / MUST |
-| 5 | The compressed payload is a standard zstd frame (RFC 8878). The reference encoder streams at level 1 with **no content-size field and no checksum**; receivers MUST NOT require either. | MUST NOT |
-| 6 | A stream ending exactly at a frame boundary is a graceful end, not an error. Ending inside a frame is an error. | MUST |
-| 7 | Frames carry no message-type tag: the type follows from stream and direction. | — |
+| 3 | **Decompression-bomb guard:** bound each frame's decompressed size and abort as soon as the plaintext would exceed `MAX_FRAME`. Never trust a content-size field inside the zstd frame. (`frame.rs` — `bounded` on the control stream, `SubStreamDecoder::inflate` on subscription streams.) | MUST |
+| 4 | Reject a `flags` value the stream does not allow. | MUST |
+| 5 | A payload decodes to exactly one message; reject trailing bytes after it. | MUST |
+| 6 | Control stream: compress iff the postcard payload is **strictly greater than** `COMPRESS_THRESHOLD`. Interop does not depend on it: receivers MUST accept either form at any size, so a minimal implementation MAY always send `flags = 0x00`. | SHOULD / MUST |
+| 7 | Control stream: the reference encoder streams at level 1 with **no content-size field and no checksum**; receivers MUST NOT require either. | MUST NOT |
+| 8 | A stream ending exactly at a frame boundary is a graceful end, not an error. Ending inside a frame is an error. | MUST |
+| 9 | Frames carry no message-type tag: the type follows from stream and direction. | — |
+
+### 4.1 Subscription streams: one zstd stream
+
+A subscription stream carries a single zstd stream that starts in its first `0x02` frame and
+is never ended. The sender compresses each message into it and flushes (`ZSTD_e_flush`) at the
+end of the frame, so every frame decodes as soon as it arrives, and every report is compressed
+against the reports before it. Consecutive reports of one search differ in a few numbers;
+measured on a real search, a stream carries about a quarter of what the same reports cost
+framed one by one ([§11](#11-reference-figures)).
+
+| # | Rule | Level |
+|---|---|---|
+| 1 | The receiver decodes every frame of the stream, in order, including one whose report it then drops: each `0x02` frame continues the zstd stream. | MUST |
+| 2 | The sender flushes at the end of every frame. A receiver MUST NOT need the next frame to finish decoding this one. | MUST |
+| 3 | The zstd window is at most 2^16 bytes. It bounds each stream's memory on the client, which MUST refuse a stream that declares a larger one. | MUST |
+| 4 | A `0x00` frame stays outside the zstd stream, which it neither advances nor resets. Any frame MAY be sent that way. | MAY |
+| 5 | Level, checksum and content-size flag are the sender's choice; the reference sender uses `SUB_STREAM_LEVEL` with neither checksum nor content size. | — |
+
+A stream's zstd state never crosses into another stream, so cancelling one — which throws its
+unread bytes away ([§8.4](#84-cancellation-inv-3)) — cannot desynchronise any other.
 
 ### Worked frame
 
@@ -568,8 +597,9 @@ Intermediate and final reports have the same shape; only the wrapping `SubMsg` v
 | 4 | `ownership` | `Option<Vec<i8>>` | Exactly `w*h` entries when present; any other length MUST be rejected. |
 | 5 | `policy` | `Option<Vec<u16>>` | Exactly `w*h + 1` entries when present, pass last; any other length MUST be rejected. |
 
-Reports are complete snapshots, never deltas: a client MAY drop an older one the moment a newer
-arrives.
+Once decoded, every report is a complete snapshot, never a delta: a client MAY drop an older
+one the moment a newer arrives. The frames underneath are not independent
+([§4.1](#41-subscription-streams-one-zstd-stream)): the client still decodes every one.
 
 ---
 
@@ -765,6 +795,7 @@ produces silently wrong analysis rather than a clean failure.
 | 9 | A `String` that is not valid UTF-8. |
 | 10 | Trailing bytes after a fully decoded message within one frame. |
 | 11 | `Size` outside `2..=19`; `ownership` not `w*h` long; `policy` not `w*h + 1` long. |
+| 12 | A `flags` value the stream does not allow ([§4](#4-framing)); a subscription stream whose zstd window exceeds 2^16. |
 
 A v2 implementation MUST NOT reject: unknown `Want` bits (ignore them), unknown `overrides`
 keys, an empty `Welcome.engines`, or a `pv_visits` shorter than `pv`.
@@ -801,6 +832,8 @@ the TLS handshake.
 |---|---|
 | 1 | ALPN `mirai/2`, `PROTO_VERSION = 2`. |
 | 2 | `AnalyzeReq.max_candidates` ([§7.3](#73-analyzereq)): a client asks for only the candidates it shows. |
+| 3 | A subscription stream is one zstd stream, flags `0x02` ([§4.1](#41-subscription-streams-one-zstd-stream)); a report is compressed against those before it. |
+| 4 | Trailing bytes after a message are rejected. MRP/1 already required it, but its reference implementation ignored them: `postcard::from_bytes` does not check. |
 
 ---
 
@@ -810,7 +843,7 @@ Measured by `mirai-proto/tests/wire_size.rs`.
 
 | Message | Contents | postcard payload | Compressed | **Framed** |
 |---|---|---|---|---|
-| `SubMsg::Report` | 19×19, 50 candidates, 15-move PVs with `pv_visits`, 361-entry ownership, no policy | 4128 B | yes → 2617 B | **2622 B** |
+| `SubMsg::Report` | 19×19, 50 candidates, 15-move PVs with `pv_visits`, 361-entry ownership, no policy; first frame of a subscription stream | 4128 B | yes → 2605 B | **2610 B** |
 | `ClientMsg::Open` | 19×19, 200 moves, `want = OWNERSHIP\|PV_VISITS`, `max_visits`, `report_every_ms` | 496 B | no | **501 B** |
 | `SubMsg::Report` | 2 candidates, 2-move PVs, no ownership or policy ([Appendix A](#appendix-a-worked-exchange)) | 77 B | no | **82 B** |
 | `ClientMsg::Ping` | one `u64` | 2 B | no | **7 B** |
@@ -845,18 +878,20 @@ makes the server drop the subscription in under 1 ms and KataGo falls to 0 % CPU
 5. Frame every message as `[len: u32 LE][flags: u8][payload]`.
 6. Reject `len > MAX_FRAME` before allocating or reading the body.
 7. Bound decompressed payloads to `MAX_FRAME` and abort decompression that would exceed it.
+   Refuse a subscription stream whose zstd window exceeds 2^16.
 8. Encode payloads as postcard v1 in exactly the field order of §6 and §7.
 9. Encode `u16`/`u32`/`u64`, all lengths and all discriminants as unsigned LEB128 varints;
    `u8`/`i8` as one raw byte; `i16` as zigzag-then-varint; `bool` as one `0x00`/`0x01` byte.
 10. Encode `Option` as `0x00`, or `0x01` + value, and reject any other tag.
-11. Reject unknown discriminants, malformed varints, invalid UTF-8 and trailing bytes.
+11. Reject unknown discriminants, malformed varints, invalid UTF-8, trailing bytes, and a
+    `flags` value the stream does not allow.
 12. Use `index = y*w + x` with `y = 0` at the top, and `65535` for pass.
 13. Send `ownership` with `w*h` entries and `policy` with `w*h + 1`, pass last, `65535` illegal.
 14. Treat every winrate, score and utility as Black-perspective, converting only at display
     time.
 15. Apply the quantisation formulas and scale constants of §7.2 exactly.
 16. Carry komi as `komi_x2`, and the whole position in every request.
-17. Check `proto == 1` in `Hello`/`Welcome` and fail the session on mismatch.
+17. Check `proto == 2` in `Hello`/`Welcome` and fail the session on mismatch.
 18. (Server) Compare tokens in constant time against every configured token.
 19. (Server) Clamp `priority` into `-8..=8`; enforce `max_subs` with `TooManySubs`; reject a
     duplicate live `sub` with `BadRequest`.
@@ -867,19 +902,21 @@ makes the server drop the subscription in under 1 ms and KataGo falls to 0 % CPU
 24. Treat a subscription stream that reaches EOF without a terminal message as failed.
 25. (Server) Flush the `Error` frame before closing a rejected connection.
 26. Decode and handle all seven `ErrCode` values.
+27. Decode every frame of a subscription stream, in order.
 
 ### SHOULD
 
-27. Compress payloads above 4096 bytes with zstd and set `flags & 0x01`.
-28. Advertise `max_concurrent_uni_streams` well above the intended subscription count.
-29. Send QUIC keep-alives at roughly ⅓ of the negotiated idle timeout.
-30. Normalise a user-supplied fingerprint (trim, lowercase, strip `:`) before comparing, and
+28. Control stream: compress payloads above 4096 bytes with zstd and set `flags = 0x01`.
+    Subscription streams: send every frame as `0x02`.
+29. Advertise `max_concurrent_uni_streams` well above the intended subscription count.
+30. Send QUIC keep-alives at roughly ⅓ of the negotiated idle timeout.
+31. Normalise a user-supplied fingerprint (trim, lowercase, strip `:`) before comparing, and
     show a first-seen fingerprint to the user before persisting it.
-31. Use ≥ 128 bits of entropy per token.
-32. Reconnect with capped exponential backoff, distinguishing "reconnecting" from "permanently
+32. Use ≥ 128 bits of entropy per token.
+33. Reconnect with capped exponential backoff, distinguishing "reconnecting" from "permanently
     rejected" in anything the user sees.
-33. Sort `Report.moves` ascending by `order` before sending.
-34. Set `report_every_ms` only when a live view is wanted, so the server does not serialise
+34. Sort `Report.moves` ascending by `order` before sending.
+35. Set `report_every_ms` only when a live view is wanted, so the server does not serialise
     reports nobody reads.
 
 ---
