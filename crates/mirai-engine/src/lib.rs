@@ -3,7 +3,7 @@
 //! Engine drivers: one trait, up to two implementations.
 //!
 //! [`LocalEngine`] drives a KataGo `analysis` subprocess; [`RemoteEngine`] drives a
-//! `mirai-server` over MRP/1. Both produce bit-identical [`Report`]s, so the GUI has a
+//! `mirai-server` over MRP/2. Both produce bit-identical [`Report`]s, so the GUI has a
 //! single code path. Each driver is one Cargo feature, both on by default: a client that
 //! only ever talks to a server compiles neither the subprocess nor the KataGo JSON code.
 

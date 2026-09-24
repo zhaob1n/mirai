@@ -23,8 +23,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use mirai_proto::frame::{self, FrameBuf, FrameError};
-use mirai_proto::msg::{ClientMsg, ServerMsg, SubMsg};
+use mirai_proto::frame::{self, FrameBuf, FrameError, SubStreamDecoder};
+use mirai_proto::msg::{ClientMsg, OwnershipDelta, ServerMsg, SubMsg};
 use mirai_proto::transport::{self, TransportError};
 use mirai_proto::types::PROTO_VERSION;
 use quinn::{Connection, RecvStream, SendStream, VarInt};
@@ -88,7 +88,7 @@ impl TofuStore {
     }
 }
 
-/// A `mirai-server` reached over MRP/1, behaving exactly like a local engine.
+/// A `mirai-server` reached over MRP/2, behaving exactly like a local engine.
 pub struct RemoteEngine {
     peer: Arc<Peer>,
     desc: EngineDesc,
@@ -649,14 +649,23 @@ async fn sub_reader(mut recv: RecvStream, int: mpsc::UnboundedSender<Int>) {
         return;
     }
 
-    let mut buf = FrameBuf::new();
+    let mut dec = match SubStreamDecoder::new() {
+        Ok(dec) => dec,
+        Err(e) => {
+            tracing::debug!(sub, error = %e, "could not start the stream's decompressor");
+            let _ = int.send(Int::SubEnd { sub });
+            return;
+        }
+    };
+    let mut own = OwnershipDelta::default();
     loop {
-        // `read_msg` is not cancel-safe, which is fine: the only thing that cancels it is a
+        // `read` is not cancel-safe, which is fine: the only thing that cancels it is a
         // cancellation, after which the stream is abandoned anyway.
         let stopped = tokio::select! {
             _ = &mut stop_rx => true,
-            read = frame::read_msg::<_, SubMsg>(&mut recv, &mut buf) => match read {
-                Ok(msg) => {
+            read = dec.read::<_, SubMsg>(&mut recv) => match read {
+                Ok(mut msg) => {
+                    own.restore(&mut msg);
                     if int.send(Int::Sub { sub, msg }).is_err() {
                         return;
                     }

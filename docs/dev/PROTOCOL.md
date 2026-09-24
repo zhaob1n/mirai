@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- Copyright (C) 2026 Huang Zhaobin -->
 
-# MRP/1 — the mirai Remote Protocol, version 1
+# MRP/2 — the mirai Remote Protocol, version 2
 
 Normative specification. Sufficient to implement an interoperable client or server without
 reading the Rust. Reference implementations: `crates/mirai-server/src/session.rs` (server) and
@@ -38,13 +38,13 @@ fixed for the life of a connection.
 
 | Item | Value | Constant |
 |---|---|---|
-| Version | 1, carried as `u16` | `PROTO_VERSION` (`mirai-proto/src/types.rs`) |
-| ALPN | `mirai/1` | `ALPN` (`mirai-proto/src/transport.rs`) |
+| Version | 2, carried as `u16` | `PROTO_VERSION` (`mirai-proto/src/types.rs`) |
+| ALPN | `mirai/2` | `ALPN` (`mirai-proto/src/transport.rs`) |
 | Default port | UDP 9678 | `DEFAULT_PORT` (same file) |
 | URL scheme | `mirai://host[:port]` | `URL_SCHEME` (same file) |
 | Server default bind | `0.0.0.0:9678` | `DEFAULT_LISTEN` (`mirai-server/src/config.rs`) |
 
-MRP/1 carries Go position analysis between an analysis GUI and a server owning KataGo
+MRP/2 carries Go position analysis between an analysis GUI and a server owning KataGo
 processes. Three properties define its shape:
 
 * **Stateless requests (INV-4).** Every request carries the whole position — initial stones,
@@ -82,7 +82,7 @@ No path, query or userinfo. Credentials travel in `Hello.token`, never in the UR
 |---|---|---|
 | Transport | MUST | QUIC v1 (RFC 9000) over UDP |
 | TLS | MUST | 1.3 only; older versions neither offered nor accepted |
-| ALPN | MUST | exactly `mirai/1`; anything else MUST fail the connection |
+| ALPN | MUST | exactly `mirai/2`; anything else MUST fail the connection |
 | Client certificates | MUST NOT | neither side requests nor sends them |
 | 0-RTT | MUST NOT be relied on | not enabled by either reference endpoint |
 
@@ -96,11 +96,11 @@ QUIC transport parameters (`transport.rs` — `transport_config`), shared by bot
 | `stream_receive_window` | 16 KiB | **Recommended for clients.** A server writing to a subscription stream blocks once it is one window ahead of what the client has read, and only then can it replace a queued report with a newer one. quinn's 1.25 MB default lets hundreds of stale reports queue on a slow link, all delivered late and in order. |
 | bidirectional streams | 1 per connection | A server MUST permit at least one; a client MUST NOT open a second. |
 
-Other flow-control windows, migration and datagrams are implementation choices outside MRP/1.
+Other flow-control windows, migration and datagrams are implementation choices outside MRP/2.
 
 ### 2.2 Certificates: trust on first use
 
-MRP/1 does not use PKI. Servers are LAN boxes; requiring a CA-issued certificate for
+MRP/2 does not use PKI. Servers are LAN boxes; requiring a CA-issued certificate for
 `mirai://basement.local` would mean public DNS plus ACME, or a private CA the user installs.
 The client pins the key directly — the SSH host-key model.
 
@@ -133,7 +133,7 @@ every client pin and is a user-visible event.
 ```
                         client                                    server
                           |                                          |
-   QUIC connect, ALPN "mirai/1", TLS 1.3, leaf pinned                 |
+   QUIC connect, ALPN "mirai/2", TLS 1.3, leaf pinned                 |
                           |=========================================>|
    client-opened BIDIRECTIONAL control stream (exactly one)           |
                           |----- ClientMsg frames ------------------->|
@@ -175,21 +175,50 @@ Every message on every stream is one frame:
 | Field | Type | Meaning |
 |---|---|---|
 | `len` | `u32` little-endian | payload length, **excluding** the 5-byte header |
-| `flags` | `u8` | bit 0 (`0x01`) set ⇒ payload is a zstd frame whose plaintext is the postcard encoding; clear ⇒ payload is the postcard encoding. Bits 1–7 reserved, MUST be 0 |
+| `flags` | `u8` | how the payload is encoded, below. Bits 2–7 reserved, MUST be 0 |
 | `payload` | `len` bytes | [§5](#5-payload-encoding-postcard-v1) |
 
+| `flags` | Allowed on | Payload |
+|---|---|---|
+| `0x00` | every stream | the postcard encoding |
+| `0x01` | the control stream | a standalone zstd frame (RFC 8878) whose plaintext is the postcard encoding |
+| `0x02` | subscription streams | the next chunk of the stream's zstd stream ([§4.1](#41-subscription-streams-one-zstd-stream)), which decompresses to the postcard encoding |
+
 Constants (`mirai-proto/src/frame.rs`): `MAX_FRAME` = 8 MiB = 8388608 · `COMPRESS_THRESHOLD` =
-4096 · `FLAG_ZSTD` = `0x01` · zstd level 1.
+4096 · `FLAG_ZSTD` = `0x01` · `FLAG_SUB_ZSTD` = `0x02` · control-stream zstd level 1 ·
+subscription window 2^16 (`SUB_WINDOW_LOG`) · `SUB_STREAM_LEVEL`, the reference sender's level.
 
 | # | Rule | Level |
 |---|---|---|
 | 1 | Never emit `len > MAX_FRAME`. | MUST NOT |
 | 2 | Read the 5-byte header first and reject `len > MAX_FRAME` **before** reading or allocating the body. | MUST |
-| 3 | **Decompression-bomb guard:** bound the decompressed size and abort as soon as the plaintext would exceed `MAX_FRAME`. Never trust a content-size field inside the zstd frame. (`frame.rs` — `Bounded`, used on both paths.) | MUST |
-| 4 | Compress iff the postcard payload is **strictly greater than** `COMPRESS_THRESHOLD`, to reproduce the byte counts in [§11](#11-reference-figures). Interop does not depend on it: receivers MUST accept either form at any size, so a minimal implementation MAY always send `flags = 0x00`. | SHOULD / MUST |
-| 5 | The compressed payload is a standard zstd frame (RFC 8878). The reference encoder streams at level 1 with **no content-size field and no checksum**; receivers MUST NOT require either. | MUST NOT |
-| 6 | A stream ending exactly at a frame boundary is a graceful end, not an error. Ending inside a frame is an error. | MUST |
-| 7 | Frames carry no message-type tag: the type follows from stream and direction. | — |
+| 3 | **Decompression-bomb guard:** bound each frame's decompressed size and abort as soon as the plaintext would exceed `MAX_FRAME`. Never trust a content-size field inside the zstd frame. (`frame.rs` — `bounded` on the control stream, `SubStreamDecoder::inflate` on subscription streams.) | MUST |
+| 4 | Reject a `flags` value the stream does not allow. | MUST |
+| 5 | A payload decodes to exactly one message; reject trailing bytes after it. | MUST |
+| 6 | Control stream: compress iff the postcard payload is **strictly greater than** `COMPRESS_THRESHOLD`. Interop does not depend on it: receivers MUST accept either form at any size, so a minimal implementation MAY always send `flags = 0x00`. | SHOULD / MUST |
+| 7 | Control stream: the reference encoder streams at level 1 with **no content-size field and no checksum**; receivers MUST NOT require either. | MUST NOT |
+| 8 | A stream ending exactly at a frame boundary is a graceful end, not an error. Ending inside a frame is an error. | MUST |
+| 9 | Frames carry no message-type tag: the type follows from stream and direction. | — |
+
+### 4.1 Subscription streams: one zstd stream
+
+A subscription stream carries a single zstd stream that starts in its first `0x02` frame and
+is never ended. The sender compresses each message into it and flushes (`ZSTD_e_flush`) at the
+end of the frame, so every frame decodes as soon as it arrives, and every report is compressed
+against the reports before it. Consecutive reports of one search differ in a few numbers;
+measured on a real search, a stream carries about a quarter of what the same reports cost
+framed one by one ([§11](#11-reference-figures)).
+
+| # | Rule | Level |
+|---|---|---|
+| 1 | The receiver decodes every frame of the stream, in order, including one whose report it then drops: each `0x02` frame continues the zstd stream. | MUST |
+| 2 | The sender flushes at the end of every frame. A receiver MUST NOT need the next frame to finish decoding this one. | MUST |
+| 3 | The zstd window is at most 2^16 bytes. It bounds each stream's memory on the client, which MUST refuse a stream that declares a larger one. | MUST |
+| 4 | A `0x00` frame stays outside the zstd stream, which it neither advances nor resets. Any frame MAY be sent that way. | MAY |
+| 5 | Level, checksum and content-size flag are the sender's choice; the reference sender uses `SUB_STREAM_LEVEL` with neither checksum nor content size. | — |
+
+A stream's zstd state never crosses into another stream, so cancelling one — which throws its
+unread bytes away ([§8.4](#84-cancellation-inv-3)) — cannot desynchronise any other.
 
 ### Worked frame
 
@@ -235,7 +264,7 @@ Corroborated by postcard's `README.md` ("Variable Length Data"): *all signed and
 integers larger than eight bits are encoded using a varint, including slice lengths and enum
 discriminants.*
 
-Deliberately unused by MRP/1, therefore unspecified here: `f32`/`f64` (MRP/1 quantises
+Deliberately unused by MRP/2, therefore unspecified here: `f32`/`f64` (MRP/2 quantises
 instead), `char`, maps, 32/64/128-bit signed integers, `u128`, COBS framing, CRC flavours.
 
 ### 5.2 Varints
@@ -261,15 +290,15 @@ encode(n):                              decode():
   `80 00` reads as `u16` 0. Encoders MUST NOT depend on that.
 
 **Length varints.** Sequence and string lengths use postcard's `usize` varint, whose decoder
-width follows the decoding machine's pointer size. MRP/1 removes the portability question: no
+width follows the decoding machine's pointer size. MRP/2 removes the portability question: no
 frame may exceed `MAX_FRAME`, so no valid length exceeds 8388608, which is at most four varint
 bytes and decodes identically everywhere. Implementations MUST NOT emit a longer length.
 
 ### 5.3 Type-to-encoding map
 
-| MRP/1 value | Rust type | Wire encoding |
+| MRP/2 value | Rust type | Wire encoding |
 |---|---|---|
-| protocol version | `u16` | varint (always 1 in v1) |
+| protocol version | `u16` | varint (always 2 in v2) |
 | subscription id | `u32` | varint — but **4 raw LE bytes** as the stream preamble ([§3](#3-stream-topology)) |
 | session id, ping nonce | `u64` | varint |
 | text | `String` | varint byte length + UTF-8 |
@@ -305,7 +334,7 @@ below. Declared in `mirai-proto/src/msg.rs`.
 
 | # | Variant | Field | Wire type | Semantics |
 |---|---|---|---|---|
-| **0** | `Hello` | `proto` | `u16` | Version the client speaks. MUST be 1. |
+| **0** | `Hello` | `proto` | `u16` | Version the client speaks. MUST be 2. |
 | | | `token` | `String` | Shared-secret credential. |
 | | | `client` | `String` | Free-form identification (`mirai/<version>`). Informational; MUST NOT affect authorisation. |
 | **1** | `Open` | `sub` | `u32` | Client-chosen id, unique among this connection's live subscriptions. |
@@ -319,7 +348,7 @@ below. Declared in `mirai-proto/src/msg.rs`.
 
 | # | Variant | Field | Wire type | Semantics |
 |---|---|---|---|---|
-| **0** | `Welcome` | `proto` | `u16` | Version the server speaks. MUST be 1. |
+| **0** | `Welcome` | `proto` | `u16` | Version the server speaks. MUST be 2. |
 | | | `server` | `String` | Server identification (`mirai-server/<version>`). |
 | | | `session` | `u64` | Server-assigned connection id for log correlation. Opaque. |
 | | | `engines` | `Vec<EngineDesc>` | Every engine offered, in configuration order; element 0 is the default. MAY be empty. |
@@ -344,7 +373,7 @@ At most one terminal message per stream, always the last frame.
 
 | # | Variant | `as_str()` | Sent when |
 |---|---|---|---|
-| **0** | `BadVersion` | `bad-version` | `Hello.proto != 1`. |
+| **0** | `BadVersion` | `bad-version` | `Hello.proto != 2`. |
 | **1** | `Unauthorized` | `unauthorized` | `Hello.token` matches no configured token. |
 | **2** | `NoSuchEngine` | `no-such-engine` | `Open.engine` names an unknown engine, or is `None` and no engine is configured. |
 | **3** | `TooManySubs` | `too-many-subs` | The token's `max_subs` is already reached. |
@@ -429,8 +458,8 @@ loosens it — a clipped value is still a lower bound — so a receiver MAY read
 
 ### 7.2.1 INV-2: Black perspective
 
-**Every winrate, score and utility on an MRP/1 wire is from Black's perspective.** There is no
-per-message perspective flag and v1 MUST NOT add one.
+**Every winrate, score and utility on an MRP/2 wire is from Black's perspective.** There is no
+per-message perspective flag and v2 MUST NOT add one.
 
 | Rule | Level |
 |---|---|
@@ -457,11 +486,12 @@ between requests.
 | 7 | `max_visits` | `Option<u32>` | visits | Search cap; absent = engine default. |
 | 8 | `max_time_ms` | `Option<u32>` | **milliseconds** | Wall-clock cap. Forwarded to KataGo as `overrideSettings.maxTime` in seconds. |
 | 9 | `pv_len` | `Option<u8>` | moves | Maximum PV length (`analysisPVLen`). |
-| 10 | `want` | `Want` (1 raw byte) | bit flags | Optional extras ([§7.7](#77-want)). |
-| 11 | `report_every_ms` | `Option<u16>` | **milliseconds** | Intermediate-report interval; absent = only the terminal message. Forwarded as `reportDuringSearchEvery` in seconds. |
-| 12 | `priority` | `i8` (1 raw byte) | | Higher runs first. A server MUST clamp it into `-8..=8` (`session.rs` — `PRIORITY_RANGE`) so one client cannot starve others. |
-| 13 | `avoid` | `Vec<AvoidSpec>` | | Move restrictions ([§7.8](#78-avoidspec)). |
-| 14 | `overrides` | `Vec<(String, String)>` | | Raw per-query KataGo `overrideSettings` entries. Servers SHOULD treat them as untrusted and MAY ignore them. |
+| 10 | `max_candidates` | `Option<u8>` | candidates | Keep only the first `n` candidates by KataGo's `order`; absent = all. The server applies it before quantising, so cut moves are neither decoded nor sent. |
+| 11 | `want` | `Want` (1 raw byte) | bit flags | Optional extras ([§7.7](#77-want)). |
+| 12 | `report_every_ms` | `Option<u16>` | **milliseconds** | Intermediate-report interval; absent = only the terminal message. Forwarded as `reportDuringSearchEvery` in seconds. |
+| 13 | `priority` | `i8` (1 raw byte) | | Higher runs first. A server MUST clamp it into `-8..=8` (`session.rs` — `PRIORITY_RANGE`) so one client cannot starve others. |
+| 14 | `avoid` | `Vec<AvoidSpec>` | | Move restrictions ([§7.8](#78-avoidspec)). |
+| 15 | `overrides` | `Vec<(String, String)>` | | Raw per-query KataGo `overrideSettings` entries. Servers SHOULD treat them as untrusted and MAY ignore them. |
 
 ### 7.4 Komi
 
@@ -502,7 +532,7 @@ KataGo (`RuleSet::katago_name`). Receivers MUST reject a discriminant above 8.
 | 0 | `0x01` | `OWNERSHIP` | `Report.ownership` populated (`w*h` entries). |
 | 1 | `0x02` | `POLICY` | `Report.policy` populated (`w*h + 1` entries). |
 | 2 | `0x04` | `PV_VISITS` | `MoveInfo.pv_visits` populated; otherwise empty. |
-| 3 | `0x08` | `MOVES_OWNERSHIP` | Requests per-move ownership from the engine. No MRP/1 field carries it ([B.2](#appendix-b-findings)). |
+| 3 | `0x08` | `MOVES_OWNERSHIP` | Requests per-move ownership from the engine. No MRP/2 field carries it ([B.2](#appendix-b-findings)). |
 | 4 | `0x10` | `ROOT_RAW` | Nominally requests `RootInfo.raw_*`. Not consulted by the reference producer ([B.1](#appendix-b-findings)). |
 | 5–7 | `0xE0` | — | Reserved, MUST be 0. Receivers MUST ignore unknown bits rather than fail (`Want::from_bits_truncate`). |
 
@@ -564,11 +594,27 @@ Intermediate and final reports have the same shape; only the wrapping `SubMsg` v
 | 1 | `turn` | `u16` varint | Turn of the analysed position: 0 = before the first move, else the request's move count. |
 | 2 | `root` | `RootInfo` | Root statistics. |
 | 3 | `moves` | `Vec<MoveInfo>` | Candidates **sorted ascending by `order`**; `moves[0]` is the engine's choice. Servers MUST sort; clients MAY rely on it. |
-| 4 | `ownership` | `Option<Vec<i8>>` | Exactly `w*h` entries when present; any other length MUST be rejected. |
+| 4 | `ownership` | `Option<Vec<i8>>` | Exactly `w*h` entries when present; any other length MUST be rejected. On a subscription stream it may carry changes rather than the map, below. |
 | 5 | `policy` | `Option<Vec<u16>>` | Exactly `w*h + 1` entries when present, pass last; any other length MUST be rejected. |
 
-Reports are complete snapshots, never deltas: a client MAY drop an older one the moment a newer
-arrives.
+**Ownership on a subscription stream.** Between two reports of one search most points move by
+a step or two. Sent as those changes, a live report measured a quarter smaller
+([§11](#11-reference-figures)). So both ends of a subscription stream keep the last map the
+stream carried:
+
+| # | Rule | Level |
+|---|---|---|
+| 1 | A report whose `ownership` has the same length as the stream's last map carries `own[i] − last[i]` (wrapping `i8` arithmetic) instead of `own[i]`; any other map goes whole. The receiver restores `last[i] + wire[i]`, wrapping. | MUST |
+| 2 | Either way the map, not the difference, becomes the stream's last map. A report without `ownership` leaves it unchanged. | MUST |
+| 3 | Every other field is sent as is. | — |
+
+Both ends apply the same rule to the same sequence, so they cannot disagree; the state lives
+and dies with the stream (`msg.rs` — `OwnershipDelta`).
+
+Once decoded and restored, every report is a complete snapshot: a client MAY drop an older one
+the moment a newer arrives. The frames underneath are not independent
+([§4.1](#41-subscription-streams-one-zstd-stream), and the ownership rule above): the client
+still decodes every one.
 
 ---
 
@@ -578,7 +624,7 @@ arrives.
 
 ```
 client                                                            server
-  | QUIC Initial, ALPN "mirai/1", TLS 1.3; leaf fingerprint pinned    |
+  | QUIC Initial, ALPN "mirai/2", TLS 1.3; leaf fingerprint pinned    |
   |----------------------------------------------------------------->|
   | open bidirectional stream; frame ClientMsg::Hello{proto,token,..} |
   |----------------------------------------------------------------->|
@@ -588,16 +634,16 @@ client                                                            server
 
 | # | Rule | Level |
 |---|---|---|
-| 1 | Complete the QUIC/TLS handshake with ALPN `mirai/1` and verify the leaf fingerprint before sending any frame. | MUST |
+| 1 | Complete the QUIC/TLS handshake with ALPN `mirai/2` and verify the leaf fingerprint before sending any frame. | MUST |
 | 2 | Open exactly one bidirectional stream and send `Hello` as its first frame. | MUST |
 | 3 | (Server) Treat any first control message other than `Hello` as fatal: `Error { None, BadRequest }`, then close the connection with application code 1. | MUST |
 | 4 | (Server) Send nothing before receiving `Hello`, except an `Error`. | MUST NOT |
 | 5 | (Client) Ignore, rather than fail on, any other message arriving before `Welcome`. | SHOULD |
 
-**Version negotiation** is two-layered and both layers are REQUIRED: ALPN `mirai/1` fails the
+**Version negotiation** is two-layered and both layers are REQUIRED: ALPN `mirai/2` fails the
 handshake between incompatible major versions, and the `Hello`/`Welcome` `proto` check catches
-a peer that offered `mirai/1` without implementing it. A server MUST reject `Hello.proto != 1`
-with `BadVersion` and close; a client MUST treat `Welcome.proto != 1` as unusable and MUST NOT
+a peer that offered `mirai/2` without implementing it. A server MUST reject `Hello.proto != 2`
+with `BadVersion` and close; a client MUST treat `Welcome.proto != 2` as unusable and MUST NOT
 send `Open`. There is no other feature negotiation — capabilities MUST NOT be inferred from the
 `client`/`server` identification strings.
 
@@ -701,7 +747,7 @@ watching.
 | `ErrCode` | `sub` | Trigger | Fatal to |
 |---|---|---|---|
 | `BadRequest` | `None` | first control message was not `Hello` | **connection** (server closes, code 1) |
-| `BadVersion` | `None` | `Hello.proto != 1` | **connection** (code 1) |
+| `BadVersion` | `None` | `Hello.proto != 2` | **connection** (code 1) |
 | `Unauthorized` | `None` | token not recognised | **connection** (code 1) |
 | `BadRequest` | `None` | second `Hello` | nothing |
 | `BadRequest` | `Some(sub)` | `Open.sub` already live | that subscription |
@@ -746,16 +792,16 @@ either interpretation.
 
 ## 10. Versioning and compatibility
 
-### 10.1 What a v1 implementation MUST reject
+### 10.1 What a v2 implementation MUST reject
 
 Postcard is positional: one misread byte desynchronises the rest of the frame, so leniency here
 produces silently wrong analysis rather than a clean failure.
 
 | # | Condition |
 |---|---|
-| 1 | ALPN other than `mirai/1`; TLS below 1.3. |
+| 1 | ALPN other than `mirai/2`; TLS below 1.3. |
 | 2 | A leaf certificate whose SHA-256 differs from the stored pin. |
-| 3 | `Hello.proto != 1` (server) or `Welcome.proto != 1` (client). |
+| 3 | `Hello.proto != 2` (server) or `Welcome.proto != 2` (client). |
 | 4 | A first control message that is not `Hello`. |
 | 5 | Frame `len > MAX_FRAME`, before reading the body; a zstd payload whose plaintext would exceed `MAX_FRAME`; a frame truncated by end of stream. |
 | 6 | An enum discriminant out of range: `ClientMsg` 0–4, `ServerMsg` 0–4, `SubMsg` 0–2, `ErrCode` 0–6, `Color` 0–1, `RuleSet` 0–8. |
@@ -764,60 +810,90 @@ produces silently wrong analysis rather than a clean failure.
 | 9 | A `String` that is not valid UTF-8. |
 | 10 | Trailing bytes after a fully decoded message within one frame. |
 | 11 | `Size` outside `2..=19`; `ownership` not `w*h` long; `policy` not `w*h + 1` long. |
+| 12 | A `flags` value the stream does not allow ([§4](#4-framing)); a subscription stream whose zstd window exceeds 2^16. |
 
-A v1 implementation MUST NOT reject: unknown `Want` bits (ignore them), unknown `overrides`
+A v2 implementation MUST NOT reject: unknown `Want` bits (ignore them), unknown `overrides`
 keys, an empty `Welcome.engines`, or a `pv_visits` shorter than `pv`.
 
-### 10.2 Rules for a future v2
+### 10.2 Rules for a future v3
 
 With no field names, counts or type tags on the wire, **nothing may be added to an existing
-struct or enum in a way a v1 peer could encounter.**
+struct or enum in a way a v2 peer could encounter.**
 
-| Change | Compatible within v1? |
+| Change | Compatible within v2? |
 |---|---|
 | New value in an existing string field | **Yes** |
 | New `Want` bit | **Yes** — receivers truncate unknown bits, and the bit only ever requests optional data |
 | New key in `AnalyzeReq.overrides` | **Yes** — an opaque string map |
 | New field appended to any struct | **No** — the decoder stops early, then rejects trailing bytes or mis-parses the next field |
-| New variant appended to any enum, including `ErrCode` | **No** — v1 rejects the unknown discriminant. `EngineFailed` and `Internal` already exist for engine-side and unclassified failures |
+| New variant appended to any enum, including `ErrCode` | **No** — v2 rejects the unknown discriminant. `EngineFailed` and `Internal` already exist for engine-side and unclassified failures |
 | Any change to a scale constant, `POLICY_ILLEGAL`, or a quantisation formula | **No** — silently wrong numbers, the worst failure mode |
 | Field reordering | **No** |
-| New framing flag bit | **No.** A v1 receiver *ignores* unknown flag bits rather than rejecting them ([B.7](#appendix-b-findings)), so a repurposed bit is misread instead of refused. Reserved bits stay zero for the life of v1 |
+| New framing flag bit | **No** — receivers reject unknown flag bits ([B.7](#appendix-b-findings)), so a new bit needs a new version. Reserved bits stay zero for the life of v2 |
 
-A v2 MUST: use ALPN `mirai/2` so incompatible peers fail at the TLS handshake (a dual-stack
-server SHOULD offer both and behave per the negotiated one) · set `PROTO_VERSION = 2` so a
+A v3 MUST: use ALPN `mirai/3` so incompatible peers fail at the TLS handshake (a dual-stack
+server SHOULD offer both and behave per the negotiated one) · set `PROTO_VERSION = 3` so a
 wrong-ALPN peer is still caught · keep the 5-byte frame header byte-identical so a version
 mismatch can still be reported with a readable `Error` · append new enum variants only at the
-end and never renumber or repurpose a discriminant, so v2 tooling can still read v1 captures ·
+end and never renumber or repurpose a discriminant, so v3 tooling can still read v2 captures ·
 preserve INV-1, INV-2 and INV-4, which are meaning, not encoding.
+
+### 10.3 Changes from MRP/1
+
+MRP/2 replaced MRP/1 outright; the reference endpoints speak only v2, so a v1 peer fails at
+the TLS handshake.
+
+| # | Change |
+|---|---|
+| 1 | ALPN `mirai/2`, `PROTO_VERSION = 2`. |
+| 2 | `AnalyzeReq.max_candidates` ([§7.3](#73-analyzereq)): a client asks for only the candidates it shows. |
+| 3 | A subscription stream is one zstd stream, flags `0x02` ([§4.1](#41-subscription-streams-one-zstd-stream)); a report is compressed against those before it. |
+| 4 | Trailing bytes after a message are rejected. MRP/1 already required it, but its reference implementation ignored them: `postcard::from_bytes` does not check. |
+| 5 | On a subscription stream `Report.ownership` carries the change from the stream's last map ([§7.11](#711-report)). |
 
 ---
 
 ## 11. Reference figures
 
-Measured by `mirai-proto/tests/wire_size.rs`.
+Two sources. `mirai-proto/tests/wire_size.rs` pins single messages on synthetic data and
+fails `cargo test` if they grow; `mirai-engine/examples/wire_bench.rs` measures a real
+search ([TESTING.md §4](TESTING.md#4-verifying-against-a-real-engine)).
 
 | Message | Contents | postcard payload | Compressed | **Framed** |
 |---|---|---|---|---|
-| `SubMsg::Report` | 19×19, 50 candidates, 15-move PVs with `pv_visits`, 361-entry ownership, no policy | 4128 B | yes → 2617 B | **2622 B** |
-| `ClientMsg::Open` | 19×19, 200 moves, `want = OWNERSHIP\|PV_VISITS`, `max_visits`, `report_every_ms` | 495 B | no | **500 B** |
+| `SubMsg::Report` | 19×19, 50 candidates, 15-move PVs with `pv_visits`, 361-entry ownership, no policy; first frame of a subscription stream | 4128 B | yes → 2587 B | **2592 B** |
+| `ClientMsg::Open` | 19×19, 200 moves, `want = OWNERSHIP\|PV_VISITS`, `max_visits`, `report_every_ms` | 496 B | no | **501 B** |
 | `SubMsg::Report` | 2 candidates, 2-move PVs, no ownership or policy ([Appendix A](#appendix-a-worked-exchange)) | 77 B | no | **82 B** |
 | `ClientMsg::Ping` | one `u64` | 2 B | no | **7 B** |
 
+A real search: `katago analysis` on an 18-move 19×19 opening, 20 s at
+`reportDuringSearchEvery = 0.1`, 196 reports of 63 candidates on average. KataGo's JSON for
+one report averaged **33.6 KB**, and 240 µs to parse and quantise. Mean framed bytes per
+report, each row adding one change to the one above:
+
+| Wire | Policy off | Policy on |
+|---|---|---|
+| MRP/1, as live analysis requested it (every candidate, `pv_visits`) | 2318 B | 2656 B |
+| without `pv_visits`, which no client reads | 2185 B | 2594 B |
+| `max_candidates = 10`, what the board shows by default | 738 B | 1147 B |
+| one zstd stream per subscription ([§4.1](#41-subscription-streams-one-zstd-stream)) | 198 B | 197 B |
+| ownership as changes ([§7.11](#711-report)) — **MRP/2** | **148 B** | **148 B** |
+
 What to expect from those numbers:
 
-* A live 19×19 analysis at `report_every_ms = 100` costs roughly **26 KB/s** per subscription.
-  The equivalent KataGo JSON is put at ~45 KB per report by the `mirai-proto` crate docs
-  (~17× larger); that figure is a project claim, not measured by this specification.
-* Ownership dominates a report: `w*h` raw bytes before compression. `POLICY` adds `w*h + 1`
-  varints of 1–3 bytes each.
-* A report crosses the 4096-byte compression threshold at roughly 50 candidates with full PVs
-  plus ownership; smaller reports go out uncompressed, so an implementation that never
-  compresses interoperates and is only larger on the biggest frames.
-* `MAX_FRAME` is ~2000× a full report. It is a safety ceiling, not a working budget.
+* A live 19×19 analysis at `report_every_ms = 100` costs about **1.5 KB/s** per subscription,
+  against 23 KB/s under MRP/1 and 336 KB/s for KataGo's own JSON.
+* The first frame of a stream has nothing to be compressed against, and costs what the report
+  costs alone (654 B here). A client that steps through a game opens a new stream per move,
+  so browsing pays that; pondering one position pays the stream rate.
+* An unchanged policy costs one back-reference, which is why the overlay adds nothing once a
+  stream is running.
+* Encoding a report takes about 14 µs at `SUB_STREAM_LEVEL` and decoding about 3 µs.
+* `MAX_FRAME` is ~3000× a full report. It is a safety ceiling, not a working budget.
 
-Verified end to end against KataGo 1.16.4, locally and through `mirai-server`; a client SIGINT
-makes the server drop the subscription in under 1 ms and KataGo falls to 0 % CPU.
+Verified end to end against KataGo 1.18.0, locally and through `mirai-server`. A client
+SIGINT makes the server drop the subscription within 50 µs of the connection closing, and
+KataGo falls from two busy cores to 0 % CPU within 250 ms.
 
 ---
 
@@ -825,7 +901,7 @@ makes the server drop the subscription in under 1 ms and KataGo falls to 0 % CPU
 
 ### MUST
 
-1. Negotiate ALPN `mirai/1` over QUIC with TLS 1.3 only.
+1. Negotiate ALPN `mirai/2` over QUIC with TLS 1.3 only.
 2. Pin the server leaf certificate by lowercase-hex SHA-256 of its DER; refuse on mismatch; do
    no chain, hostname or expiry validation; still verify the handshake signature.
 3. Use one client-opened bidirectional control stream, with `Hello` as its first frame.
@@ -834,18 +910,20 @@ makes the server drop the subscription in under 1 ms and KataGo falls to 0 % CPU
 5. Frame every message as `[len: u32 LE][flags: u8][payload]`.
 6. Reject `len > MAX_FRAME` before allocating or reading the body.
 7. Bound decompressed payloads to `MAX_FRAME` and abort decompression that would exceed it.
+   Refuse a subscription stream whose zstd window exceeds 2^16.
 8. Encode payloads as postcard v1 in exactly the field order of §6 and §7.
 9. Encode `u16`/`u32`/`u64`, all lengths and all discriminants as unsigned LEB128 varints;
    `u8`/`i8` as one raw byte; `i16` as zigzag-then-varint; `bool` as one `0x00`/`0x01` byte.
 10. Encode `Option` as `0x00`, or `0x01` + value, and reject any other tag.
-11. Reject unknown discriminants, malformed varints, invalid UTF-8 and trailing bytes.
+11. Reject unknown discriminants, malformed varints, invalid UTF-8, trailing bytes, and a
+    `flags` value the stream does not allow.
 12. Use `index = y*w + x` with `y = 0` at the top, and `65535` for pass.
 13. Send `ownership` with `w*h` entries and `policy` with `w*h + 1`, pass last, `65535` illegal.
 14. Treat every winrate, score and utility as Black-perspective, converting only at display
     time.
 15. Apply the quantisation formulas and scale constants of §7.2 exactly.
 16. Carry komi as `komi_x2`, and the whole position in every request.
-17. Check `proto == 1` in `Hello`/`Welcome` and fail the session on mismatch.
+17. Check `proto == 2` in `Hello`/`Welcome` and fail the session on mismatch.
 18. (Server) Compare tokens in constant time against every configured token.
 19. (Server) Clamp `priority` into `-8..=8`; enforce `max_subs` with `TooManySubs`; reject a
     duplicate live `sub` with `BadRequest`.
@@ -856,19 +934,22 @@ makes the server drop the subscription in under 1 ms and KataGo falls to 0 % CPU
 24. Treat a subscription stream that reaches EOF without a terminal message as failed.
 25. (Server) Flush the `Error` frame before closing a rejected connection.
 26. Decode and handle all seven `ErrCode` values.
+27. Decode every frame of a subscription stream, in order, and restore ownership from the
+    stream's last map (§7.11).
 
 ### SHOULD
 
-27. Compress payloads above 4096 bytes with zstd and set `flags & 0x01`.
-28. Advertise `max_concurrent_uni_streams` well above the intended subscription count.
-29. Send QUIC keep-alives at roughly ⅓ of the negotiated idle timeout.
-30. Normalise a user-supplied fingerprint (trim, lowercase, strip `:`) before comparing, and
+28. Control stream: compress payloads above 4096 bytes with zstd and set `flags = 0x01`.
+    Subscription streams: send every frame as `0x02`.
+29. Advertise `max_concurrent_uni_streams` well above the intended subscription count.
+30. Send QUIC keep-alives at roughly ⅓ of the negotiated idle timeout.
+31. Normalise a user-supplied fingerprint (trim, lowercase, strip `:`) before comparing, and
     show a first-seen fingerprint to the user before persisting it.
-31. Use ≥ 128 bits of entropy per token.
-32. Reconnect with capped exponential backoff, distinguishing "reconnecting" from "permanently
+32. Use ≥ 128 bits of entropy per token.
+33. Reconnect with capped exponential backoff, distinguishing "reconnecting" from "permanently
     rejected" in anything the user sees.
-33. Sort `Report.moves` ascending by `order` before sending.
-34. Set `report_every_ms` only when a live view is wanted, so the server does not serialise
+34. Sort `Report.moves` ascending by `order` before sending.
+35. Set `report_every_ms` only when a live view is wanted, so the server does not serialise
     reports nobody reads.
 
 ---
@@ -879,17 +960,17 @@ Every byte below was produced by an independent encoder written from this specif
 `Open` and `Report` sizes reproduce the reference implementation's measured frame sizes
 exactly. `|` marks the header/payload boundary for readability only.
 
-**0 — connect.** UDP to `box.local:9678`, QUIC + ALPN `mirai/1` + TLS 1.3. Hash the leaf DER
+**0 — connect.** UDP to `box.local:9678`, QUIC + ALPN `mirai/2` + TLS 1.3. Hash the leaf DER
 with SHA-256, render 64 lowercase hex characters, compare with the stored pin. No pin stored ⇒
 record and ask the user; mismatch ⇒ abort before any frame is sent.
 
-**1 — `Hello { proto: 1, token: "t0k", client: "demo/1" }`**
+**1 — `Hello { proto: 2, token: "t0k", client: "demo/1" }`**
 
 ```
-0d 00 00 00 | 00 | 00 01 03 74 30 6b 06 64 65 6d 6f 2f 31
+0d 00 00 00 | 00 | 00 02 03 74 30 6b 06 64 65 6d 6f 2f 31
 len=13       flags  ^  ^  ^  "t0k"  ^  "demo/1"
                     |  |  len 3     len 6
-                    |  proto = 1
+                    |  proto = 2
                     variant 0 = Hello
 ```
 
@@ -897,11 +978,11 @@ len=13       flags  ^  ^  ^  "t0k"  ^  "demo/1"
 `{ "default", "1.16.4", "b18c384nbt", 4 threads, 19×19, no human model }`
 
 ```
-35 00 00 00 | 00 | 00 01 12 6d 69 72 61 69 2d 73 65 72 76 65 72 2f 30 2e 31 2e 30
+35 00 00 00 | 00 | 00 02 12 6d 69 72 61 69 2d 73 65 72 76 65 72 2f 30 2e 31 2e 30
                    01 01 07 64 65 66 61 75 6c 74 06 31 2e 31 36 2e 34
                    0a 62 31 38 63 33 38 34 6e 62 74 04 13 13 00
 
-00 variant 0 = Welcome · 01 proto · 12 "mirai-server/0.1.0" (len 18) · 01 session = 1
+00 variant 0 = Welcome · 02 proto · 12 "mirai-server/0.1.0" (len 18) · 01 session = 1
 01 engines: 1 element · 07 "default" · 06 "1.16.4" · 0a "b18c384nbt"
 04 analysis_threads · 13 13 max_board 19x19 (raw u8) · 00 has_human_model = false
 ```
@@ -910,12 +991,13 @@ len=13       flags  ^  ^  ^  "t0k"  ^  "demo/1"
 `max_visits: Some(1000)`, `want: OWNERSHIP`, `report_every_ms: Some(250)`
 
 ```
-16 00 00 00 | 00 | 01 01 00 13 13 01 1e 00 00 00 01 e8 07 00 00 01 01 fa 01 00 00 00
+17 00 00 00 | 00 | 01 01 00 13 13 01 1e 00 00 00 01 e8 07 00 00 00 01 01 fa 01 00 00 00
 
 01 variant 1 = Open · 01 sub = 1 · 00 engine = None (server default)
 13 13 size 19x19 · 01 rules = Chinese · 1e komi_x2: zigzag 30 -> 15 -> komi 7.5
 00 initial_stones: 0 · 00 moves: 0 · 00 initial_player = None (=> Black)
 01 e8 07 max_visits = Some(1000) · 00 max_time_ms = None · 00 pv_len = None
+00 max_candidates = None
 01 want = OWNERSHIP (raw byte) · 01 fa 01 report_every_ms = Some(250)
 00 priority = 0 (raw byte) · 00 avoid: 0 · 00 overrides: 0
 ```
@@ -928,7 +1010,10 @@ len=13       flags  ^  ^  ^  "t0k"  ^  "demo/1"
 ```
 
 **5 — one intermediate `Report`**: 1000 root visits, root winrate 0.4837 and lead −1.5 points
-(Black), two candidates with 2-move PVs, no ownership yet, no policy.
+(Black), two candidates with 2-move PVs, no ownership yet, no policy. It is shown as an
+uncompressed `0x00` frame, which a subscription stream accepts
+([§4.1](#41-subscription-streams-one-zstd-stream)); the reference server sends the same bytes
+compressed into the stream's zstd stream, flags `0x02`.
 
 ```
 4d 00 00 00 | 00 | 00 00 e8 07 d3 f7 01 5f 53 c0 03 d7 07 00 00 00 00 02
@@ -985,12 +1070,12 @@ open. None blocks an interoperable implementation, and none corrupts a session o
 | # | Finding | Status | What an implementer should do |
 |---|---|---|---|
 | B.1 | `Want::ROOT_RAW` was documented as gating `RootInfo`'s `raw_*` fields, but nothing consulted it — KataGo has no switch for those values | **fixed** (documented as advisory) | Treat the raw fields as "present when the engine supplied them". Set the bit for forward compatibility; never rely on it to suppress them. |
-| B.2 | `Want::MOVES_OWNERSHIP` was forwarded as KataGo's `includeMovesOwnership`, but `MoveInfo` has no field for the result, so it was decoded and discarded | **fixed** (flag reserved; no longer requested) | Leave unset. The bit is reserved so a v2 can add the field without reusing it. |
-| B.3 | `EngineFailed` and `Internal` are never sent by the reference server; engine failures arrive as `SubMsg::Failed(String)`, losing the machine-readable code | open | Decode both anyway — the discriminants are part of v1 and another server may use them. |
+| B.2 | `Want::MOVES_OWNERSHIP` was forwarded as KataGo's `includeMovesOwnership`, but `MoveInfo` has no field for the result, so it was decoded and discarded | **fixed** (flag reserved; no longer requested) | Leave unset. The bit is reserved so a later version can add the field without reusing it. |
+| B.3 | `EngineFailed` and `Internal` are never sent by the reference server; engine failures arrive as `SubMsg::Failed(String)`, losing the machine-readable code | open | Decode both anyway — the discriminants are part of the protocol and another server may use them. |
 | B.4 | `RAW_VAR_TIME_SCALE` was defined in `mirai-engine`, so `mirai-proto` alone was not enough to decode `raw_var_time_left` | **fixed** (moved beside the other scales in `types.rs`) | — |
 | B.5 | `max_subs` is enforced per connection, not per token, so one token on two connections gets twice its quota | open | A server MAY enforce it globally; a client must rely on neither. |
 | B.6 | The reference server accepts one bidirectional stream and never looks for another, so a second stalls rather than erroring. [INFERENCE] from the control flow; untested | open | Never open a second bidirectional stream. A stricter server would close the connection. |
-| B.7 | Unknown framing flag bits were ignored, so `flags = 0x02` parsed as uncompressed postcard | **fixed** (unknown bits are now a hard error) | Keep reserved bits zero; expect a peer to reject anything else ([§10.2](#102-rules-for-a-future-v2)). |
+| B.7 | Unknown framing flag bits were ignored, so `flags = 0x02` parsed as uncompressed postcard | **fixed** (unknown bits are now a hard error) | Keep reserved bits zero; expect a peer to reject anything else ([§10.2](#102-rules-for-a-future-v3)). |
 | B.8 | Nothing validates a non-empty `MoveInfo.pv_visits` against the length of `pv` | open | Index defensively; do not assume the two are the same length. |
 
 Everything else read for this specification — framing, quantisation, the handshake, the

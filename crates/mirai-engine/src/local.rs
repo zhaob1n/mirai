@@ -95,6 +95,7 @@ struct Inner {
 struct Entry {
     tx: watch::Sender<SubEvent>,
     size: Size,
+    max_candidates: Option<u8>,
     turn: u16,
     to_play: Color,
     /// A `terminate` has been sent; the entry stays until KataGo's final response lands.
@@ -245,6 +246,7 @@ impl Engine for LocalEngine {
             Entry {
                 tx,
                 size: req.size,
+                max_candidates: req.max_candidates,
                 turn: req.turn(),
                 to_play: req.to_play(),
                 terminating: false,
@@ -334,7 +336,10 @@ impl Inner {
             tracing::trace!(id, "response for a non-analysis id");
             return;
         };
-        let Some((size, turn, to_play)) = self.subs.get(&key).map(|e| (e.size, e.turn, e.to_play))
+        let Some((size, cap, turn, to_play)) = self
+            .subs
+            .get(&key)
+            .map(|e| (e.size, e.max_candidates, e.turn, e.to_play))
         else {
             // The tail of a query we terminated and already finished with.
             tracing::trace!(id, "response for an unknown query id");
@@ -344,7 +349,7 @@ impl Inner {
         let event = if no_results {
             SubEvent::Done(Arc::new(Report::empty(turn, to_play)))
         } else {
-            match decode_report(size, body) {
+            match decode_report(size, cap, body) {
                 Ok(report) => {
                     let report = Arc::new(report);
                     if terminal {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! QUIC transport for MRP/1.
+//! QUIC transport for MRP/2.
 //!
 //! Stream topology:
 //!

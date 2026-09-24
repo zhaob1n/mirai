@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Huang Zhaobin
 //! One QUIC connection: the control stream, and one task per live subscription.
 //!
-//! Stream topology is MRP/1's (see `mirai_proto::transport`): the client opens a single
+//! Stream topology is MRP/2's (see `mirai_proto::transport`): the client opens a single
 //! bidirectional control stream, and the server opens one unidirectional stream per
 //! subscription, prefixed with the 4-byte LE subscription id.
 //!
@@ -15,11 +15,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use mirai_core::Size;
 use mirai_engine::{Engine, SubEvent, Subscription};
-use mirai_proto::frame::{self, FrameBuf, FrameError};
-use mirai_proto::msg::{ClientMsg, ErrCode, ServerMsg};
-use mirai_proto::types::{AnalyzeReq, EngineDesc, PROTO_VERSION, Report};
+use mirai_proto::frame::{self, FrameBuf, FrameError, SUB_STREAM_LEVEL, SubStreamEncoder};
+use mirai_proto::msg::{ClientMsg, ErrCode, OwnershipDelta, ServerMsg, SubMsgRef};
+use mirai_proto::types::{AnalyzeReq, EngineDesc, PROTO_VERSION};
 use quinn::{Connection, SendStream, VarInt};
-use serde::Serialize;
 use subtle::ConstantTimeEq;
 use tokio::sync::oneshot;
 use tracing::{debug, info, warn};
@@ -105,18 +104,6 @@ fn request_geometry_error(req: &AnalyzeReq) -> Option<&'static str> {
     }
 
     None
-}
-
-/// Borrowed mirror of [`mirai_proto::msg::SubMsg`].
-///
-/// Variant order and shapes match exactly, so postcard emits byte-identical frames — but
-/// a report can be streamed straight out of its `Arc` instead of being cloned ten times a
-/// second per subscription. `sub_msg_ref_is_byte_identical` pins the two together.
-#[derive(Serialize)]
-enum SubMsgRef<'a> {
-    Report(&'a Report),
-    Done(&'a Report),
-    Failed(&'a str),
 }
 
 pub async fn serve(host: Arc<Host>, conn: Connection) {
@@ -288,6 +275,7 @@ async fn session_loop(host: &Host, conn: &Connection, session: u64) -> anyhow::R
                     engine = %named.name,
                     moves = req.moves.len(),
                     max_visits = ?req.max_visits,
+                    max_candidates = ?req.max_candidates,
                     priority = req.priority,
                     "open subscription"
                 );
@@ -326,27 +314,37 @@ async fn pump(
         return;
     }
 
-    let mut buf = FrameBuf::new();
+    let mut enc = match SubStreamEncoder::new(SUB_STREAM_LEVEL) {
+        Ok(enc) => enc,
+        Err(e) => {
+            // A stream that ends without `Done` or `Failed` fails on the client.
+            warn!(session, sub, error = %e, "could not start the stream's compressor");
+            let _ = stream.finish();
+            return;
+        }
+    };
+    let mut own = OwnershipDelta::default();
     let mut event = subscription.current();
     loop {
         match &event {
             SubEvent::Pending => {}
             SubEvent::Report(r) => {
-                if let Err(e) = send(&mut stream, &mut buf, SubMsgRef::Report(r)).await {
+                let msg = SubMsgRef::Report(own.report(r));
+                if let Err(e) = send(&mut stream, &mut enc, msg).await {
                     debug!(session, sub, error = %e, "subscription stream closed early");
                     info!(session, sub, "subscription dropped");
                     return;
                 }
             }
             SubEvent::Done(r) => {
-                let _ = send(&mut stream, &mut buf, SubMsgRef::Done(r)).await;
+                let _ = send(&mut stream, &mut enc, SubMsgRef::Done(own.report(r))).await;
                 let _ = stream.finish();
                 info!(session, sub, visits = r.root.visits, "subscription done");
                 return;
             }
             SubEvent::Failed(err) => {
                 let text = err.to_string();
-                let _ = send(&mut stream, &mut buf, SubMsgRef::Failed(&text)).await;
+                let _ = send(&mut stream, &mut enc, SubMsgRef::Failed(&text)).await;
                 let _ = stream.finish();
                 info!(session, sub, error = %text, "subscription failed");
                 return;
@@ -366,7 +364,7 @@ async fn pump(
                 None => {
                     let _ = send(
                         &mut stream,
-                        &mut buf,
+                        &mut enc,
                         SubMsgRef::Failed("engine closed the subscription"),
                     )
                     .await;
@@ -381,10 +379,10 @@ async fn pump(
 
 async fn send(
     stream: &mut SendStream,
-    buf: &mut FrameBuf,
+    enc: &mut SubStreamEncoder,
     msg: SubMsgRef<'_>,
 ) -> Result<(), FrameError> {
-    frame::write_msg(stream, buf, &msg).await
+    enc.write(stream, &msg).await
 }
 
 async fn error_msg(
@@ -432,8 +430,7 @@ async fn stream_flush(tx: &mut SendStream) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use mirai_core::{Color, Point, RuleSet};
-    use mirai_proto::msg::SubMsg;
-    use mirai_proto::types::{AvoidSpec, MoveInfo};
+    use mirai_proto::types::AvoidSpec;
 
     fn host(tokens: &[(&str, u32)]) -> Host {
         Host {
@@ -476,76 +473,6 @@ mod tests {
         let h = host(&[]);
         assert!(h.resolve_engine(None).is_none());
         assert!(h.resolve_engine(Some("default")).is_none());
-    }
-
-    fn sample_report() -> Report {
-        let mut r = Report::empty(42, Color::White);
-        r.root.visits = 1234;
-        r.root.winrate = 40000;
-        r.root.score_lead = -97;
-        r.root.raw_winrate = Some(31000);
-        r.ownership = Some((0..81).map(|i| (i as i8) - 40).collect());
-        r.policy = Some((0..82).map(|i| (i * 700) as u16).collect());
-        r.moves = (0..3)
-            .map(|i| MoveInfo {
-                mv: Point(60 + i),
-                visits: 900 - i as u32,
-                edge_visits: 880 - i as u32,
-                winrate: 40000 + i,
-                prior: 3000,
-                lcb: -120,
-                utility: 44,
-                utility_lcb: 30,
-                score_lead: -97,
-                score_selfplay: -101,
-                score_stdev: 400,
-                order: i as u8,
-                play_value: 12345,
-                pv: (0..15).map(|k| Point(k * 7 + i)).collect(),
-                pv_visits: (0..15).map(|k| 100 - k as u32).collect(),
-            })
-            .collect();
-        r
-    }
-
-    /// The zero-copy `SubMsgRef` is only sound while it encodes exactly like `SubMsg`;
-    /// a reordered or added variant in `mirai-proto` would silently corrupt the stream.
-    #[test]
-    fn sub_msg_ref_is_byte_identical_to_sub_msg() {
-        let r = sample_report();
-        let mut a = FrameBuf::new();
-        let mut b = FrameBuf::new();
-
-        let borrowed = frame::encode(&mut a, &SubMsgRef::Report(&r))
-            .unwrap()
-            .to_vec();
-        let owned = frame::encode(&mut b, &SubMsg::Report(r.clone())).unwrap();
-        assert_eq!(borrowed, owned, "Report variant");
-
-        let borrowed = frame::encode(&mut a, &SubMsgRef::Done(&r))
-            .unwrap()
-            .to_vec();
-        let owned = frame::encode(&mut b, &SubMsg::Done(r.clone())).unwrap();
-        assert_eq!(borrowed, owned, "Done variant");
-
-        let borrowed = frame::encode(&mut a, &SubMsgRef::Failed("boom"))
-            .unwrap()
-            .to_vec();
-        let owned = frame::encode(&mut b, &SubMsg::Failed("boom".to_string())).unwrap();
-        assert_eq!(borrowed, owned, "Failed variant");
-    }
-
-    /// And it must decode back into the real type, compression path included.
-    #[test]
-    fn a_borrowed_report_round_trips_through_the_frame_codec() {
-        let r = sample_report();
-        let mut buf = FrameBuf::new();
-        let bytes = frame::encode(&mut buf, &SubMsgRef::Done(&r))
-            .unwrap()
-            .to_vec();
-        let mut rbuf = FrameBuf::new();
-        let back: SubMsg = frame::decode(&mut rbuf, &bytes).unwrap();
-        assert_eq!(back, SubMsg::Done(r));
     }
 
     #[test]

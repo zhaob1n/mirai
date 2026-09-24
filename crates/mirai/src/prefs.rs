@@ -1434,8 +1434,17 @@ fn connect_analysis(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, st
             if suggestions_syncing.get() {
                 return;
             }
-            suggestions_state.config_mut().analysis.max_suggestions = row.value() as u8;
+            let grew = {
+                let mut cfg = suggestions_state.config_mut();
+                let before = cfg.analysis.suggestion_limit();
+                cfg.analysis.max_suggestions = row.value() as u8;
+                cfg.analysis.suggestion_limit() > before
+            };
             suggestions_state.save_config();
+            // The live request carries the old cap: the engine never sends the extra moves.
+            if grew {
+                suggestions_state.restart_analysis();
+            }
             // The board and the candidate list truncate to this, so redraw them now.
             suggestions_state.changed(Change::Report);
         });

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! MRP/1 — the mirai remote-analysis protocol.
+//! MRP/2 — the mirai remote-analysis protocol.
 //!
 //! * [`types`] — quantised wire values shared by the local and remote engine paths.
 //! * [`msg`] — control-stream and subscription-stream messages.

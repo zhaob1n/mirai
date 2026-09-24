@@ -5,7 +5,7 @@ one document your task points at. Do not re-explore the tree; it is mapped for y
 
 **mirai** is a GTK4/libadwaita desktop application that drives KataGo for Go analysis, review
 and play, either as a local subprocess or over a network via a purpose-built protocol
-(MRP/1). Six crates, GPL-3.0-or-later.
+(MRP/2). Six crates, GPL-3.0-or-later.
 
 The code is complete, reviewed and shipping. Treat it as a working system to extend carefully,
 not a draft to rewrite.
@@ -47,7 +47,7 @@ Do not modify this section without explicit approval.
 | You need | Read |
 |---|---|
 | Where does X live? What may I depend on? | [`docs/dev/ARCHITECTURE.md`](docs/dev/ARCHITECTURE.md) — module map, data model, extension recipes |
-| Implement or change the network protocol | [`docs/dev/PROTOCOL.md`](docs/dev/PROTOCOL.md) — normative MRP/1 spec, implementable without reading Rust |
+| Implement or change the network protocol | [`docs/dev/PROTOCOL.md`](docs/dev/PROTOCOL.md) — normative MRP/2 spec, implementable without reading Rust |
 | Prove a change works, especially in the GUI | [`docs/dev/TESTING.md`](docs/dev/TESTING.md) — crate coverage, engine verification, GUI harness, debugging playbook |
 | Draw in a widget, or chase a dropped frame | [`docs/dev/RENDERING.md`](docs/dev/RENDERING.md) — why the custom widgets draw with quads, and the measurements behind it |
 | Candidate colour, or why the list is not monotonic | [`docs/dev/CANDIDATE_COLOUR.md`](docs/dev/CANDIDATE_COLOUR.md) — KataGo's `order` is play-selection value, not the win-rate column; what that does to the ramp |
@@ -64,7 +64,7 @@ Search user-facing questions in `README.md docs/user/` and implementation questi
 
 ```
 crates/mirai-core     geometry, rules, scoring, game tree, SGF     no I/O, no GUI
-crates/mirai-proto    MRP/1 types, frame codec, QUIC transport     knows nothing about KataGo
+crates/mirai-proto    MRP/2 types, frame codec, QUIC transport     knows nothing about KataGo
 crates/mirai-engine   Engine trait, LocalEngine, RemoteEngine      knows nothing about GTK
 crates/mirai-client   shared analysis, session, play, Fox          no GTK, no files
 crates/mirai-server   headless host sharing KataGo across clients

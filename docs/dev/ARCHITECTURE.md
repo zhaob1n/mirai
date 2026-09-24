@@ -33,7 +33,7 @@ flowchart TB
     gtk["mirai — GTK4 + libadwaita"]
     client["mirai-client — analysis / session"]
     engine["mirai-engine — Local / Remote"]
-    proto["mirai-proto — MRP/1 + QUIC"]
+    proto["mirai-proto — MRP/2 + QUIC"]
     core["mirai-core — rules, tree, SGF"]
     server["mirai-server — headless"]
     katago["katago analysis"]
@@ -48,14 +48,14 @@ flowchart TB
     server --> engine
     server --> core
     engine -->|"spawn / stdio"| katago
-    gtk -->|"QUIC / MRP/1"| server
+    gtk -->|"QUIC / MRP/2"| server
     server --> katago
 ```
 
 | crate | owns | depends on | may **not** depend on |
 |---|---|---|---|
 | `mirai-core` | geometry, rulesets, legality, superko, scoring, game tree, SGF, time control | serde, smallvec, arrayvec, encoding_rs, base64, zstd, postcard | any workspace crate; GTK; tokio; anything doing real I/O |
-| `mirai-proto` | MRP/1 value types, messages, frame codec, QUIC transport, SHA-256 for cert pins | `mirai-core`, quinn, rustls, rcgen, postcard, zstd, bitflags, tokio | `mirai-engine`, `mirai`, serde_json, **anything KataGo-specific** |
+| `mirai-proto` | MRP/2 value types, messages, frame codec, QUIC transport, SHA-256 for cert pins | `mirai-core`, quinn, rustls, rcgen, postcard, zstd, bitflags, tokio | `mirai-engine`, `mirai`, serde_json, **anything KataGo-specific** |
 | `mirai-engine` | the `Engine` trait and its two implementations; KataGo query building and response decoding | `mirai-core`, `mirai-proto`, tokio, serde_json, dashmap, quinn | GTK/glib/adw, `mirai`, `mirai-server` |
 | `mirai-client` | shared application layer: analysis requests, sweep planning, play, Fox, TOFU session | `mirai-core`, `mirai-engine` (`remote` only), tokio, serde_json | GTK/glib/adw, `mirai`, `mirai-server`, KataGo JSON |
 | `mirai-server` | headless host: one KataGo per configured engine, multiplexed across clients, token auth | `mirai-core`, `mirai-engine`, `mirai-proto`, clap, toml, subtle, quinn | GTK, `mirai` |
@@ -191,7 +191,12 @@ overwritten rather than queued.
   Terminal events are safe under the same rule *because one query is one position* — the last
   value written is always the final report.
 - **Costs.** Intermediate reports are genuinely lost; nothing may treat the stream as a log.
-  Anything needing every value (there is nothing in-tree) needs a different channel.
+  Anything needing every value (there is nothing in-tree) needs a different channel. Across
+  MRP the server's `pump` only coalesces when a write blocks, so the client's small stream
+  receive window (`transport.rs` — `STREAM_WINDOW`) is part of this design: a large one lets
+  stale reports queue in the transport instead. Below the watch, a subscription stream is
+  compressed against itself, so the *client* still decodes every frame and only then
+  coalesces ([PROTOCOL §4.1](PROTOCOL.md#41-subscription-streams-one-zstd-stream)).
 
 ### 2.6 Quantised wire values (INV-6)
 
@@ -200,9 +205,9 @@ Quantisation is part of the type: a candidate's win rate is a fixed-point intege
 [PROTOCOL §7.2](PROTOCOL.md#72-quantisation) (INV-6). They live in code only in
 `crates/mirai-proto/src/types.rs`; `*_f32` accessors are the only way back to floats.
 
-- **Rationale.** The equivalent KataGo JSON for a 50-candidate report with ownership is ~45 KB.
-  At 10 Hz per client that is the difference between a protocol that works on a LAN and one that
-  does not.
+- **Rationale.** KataGo's JSON for one live report measured 33.6 KB
+  ([PROTOCOL §11](PROTOCOL.md#11-reference-figures)). At 10 Hz per client that is the
+  difference between a protocol that works on a LAN and one that does not.
 - **Buys.** The framed worst case is the measured figure in
   [PROTOCOL §11](PROTOCOL.md#11-reference-figures) (`crates/mirai-proto/tests/wire_size.rs`).
   The local and remote paths quantise with the same functions, so the two engines produce

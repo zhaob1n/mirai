@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! MRP/1 value types.
+//! MRP/2 value types.
 //!
 //! Quantisation is part of the type: every float that crosses the wire is stored as a
 //! fixed-point integer, and the conversion helpers live here so that the local KataGo
-//! decoder and the remote server quantise identically. A live report is ~2.5 KB instead
-//! of the ~45 KB of equivalent KataGo JSON.
+//! decoder and the remote server quantise identically. A live report crosses the wire in a
+//! few hundred bytes where KataGo's JSON for it runs to 34 KB (`PROTOCOL.md` §11).
 //!
 //! All values are from **Black's** perspective (mirai always launches KataGo with
 //! `reportAnalysisWinratesAs = BLACK`).
@@ -13,7 +13,7 @@
 use mirai_core::{Color, Point, RuleSet, Size};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-pub const PROTO_VERSION: u16 = 1;
+pub const PROTO_VERSION: u16 = 2;
 
 /// Sentinel stored in `Report::policy` for a move KataGo reported as illegal (`-1`).
 pub const POLICY_ILLEGAL: u16 = u16::MAX;
@@ -26,7 +26,7 @@ pub const STDEV_SCALE: f64 = 32.0;
 /// Steps per unit for [`RootInfo::raw_var_time_left`]. KataGo's `rawVarTimeLeft` is in "no
 /// particular units" and runs to a few hundred, so a quarter-unit step covers it in `u16`.
 ///
-/// It lives here with the other scales rather than beside its decoder: a peer decoding MRP/1
+/// It lives here with the other scales rather than beside its decoder: a peer decoding MRP/2
 /// must be able to learn every scale from this crate alone.
 pub const RAW_VAR_TIME_SCALE: f64 = 4.0;
 
@@ -160,6 +160,9 @@ pub struct AnalyzeReq {
     pub max_visits: Option<u32>,
     pub max_time_ms: Option<u32>,
     pub pv_len: Option<u8>,
+    /// Keep only the first `n` candidates by KataGo's `order`; `None` keeps all. Applied by
+    /// the engine before quantising, so the cut moves are neither decoded nor sent.
+    pub max_candidates: Option<u8>,
     pub want: Want,
     pub report_every_ms: Option<u16>,
     pub priority: i8,
@@ -180,6 +183,7 @@ impl AnalyzeReq {
             max_visits: None,
             max_time_ms: None,
             pv_len: None,
+            max_candidates: None,
             want: Want::empty(),
             report_every_ms: None,
             priority: 0,
