@@ -200,8 +200,8 @@ them while the list is sorted by Loss or Prior returns the sort to #.
 **Click a heading to sort by that column**, and again to reverse it. The list opens in the
 engine's order, and **#** puts it back. Sorting changes only the list: the rank numbers, the
 blobs and the move the engine would play stay on that order. Selecting a row pins its
-variation on the board; the pin survives the next report. Double-click, or Enter on the list,
-plays the move.
+variation on the board; the pin survives the next report. Stepping to another position
+clears the selection. Double-click, or Enter on the list, plays the move.
 
 Above the list, one line: the stone of the side to move, `{visits} visits`, and while a live
 search is running its speed, such as `1.4k/s`. A cached reading has no speed. Hover the line

@@ -4,7 +4,9 @@
 //! Step 10 / Step 12.
 //!
 //! Candidate objects are updated in place at report rate; expression bindings preserve row
-//! hover and PV selection without replacing the model.
+//! hover and PV selection without replacing the model. `Change::Cursor` clears that
+//! selection, as it clears the board's pin: the row is about to name a different
+//! position's candidate.
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
@@ -694,6 +696,15 @@ impl AnalysisPanel {
         let index = index.map(|i| i as usize);
         for hook in self.imp().pv_hooks.borrow().iter() {
             hook(index);
+        }
+    }
+
+    /// Unselects the candidate. The dispatcher calls this on every `Change::Cursor`, the
+    /// same event on which the board drops its pin; unselecting notifies `sync_pv`.
+    pub(crate) fn clear_selection(&self) {
+        let selection = &self.inner().selection;
+        if selection.selected() != gtk::INVALID_LIST_POSITION {
+            selection.set_selected(gtk::INVALID_LIST_POSITION);
         }
     }
 

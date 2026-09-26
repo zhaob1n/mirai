@@ -547,6 +547,9 @@ fn handle_change(ui: &Ui, change: Change) {
             ui.board.refresh_cursor();
             ui.move_tree.refresh();
             ui.winrate.refresh_cursor();
+            // The board has just dropped its pin; the row would name another position's
+            // move once `refresh` rewrites it in place.
+            ui.analysis.clear_selection();
             ui.analysis.refresh();
             update_editor_actions(ui);
         }
