@@ -88,15 +88,23 @@ index identically to the board array. Never introduce a remap. Boards are 2..=19
 
 **INV-2 — perspective.** KataGo runs with `reportAnalysisWinratesAs=BLACK`. Everything stored
 and transmitted is **Black-perspective**. Convert to side-to-move only where you display it,
-with `winrate_for(color)` / `score_lead_for(color)`. A double conversion looks plausible on
-screen and is nearly invisible — check every new call site.
+with `winrate_for` / `score_lead_for` / `utility_for` — utility and score lead negate, win rate
+is `1 - p`. A double conversion looks plausible on screen and is nearly invisible — check every
+new call site.
 
-**INV-3 — cancellation.** Dropping a `Subscription` is the *only* cancellation mechanism.
-Local sends KataGo a `terminate`; remote sends `Cancel` and `stop_sending` on that
-subscription's stream. Do not add a second mechanism.
+**INV-3 — cancellation.** For a consumer, dropping a `Subscription` is the *only* way to
+cancel a query; there is no public cancel API, and do not add one. Local sends KataGo a
+`terminate`; remote sends `Cancel` and `stop_sending` on that subscription's stream. The engine
+runs that same internal cancel itself when it fails or rejects a subscription whose search may
+still be running (a report it cannot decode, an unfit remote report): a subscription that has
+ended for its consumer must not leave KataGo searching.
 
 **INV-4 — stateless queries.** Every request carries its whole position. There is no
-engine-side session state, and adding some would collapse the remote design.
+engine-side session state, and adding some would collapse the remote design. The corollary is
+that nothing is replayed: when a remote link returns (`RemoteStatus::Connected`) or the engine
+is replaced, the owner of the view re-requests what it shows *now* — live analysis, a stalled
+AI turn. An engine never queues stale work, and a consumer must not drop the status channel
+that tells it when to re-request.
 
 **INV-5 — komi** travels as `komi_x2: i16`; KataGo accepts only integer/half-integer komi.
 
@@ -107,10 +115,12 @@ score lead ≤ 0.02 points, ownership ≤ 0.005. Changing a scale means updating
 
 **INV-7 — one source of truth, per window.** `AppState` (`crates/mirai/src/app.rs`) owns
 application state. One `Change` dispatcher in `window.rs` pushes projections to widgets; widgets
-never talk to siblings or install competing AppState dispatchers. There is one `AppState` per
-window and **several windows are normal**. `MiraiApplication` owns only the process-wide Tokio
-runtime and shared `EnginePool` (whose engine entries are weak). Config writes use
-`Config::save_merged`; autosaves remain per-window.
+never talk to siblings or install competing AppState dispatchers. Emit the narrowest `Change`
+that is true — a comment commit is not a structural `Tree` change — because each variant's
+dispatcher work is what the UI pays for it. There is one `AppState` per window and **several
+windows are normal**. `MiraiApplication` owns only the process-wide Tokio runtime and shared
+`EnginePool` (whose engine entries are weak). Config writes use `Config::save_merged`;
+autosaves remain per-window.
 
 **INV-8 — window ownership.** `MiraiWindow` owns exactly one plain `Ui` value in its GObject
 state. Long-lived handlers capture `glib::WeakRef<MiraiWindow>` and enter through
@@ -118,7 +128,12 @@ state. Long-lived handlers capture `glib::WeakRef<MiraiWindow>` and enter throug
 their window's `AppState` and hold it directly. `close-request`, `dispose` and
 `ApplicationImpl::shutdown` all reduce to `MiraiWindow::shutdown`, whose `take_ui` drops the
 `Ui` — and releasing *is* `Ui`'s `Drop`, so a new exit path cannot forget it. Finite async
-captures must be explicitly transient and own one teardown path.
+captures must be explicitly transient and own one teardown path. The rule is about cycles, not
+only the window: no signal or action closure holds a strong reference to an object that owns,
+directly or through the widget tree, the emitter it is connected to (a dialog's button closure
+holding the dialog; an action closure holding a widget whose handler holds the action). Use
+`#[weak]` or go through `with_ui`. A handler that something shorter-lived (a dialog) connects on
+something longer-lived (`AppState`) is disconnected when the shorter-lived owner closes.
 
 **INV-9 — rendering.** Board, win-rate graph and move tree are custom `gtk::Widget` subclasses
 drawn with `gsk` in `snapshot()`. No `GtkDrawingArea`, no cairo. Tree-derived projections,
@@ -126,14 +141,29 @@ heat-map textures and reusable render nodes are built outside `snapshot()`. Draw
 colour nodes, border nodes, rounded clips, the helpers in `widgets/paint.rs` — and never hand
 GSK a `fill` or `stroke` node for a shape they can draw: GSK keys its rasterisation cache on
 the path pointer, so a path rebuilt every frame always misses, and rebuilding board-sized paths
-cost 30–120 ms a frame. Text is cached per `PangoFont` instead, never per position, so board
-text may be deferred while `Layout::cell` moves — never merely because the widget was
-reallocated ([`docs/dev/RENDERING.md`](docs/dev/RENDERING.md)).
+cost 30–120 ms a frame. A path that must stay a path and spans the plot (the win-rate curve)
+is kept as a cached node and rebuilt only when its data changes — an identical curve rebuilt
+is still a miss. `snapshot()` does not heap-allocate per drawn item; format labels on the
+stack. Text is cached per `PangoFont` instead, never per position, so board text may be
+deferred while `Layout::cell` moves — never merely because the widget was reallocated
+([`docs/dev/RENDERING.md`](docs/dev/RENDERING.md)).
 
-**INV-10 — borrow and identity discipline.** Release every `RefCell` tree borrow before calling
-`changed`, `set_cursor`, `set_report` or `toast`; dispatcher code borrows the tree again.
-`NodeId` is arena-local, so anything retained across a tree replacement carries
+**INV-10 — borrow and identity discipline.** The session lives in a `RefCell`. Shared borrows
+(`tree()`, `cursor()`, `tree_epoch()`) may overlap one another; what panics is a mutable
+borrow while any other borrow is live. Mutable borrows are not only edits: `position()`,
+`to_play()` and `with_tree_cached` borrow mutably because the tree caches positions, and
+`changed`, `set_cursor`, `set_report` and `toast` enter dispatcher code that may edit (a
+comment flush). Never hold a `tree()` borrow across any of those; copy what you need into
+locals first. `NodeId` is arena-local, so anything retained across a tree replacement carries
 `NodeRef { epoch, id }` and is validated with `resolve_node`.
+
+**INV-11 — the GTK thread does not wait on the system.** No synced write (`write_atomic*`),
+directory scan, `PATH` search, network round-trip or process wait runs on the GTK main thread.
+It goes to the runtime's blocking pool and the result comes back through the weak window.
+Reading one small file mirai owns is fine. Two writes stay synchronous because something must
+not run until they land: `flush_config` when a window closes or before another loads the file,
+and an explicit Save, which the user waits on and a quit must not overtake. Anything else that
+syncs is a 50–100 ms dropped frame no test sees.
 
 ---
 

@@ -477,7 +477,7 @@ immediately and the engine's own tasks do the work — and the GUI then awaits
 `Subscription::next()` inside a `glib::spawn_future_local`, so every report is handled on the main
 thread.
 
-### What must not happen on the main thread
+### What must not happen on the main thread (INV-11)
 
 - **No `block_on`, no `blocking_recv`, no thread joins.** There are none in `crates/mirai`; the
   oneshot pattern above is the replacement.
@@ -485,13 +485,19 @@ thread.
   OpenCL install includes autotuning and is allowed minutes.
 - **No blocking on a `Subscription`.** `finish()` is async and is used by the probe and the
   server, never by the GUI.
-- SGF parsing *is* inline and fast enough for real records; a multi-megabyte collection would
-  stutter. `[INFERENCE]`
+- **No synced write, directory scan or `PATH` search.** `write_atomic*` syncs the file and its
+  directory, 50–100 ms on an ordinary disk; KataGo discovery walks several directories. They
+  run on `runtime().spawn_blocking` and land back through the weak window: the config saver,
+  autosave, opening an SGF and its crash-leftover scan are the pattern. Reading one small file
+  mirai owns is allowed. Two writes stay synchronous: `flush_config` on close, because the next
+  reader must see it, and an explicit Save (`write_to`), which the user is waiting on and a quit
+  must not overtake. Moving Save would need autosave's document-token snapshot and exit gate
+  for a one-off 50–100 ms.
 
 ### The cancellation chain (INV-3)
 
-There is one cancellation mechanism — **drop the `Subscription`** — and everything else is
-plumbing that leads to that drop.
+For a consumer there is one cancellation mechanism — **drop the `Subscription`** — and
+everything else is plumbing that leads to that drop.
 
 ```mermaid
 flowchart TB
@@ -515,6 +521,12 @@ the server drop the subscription in under a millisecond and KataGo falls to 0% C
 Other participants follow the same ownership rule: score and play tasks, plus the batch
 coordinator's runtime task, are aborted by their owning window/controller. Dropping those tasks
 drops every in-flight `Subscription`; there is no parallel query-cancellation API.
+
+The engine also reaches its internal cancel on its own when it ends a subscription whose search
+may still be running: `RemoteEngine` for a report it rejects (`Routed::Reject`), `LocalEngine`
+for a response it cannot decode. That is not a second mechanism — it is the same `terminate` /
+`Cancel`, not reachable by consumers — and it is required: a subscription the consumer sees as
+failed would otherwise leave KataGo searching to its visit cap.
 
 ### One live-analysis cycle: pressing Left
 
@@ -834,6 +846,13 @@ Transient futures may retain GTK objects only when their finite lifetime is expl
 uses a single `CalibrationRun` owner taken by either completion or cancellation; its window-added
 signal handler, runtime task, controls and engine restoration are torn down together.
 
+Weak capture is about cycles, not only the window. A closure connected to a signal or action
+must not own, strongly, anything that owns the emitter: a dialog's button handler holding the
+dialog, or an action's closure holding a widget whose notify handler holds the action, keeps
+both alive forever — and with them any `AppState` they captured. A handler a dialog connects on
+`AppState` keeps its `SignalHandlerId` and is disconnected when the dialog closes; `#[weak]`
+on the dialog only makes a leaked handler return early.
+
 ### More than one window
 
 `activate` and `open` both call `window::present`, and `open` calls it once per file, so several
@@ -848,10 +867,14 @@ windows in one process is a normal state, not an edge case. Each owns a complete
 
 ### RefCell and identity discipline (INV-10)
 
-`AppState` keeps the `GameSession` (and thus the tree) in a `RefCell`. A borrow must be released
-before `changed`, `set_cursor`, `set_report` or `toast` enters window code; the dispatcher
-immediately reads the tree again. `with_session_mut`, `adopt_record` / `adopt_unsaved`, report
-caching and navigation helpers scope or explicitly drop their borrows before dispatch.
+`AppState` keeps the `GameSession` (and thus the tree) in a `RefCell`. Shared borrows —
+`tree()`, `cursor()`, `tree_epoch()` — overlap safely; a mutable borrow while any other is live
+panics. Mutable borrows are not only edits: `position()`, `to_play()` and `with_tree_cached`
+take one because `GameTree` fills its position cache through `&mut`, and `changed`,
+`set_cursor`, `set_report` and `toast` enter dispatcher code that may edit (`BeforeEdit`
+flushes the comment through `with_session_mut`). So a `tree()` borrow is never held across any
+of them. `with_session_mut`, `adopt_record` / `adopt_unsaved`, report caching and navigation
+helpers scope or explicitly drop their borrows before dispatch.
 
 `NodeId` is stable only within one `GameTree` arena. Every node reference that can outlive a
 borrow is therefore a `NodeRef { epoch, id }`. Replacing the record (`GameSession::adopt` /
