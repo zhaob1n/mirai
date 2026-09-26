@@ -76,9 +76,21 @@ pub enum Change {
         structure_changed: bool,
     },
     Editor,
+    /// Structure or position changed. Rebuilds the board, the graph and the blunder list.
     Tree,
-    Cursor,
+    /// Marks on the current node. The board redraws them; the graph and the lists do not.
+    Marks,
+    /// Cursor moved. `project` is false when [`Change::Tree`] in the same edit already
+    /// rebuilt the board and the graph for this cursor — doing it again is what made one
+    /// move rebuild the projection twice.
+    Cursor {
+        project: bool,
+    },
+    /// Live report, or its absence. Does not walk the graph: samples come from stored
+    /// [`mirai_core::NodeAnalysis`], not from this report.
     Report,
+    /// Stored analysis the graph reads may have changed.
+    Samples,
     Engine,
     Toast(String),
     Play,
@@ -603,7 +615,22 @@ impl AppState {
     /// [`mirai_client::Play`] drives the record directly — turns, clocks, scoring and undo
     /// are its rules, not the window's — so this is the one door it goes through and a play
     /// action cannot forget to dispatch. The borrow is always released first (INV-10).
+    ///
+    /// A revision bump is not a new position. A comment or a result used to emit
+    /// [`Change::Tree`], which rebuilt the board projection, the graph, the candidate list
+    /// and the blunder list. Those follow structure and position.
     pub fn with_session_mut<R>(&self, f: impl FnOnce(&mut GameSession) -> R) -> R {
+        self.with_session_mut_inner(f, false)
+    }
+
+    /// Board edits (including undo/redo) can change marks without changing position.
+    /// The ordinary session path, used by comments and play ticks, does not copy marks
+    /// merely to find that out on every call.
+    fn with_session_mut_inner<R>(
+        &self,
+        f: impl FnOnce(&mut GameSession) -> R,
+        board_metadata: bool,
+    ) -> R {
         let (out, changed, positions_changed, structure_changed, cursor_changed) = {
             let mut session = self.imp().session.borrow_mut();
             let before = (
@@ -618,12 +645,16 @@ impl AppState {
             if replaced {
                 self.imp().editor_tool.set(EditorTool::Play);
             }
+            let positions_changed = replaced || before.3 != session.position_revision();
+            let structure_changed = replaced || before.4 != session.tree().structure_revision();
+            let cursor_changed = replaced || before.1 != session.cursor();
+            let changed = before.0 != session.revision();
             (
                 out,
-                before.0 != session.revision(),
-                replaced || before.3 != session.position_revision(),
-                replaced || before.4 != session.tree().structure_revision(),
-                replaced || before.1 != session.cursor(),
+                changed,
+                positions_changed,
+                structure_changed,
+                cursor_changed,
             )
         };
         if changed {
@@ -635,9 +666,20 @@ impl AppState {
                 positions_changed,
                 structure_changed,
             });
-            self.changed(Change::Tree);
-            if positions_changed || cursor_changed {
-                self.moved_cursor();
+            let dispatch = session_dispatch(
+                structure_changed,
+                positions_changed,
+                cursor_changed,
+                board_metadata,
+            );
+            if dispatch.tree {
+                self.changed(Change::Tree);
+            }
+            if dispatch.marks {
+                self.changed(Change::Marks);
+            }
+            if let Some(project) = dispatch.cursor_project {
+                self.moved_cursor(project);
             }
         }
         out
@@ -645,7 +687,7 @@ impl AppState {
 
     pub(crate) fn with_edit_session<R>(&self, f: impl FnOnce(&mut GameSession) -> R) -> R {
         self.changed(Change::BeforeEdit);
-        self.with_session_mut(f)
+        self.with_session_mut_inner(f, true)
     }
 
     pub(crate) fn set_comment_at(&self, node: NodeRef, text: &str) {
@@ -736,12 +778,16 @@ impl AppState {
         self.changed(Change::BeforeEdit);
         self.imp().session.borrow_mut().go_to(id);
         self.imp().report.replace(None);
-        self.moved_cursor();
+        self.moved_cursor(true);
     }
 
     /// Everything a cursor move has to tell the window, once the borrow is gone.
-    fn moved_cursor(&self) {
-        self.changed(Change::Cursor);
+    ///
+    /// `project` is false when the caller already emitted [`Change::Tree`] for this
+    /// cursor. The board projection and the graph samples are current; repeating them
+    /// is the second and third rebuild of one move.
+    fn moved_cursor(&self, project: bool) {
+        self.changed(Change::Cursor { project });
         self.changed(Change::Report);
         self.restart_analysis();
     }
@@ -778,7 +824,7 @@ impl AppState {
             }
             imp.report.replace(None);
         }
-        self.moved_cursor();
+        self.moved_cursor(true);
     }
 
     pub fn go_first(&self) {
@@ -1176,7 +1222,7 @@ impl AppState {
         // is borrowed and the `Arc` moves into the cell last instead of being cloned into
         // it. The dispatcher below is the first thing that can observe either.
         let analysis = mirai_client::analysis_of(&report, max);
-        {
+        let stored = {
             let mut session = self.imp().session.borrow_mut();
             let existing = session
                 .tree()
@@ -1185,11 +1231,18 @@ impl AppState {
                 .as_ref()
                 .map(|a| a.visits);
             if crate::util::replaces_stored_analysis(existing, analysis.visits) {
-                session.set_analysis_at(cursor, self.imp().analysis_revision.get(), Some(analysis));
+                session.set_analysis_at(cursor, self.imp().analysis_revision.get(), Some(analysis))
+            } else {
+                false
             }
-        }
+        };
         self.imp().report.replace(Some(report));
+        // The board and the candidate list read the live report. The graph reads stored
+        // analysis, so a report that did not replace it must not walk the main line.
         self.changed(Change::Report);
+        if stored {
+            self.changed(Change::Samples);
+        }
     }
 
     /// Cancels every future owned by this window state.
@@ -1271,6 +1324,31 @@ fn should_toast_illegal_move(error: IllegalMove) -> bool {
     !matches!(error, IllegalMove::Occupied)
 }
 
+/// What a revision bump has to tell the window besides [`Change::Edit`].
+///
+/// `tree` rebuilds the board, the graph and the blunder list. A move that also
+/// moves the cursor must not do that again: `cursor_project` is then `Some(false)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SessionDispatch {
+    tree: bool,
+    marks: bool,
+    cursor_project: Option<bool>,
+}
+
+fn session_dispatch(
+    structure_changed: bool,
+    positions_changed: bool,
+    cursor_changed: bool,
+    board_metadata: bool,
+) -> SessionDispatch {
+    let structural = structure_changed || positions_changed;
+    SessionDispatch {
+        tree: structural,
+        marks: !structural && !cursor_changed && board_metadata,
+        cursor_project: (positions_changed || cursor_changed).then_some(!structural),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1281,5 +1359,87 @@ mod tests {
         assert!(should_toast_illegal_move(IllegalMove::Suicide));
         assert!(should_toast_illegal_move(IllegalMove::Ko));
         assert!(should_toast_illegal_move(IllegalMove::OffBoard));
+    }
+
+    /// `Change` is the one window dispatcher. Comments and marks must not run its
+    /// expensive Tree arm; a new move must project once, while replaying a child
+    /// must use the navigation path rather than rebuild unchanged samples.
+    #[test]
+    fn a_revision_only_refreshes_the_projections_it_changed() {
+        use mirai_core::{MarkKind, Size};
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime");
+        let state = AppState::new(
+            Config::default(),
+            PathBuf::from("/tmp/mirai-refresh-test.toml"),
+            runtime.handle().clone(),
+            Rc::new(EnginePool::default()),
+        );
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let log = Rc::clone(&seen);
+        state.set_change_hook(move |change| log.borrow_mut().push(change));
+        let take = || std::mem::take(&mut *seen.borrow_mut());
+
+        state.set_comment_at(state.cursor_ref(), "a comment");
+        let changes = take();
+        assert!(changes.iter().any(|c| matches!(c, Change::Edit { .. })));
+        assert!(!changes.iter().any(|c| matches!(
+            c,
+            Change::Tree | Change::Marks | Change::Cursor { .. } | Change::Report
+        )));
+
+        let point = Size::square(19).point(3, 3);
+        state.with_edit_session(|game| game.toggle_mark(MarkKind::Triangle, point));
+        let changes = take();
+        assert!(changes.iter().any(|c| matches!(c, Change::Marks)));
+        assert!(!changes.iter().any(|c| matches!(c, Change::Tree)));
+
+        state.play_move(point).expect("legal move");
+        let changes = take();
+        assert_eq!(
+            changes.iter().filter(|c| matches!(c, Change::Tree)).count(),
+            1
+        );
+        assert!(
+            changes
+                .iter()
+                .any(|c| matches!(c, Change::Cursor { project: false }))
+        );
+        assert!(!changes.iter().any(|c| matches!(c, Change::Samples)));
+
+        state.go_prev();
+        let changes = take();
+        assert!(!changes.iter().any(|c| matches!(c, Change::Tree)));
+        assert!(
+            changes
+                .iter()
+                .any(|c| matches!(c, Change::Cursor { project: true }))
+        );
+
+        state.play_move(point).expect("existing move");
+        let changes = take();
+        assert!(!changes.iter().any(|c| matches!(c, Change::Tree)));
+        assert!(
+            changes
+                .iter()
+                .any(|c| matches!(c, Change::Cursor { project: true }))
+        );
+
+        // The panel consumes every live report, but the graph consumes only
+        // reports whose deeper analysis was actually stored on a node.
+        let mut report = Report::empty(1, Color::White);
+        report.root.visits = 100;
+        state.set_report(Arc::new(report.clone()));
+        let changes = take();
+        assert!(changes.iter().any(|c| matches!(c, Change::Report)));
+        assert!(changes.iter().any(|c| matches!(c, Change::Samples)));
+
+        report.root.visits = 50;
+        state.set_report(Arc::new(report));
+        let changes = take();
+        assert!(changes.iter().any(|c| matches!(c, Change::Report)));
+        assert!(!changes.iter().any(|c| matches!(c, Change::Samples)));
     }
 }

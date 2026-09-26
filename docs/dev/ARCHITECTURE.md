@@ -232,7 +232,8 @@ Board, win-rate graph and move tree are `gtk::Widget` subclasses drawing in `sna
   buffer is uploaded as a `gdk::MemoryTexture` only while that overlay is on, and dropped
   when it is turned off — live analysis still requests ownership either way, because the
   score estimate and the stored analysis use it. The win-rate graph caches its base
-  render node and redraws only the cursor marker while navigating. Widgets consume pushed
+  render node; navigation redraws only the cursor marker, and a new report invalidates
+  the base only if stored samples or the score axis changed. Widgets consume pushed
   projections, so `snapshot()` does not walk `AppState` or rebuild tree-derived data.
 - **Costs.** No cairo conveniences: a circle is a colour node inside a rounded clip
   (`crates/mirai/src/widgets/paint.rs`), and text is a `pango::Layout` per label. Projection
@@ -702,9 +703,11 @@ refresh. This avoids several independently ordered signal callbacks observing ha
 | `BeforeEdit` | `with_edit_session`, `set_cursor`, `navigate`, `adopt_record` / `adopt_unsaved` | flush the comment so it is one history item before the next edit |
 | `Edit { positions_changed, structure_changed }` | `with_session_mut` when the record actually changed | cancel batch, and abort score if the position moved, before the Tree/Cursor refresh; update undo/redo sensitivity |
 | `Editor` | `set_editor_tool`; adopt forces Play and emits this too | if the tool is not Play, reveal `editor_revealer`; project toolbar state; clear the PV preview when leaving Play. Collapsing the revealer forces Play first. Returning to Play does not hide a toolbar the user opened |
-| `Tree` | `with_session_mut`; the batch coordinator when a sweep lands, cancels or fails | close the board menu; update the board-local position label; choose the analysis page; rebuild board, tree and graph projections; recompute blunders; refresh the analysis panel and editor actions |
-| `Cursor` | `set_cursor`, and `moved_cursor` after `play_move` or a cursor-changing edit | load the comment (does not flush); update the board-local position label and clocks; choose the analysis page; refresh cursor projections. Does not refresh the subtitle |
-| `Report` | `set_report`, and `moved_cursor` after the live report is cleared | refresh board textures, graph data and analysis rows; choose the analysis page. Does not move the slider or the position label |
+| `Tree` | `with_session_mut` only for structure or position changes; the batch coordinator when a sweep lands, cancels or fails | close the board menu; update the board-local position label; choose the analysis page; rebuild board, tree and graph projections; recompute blunders; refresh the analysis panel and editor actions |
+| `Marks` | board-edit session when metadata changes without moving the cursor | refresh the board projection for marks. Comment commits do not take this path; undo/redo of metadata does, without refreshing the graph or lists |
+| `Cursor { project }` | `set_cursor`, and `moved_cursor` after `play_move` or a cursor-changing edit | load the comment, update the board-local position label and clocks, choose the analysis page; refresh board and graph cursor projections only if `Tree` did not already do so (`project: true`). Does not refresh the subtitle |
+| `Report` | `set_report`, and `moved_cursor` after the live report is cleared | refresh board textures and analysis rows; choose the analysis page. Does not walk the graph, move the slider or the position label |
+| `Samples` | `set_report` only when deeper analysis was stored | refresh graph samples; keep its GSK base node if the plotted values and axis range did not change |
 | `Engine` | engine-state transitions and profile edits | rebuild the engine menu, choose the analysis page, refresh the panel, update the subtitle |
 | `Toast(String)` | `AppState::toast` | add one `adw::Toast` |
 | `Play` | `notify_play_changed` | refresh clocks and play controls. Active play forces the editor revealer closed and disables its toggle |
