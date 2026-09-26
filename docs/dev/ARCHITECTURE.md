@@ -619,7 +619,8 @@ draining, so a death cannot leave a subscription `Pending`. A terminal event rem
 before sending; `cancel` instead keeps the entry and marks it terminating, so the tail of a
 terminated search is still routed and discarded correctly, and a response for an unknown id is a
 trace, not an error. A terminated query that never searched still terminates cleanly, as an empty
-`Done`.
+`Done`. A decode failure also removes its entry and sends `terminate` itself — otherwise `Drop`
+finds nothing to cancel and the search runs to its visit cap.
 
 ### RemoteEngine
 

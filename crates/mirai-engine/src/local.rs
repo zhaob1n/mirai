@@ -304,6 +304,10 @@ impl Inner {
             Some(entry) if !entry.terminating => entry.terminating = true,
             _ => return,
         }
+        self.terminate(id);
+    }
+
+    fn terminate(&self, id: u64) {
         let key = id.to_string();
         let line = terminate_query(&format!("t{key}"), &key).to_string();
         let _ = self.to_engine.send(line);
@@ -380,7 +384,16 @@ impl Inner {
                 }
                 Err(e) => {
                     tracing::error!(id, %e, "could not decode a katago response");
-                    SubEvent::Failed(EngineError::Protocol(e))
+                    // The failure removes the entry, so Drop's cancel cannot send this.
+                    // Stop KataGo now, as on a consumer cancel (INV-3).
+                    let entry = self.subs().map.remove(&key);
+                    if let Some(entry) = entry {
+                        entry
+                            .tx
+                            .send_replace(SubEvent::Failed(EngineError::Protocol(e)));
+                        self.terminate(key);
+                    }
+                    return;
                 }
             }
         };
@@ -701,5 +714,63 @@ mod tests {
         );
         assert_eq!(config_u16(&path, "nnCacheSizePowerOfTwo"), None);
         std::fs::remove_file(&path).unwrap();
+    }
+
+    fn req() -> AnalyzeReq {
+        AnalyzeReq::new(Size::square(19), mirai_core::RuleSet::Chinese, 7.5)
+    }
+
+    /// No process: `lines` is what subscribe and cancel would write to KataGo.
+    fn detached() -> (LocalEngine, mpsc::UnboundedReceiver<String>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (shutdown_tx, _shutdown_rx) = oneshot::channel();
+        let (_complete_tx, shutdown_complete) = oneshot::channel();
+        let engine = LocalEngine {
+            inner: Arc::new(Inner {
+                desc: EngineDesc::placeholder("test"),
+                to_engine: tx,
+                subs: Mutex::new(Subs {
+                    map: HashMap::new(),
+                    dead: false,
+                }),
+                next_id: AtomicU64::new(0),
+                _shutdown: shutdown_tx,
+            }),
+            shutdown_complete,
+        };
+        (engine, rx)
+    }
+
+    #[test]
+    fn a_decode_failure_terminates_the_search() {
+        let (engine, mut lines) = detached();
+        let sub = engine.subscribe(req());
+        let query = lines.try_recv().expect("query");
+        assert!(query.contains("\"id\":\"0\""), "{query}");
+
+        // Analysis-shaped, but missing rootInfo, so decode_report fails.
+        engine
+            .inner
+            .handle(r#"{"id":"0","isDuringSearch":true,"moveInfos":[]}"#);
+
+        match sub.current() {
+            SubEvent::Failed(EngineError::Protocol(msg)) => {
+                assert!(msg.contains("rootInfo"), "{msg}");
+            }
+            other => panic!("expected a protocol failure, got {other:?}"),
+        }
+        let term = lines
+            .try_recv()
+            .expect("decode failure must terminate the search");
+        let v: serde_json::Value = serde_json::from_str(&term).unwrap();
+        assert_eq!(v["action"], "terminate");
+        assert_eq!(v["terminateId"], "0");
+        assert!(engine.inner.subs().map.is_empty());
+
+        drop(sub);
+        assert!(
+            lines.try_recv().is_err(),
+            "drop must not terminate a second time"
+        );
     }
 }
