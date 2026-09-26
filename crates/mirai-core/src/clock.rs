@@ -22,9 +22,10 @@ impl TimeControl {
         increment_s: 0,
     };
 
+    /// True only when every time field is zero. An increment alone is still a clock.
     #[inline]
     pub const fn is_unlimited(self) -> bool {
-        self.main_s == 0 && self.byo_periods == 0
+        self.main_s == 0 && self.byo_periods == 0 && self.increment_s == 0
     }
 }
 
@@ -152,5 +153,18 @@ mod tests {
         assert_eq!(think_budget(&tc, 30.0, 2, true), Some(27.0));
         // A turn resumed part-way through the last period must not overrun it.
         assert_eq!(think_budget(&tc, 10.0, 0, true), Some(9.0));
+    }
+
+    #[test]
+    fn increment_only_is_timed_and_budgets_from_the_increment() {
+        let tc = TimeControl {
+            main_s: 0,
+            byo_periods: 0,
+            byo_period_s: 0,
+            increment_s: 10,
+        };
+        assert!(!tc.is_unlimited());
+        // The opening bank is the increment. Half of what is left, not "no clock".
+        assert_eq!(think_budget(&tc, 10.0, 0, false), Some(5.0));
     }
 }

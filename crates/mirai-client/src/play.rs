@@ -348,6 +348,10 @@ impl Play {
         let in_byo = setup.tc.main_s == 0 && setup.tc.byo_periods > 0;
         let start_time = if in_byo {
             setup.tc.byo_period_s as f32
+        } else if setup.tc.main_s == 0 {
+            // Fischer adds the increment after a move. With no main time the
+            // first move is played on that increment, or the opening tick flags.
+            setup.tc.increment_s as f32
         } else {
             setup.tc.main_s as f32
         };
@@ -1055,5 +1059,30 @@ mod tests {
         let (mut game, mut play) = engine_to_move(tc);
         let req = play.ai_request(&mut game).expect("the engine is to move");
         assert_eq!(req.max_time_ms, Some(27_000));
+    }
+
+    /// Zero main time with an increment is still a clock. Seeding from main time
+    /// alone starts the bank at zero, so the first tick loses on time; hiding it
+    /// as unlimited leaves the increment unused.
+    #[test]
+    fn increment_only_starts_on_the_increment_and_does_not_flag_immediately() {
+        let tc = TimeControl {
+            main_s: 0,
+            byo_periods: 0,
+            byo_period_s: 0,
+            increment_s: 10,
+        };
+        let (mut game, mut play) = engine_to_move(tc);
+        assert_eq!(
+            play.clocks(),
+            Some(("0:10".to_string(), "0:10".to_string()))
+        );
+        let req = play.ai_request(&mut game).expect("the engine is to move");
+        assert_eq!(req.max_time_ms, Some(5_000));
+        assert!(!play.tick(&mut game, 1.0));
+        assert_eq!(
+            play.clocks(),
+            Some(("0:09".to_string(), "0:10".to_string()))
+        );
     }
 }
