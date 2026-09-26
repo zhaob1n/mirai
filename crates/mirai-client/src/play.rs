@@ -444,7 +444,8 @@ impl Play {
     pub fn ai_request(&mut self, game: &mut GameSession) -> Option<AnalyzeReq> {
         let s = self.session.as_ref()?;
         let ai = s.ai()?;
-        let seconds = think_budget(&s.tc, s.remaining[ai.index()], s.byo_left[ai.index()]);
+        let i = ai.index();
+        let seconds = think_budget(&s.tc, s.remaining[i], s.byo_left[i], s.in_byo[i]);
         let ms = match &s.strength {
             Strength::TimeMs(t) => Some(*t),
             _ => seconds.map(|sec| (sec * 1000.0).max(100.0) as u32),
@@ -1037,5 +1038,22 @@ mod tests {
         play.retry_ai();
         assert!(!play.tick(&mut game, 1.0));
         assert_ne!(play.clocks(), stalled);
+    }
+
+    /// The period clock is still positive while in byo-yomi, and `byo_left` counts
+    /// only periods banked after the current one. Budgeting that remainder as main
+    /// time (or treating a zero bank as "out of periods") makes the engine move at
+    /// once instead of using the period.
+    #[test]
+    fn an_ai_already_in_byo_yomi_thinks_for_most_of_the_period() {
+        let tc = TimeControl {
+            main_s: 0,
+            byo_periods: 1,
+            byo_period_s: 30,
+            increment_s: 0,
+        };
+        let (mut game, mut play) = engine_to_move(tc);
+        let req = play.ai_request(&mut game).expect("the engine is to move");
+        assert_eq!(req.max_time_ms, Some(27_000));
     }
 }
