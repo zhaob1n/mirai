@@ -367,28 +367,35 @@ pub fn present(
     let has_human_model = state.engine_desc().is_some_and(|desc| desc.has_human_model);
     let dialog = NewGameDialog::new(&play, has_human_model);
 
-    let close_dialog = dialog.clone();
-    dialog.imp().cancel_button.connect_clicked(move |_| {
-        close_dialog.close();
-    });
-
-    let start_dialog = dialog.clone();
-    let start_state = state.clone();
-    dialog.imp().start_button.connect_clicked(move |_| {
-        let setup = start_dialog.setup();
-        {
-            let mut config = start_state.config_mut();
-            config.play.rules = setup.rules;
-            config.play.strength = strength_to_save(
-                &config.play.strength,
-                &setup.strength,
-                start_dialog.imp().coerced_strength.get(),
-            );
+    dialog.imp().cancel_button.connect_clicked(glib::clone!(
+        #[weak]
+        dialog,
+        move |_| {
+            dialog.close();
         }
-        start_state.save_config();
-        start_dialog.close();
-        on_start(setup);
-    });
+    ));
+
+    dialog.imp().start_button.connect_clicked(glib::clone!(
+        #[weak]
+        dialog,
+        #[weak]
+        state,
+        move |_| {
+            let setup = dialog.setup();
+            {
+                let mut config = state.config_mut();
+                config.play.rules = setup.rules;
+                config.play.strength = strength_to_save(
+                    &config.play.strength,
+                    &setup.strength,
+                    dialog.imp().coerced_strength.get(),
+                );
+            }
+            state.save_config();
+            dialog.close();
+            on_start(setup);
+        }
+    ));
 
     dialog.present(Some(parent));
 }
