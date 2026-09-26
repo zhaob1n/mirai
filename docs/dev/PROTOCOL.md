@@ -62,11 +62,12 @@ host      = reg-name | IPv4address | "[" IPv6address "]"
 port      = 1*DIGIT                                       ; default 9678
 ```
 
-Parsing (`transport.rs` — `parse_url`), which a client MUST reproduce:
+Parsing (`endpoint.rs` — `parse_url`), which a client MUST reproduce:
 
 1. Trim whitespace; strip an optional `mirai://` prefix; strip trailing `/`.
-2. Empty host is an error.
-3. A leading `[` starts an IPv6 literal ending at the first `]`; an optional `:port` follows.
+2. Empty host is an error, including a missing host before `:` and an empty `[]`.
+3. A leading `[` starts an IPv6 literal ending at the first `]`. An optional `:port`
+   may follow; anything else after `]` is an error.
 4. Otherwise split host and port at the **last** `:`; a non-numeric port is an error.
 5. Absent port means 9678.
 
