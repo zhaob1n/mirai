@@ -98,6 +98,17 @@ pub fn fingerprint(der: &[u8]) -> String {
     hex(&sha256(der))
 }
 
+/// Colon-separated pairs, the form a person compares with the server's startup log.
+/// The transport strips `:` and lowercases before comparing, so this string is also a pin.
+pub fn format_fingerprint(fingerprint: &str) -> String {
+    fingerprint
+        .as_bytes()
+        .chunks(2)
+        .map(|pair| String::from_utf8_lossy(pair).into_owned())
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

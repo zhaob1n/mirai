@@ -10,7 +10,8 @@
 //! cargo run -p mirai-engine --example probe -- \
 //!     --katago $KATA --model $MODEL --config $CFG --visits 200
 //! cargo run -p mirai-engine --example probe -- \
-//!     --remote mirai://127.0.0.1:9678 --token <token>
+//!     --remote mirai://127.0.0.1:9678 --token <token> \
+//!     --fingerprint "$(cargo run -q -p mirai-server -- --print-fingerprint)"
 //! ```
 
 use std::process::ExitCode;
@@ -181,10 +182,12 @@ async fn build_engine(args: &Args) -> Result<Arc<dyn Engine>> {
         }
         (None, Some(url)) => {
             let token = args.token.as_deref().expect("--token required by --remote");
-            let engine =
-                RemoteEngine::connect(url, token, args.engine.clone(), args.fingerprint.clone())
-                    .await
-                    .with_context(|| format!("could not connect to {url}"))?;
+            let pin = args.fingerprint.clone().context(
+                "--fingerprint is required; the token is not sent until the certificate is pinned",
+            )?;
+            let engine = RemoteEngine::connect(url, token, args.engine.clone(), pin)
+                .await
+                .with_context(|| format!("could not connect to {url}"))?;
             tracing::info!(fingerprint = engine.fingerprint(), "server certificate");
             Ok(Arc::new(engine))
         }

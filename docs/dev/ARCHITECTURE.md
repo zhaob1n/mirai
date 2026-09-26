@@ -626,10 +626,13 @@ stream, one acceptor for server-opened unidirectional streams, and one per subsc
 the 4-byte id preamble and then `SubMsg` frames. Dropping the handle drops a oneshot, which is what
 stops the task.
 
-`handshake` connects (TOFU-verified), sends `Hello`, awaits `Welcome`, then resolves the requested
-engine name against the server's list. Its error classification is load-bearing:
-`EngineError::Protocol` means reconnecting cannot help (bad token, version mismatch, fingerprint
-mismatch), `Disconnected` means retry. Backoff is 0.5 s, 1 s, 2 s, 4 s then capped; while waiting,
+`handshake` connects only with a pin the user has already accepted, sends `Hello`, awaits
+`Welcome`, then resolves the requested engine name against the server's list. There is no
+unpinned connect: `probe_fingerprint` does the TLS handshake, returns the leaf fingerprint
+and closes with application code 0, and the token is sent only on the later pinned
+connection. Its error classification is load-bearing: `EngineError::Protocol` means
+reconnecting cannot help (bad token, version mismatch, fingerprint mismatch), `Disconnected`
+means retry. Backoff is 0.5 s, 1 s, 2 s, 4 s then capped; while waiting,
 commands are still answered so the handle never deadlocks. `RemoteStatus::Failed` is sticky for
 unfixable causes so the UI can say something truthful instead of spinning, while the task keeps
 retrying at maximum backoff in case the server is fixed and restarted.

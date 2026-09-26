@@ -108,15 +108,19 @@ The client pins the key directly — the SSH host-key model.
 |---|---|
 | The pin is the **lowercase hex SHA-256 of the leaf certificate's DER**, 64 characters, no separators. Only the leaf is hashed; intermediates are ignored. | MUST |
 | Self-signed leaves are expected and normal. | — |
-| First connection with no stored pin: record the observed fingerprint; SHOULD show it to the user before persisting. | MUST / SHOULD |
+| First contact with no stored pin: perform a TLS handshake, record the leaf fingerprint, and close with application code 0 **without opening a stream or sending a frame**. Show that fingerprint to the user and persist it only after they accept it. | MUST |
+| A client MUST NOT send `Hello` or a token on a connection whose leaf fingerprint the user has not accepted. The token-bearing connection is a later, pinned handshake. | MUST NOT |
 | Later connections: compare, and abort the TLS handshake on mismatch. A mismatch is a **hard failure** — no fallback check, no one-time override, no retry of that connection. | MUST |
 | Do NOT validate against a trust store, do NOT validate hostname/SAN, do NOT reject on `notBefore`/`notAfter`. The fingerprint is the entire check. | MUST |
 | Still verify the TLS 1.3 `CertificateVerify` signature against the leaf's public key. Pinning replaces chain validation, not proof of key possession. | MUST |
 | Normalise a user-supplied pin — trim, lowercase, strip `:` — so a fingerprint pasted from `openssl x509 -fingerprint -sha256` works. | SHOULD |
 
-Reference: `transport.rs` — `normalize_fingerprint` canonicalises a pin once before
-`connect` builds the verifier; `TofuVerifier` compares that pin and delegates signature
-checking to rustls; `fingerprint_of` / `sha256.rs` — `fingerprint` produce the pin.
+Reference: `transport.rs` — `probe` is the unpinned handshake (no stream); `connect` requires a
+pin and is the only path that may be followed by `Hello`. `normalize_fingerprint` canonicalises
+that pin once before the verifier is built; `TofuVerifier` compares it and delegates signature
+checking to rustls. The accept-anything verifier is used only by `probe`. `fingerprint_of` /
+`sha256.rs` — `fingerprint` produce the pin; `format_fingerprint` is the colon-grouped form a
+person compares with the server's startup log.
 
 **SNI.** rustls requires a syntactically valid server name, so a client whose URL host is an IP
 literal sends the SNI name `localhost` (`transport.rs` — `connect`). Servers MUST NOT route or
@@ -636,7 +640,7 @@ client                                                            server
 
 | # | Rule | Level |
 |---|---|---|
-| 1 | Complete the QUIC/TLS handshake with ALPN `mirai` and verify the leaf fingerprint before sending any frame. | MUST |
+| 1 | Complete the QUIC/TLS handshake with ALPN `mirai` and verify the leaf fingerprint before sending any frame. A client with no accepted pin MUST [`probe`](#22-certificates-trust-on-first-use) instead of sending `Hello`. | MUST |
 | 2 | Open exactly one bidirectional stream and send `Hello` as its first frame. | MUST |
 | 3 | (Server) Treat any first control message other than `Hello` as fatal: `Error { None, BadRequest }`, then close the connection with application code 1. | MUST |
 | 4 | (Server) Send nothing before receiving `Hello`, except an `Error`. | MUST NOT |
@@ -679,7 +683,7 @@ The credential is the opaque UTF-8 `Hello.token`, checked against a server-side 
 | A server with no configured tokens rejects every client. | MUST |
 | On failure reply `Error { None, Unauthorized }`, then close with application code 1; do not distinguish "unknown" from "wrong" in `msg`. | MUST |
 | Tokens carry ≥ 128 bits of entropy. `mirai-server --generate-token` emits 64 lowercase hex characters. | SHOULD |
-| The token is sent nowhere but inside `Hello` on an established TLS 1.3 connection. | MUST NOT (otherwise) |
+| The token is sent nowhere but inside `Hello` on a TLS 1.3 connection pinned to a fingerprint the user has accepted. An unpinned connection MUST NOT carry it. | MUST NOT (otherwise) |
 
 ### 8.3 Subscription lifecycle
 
@@ -926,8 +930,9 @@ KataGo falls from two busy cores to 0 % CPU within 250 ms.
     Subscription streams: send every frame as `0x02`.
 29. Advertise `max_concurrent_uni_streams` well above the intended subscription count.
 30. Send QUIC keep-alives at roughly ⅓ of the negotiated idle timeout.
-31. Normalise a user-supplied fingerprint (trim, lowercase, strip `:`) before comparing, and
-    show a first-seen fingerprint to the user before persisting it.
+31. Normalise a user-supplied fingerprint (trim, lowercase, strip `:`) before comparing.
+    Probe an unpinned server, show the fingerprint, and only then connect with that pin.
+    A client MUST NOT send a token over an unpinned connection.
 32. Use ≥ 128 bits of entropy per token.
 33. Reconnect with capped exponential backoff, distinguishing "reconnecting" from "permanently
     rejected" in anything the user sees.

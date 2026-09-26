@@ -117,16 +117,16 @@ impl std::fmt::Debug for RemoteEngine {
 impl RemoteEngine {
     /// Connects to `url` (`mirai://host:port`), authenticates, and picks an engine.
     ///
-    /// `expect_fingerprint` is the TOFU pin: `None` accepts (and records) whatever
-    /// certificate the server offers, which the caller should show to the user and persist
-    /// in a [`TofuStore`]. A pin that does not match is a hard failure.
+    /// `pin` is the fingerprint the user has already accepted. A mismatch is a hard
+    /// failure. There is no unpinned mode: call [`probe_fingerprint`] and ask the user
+    /// before this, or the token would be sent to whoever answered.
     pub async fn connect(
         url: &str,
         token: &str,
         engine: Option<String>,
-        expect_fingerprint: Option<String>,
+        pin: String,
     ) -> Result<RemoteEngine, EngineError> {
-        let session = handshake(url, token, expect_fingerprint).await?;
+        let session = handshake(url, token, pin).await?;
         let desc = pick_engine(&session.engines, engine.as_deref())?;
         let fingerprint = session.fingerprint.clone();
         let server = session.server.clone();
@@ -165,6 +165,14 @@ impl RemoteEngine {
             status: status_rx,
             _shutdown: shutdown_tx,
         })
+    }
+
+    /// TLS handshake only. Returns the leaf fingerprint and closes with application
+    /// code 0. No stream is opened and the token is not sent.
+    pub async fn probe_fingerprint(url: &str) -> Result<String, EngineError> {
+        transport::probe(url)
+            .await
+            .map_err(|e| EngineError::Disconnected(e.to_string()))
     }
 
     /// The server certificate's SHA-256, lowercase hex — the value to pin.
@@ -258,12 +266,13 @@ struct Session {
     server: String,
 }
 
-/// Connects, sends `Hello`, and waits for `Welcome`.
+/// Connects with `pin`, sends `Hello`, and waits for `Welcome`.
 ///
 /// Errors are classified by variant, and the classification is load-bearing:
 /// [`EngineError::Protocol`] is something reconnecting will not fix (bad token, bad version,
-/// fingerprint mismatch), [`EngineError::Disconnected`] is worth retrying.
-async fn handshake(url: &str, token: &str, pin: Option<String>) -> Result<Session, EngineError> {
+/// fingerprint mismatch), [`EngineError::Disconnected`] is worth retrying. A pin mismatch
+/// fails inside the TLS handshake, before `Hello`.
+async fn handshake(url: &str, token: &str, pin: String) -> Result<Session, EngineError> {
     let (conn, fingerprint) = match transport::connect(url, pin).await {
         Ok(v) => v,
         Err(e @ TransportError::FingerprintMismatch { .. }) => {
@@ -797,7 +806,7 @@ async fn reconnect(
             return None;
         }
 
-        let attempting = handshake(&peer.url, &peer.token, Some(peer.pin.clone()));
+        let attempting = handshake(&peer.url, &peer.token, peer.pin.clone());
         let result = tokio::select! {
             _ = &mut *shutdown => return None,
             r = attempting => r,
@@ -907,9 +916,14 @@ mod tests {
     /// instead of panicking or hanging.
     #[tokio::test]
     async fn connect_reports_an_unusable_address() {
-        let err = RemoteEngine::connect("mirai://no.such.host.invalid:9678", "tok", None, None)
-            .await
-            .expect_err("connecting to an unresolvable host must fail");
+        let err = RemoteEngine::connect(
+            "mirai://no.such.host.invalid:9678",
+            "tok",
+            None,
+            "a".repeat(64),
+        )
+        .await
+        .expect_err("connecting to an unresolvable host must fail");
         assert!(matches!(err, EngineError::Disconnected(_)), "{err}");
         let msg = err.to_string();
         assert!(msg.contains("no.such.host.invalid"), "{msg}");
@@ -920,7 +934,7 @@ mod tests {
     /// still be waiting — never panic and never return `Ok`.
     #[tokio::test]
     async fn connect_to_a_dead_port_never_succeeds() {
-        let attempt = RemoteEngine::connect("mirai://127.0.0.1:1", "tok", None, None);
+        let attempt = RemoteEngine::connect("mirai://127.0.0.1:1", "tok", None, "a".repeat(64));
         match tokio::time::timeout(Duration::from_secs(2), attempt).await {
             Ok(Ok(_)) => panic!("connected to a port with no server on it"),
             Ok(Err(err)) => {

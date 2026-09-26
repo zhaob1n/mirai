@@ -186,7 +186,11 @@ async fn run(
         tokens = host.tokens.len(),
         "mirai-server listening"
     );
-    info!(sha256 = %fingerprint, "certificate fingerprint (pin this in the client)");
+    let shown = mirai_proto::sha256::format_fingerprint(&fingerprint);
+    info!(
+        sha256 = %shown,
+        "certificate fingerprint (compare this with the client before trusting)"
+    );
 
     let sessions = Arc::new(Semaphore::new(MAX_SESSIONS));
     while let Some(incoming) = endpoint.accept().await {

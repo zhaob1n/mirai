@@ -40,7 +40,7 @@ fn a_request() -> AnalyzeReq {
 async fn connect(server: &TestServer) -> Result<RemoteEngine, EngineError> {
     tokio::time::timeout(
         PATIENCE,
-        RemoteEngine::connect(&server.url, "tok", None, Some(server.fingerprint.clone())),
+        RemoteEngine::connect(&server.url, "tok", None, server.fingerprint.clone()),
     )
     .await
     .expect("connect hung")
@@ -70,6 +70,42 @@ async fn a_hello_is_answered_and_the_first_engine_is_resolved() {
     assert_eq!(engine.describe().name, "default");
     assert!(engine.connected());
     assert_eq!(engine.fingerprint(), server.fingerprint);
+}
+
+/// A probe returns the real fingerprint and closes. The server must not see Hello:
+/// that frame is where the token would have been.
+#[tokio::test]
+async fn a_probe_returns_the_fingerprint_and_sends_no_hello() {
+    let mut server = TestServer::start(Script::default()).await;
+    let fp = tokio::time::timeout(PATIENCE, RemoteEngine::probe_fingerprint(&server.url))
+        .await
+        .expect("probe hung")
+        .expect("probe");
+    assert_eq!(fp, server.fingerprint);
+    match server.next().await {
+        Seen::Gone => {}
+        Seen::Control(msg) => panic!("a probe sent {msg:?}"),
+        other => panic!("expected the probe to close without Hello, saw {other:?}"),
+    }
+}
+
+/// A wrong pin fails inside TLS, before Hello, so the token never leaves the client.
+#[tokio::test]
+async fn a_wrong_pin_fails_before_hello() {
+    let mut server = TestServer::start(Script::default()).await;
+    let err = tokio::time::timeout(
+        PATIENCE,
+        RemoteEngine::connect(&server.url, "secret-token", None, "b".repeat(64)),
+    )
+    .await
+    .expect("connect hung")
+    .expect_err("a wrong pin connected");
+    assert!(matches!(err, EngineError::Protocol(_)), "{err}");
+    match server.next().await {
+        Seen::Gone => {}
+        Seen::Control(msg) => panic!("Hello was sent on a mismatched pin: {msg:?}"),
+        other => panic!("expected no Hello, saw {other:?}"),
+    }
 }
 
 /// §8.1 rule 5: a client that failed on unexpected pre-`Welcome` frames could not talk to a

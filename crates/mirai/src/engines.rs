@@ -41,9 +41,8 @@ use tokio::sync::oneshot;
 
 use crate::config::{EngineProfile, ProfileKind};
 
-/// A started engine and, for a remote profile on its first connect, the certificate
-/// fingerprint the caller should pin.
-pub type Built = (Arc<dyn Engine>, Option<String>);
+/// A started engine. A remote profile is connected only when its certificate is already pinned.
+pub type Built = Arc<dyn Engine>;
 
 enum Entry {
     Ready(Weak<dyn Engine>),
@@ -119,7 +118,7 @@ impl EnginePool {
             if let Some(Entry::Ready(weak)) = entries.get(&key)
                 && let Some(engine) = weak.upgrade()
             {
-                return Ok((engine, None));
+                return Ok(engine);
             }
             let (tx, rx) = oneshot::channel();
             let launch = match entries.get_mut(&key) {
@@ -186,7 +185,7 @@ impl EnginePool {
                 None => return,
             }
         };
-        if let Ok((engine, _)) = &result {
+        if let Ok(engine) = &result {
             self.entries
                 .borrow_mut()
                 .insert(key.to_string(), Entry::Ready(Arc::downgrade(engine)));
@@ -269,7 +268,7 @@ async fn build(profile: EngineProfile, log_dir: PathBuf) -> Result<Built, Engine
             cfg.analysis_threads = analysis_threads;
             cfg.search_threads = search_threads;
             let engine = mirai_engine::LocalEngine::spawn(cfg).await?;
-            Ok((Arc::new(engine) as Arc<dyn Engine>, None))
+            Ok(Arc::new(engine) as Arc<dyn Engine>)
         }
         ProfileKind::Remote {
             url,
@@ -277,10 +276,13 @@ async fn build(profile: EngineProfile, log_dir: PathBuf) -> Result<Built, Engine
             engine,
             cert_sha256,
         } => {
-            let remote =
-                mirai_engine::RemoteEngine::connect(&url, &token, engine, cert_sha256).await?;
-            let fingerprint = remote.fingerprint().to_string();
-            Ok((Arc::new(remote) as Arc<dyn Engine>, Some(fingerprint)))
+            let Some(pin) = cert_sha256 else {
+                return Err(EngineError::Protocol(
+                    "refusing to send the token before the certificate is pinned".into(),
+                ));
+            };
+            let remote = mirai_engine::RemoteEngine::connect(&url, &token, engine, pin).await?;
+            Ok(Arc::new(remote) as Arc<dyn Engine>)
         }
     }
 }
@@ -367,7 +369,7 @@ mod tests {
                     .take()
                     .expect("a second start ran for one profile");
                 rx.await.expect("the test dropped the start gate");
-                Ok((Arc::new(Stub) as Arc<dyn Engine>, None))
+                Ok(Arc::new(Stub) as Arc<dyn Engine>)
             })
         }
     }
@@ -429,7 +431,7 @@ mod tests {
             let running = pool
                 .running(&profile)
                 .expect("the finished start is installed");
-            assert!(Arc::ptr_eq(&built.0, &running));
+            assert!(Arc::ptr_eq(&built, &running));
         });
     }
 
@@ -472,7 +474,7 @@ mod tests {
                 .expect("second acquire hung")
                 .expect("acquire task")
                 .expect("start");
-            assert!(Arc::ptr_eq(&first.0, &second.0));
+            assert!(Arc::ptr_eq(&first, &second));
             assert_eq!(starts.get(), 1);
         });
     }
@@ -522,9 +524,7 @@ mod tests {
             drop(waiter);
             drop(pool);
             assert!(
-                gate_tx
-                    .send(Ok((Arc::new(Stub) as Arc<dyn Engine>, None)))
-                    .is_err(),
+                gate_tx.send(Ok(Arc::new(Stub) as Arc<dyn Engine>)).is_err(),
                 "the start receiver was still alive after the pool dropped"
             );
         });

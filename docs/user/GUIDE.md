@@ -501,19 +501,22 @@ One server serves several clients from the one KataGo; it does not start a copy 
 | **Token** | the 64 characters, masked as you type |
 | **Engine name (optional)** | blank unless the desktop hosts several and you want a particular one. Blank means the server's first engine |
 
-Press **Test Connection**. On the first successful connect the dialog is **Trust This
-Server?** The body names the URL and says mirai will refuse to connect if the certificate
-ever changes. The SHA-256 itself is a separate selectable monospace line, wrapped so it is
-not cut off. **Cancel** is the default: Enter and Escape dismiss the dialog and do not pin
-anything. **Trust** is explicit.
+Press **Test Connection**. mirai performs a TLS handshake and shows **Trust This Server?**
+before it sends the token. The body names the host and tells you to compare the fingerprint
+with the one `mirai-server` printed at startup. The SHA-256 itself is a separate selectable
+monospace line, colon-grouped the same way as that log, wrapped so it is not cut off.
+**Cancel** is the default: Enter and Escape dismiss the dialog and do not pin anything.
+**Trust** is explicit and is not styled as a destructive action.
 
 **Compare that line with what the server printed.** Matching → **Trust**. Not matching →
-Cancel; something between the two machines is answering in the desktop's place.
+Cancel; something between the two machines is answering in the desktop's place. The token
+is sent only after Trust, on a connection pinned to the fingerprint you just accepted.
 
-Trusting *pins* that fingerprint. **Save Profile**, then select the profile from the engine
-button. Everything behaves as it does locally. Changing the Server URL later discards the
-pin, because a pin belongs to the address it came from, and you are asked to confirm the new
-one.
+Trusting *pins* that fingerprint in the editor. **Save Profile**, then select the profile
+from the engine button. Selecting a profile that is not yet pinned asks the same question
+before connecting; Cancel leaves the engine unavailable and writes nothing. Changing the
+Server URL later discards the pin, because a pin belongs to the address it came from, and
+you are asked to confirm the new one.
 
 ### If mirai later refuses to connect
 

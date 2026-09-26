@@ -52,9 +52,9 @@ needed, `cargo test -p <crate> -- --list`.
 | Crate | Behaviour the suite proves | Command / fixture |
 |---|---|---|
 | `mirai-core` | INV-1 geometry; each ruleset's KataGo string; ko, suicide, captures, Zobrist; positional versus situational superko, and that edits keep `NodeId`s; scoring totals (territory **plus the prisoners that side holds**), not the margin alone; SGF escaping, collections, branches, and a corrupt `MRAI` ignored rather than fatal | `cargo test -p mirai-core`. Parser fixtures: `crates/mirai-core/tests/data/katago-selfplay.sgf` (mirai's writer; regenerate in §4) and `lizzieyzy-autoGame1.sgf` (another writer's bytes, vendored) |
-| `mirai-proto` | INV-6 quantisation and the INV-2 flip; the frame length cap enforced *before* allocate; a control frame's zstd plaintext stops inflating at the read's limit; trailing bytes and a flag the stream does not allow refused; a subscription stream decodes frame by frame, compresses a repeat to a back-reference, refuses a bomb and an oversized window, and restores ownership sent as changes; a stream cannot run more than one window ahead of its reader; cert reuse; a mismatched pin refused as a mismatch, not as a generic failure; an openssl-style pin of the real certificate connects | `cargo test -p mirai-proto`. The byte budget is the `wire_size` command in §1 — read the printed numbers, do not copy them into this table |
-| `mirai-engine` | The JSON handed to KataGo (empty `avoidMoves` dropped, never `analyzeTurns`, `terminate` behind INV-3); decode order and Black-perspective values; a candidate cap keeps the engine's best, not KataGo's first; reporting perspective forced on the command line; a comma in an override path is an error; the generated analysis config carries every key KataGo demands and is not rewritten when unchanged; calibration selects the measured winner and covers the thread product; a dead remote address fails instead of hanging; the MRP session rules against a scripted server | `cargo test -p mirai-engine`. These tests never start KataGo. A real engine is §4 |
-| `mirai-client` | A request built from the last setup/`PL` boundary, with territory komi taken from that boundary; a sweep hands back a result before the rest of the plan is dispatched; blunder drop measured from the mover, above the 2% noise floor; an illegal move changes nothing; dirty is a document token; TOFU waits until trusted; temperature 0 is deterministic and one bad report does not resign; Fox dialect normalised before `sgf::parse` | `cargo test -p mirai-client` |
+| `mirai-proto` | INV-6 quantisation and the INV-2 flip; the frame length cap enforced *before* allocate; a control frame's zstd plaintext stops inflating at the read's limit; trailing bytes and a flag the stream does not allow refused; a subscription stream decodes frame by frame, compresses a repeat to a back-reference, refuses a bomb and an oversized window, and restores ownership sent as changes; a stream cannot run more than one window ahead of its reader; cert reuse; a mismatched pin refused as a mismatch, not as a generic failure; an openssl-style pin of the real certificate connects; a probe returns the fingerprint and opens no stream | `cargo test -p mirai-proto`. The byte budget is the `wire_size` command in §1 — read the printed numbers, do not copy them into this table |
+| `mirai-engine` | The JSON handed to KataGo (empty `avoidMoves` dropped, never `analyzeTurns`, `terminate` behind INV-3); decode order and Black-perspective values; a candidate cap keeps the engine's best, not KataGo's first; reporting perspective forced on the command line; a comma in an override path is an error; the generated analysis config carries every key KataGo demands and is not rewritten when unchanged; calibration selects the measured winner and covers the thread product; a dead remote address fails instead of hanging; the MRP session rules against a scripted server; a probe returns the fingerprint and sends no Hello, and a wrong pin fails before Hello | `cargo test -p mirai-engine`. These tests never start KataGo. A real engine is §4 |
+| `mirai-client` | A request built from the last setup/`PL` boundary, with territory komi taken from that boundary; a sweep hands back a result before the rest of the plan is dispatched; blunder drop measured from the mover, above the 2% noise floor; an illegal move changes nothing; dirty is a document token; an unpinned connect probes and waits, and Trust is what sends the pin; temperature 0 is deterministic and one bad report does not resign; Fox dialect normalised before `sgf::parse` | `cargo test -p mirai-client` |
 | `mirai-server` | Token shape; a misspelled key is an error; relative paths resolve against the config directory; the example config parses; exact-match auth (no `[[token]]` rejects everyone); a client cannot raise its own priority; an off-board or oversized request is refused with `BadRequest` before the engine sees it, and only allow-listed overrides reach the engine; a silent pre-auth connection is closed and its session slot returns; a cancelled subscription stops even when its stream is not read, and keeps its `max_subs` slot until it has; an oversized first frame, compressed or not, or `Hello` field is refused as `BadRequest` and kept out of the log | `cargo test -p mirai-server`. Example: `crates/mirai-server/server.example.toml` |
 | `mirai` | Display-free projections only: config merge and discovery order, Clear Board keeps size/rules/komi, the slider spans the line through the cursor, Fox normalisation, widget geometry lifted out of `snapshot()`, harness grammar, a dropped engine acquire does not strand the profile, two acquires share one start, and dropping the pool mid-start closes that start's receiver. Nothing drawn | `cargo test -p mirai`. What the window looks like is §5 |
 
@@ -658,7 +658,7 @@ thread count are whatever this process started:
 ```text
 INFO engine ready engine=default katago_version=<version> analysis_threads=<n> human_model=false
 INFO mirai-server listening listen=127.0.0.1:9678 engines=1 tokens=1
-INFO certificate fingerprint (pin this in the client) sha256=<64 hex>
+INFO certificate fingerprint (compare this with the client before trusting) sha256=<colon-grouped hex>
 ```
 
 **Point a client at it.**
@@ -666,10 +666,12 @@ INFO certificate fingerprint (pin this in the client) sha256=<64 hex>
 `probe --remote` is the fastest check (§4). For the GUI, add a remote profile
 (`url`, `token`, optional `engine`) to the isolated `config.toml`. Field
 meanings are the client settings document [`AGENTS.md`](../../AGENTS.md) points
-at. Leave `cert_sha256` out on the first connect: the app shows
-`dialogs::confirm_fingerprint` with the colon-grouped digits, and accepting
-writes the pin via `Config::set_pin`. Compare it with `--print-fingerprint`
-before accepting. Switch engines with `action:win.set-engine=<profile>`.
+at. Leave `cert_sha256` out: selecting the profile probes and shows
+`dialogs::confirm_fingerprint` with the colon-grouped digits before any token is
+sent. Trust writes the pin via `Config::set_pin` and then connects; Cancel
+persists nothing. Compare it with the server's startup log (the same grouping;
+`--print-fingerprint` is the raw hex) before accepting. Switch engines with
+`action:win.set-engine=<profile>`.
 
 **Confirm a subscription opened.**
 
@@ -691,7 +693,9 @@ estimate 8 — each clamped into the served band.
 RUST_LOG=info cargo run --release -p mirai-server
 # terminal 2, then Ctrl-C
 cargo run -p mirai-engine --example probe -- \
-    --remote mirai://127.0.0.1:9678 --token "$TOKEN" --visits 1000000
+    --remote mirai://127.0.0.1:9678 --token "$TOKEN" \
+    --fingerprint "$(cargo run -q -p mirai-server -- --print-fingerprint)" \
+    --visits 1000000
 ```
 
 Compare timestamps. The recorded run logged `connection closed` and

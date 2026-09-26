@@ -233,9 +233,14 @@ async fn serve(
         return;
     };
     let Ok(conn) = incoming.await else {
+        // The handshake failed (a wrong pin does this) before any stream existed.
+        let _ = seen.send(Seen::Gone);
         return;
     };
     let Ok((mut tx, mut rx)) = conn.accept_bi().await else {
+        // Connected, then closed without a control stream. A probe does this: code 0,
+        // no Hello, no token.
+        let _ = seen.send(Seen::Gone);
         return;
     };
 

@@ -791,7 +791,7 @@ mod tests {
             .await;
         });
 
-        let (conn, _) = mirai_proto::transport::connect(&format!("mirai://{addr}"), Some(fp))
+        let (conn, _) = mirai_proto::transport::connect(&format!("mirai://{addr}"), fp)
             .await
             .expect("handshake");
         let (mut tx, mut rx) = conn.open_bi().await.expect("control stream");
@@ -911,7 +911,7 @@ mod tests {
             .await;
         });
 
-        let (conn, _) = mirai_proto::transport::connect(&format!("mirai://{addr}"), Some(fp))
+        let (conn, _) = mirai_proto::transport::connect(&format!("mirai://{addr}"), fp)
             .await
             .expect("handshake");
         // Hold the stream open and write nothing. Dropping it would reset the stream,
@@ -970,7 +970,7 @@ mod tests {
             .await;
         });
 
-        let (conn, _) = mirai_proto::transport::connect(&format!("mirai://{addr}"), Some(fp))
+        let (conn, _) = mirai_proto::transport::connect(&format!("mirai://{addr}"), fp)
             .await
             .expect("handshake");
         let (mut tx, mut rx) = conn.open_bi().await.expect("control stream");
@@ -1090,7 +1090,7 @@ mod tests {
                 serve(host, incoming, Duration::from_secs(2)).await;
             });
 
-            let (conn, _) = mirai_proto::transport::connect(&format!("mirai://{addr}"), Some(fp))
+            let (conn, _) = mirai_proto::transport::connect(&format!("mirai://{addr}"), fp)
                 .await
                 .expect("handshake");
             let (tx, rx) = conn.open_bi().await.expect("control stream");
@@ -1251,7 +1251,7 @@ mod tests {
             session_loop(&host, &conn, 1, deadline).await
         });
 
-        let (conn, _) = mirai_proto::transport::connect(&format!("mirai://{addr}"), Some(fp))
+        let (conn, _) = mirai_proto::transport::connect(&format!("mirai://{addr}"), fp)
             .await
             .expect("handshake");
         let (mut tx, mut rx) = conn.open_bi().await.expect("control stream");

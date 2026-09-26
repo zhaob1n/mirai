@@ -42,28 +42,30 @@ pub fn show_score_with(
     dialog.present(Some(parent));
 }
 
-/// Asks the user to confirm a server's certificate fingerprint before pinning it.
+/// Asks the user to compare a server's certificate fingerprint before pinning it.
 ///
-/// The fingerprint is a selectable label under the body, not part of the body
-/// text. Cancel is the default and the close response, so Enter and Escape
-/// dismiss the dialog and never pin the server.
+/// The fingerprint is a selectable label under the body, grouped the same way
+/// `mirai-server` prints it at startup. Cancel is the default and the close
+/// response, so Enter and Escape dismiss the dialog and never pin the server.
+/// Trust is not styled as destructive. Returns the dialog so a superseded
+/// activation can dismiss it.
 pub fn confirm_fingerprint(
     parent: &impl IsA<gtk::Widget>,
     url: &str,
     fingerprint: &str,
-    on_accept: impl Fn() + 'static,
-) {
-    let pretty: String = fingerprint
-        .as_bytes()
-        .chunks(2)
-        .map(|c| String::from_utf8_lossy(c).into_owned())
-        .collect::<Vec<_>>()
-        .join(":");
+    on_trust: impl Fn() + 'static,
+    on_cancel: impl Fn() + 'static,
+) -> adw::AlertDialog {
+    let host = mirai_proto::parse_url(url)
+        .map(|(host, _)| host)
+        .unwrap_or_else(|_| url.to_string());
+    let pretty = mirai_proto::sha256::format_fingerprint(fingerprint);
     let dialog = adw::AlertDialog::new(
         Some("Trust This Server?"),
         Some(&format!(
-            "{url} presented a certificate with SHA-256.\n\n\
-             mirai will refuse to connect if it ever changes."
+            "{host} presented this certificate. Compare it with the fingerprint \
+             mirai-server printed at startup. The token is sent only after you \
+             trust it, and a later change is refused."
         )),
     );
     // Colon groups are one token, so word wrap would not break them. WordChar
@@ -85,8 +87,18 @@ pub fn confirm_fingerprint(
     dialog.set_close_response("cancel");
     dialog.connect_response(None, move |_, response| {
         if response == "trust" {
-            on_accept();
+            on_trust();
+        } else {
+            on_cancel();
         }
     });
     dialog.present(Some(parent));
+    dialog
+}
+
+/// Dismisses a trust dialog a newer activation has replaced.
+pub fn dismiss_trust_dialog(widget: &gtk::Widget) {
+    if let Some(dialog) = widget.downcast_ref::<adw::AlertDialog>() {
+        dialog.close();
+    }
 }
