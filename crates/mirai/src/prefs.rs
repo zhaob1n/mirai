@@ -1585,7 +1585,8 @@ fn connect_analysis(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, st
 
     let interval_state = state.clone();
     let interval_syncing = syncing.clone();
-    let interval_restart = restart;
+    let interval_restart = Rc::clone(&restart);
+    let suggestions_restart = restart;
     widgets
         .analysis_interval_row
         .connect_value_notify(move |row| {
@@ -1614,8 +1615,9 @@ fn connect_analysis(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, st
             };
             suggestions_state.save_config();
             // The live request carries the old cap: the engine never sends the extra moves.
+            // Same pause as the visit cap — a key repeat must not restart on every step.
             if grew {
-                suggestions_state.restart_analysis();
+                suggestions_restart.schedule(&suggestions_state);
             }
             // The board and the candidate list truncate to this, so redraw them now.
             suggestions_state.changed(Change::Report);

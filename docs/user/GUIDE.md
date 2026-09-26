@@ -581,10 +581,11 @@ to persist and activate them. The neural-net cache is not changed.
 | **Visits per Move** | 100 | 100 – 100 000 | reviewing: 100 is quick, 5 000 is thorough |
 | **Analyse on Open** | off | on / off | turn on to start a whole-game sweep whenever a record is opened, pasted or downloaded |
 
-Changing **Maximum Visits** or **Report Interval** restarts a search that is already running,
-after a brief pause so dragging or key-repeating the row does not restart on every step.
-**Suggestions Shown** restarts only when the cap grows. The number is written to disk
-immediately either way. The numeric rows accept typing, scrolling and the keyboard's arrow
+Changing **Maximum Visits**, **Report Interval**, or a larger **Suggestions Shown**
+restarts a search that is already running, after a brief pause so dragging or
+key-repeating the row does not restart on every step. Shrinking **Suggestions Shown**
+only redraws: the engine already sent every move the board now keeps. The number is
+written to disk immediately either way. The numeric rows accept typing, scrolling and the keyboard's arrow
 keys. Each page ends with **Restore Defaults**. Its toast offers **Undo**. Restoring a page
 does not delete engine profiles.
 
