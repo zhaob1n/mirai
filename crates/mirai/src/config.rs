@@ -354,6 +354,12 @@ impl Default for AnalysisSettings {
     }
 }
 
+pub const MIN_SECONDS_PER_MOVE: f64 = 0.1;
+pub const MAX_SECONDS_PER_MOVE: f64 = 600.0;
+pub const MAX_VISITS_PER_MOVE: f64 = 1_000_000.0;
+pub const DEFAULT_VISITS_PER_MOVE: u32 = 800;
+pub const DEFAULT_SECONDS_PER_MOVE: f64 = 5.0;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum StrengthSetting {
@@ -364,7 +370,9 @@ pub enum StrengthSetting {
 
 impl Default for StrengthSetting {
     fn default() -> Self {
-        StrengthSetting::Visits { visits: 800 }
+        StrengthSetting::Visits {
+            visits: DEFAULT_VISITS_PER_MOVE,
+        }
     }
 }
 

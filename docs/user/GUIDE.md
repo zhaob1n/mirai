@@ -595,7 +595,7 @@ does not delete engine profiles.
 |---|---|---|---|
 | **Mode** | Visits | Visits / Time per move / Human-like | the same three names as New Game |
 | **Visits per Move** | 800 | 1 – 1 000 000 | you want a weaker or stronger opponent |
-| **Seconds per Move** | 5.0 | 0.1 – 300 | using Time per move. New Game allows up to 600 |
+| **Seconds per Move** | 5.0 | 0.1 – 600 | using Time per move, in both Preferences and New Game |
 | **Human Model Profile** | `rank_5k` | free text | the network supports human imitation and you want another rank |
 | **Temperature** | 0.00 | 0 – 2 | 0 always plays the best move; 0.2–0.4 varies the opening |
 | **Resign Threshold** | 0.05 | 0 – 0.5 | 0 makes the engine play every game out |

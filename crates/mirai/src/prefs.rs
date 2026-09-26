@@ -18,7 +18,9 @@ use mirai_core::RuleSet;
 
 use crate::app::{AppState, Change};
 use crate::config::{
-    AnalysisSettings, EngineProfile, PlaySettings, ProfileKind, StrengthSetting, UiSettings,
+    AnalysisSettings, DEFAULT_SECONDS_PER_MOVE, DEFAULT_VISITS_PER_MOVE, EngineProfile,
+    MAX_SECONDS_PER_MOVE, MAX_VISITS_PER_MOVE, MIN_SECONDS_PER_MOVE, PlaySettings, ProfileKind,
+    StrengthSetting, UiSettings,
 };
 use crate::preferences_shell::{PreferencesDialog, PreferencesWidgets};
 use crate::profile_editor::ProfileEditorPage;
@@ -1776,8 +1778,14 @@ fn connect_play(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state:
     widgets
         .play_strength_kind_row
         .set_model(Some(&gtk::StringList::new(&STRENGTH_KINDS)));
-    configure_spin(&widgets.play_visits_row, 1.0, 1_000_000.0, 100.0, 0);
-    configure_spin(&widgets.play_seconds_row, 0.1, 300.0, 0.5, 1);
+    configure_spin(&widgets.play_visits_row, 1.0, MAX_VISITS_PER_MOVE, 100.0, 0);
+    configure_spin(
+        &widgets.play_seconds_row,
+        MIN_SECONDS_PER_MOVE,
+        MAX_SECONDS_PER_MOVE,
+        0.5,
+        1,
+    );
     configure_spin(&widgets.play_temperature_row, 0.0, 2.0, 0.05, 2);
     configure_spin(&widgets.play_threshold_row, 0.0, 0.5, 0.01, 2);
     configure_spin(&widgets.play_streak_row, 1.0, 10.0, 1.0, 0);
@@ -1905,8 +1913,10 @@ fn store_strength(widgets: &PreferencesWidgets, state: &AppState) {
 fn load_play(widgets: &PreferencesWidgets, state: &AppState, syncing: &Cell<bool>) {
     let play = state.config().play.clone();
     syncing.set(true);
-    widgets.play_visits_row.set_value(800.0);
-    widgets.play_seconds_row.set_value(5.0);
+    widgets
+        .play_visits_row
+        .set_value(f64::from(DEFAULT_VISITS_PER_MOVE));
+    widgets.play_seconds_row.set_value(DEFAULT_SECONDS_PER_MOVE);
     widgets
         .play_human_row
         .set_text(crate::play::DEFAULT_HUMAN_PROFILE);

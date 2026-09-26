@@ -10,7 +10,10 @@ use gtk::{CompositeTemplate, glib};
 use mirai_core::{Color, RuleSet, Size, TimeControl};
 
 use crate::app::AppState;
-use crate::config::{PlaySettings, StrengthSetting};
+use crate::config::{
+    DEFAULT_SECONDS_PER_MOVE, DEFAULT_VISITS_PER_MOVE, MAX_SECONDS_PER_MOVE, MAX_VISITS_PER_MOVE,
+    MIN_SECONDS_PER_MOVE, PlaySettings, StrengthSetting,
+};
 use crate::play::{GameSetup, Strength};
 
 const HUMAN_LIKE: &str = "Human-like";
@@ -148,8 +151,22 @@ impl NewGameDialog {
         }));
         set_items(&imp.strength_row, &["Visits", "Time per move", HUMAN_LIKE]);
         grey_out_human(&imp.strength_row, has_human_model);
-        configure_spin(&imp.visits_row, 1.0, 1_000_000.0, 100.0, 0, 800.0);
-        configure_spin(&imp.seconds_row, 0.1, 600.0, 0.5, 1, 5.0);
+        configure_spin(
+            &imp.visits_row,
+            1.0,
+            MAX_VISITS_PER_MOVE,
+            100.0,
+            0,
+            f64::from(DEFAULT_VISITS_PER_MOVE),
+        );
+        configure_spin(
+            &imp.seconds_row,
+            MIN_SECONDS_PER_MOVE,
+            MAX_SECONDS_PER_MOVE,
+            0.5,
+            1,
+            DEFAULT_SECONDS_PER_MOVE,
+        );
         imp.profile_row.set_text(crate::play::DEFAULT_HUMAN_PROFILE);
 
         let saved_mode = match &play.strength {
