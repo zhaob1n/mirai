@@ -602,7 +602,8 @@ fn spin_value_u8(row: &adw::SpinRow) -> Option<u8> {
 }
 
 /// KataGo's own estimate is about 3 KiB per cached evaluation once ownership is included,
-/// and mirai asks for ownership on nearly every query.
+/// and mirai asks for ownership on nearly every query. The row never shows a power between
+/// 0 and [`EngineTuning::MIN_CACHE_POWER`], so the figure is always whole MiB.
 fn cache_subtitle(power: u8) -> String {
     if power == 0 {
         return format!(
@@ -610,10 +611,44 @@ fn cache_subtitle(power: u8) -> String {
             EngineTuning::default().nn_cache_size_power_of_two
         );
     }
+    let bytes = EngineTuning {
+        nn_cache_size_power_of_two: power,
+        ..EngineTuning::default()
+    }
+    .cache_bytes();
     format!(
         "2^{power} evaluations, roughly {} MiB once warm",
-        (3u64 << power) / 1024
+        bytes / (1024 * 1024)
     )
+}
+
+/// `0` is the sentinel for mirai's default; anything else lies in
+/// [`EngineTuning::MIN_CACHE_POWER`]`..=`[`EngineTuning::MAX_CACHE_POWER`]. The spinner's
+/// next step after `0` is the minimum, and the step down from the minimum is `0`: a value
+/// in the gap follows the direction of the change, and one with no previous (`0`) is raised.
+fn snap_cache_power(previous: u8, value: u8) -> u8 {
+    if value == 0
+        || (EngineTuning::MIN_CACHE_POWER..=EngineTuning::MAX_CACHE_POWER).contains(&value)
+    {
+        return value;
+    }
+    if value > EngineTuning::MAX_CACHE_POWER {
+        return EngineTuning::MAX_CACHE_POWER;
+    }
+    if value < previous {
+        0
+    } else {
+        EngineTuning::MIN_CACHE_POWER
+    }
+}
+
+/// `None` keeps the default. A value the spinner should not have offered is clamped
+/// rather than written through.
+fn stored_cache_power(power: u8) -> Option<u8> {
+    match snap_cache_power(0, power) {
+        0 => None,
+        power => Some(power),
+    }
 }
 
 /// Both halves of a thread setting, in the words the two rows above the tuning group use.
@@ -813,14 +848,24 @@ fn local_editor(
         u32::from(batch.unwrap_or(0)),
         f64::from(EngineTuning::MAX_BATCH_SIZE),
     );
+    let cache_shown = snap_cache_power(0, cache.unwrap_or(0));
     let cache_row = tuned_row(
         "Neural-net cache",
-        &cache_subtitle(cache.unwrap_or(0)),
-        u32::from(cache.unwrap_or(0)),
+        &cache_subtitle(cache_shown),
+        u32::from(cache_shown),
         f64::from(EngineTuning::MAX_CACHE_POWER),
     );
-    cache_row.connect_value_notify(|row| {
-        row.set_subtitle(&cache_subtitle(row.value() as u8));
+    let cache_previous = Rc::new(Cell::new(cache_shown));
+    cache_row.connect_value_notify(move |row| {
+        let value = row.value() as u8;
+        let snapped = snap_cache_power(cache_previous.get(), value);
+        if snapped != value {
+            cache_previous.set(snapped);
+            row.set_value(f64::from(snapped));
+            return;
+        }
+        cache_previous.set(snapped);
+        row.set_subtitle(&cache_subtitle(snapped));
     });
     memory.add(&batch_row);
     memory.add(&cache_row);
@@ -1154,7 +1199,7 @@ fn local_editor(
                     search_threads: spin_value_u16(&search_row),
                     nn_max_batch_size: (!custom).then(|| spin_value_u16(&batch_row)).flatten(),
                     nn_cache_size_power_of_two: (!custom)
-                        .then(|| spin_value_u8(&cache_row))
+                        .then(|| stored_cache_power(cache_row.value() as u8))
                         .flatten(),
                 },
             };
@@ -2132,5 +2177,29 @@ mod tests {
                 ("analysis-fast.cfg".to_string(), None),
             ]
         );
+    }
+
+    #[test]
+    fn cache_power_steps_from_zero_to_the_minimum_and_clamps_on_save() {
+        assert_eq!(snap_cache_power(0, 1), EngineTuning::MIN_CACHE_POWER);
+        assert_eq!(
+            snap_cache_power(
+                EngineTuning::MIN_CACHE_POWER,
+                EngineTuning::MIN_CACHE_POWER - 1
+            ),
+            0
+        );
+        assert_eq!(snap_cache_power(0, 0), 0);
+        assert_eq!(snap_cache_power(20, 20), 20);
+        assert_eq!(snap_cache_power(0, 10), EngineTuning::MIN_CACHE_POWER);
+        assert_eq!(snap_cache_power(20, 10), 0);
+        assert_eq!(stored_cache_power(0), None);
+        assert_eq!(stored_cache_power(1), Some(EngineTuning::MIN_CACHE_POWER));
+        assert_eq!(stored_cache_power(20), Some(20));
+        assert_eq!(
+            stored_cache_power(EngineTuning::MAX_CACHE_POWER + 1),
+            Some(EngineTuning::MAX_CACHE_POWER)
+        );
+        assert!(cache_subtitle(20).contains("3072 MiB"));
     }
 }
