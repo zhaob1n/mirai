@@ -526,7 +526,9 @@ async fn stream_events(
         }
     };
     let mut own = OwnershipDelta::default();
-    let mut event = subscription.current();
+    // `current` borrows without marking the value seen, so `next` would hand a report
+    // already published back to be sent again.
+    let mut event = subscription.latest();
     loop {
         match &event {
             SubEvent::Pending => {}
@@ -1402,6 +1404,147 @@ mod tests {
             error.contains("0.2.0"),
             "the session ended without naming the offered version: {error}"
         );
+    }
+
+    /// A report published before the stream opens is still unseen. Sending what `current`
+    /// borrowed and then waiting on `next` puts that report on the wire twice.
+    #[tokio::test]
+    async fn a_report_already_published_is_sent_once() {
+        use std::sync::Mutex;
+
+        use mirai_engine::CancelGuard;
+        use mirai_proto::frame::SubStreamDecoder;
+        use mirai_proto::msg::SubMsg;
+        use mirai_proto::types::Report;
+
+        struct Holding {
+            tx: Mutex<Option<tokio::sync::watch::Sender<SubEvent>>>,
+        }
+
+        impl Engine for Holding {
+            fn subscribe(&self, _req: AnalyzeReq) -> Subscription {
+                let (tx, rx) = tokio::sync::watch::channel(SubEvent::Pending);
+                let mut report = Report::empty(0, Color::Black);
+                report.root.visits = 1;
+                tx.send(SubEvent::Report(Arc::new(report))).unwrap();
+                *self.tx.lock().unwrap() = Some(tx);
+                Subscription::new(rx, CancelGuard::noop())
+            }
+
+            fn describe(&self) -> EngineDesc {
+                EngineDesc::placeholder("holding")
+            }
+        }
+
+        let holding = Arc::new(Holding {
+            tx: Mutex::new(None),
+        });
+        let (endpoint, fp, dir) = test_endpoint("once");
+        let addr = endpoint.local_addr().expect("bound");
+        let accepting = endpoint.clone();
+        let engine: Arc<dyn Engine> = holding.clone();
+        let served = tokio::spawn(async move {
+            let incoming = accepting.accept().await.expect("incoming");
+            serve(
+                Arc::new(Host {
+                    engines: vec![NamedEngine {
+                        name: "holding".into(),
+                        engine,
+                    }],
+                    tokens: vec![Token {
+                        value: "secret".into(),
+                        name: "test".into(),
+                        max_subs: 4,
+                    }],
+                }),
+                incoming,
+                Duration::from_secs(2),
+            )
+            .await;
+        });
+
+        let (conn, _) = mirai_proto::transport::connect(&format!("mirai://{addr}"), fp)
+            .await
+            .expect("handshake");
+        let (mut tx, mut rx) = conn.open_bi().await.expect("control stream");
+        let mut buf = FrameBuf::new();
+        let hello = ClientMsg::Hello {
+            proto: PROTO_VERSION,
+            token: "secret".into(),
+            client: "test".into(),
+        };
+        frame::write_msg(&mut tx, &mut buf, &hello)
+            .await
+            .expect("write Hello");
+        let welcome: ServerMsg =
+            tokio::time::timeout(Duration::from_secs(2), frame::read_msg(&mut rx, &mut buf))
+                .await
+                .expect("no Welcome")
+                .expect("read Welcome");
+        assert!(matches!(welcome, ServerMsg::Welcome { .. }), "{welcome:?}");
+
+        let open = ClientMsg::Open {
+            sub: 1,
+            engine: None,
+            req: AnalyzeReq::new(Size::square(19), RuleSet::Chinese, 7.5),
+        };
+        frame::write_msg(&mut tx, &mut buf, &open)
+            .await
+            .expect("write Open");
+        let opened: ServerMsg =
+            tokio::time::timeout(Duration::from_secs(2), frame::read_msg(&mut rx, &mut buf))
+                .await
+                .expect("no Opened")
+                .expect("read Opened");
+        assert!(matches!(opened, ServerMsg::Opened { sub: 1 }), "{opened:?}");
+
+        let mut uni = tokio::time::timeout(Duration::from_secs(2), conn.accept_uni())
+            .await
+            .expect("no subscription stream")
+            .expect("accept uni");
+        let mut preamble = [0u8; 4];
+        uni.read_exact(&mut preamble).await.expect("preamble");
+        assert_eq!(u32::from_le_bytes(preamble), 1);
+
+        let mut dec = SubStreamDecoder::new().expect("decoder");
+        let first: SubMsg = tokio::time::timeout(Duration::from_secs(2), dec.read(&mut uni))
+            .await
+            .expect("the published report was not sent")
+            .expect("read report");
+        assert!(
+            matches!(&first, SubMsg::Report(r) if r.root.visits == 1),
+            "first message was not the published report: {first:?}"
+        );
+
+        // The duplicate, if `next` hands the same unseen value back, is written in the
+        // same turn as the first report. Nothing newer is published during this wait.
+        let duplicate =
+            tokio::time::timeout(Duration::from_millis(200), dec.read::<_, SubMsg>(&mut uni)).await;
+        if let Ok(msg) = duplicate {
+            panic!("a report already present was sent twice: {msg:?}");
+        }
+
+        let sender = holding.tx.lock().unwrap().take().expect("sender");
+        let mut newer = Report::empty(0, Color::Black);
+        newer.root.visits = 2;
+        sender
+            .send(SubEvent::Report(Arc::new(newer)))
+            .expect("publish");
+        let second: SubMsg = tokio::time::timeout(Duration::from_secs(2), dec.read(&mut uni))
+            .await
+            .expect("a newer report was not sent")
+            .expect("read newer");
+        assert!(
+            matches!(&second, SubMsg::Report(r) if r.root.visits == 2),
+            "the report after the snapshot was dropped: {second:?}"
+        );
+
+        conn.close(VarInt::from_u32(0), b"bye");
+        tokio::time::timeout(Duration::from_secs(2), served)
+            .await
+            .expect("serve did not finish")
+            .expect("serve task");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     fn test_endpoint(tag: &str) -> (quinn::Endpoint, String, std::path::PathBuf) {
