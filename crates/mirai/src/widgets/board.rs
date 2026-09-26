@@ -760,8 +760,10 @@ mod imp {
             fd.set_weight(pango::Weight::Bold);
             // One layout for the whole pass: creating a PangoLayout is a GObject construction
             // plus a font-map lookup, and a numbered 200-move game would otherwise pay that
-            // once per stone per frame.
+            // once per stone per frame. The digits stay in a stack buffer, the same one the
+            // candidate figures use, so the pass does not allocate a String per stone either.
             let layout = obj.create_pango_layout(None);
+            let mut text = StackLabel::new();
             for y in 0..size.h {
                 for x in 0..size.w {
                     let p = size.point(x, y);
@@ -773,15 +775,18 @@ mod imp {
                         continue;
                     }
                     let Some(color) = board.at(p) else { continue };
-                    let text = n.to_string();
-                    let scale = match text.len() {
+                    text.write(|buf| {
+                        use std::fmt::Write;
+                        write!(buf, "{n}")
+                    });
+                    let scale = match text.len {
                         1 => 0.48,
                         2 => 0.42,
                         3 => 0.32,
                         _ => 0.26,
                     };
                     fd.set_absolute_size((l.cell * scale) as f64 * pango::SCALE as f64);
-                    layout.set_text(&text);
+                    layout.set_text(text.as_str());
                     layout.set_font_description(Some(&fd));
                     let fg = if highlight == Some(p) {
                         last_move_tint(color)
@@ -919,9 +924,9 @@ mod imp {
             // Losses are pick.utility − candidate.utility, so the pick is always the coolest
             // blob and a candidate that reads better than it clamps there too.
             let pick_utility = report.moves.first().map(|m| m.utility_for(to_play));
-            let obj = self.obj();
-            let mut fd = obj.pango_context().font_description().unwrap_or_default();
-            let layout = obj.create_pango_layout(None);
+            // Figures are pango. A frame that deferred them, or a board of unlabelled
+            // blobs, must not construct a layout it will not draw: build it on first use.
+            let mut figures: Option<(pango::FontDescription, pango::Layout)> = None;
             let mut ringed = false;
 
             for (rank, info) in report.moves.iter().take(max).enumerate() {
@@ -949,12 +954,17 @@ mod imp {
 
                 // The engine's pick and the record's move keep their numbers whatever their
                 // search: a played move the engine dismissed is exactly the one to read.
-                if skip_overlay
-                    || (info.visits < LABEL_MIN_VISITS && rank != 0 && !played)
-                    || !labels
-                {
+                if skip_overlay || (info.visits < LABEL_MIN_VISITS && rank != 0 && !played) {
                     continue;
                 }
+                if !labels {
+                    continue;
+                }
+                let (fd, layout) = figures.get_or_insert_with(|| {
+                    let obj = self.obj();
+                    let fd = obj.pango_context().font_description().unwrap_or_default();
+                    (fd, obj.create_pango_layout(None))
+                });
 
                 let fg = text_on(over(blob, wood_color(dark)));
                 // Three lines, formatted into stack buffers. A `Vec<(String, f32)>` here
@@ -984,7 +994,7 @@ mod imp {
                 for i in 0..n {
                     fd.set_absolute_size((l.cell * scales[i]) as f64 * pango::SCALE as f64);
                     layout.set_text(lines[i].as_str());
-                    layout.set_font_description(Some(&fd));
+                    layout.set_font_description(Some(fd));
                     let h = layout.pixel_size().1 as f32;
                     heights[i] = h;
                     total += h;
@@ -993,8 +1003,8 @@ mod imp {
                 for i in 0..n {
                     fd.set_absolute_size((l.cell * scales[i]) as f64 * pango::SCALE as f64);
                     layout.set_text(lines[i].as_str());
-                    layout.set_font_description(Some(&fd));
-                    draw_text(snapshot, &layout, cx, ty + heights[i] * 0.5, &fg);
+                    layout.set_font_description(Some(fd));
+                    draw_text(snapshot, layout, cx, ty + heights[i] * 0.5, &fg);
                     ty += heights[i];
                 }
             }
@@ -1108,9 +1118,10 @@ fn policy_texture(report: &mirai_engine::Report, size: Size) -> Option<gdk::Text
     Some(texture(buf, size))
 }
 
-/// One candidate label, formatted in place. Three of these replace the
-/// `Vec<(String, f32)>` a labelled blob used to allocate on every snapshot.
-/// 24 bytes covers the longest `pct1` / `signed1` / `si_visits` (`+1024.0`, `4295.0m`).
+/// One board label, formatted in place. Three of these replace the
+/// `Vec<(String, f32)>` a labelled blob used to allocate on every snapshot;
+/// a fourth holds each stone's move number. 24 bytes covers the longest
+/// `pct1` / `signed1` / `si_visits` (`+1024.0`, `4295.0m`).
 #[derive(Clone, Copy)]
 struct StackLabel {
     bytes: [u8; 24],
@@ -1127,11 +1138,11 @@ impl StackLabel {
 
     fn write(&mut self, f: impl FnOnce(&mut Self) -> std::fmt::Result) {
         self.len = 0;
-        f(self).expect("a candidate label fits in 24 bytes");
+        f(self).expect("a board label fits in 24 bytes");
     }
 
     fn as_str(&self) -> &str {
-        std::str::from_utf8(&self.bytes[..self.len as usize]).expect("a candidate label is utf-8")
+        std::str::from_utf8(&self.bytes[..self.len as usize]).expect("a board label is utf-8")
     }
 }
 
