@@ -2306,10 +2306,20 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
     });
 
     let split = window.split();
-    let sidebar = toggle("toggle-sidebar", split.shows_sidebar(), {
-        let split = split.clone();
-        Box::new(move |_: &Ui| split.set_show_sidebar(!split.shows_sidebar()))
-    });
+    let sidebar = toggle(
+        "toggle-sidebar",
+        split.shows_sidebar(),
+        Box::new(|ui| {
+            // The action must not own the split. The notify handler below owns this
+            // action, and a strong split in the closure is a cycle: the closed window's
+            // widget tree, and the AppState the sidebar widgets hold, never drop (INV-8).
+            let Some(window) = ui.window() else {
+                return;
+            };
+            let split = window.split();
+            split.set_show_sidebar(!split.shows_sidebar());
+        }),
+    );
     {
         let weak = weak.clone();
         split.connect_show_sidebar_notify(move |split| {
