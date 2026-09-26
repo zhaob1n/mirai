@@ -601,21 +601,25 @@ flushes once per batch; returning closes KataGo's stdin, which with `-quit-witho
 it to quit. The *reader* line-splits stdout into `Inner::handle`, holding only a `Weak`, so it
 exits when the engine handle drops. The *supervisor* selects on process exit and a shutdown
 oneshot: on handle drop it waits a short grace period and then kills, and on exit it marks the
-engine dead and fails every live subscription. The *stderr drain* logs each line and keeps a
-bounded ring for error messages.
+engine dead under the subscription mutex and fails every live subscription. The *stderr drain*
+logs each line and keeps a bounded ring for error messages.
 
-**Routing.** A `Mutex<HashMap>` from a monotonic query id to the `watch::Sender` plus the three
-facts needed to decode that query's responses (size, turn, side to move). The id is stringified
-into the query and echoed back by KataGo. The table is shared across threads — `subscribe` and
+**Routing.** A mutex around the query map and a `dead` flag. The map is keyed by a monotonic
+query id and holds the `watch::Sender` plus the three facts needed to decode that query's
+responses (size, turn, side to move). The id is stringified into the query and echoed back by
+KataGo. The table is shared across threads — `subscribe` and
 `cancel` run on the GTK thread or a runtime worker while the reader task delivers — but holds a
 handful of entries, is read about ten times a second per live query and written once per query
 start and end, and no lock spans an `.await`. Measured that way, a lookup costs about 18 ns
 under a plain mutex against 20 ns in a sharded `DashMap`, with writers at up to 1000/s; the
 sharded map only wins under a writer that never stops, which nothing here is, and a whole
-report line takes tens of microseconds to parse. A terminal event removes the entry before sending; `cancel`
-instead *keeps* the entry and marks it terminating, so the tail of a terminated search is still
-routed and discarded correctly, and a response for an unknown id is a trace, not an error. A
-terminated query that never searched still terminates cleanly, as an empty `Done`.
+report line takes tens of microseconds to parse. `subscribe` checks `dead` under that mutex
+before inserting; the supervisor and an engine-fault line set it under the same mutex before
+draining, so a death cannot leave a subscription `Pending`. A terminal event removes the entry
+before sending; `cancel` instead keeps the entry and marks it terminating, so the tail of a
+terminated search is still routed and discarded correctly, and a response for an unknown id is a
+trace, not an error. A terminated query that never searched still terminates cleanly, as an empty
+`Done`.
 
 ### RemoteEngine
 

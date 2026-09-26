@@ -9,7 +9,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 
@@ -84,11 +84,18 @@ pub struct LocalEngine {
 struct Inner {
     desc: EngineDesc,
     to_engine: mpsc::UnboundedSender<String>,
-    subs: Mutex<HashMap<u64, Entry>>,
+    /// Query map and the death flag. They share one mutex: `subscribe` checks
+    /// `dead` before inserting, and [`Inner::kill`] sets it before draining, so
+    /// a death cannot land between the check and the insert.
+    subs: Mutex<Subs>,
     next_id: AtomicU64,
-    dead: AtomicBool,
     /// Dropped together with the engine; tells the supervisor to stop waiting.
     _shutdown: oneshot::Sender<()>,
+}
+
+struct Subs {
+    map: HashMap<u64, Entry>,
+    dead: bool,
 }
 
 struct Entry {
@@ -196,9 +203,11 @@ impl LocalEngine {
         let inner = Arc::new(Inner {
             desc,
             to_engine,
-            subs: Mutex::new(HashMap::new()),
+            subs: Mutex::new(Subs {
+                map: HashMap::new(),
+                dead: false,
+            }),
             next_id: AtomicU64::new(0),
-            dead: AtomicBool::new(false),
             _shutdown: shutdown_tx,
         });
 
@@ -232,29 +241,32 @@ impl LocalEngine {
 impl Engine for LocalEngine {
     fn subscribe(&self, req: AnalyzeReq) -> Subscription {
         let inner = &self.inner;
-        if inner.dead.load(Ordering::Acquire) {
-            return Subscription::failed(EngineError::EngineExited(
-                "katago is no longer running".into(),
-            ));
-        }
-
-        let id = inner.next_id.fetch_add(1, Ordering::Relaxed);
-        let (tx, rx) = watch::channel(SubEvent::Pending);
-        inner.subs().insert(
-            id,
-            Entry {
-                tx,
-                size: req.size,
-                max_candidates: req.max_candidates,
-                turn: req.turn(),
-                to_play: req.to_play(),
-                terminating: false,
-            },
-        );
+        let (id, rx) = {
+            let mut subs = inner.subs();
+            if subs.dead {
+                return Subscription::failed(EngineError::EngineExited(
+                    "katago is no longer running".into(),
+                ));
+            }
+            let id = inner.next_id.fetch_add(1, Ordering::Relaxed);
+            let (tx, rx) = watch::channel(SubEvent::Pending);
+            subs.map.insert(
+                id,
+                Entry {
+                    tx,
+                    size: req.size,
+                    max_candidates: req.max_candidates,
+                    turn: req.turn(),
+                    to_play: req.to_play(),
+                    terminating: false,
+                },
+            );
+            (id, rx)
+        };
 
         let line = build_query(&id.to_string(), &req).to_string();
         if inner.to_engine.send(line).is_err() {
-            inner.subs().remove(&id);
+            inner.subs().map.remove(&id);
             return Subscription::failed(EngineError::EngineExited(
                 "katago stdin is closed".into(),
             ));
@@ -281,14 +293,14 @@ impl Inner {
     /// The subscription table. Every critical section is one lookup or edit, plus at most one
     /// non-blocking `watch` send, and none spans an `.await`. Each edit leaves the map whole,
     /// so a panic elsewhere while it was held is no reason to stop routing: take it anyway.
-    fn subs(&self) -> MutexGuard<'_, HashMap<u64, Entry>> {
+    fn subs(&self) -> MutexGuard<'_, Subs> {
         self.subs.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Asks KataGo to stop a query. The entry stays until its final response arrives, so
     /// the tail of a terminated search is still routed (and discarded) correctly.
     fn cancel(&self, id: u64) {
-        match self.subs().get_mut(&id) {
+        match self.subs().map.get_mut(&id) {
             Some(entry) if !entry.terminating => entry.terminating = true,
             _ => return,
         }
@@ -323,7 +335,7 @@ impl Inner {
                 let entry = id
                     .parse::<u64>()
                     .ok()
-                    .and_then(|key| self.subs().remove(&key));
+                    .and_then(|key| self.subs().map.remove(&key));
                 if let Some(entry) = entry {
                     entry
                         .tx
@@ -332,8 +344,7 @@ impl Inner {
             }
             Ok(RawResponse::EngineFault { msg }) => {
                 tracing::error!(msg, "katago reported a fatal error");
-                self.dead.store(true, Ordering::Release);
-                self.fail_all(EngineError::Query(msg));
+                self.kill(EngineError::Query(msg));
             }
             Err(e) => tracing::debug!(%e, line, "ignoring unrecognised katago response"),
         }
@@ -346,6 +357,7 @@ impl Inner {
         };
         let Some((size, cap, turn, to_play)) = self
             .subs()
+            .map
             .get(&key)
             .map(|e| (e.size, e.max_candidates, e.turn, e.to_play))
         else {
@@ -374,20 +386,30 @@ impl Inner {
         };
 
         if event.is_terminal() {
-            let entry = self.subs().remove(&key);
+            let entry = self.subs().map.remove(&key);
             if let Some(entry) = entry {
                 entry.tx.send_replace(event);
             }
-        } else if let Some(entry) = self.subs().get(&key) {
+        } else if let Some(entry) = self.subs().map.get(&key) {
             entry.tx.send_replace(event);
         }
     }
 
-    fn fail_all(&self, err: EngineError) {
-        let entries = std::mem::take(&mut *self.subs());
+    /// Marks the engine dead and fails every live subscription.
+    ///
+    /// `dead` is set under the map lock, before the drain, so it excludes `subscribe`'s
+    /// check-and-insert. Returns whether any analysis was still live.
+    fn kill(&self, err: EngineError) -> bool {
+        let entries = {
+            let mut subs = self.subs();
+            subs.dead = true;
+            std::mem::take(&mut subs.map)
+        };
+        let live = !entries.is_empty();
         for entry in entries.into_values() {
             entry.tx.send_replace(SubEvent::Failed(err.clone()));
         }
+        live
     }
 }
 
@@ -469,11 +491,10 @@ async fn supervise(
         Err(e) => format!("could not wait for katago: {e}"),
     };
     if let Some(inner) = engine.upgrade() {
-        inner.dead.store(true, Ordering::Release);
-        if !inner.subs().is_empty() {
+        let err = EngineError::EngineExited(with_tail(reason.clone(), &tail));
+        if inner.kill(err) {
             tracing::error!(reason, "katago exited with live analyses");
         }
-        inner.fail_all(EngineError::EngineExited(with_tail(reason, &tail)));
     }
     let _ = shutdown_complete.send(());
 }
