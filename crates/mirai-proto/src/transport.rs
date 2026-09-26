@@ -14,8 +14,9 @@
 //! client, so buffered stale reports are discarded instead of delivered. That property is
 //! the reason this is QUIC and not one TCP socket.
 //!
-//! TLS is trust-on-first-use: the client pins the server certificate's SHA-256 and refuses
-//! anything else afterwards.
+//! TLS pins the server certificate's SHA-256. A token is sent only on a connection
+//! pinned to a fingerprint the user has already accepted. [`probe`] learns that
+//! fingerprint and closes without opening a stream.
 
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::Path;
@@ -243,14 +244,12 @@ pub fn server_endpoint(
 // ---------------------------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------------------------
-
-/// Trust-on-first-use certificate verification.
+/// Certificate verification for a pinned connection, or for a probe that only records.
 ///
-/// With `expected` set, only that fingerprint is accepted. The pin is normalised
-/// first — trim, lowercase, strip `:` — so a value pasted from `openssl x509
-/// -fingerprint` matches the lowercase hex the server prints. With `expected`
-/// unset, whatever the server offers is accepted **and recorded** in `observed`;
-/// the caller is responsible for showing it to the user and persisting it.
+/// A pin is normalised first — trim, lowercase, strip `:` — so a value pasted from
+/// `openssl x509 -fingerprint` matches the lowercase hex the server prints. The
+/// accept-anything mode exists only for [`probe`]: it never opens a stream, so it
+/// cannot carry a token. [`connect`] always passes a pin.
 #[derive(Debug)]
 pub struct TofuVerifier {
     expected: Option<String>,
@@ -258,9 +257,18 @@ pub struct TofuVerifier {
 }
 
 impl TofuVerifier {
-    pub fn new(expected: Option<String>, observed: Arc<Mutex<Option<String>>>) -> TofuVerifier {
+    /// Accepts only `expected`. An empty pin matches nothing.
+    pub fn new(expected: String, observed: Arc<Mutex<Option<String>>>) -> TofuVerifier {
         TofuVerifier {
-            expected: expected.as_deref().map(normalize_fingerprint),
+            expected: Some(normalize_fingerprint(&expected)),
+            observed,
+        }
+    }
+
+    /// Records whatever leaf is offered. Used only by [`probe`].
+    fn observe(observed: Arc<Mutex<Option<String>>>) -> TofuVerifier {
+        TofuVerifier {
+            expected: None,
             observed,
         }
     }
@@ -335,15 +343,27 @@ impl ServerCertVerifier for TofuVerifier {
 }
 
 /// Builds a client endpoint bound to an ephemeral local port.
+///
+/// `expected` is required: an unpinned endpoint could be used to send a token. A probe
+/// uses [`observe_endpoint`] and closes before any stream exists.
 pub fn client_endpoint(
-    expected: Option<String>,
+    expected: String,
     observed: Arc<Mutex<Option<String>>>,
 ) -> Result<quinn::Endpoint, TransportError> {
-    let verifier = Arc::new(TofuVerifier::new(expected, observed));
+    endpoint_with(TofuVerifier::new(expected, observed))
+}
+
+fn observe_endpoint(
+    observed: Arc<Mutex<Option<String>>>,
+) -> Result<quinn::Endpoint, TransportError> {
+    endpoint_with(TofuVerifier::observe(observed))
+}
+
+fn endpoint_with(verifier: TofuVerifier) -> Result<quinn::Endpoint, TransportError> {
     let mut crypto = rustls::ClientConfig::builder_with_provider(provider())
         .with_protocol_versions(&[&rustls::version::TLS13])?
         .dangerous()
-        .with_custom_certificate_verifier(verifier)
+        .with_custom_certificate_verifier(Arc::new(verifier))
         .with_no_client_auth();
     crypto.alpn_protocols = vec![ALPN.to_vec()];
 
@@ -358,22 +378,33 @@ pub fn client_endpoint(
     Ok(ep)
 }
 
-/// Resolves `mirai://host:port` and opens a QUIC connection.
-///
-/// Returns the connection and the server's certificate fingerprint, which the caller
-/// should persist on a first (unpinned) connection. A supplied pin is normalised once
-/// here, before the verifier is built, and that value is what every later comparison
-/// and error uses.
-pub async fn connect(
+/// How [`open_connection`] decides which certificates to accept.
+enum Trust {
+    /// Only this pin. The only mode that may be followed by `Hello`.
+    Pin(String),
+    /// Record the leaf. [`probe`] closes immediately afterwards.
+    Observe,
+}
+
+/// Resolves `url` and finishes the TLS handshake. Does not open a stream.
+async fn open_connection(
     url: &str,
-    expected_fingerprint: Option<String>,
-) -> Result<(quinn::Connection, String), TransportError> {
+    trust: Trust,
+) -> Result<(quinn::Connection, String, quinn::Endpoint), TransportError> {
     let (host, port) = parse_url(url)?;
-    // Normalise before the verifier, and keep that string: the check after the
-    // handshake used to compare the raw pin and report a match as a mismatch.
-    let expected = expected_fingerprint.as_deref().map(normalize_fingerprint);
     let observed = Arc::new(Mutex::new(None));
-    let endpoint = client_endpoint(expected.clone(), observed.clone())?;
+    let (endpoint, expected) = match trust {
+        Trust::Pin(pin) => {
+            let pin = normalize_fingerprint(&pin);
+            if pin.is_empty() {
+                return Err(TransportError::Cert(
+                    "a certificate pin is required before the token can be sent".into(),
+                ));
+            }
+            (client_endpoint(pin.clone(), observed.clone())?, Some(pin))
+        }
+        Trust::Observe => (observe_endpoint(observed.clone())?, None),
+    };
 
     let addr = tokio::task::spawn_blocking({
         let host = host.clone();
@@ -432,7 +463,39 @@ pub async fn connect(
     {
         return Err(TransportError::FingerprintMismatch { expected, got: fp });
     }
-    Ok((conn, fp))
+    if fp.is_empty() {
+        return Err(TransportError::Cert(
+            "the server presented no certificate".into(),
+        ));
+    }
+    Ok((conn, fp, endpoint))
+}
+
+/// TLS handshake only. Returns the leaf fingerprint and closes with application code 0.
+///
+/// Opens no stream and writes no frame, so a token cannot be sent on this connection.
+/// The caller shows the fingerprint to the user; only a later [`connect`] with that pin
+/// may send `Hello`.
+pub async fn probe(url: &str) -> Result<String, TransportError> {
+    let (conn, fingerprint, endpoint) = open_connection(url, Trust::Observe).await?;
+    conn.close(quinn::VarInt::from_u32(0), b"");
+    // Dropping the endpoint before the close is flushed would look, to the server, like
+    // a crash rather than an orderly probe. A peer that never acks must not stall us.
+    let _ = tokio::time::timeout(Duration::from_secs(2), endpoint.wait_idle()).await;
+    Ok(fingerprint)
+}
+
+/// Resolves `mirai://host:port` and opens a QUIC connection pinned to `pin`.
+///
+/// `pin` is normalised once here, before the verifier is built, and that value is what
+/// every later comparison and error uses. There is no unpinned mode: a caller that does
+/// not yet have a pin must [`probe`] and ask the user, not send a token.
+pub async fn connect(
+    url: &str,
+    pin: String,
+) -> Result<(quinn::Connection, String), TransportError> {
+    let (conn, fingerprint, _endpoint) = open_connection(url, Trust::Pin(pin)).await?;
+    Ok((conn, fingerprint))
 }
 
 #[cfg(test)]
@@ -524,7 +587,7 @@ mod tests {
             let incoming = accepting.accept().await.expect("an incoming connection");
             incoming.await.expect("server handshake")
         });
-        let (client, _) = connect(&format!("mirai://{addr}"), Some(fp))
+        let (client, _) = connect(&format!("mirai://{addr}"), fp)
             .await
             .expect("client handshake");
         let server = accepted.await.expect("accept task");
@@ -564,7 +627,7 @@ mod tests {
         let (addr, real) = a_server("mismatch");
         let wrong = "b".repeat(64);
 
-        let err = connect(&format!("mirai://{addr}"), Some(wrong.clone()))
+        let err = connect(&format!("mirai://{addr}"), wrong.clone())
             .await
             .expect_err("connected with the wrong pin");
 
@@ -583,7 +646,7 @@ mod tests {
     async fn the_pinned_fingerprint_connects() {
         let (addr, real) = a_server("match");
 
-        let (_conn, fp) = connect(&format!("mirai://{addr}"), Some(real.clone()))
+        let (_conn, fp) = connect(&format!("mirai://{addr}"), real.clone())
             .await
             .expect("the pinned certificate was refused");
         assert_eq!(fp, real);
@@ -615,7 +678,7 @@ mod tests {
             "the pasted form must not already be canonical"
         );
 
-        let (_conn, fp) = connect(&format!("mirai://{addr}"), Some(pasted))
+        let (_conn, fp) = connect(&format!("mirai://{addr}"), pasted)
             .await
             .expect("an openssl-style pin of the real certificate was refused");
         assert_eq!(fp, real);
@@ -625,7 +688,7 @@ mod tests {
     #[tokio::test]
     async fn an_unreachable_server_is_not_a_mismatch() {
         // Nothing listens on UDP port 1; the handshake times out rather than being rejected.
-        let attempt = connect("mirai://127.0.0.1:1", Some("c".repeat(64)));
+        let attempt = connect("mirai://127.0.0.1:1", "c".repeat(64));
         match tokio::time::timeout(Duration::from_secs(2), attempt).await {
             Ok(Err(TransportError::FingerprintMismatch { .. })) => {
                 panic!("a silent port was reported as a certificate mismatch")
@@ -633,5 +696,25 @@ mod tests {
             Ok(Err(_)) | Err(_) => {} // a connection error, or still trying: both are honest
             Ok(Ok(_)) => panic!("connected to a port with no server on it"),
         }
+    }
+
+    /// A probe learns the fingerprint and closes. The server must not see a stream: that
+    /// is the only place a token could be written.
+    #[tokio::test]
+    async fn a_probe_returns_the_fingerprint_and_opens_no_stream() {
+        let (endpoint, real) = a_server_endpoint("probe");
+        let addr = endpoint.local_addr().expect("bound");
+        let accepting = endpoint.clone();
+        let served = tokio::spawn(async move {
+            let incoming = accepting.accept().await.expect("an incoming connection");
+            let conn = incoming.await.expect("server handshake");
+            if conn.accept_bi().await.is_ok() {
+                panic!("a probe opened a stream");
+            }
+        });
+
+        let got = probe(&format!("mirai://{addr}")).await.expect("probe");
+        assert_eq!(got, real);
+        served.await.expect("server task");
     }
 }

@@ -8,8 +8,10 @@
 
 use std::cell::{Cell, OnceCell, Ref, RefCell, RefMut};
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use gtk::glib;
@@ -20,7 +22,7 @@ use mirai_client::{GameSession, SpeedMeter};
 use mirai_core::{Color, GameTree, IllegalMove, NodeAnalysis, NodeId, Point, Position};
 use mirai_engine::{AnalyzeReq, Engine, EngineDesc, EngineError, Report, SubEvent, Want};
 
-use crate::config::{Config, ConfigError};
+use crate::config::{Config, ConfigError, ProfileKind};
 use crate::engines::EnginePool;
 
 /// How long settings may keep changing before they are written. A spin row saves on every
@@ -227,6 +229,10 @@ mod imp {
         pub change_hook: OnceCell<ChangeHook>,
         /// Visits-per-second meter for the search that is running now; `None` when none is.
         pub speed: Cell<Option<SpeedMeter>>,
+        /// The window trust dialogs are presented on. Set once, when the window is built.
+        pub dialog_parent: OnceCell<glib::WeakRef<gtk::Widget>>,
+        /// The certificate dialog for an unpinned profile, so a newer selection can dismiss it.
+        pub trust_dialog: RefCell<Option<glib::WeakRef<gtk::Widget>>>,
     }
 
     impl Default for AppState {
@@ -260,6 +266,8 @@ mod imp {
                 editor_tool: Cell::new(EditorTool::Play),
                 change_hook: OnceCell::new(),
                 speed: Cell::new(None),
+                dialog_parent: OnceCell::new(),
+                trust_dialog: RefCell::new(None),
             }
         }
     }
@@ -813,7 +821,9 @@ impl AppState {
     /// Starts (or connects to) the named profile and installs it as the active engine.
     ///
     /// The engine comes from the application-wide [`EnginePool`], so a second window on the
-    /// same profile adopts the running KataGo instead of starting its own.
+    /// same profile adopts the running KataGo instead of starting its own. A remote profile
+    /// with no pin is probed first: the token is sent only after the user trusts the
+    /// fingerprint the dialog showed.
     pub fn activate_profile(&self, name: &str) {
         let Some(profile) = self.config().profile(name).cloned() else {
             self.toast(format!("No engine profile named “{name}”"));
@@ -822,6 +832,7 @@ impl AppState {
         if let Some(task) = self.imp().activation_task.borrow_mut().take() {
             task.abort();
         }
+        self.dismiss_trust_dialog();
         // Starting an engine is slow. A later selection supersedes this one.
         let activation = self.imp().activation.get().wrapping_add(1);
         self.imp().activation.set(activation);
@@ -829,7 +840,7 @@ impl AppState {
         if let Some(engine) = self.pool().running(&profile) {
             self.set_busy(false);
             self.set_status(String::new());
-            self.remember_active(name, None);
+            self.remember_active(name);
             self.set_engine(Some(engine));
             return;
         }
@@ -841,6 +852,132 @@ impl AppState {
         self.set_busy(true);
         self.set_status(String::new());
 
+        if let ProfileKind::Remote {
+            cert_sha256: None,
+            ref url,
+            ..
+        } = profile.kind
+        {
+            self.probe_unpinned(name, url, activation);
+            return;
+        }
+
+        self.acquire_profile(name, profile, activation);
+    }
+
+    /// The window trust dialogs attach to. Set from `window::present` before the first
+    /// activation, which may need to ask about a certificate.
+    pub fn set_dialog_parent(&self, parent: &impl IsA<gtk::Widget>) {
+        let widget = parent.clone().upcast::<gtk::Widget>();
+        let _ = self.imp().dialog_parent.set(widget.downgrade());
+    }
+
+    fn dialog_parent(&self) -> Option<gtk::Widget> {
+        self.imp()
+            .dialog_parent
+            .get()
+            .and_then(|parent| parent.upgrade())
+    }
+
+    fn dismiss_trust_dialog(&self) {
+        let Some(weak) = self.imp().trust_dialog.borrow_mut().take() else {
+            return;
+        };
+        if let Some(widget) = weak.upgrade() {
+            crate::dialogs::dismiss_trust_dialog(&widget);
+        }
+    }
+
+    /// TLS only. The token stays on this machine until [`Self::pin_and_connect`].
+    ///
+    /// The probe lives in the activation future. Aborting that future — a newer
+    /// selection, or the window closing — aborts the network task with it.
+    fn probe_unpinned(&self, name: &str, url: &str, activation: u64) {
+        let probe_url = url.to_string();
+        let probe =
+            AbortOnDrop::new(self.runtime().spawn(async move {
+                mirai_engine::RemoteEngine::probe_fingerprint(&probe_url).await
+            }));
+        let this = self.clone();
+        let profile_name = name.to_string();
+        let url = url.to_string();
+        let handle = glib::spawn_future_local(async move {
+            let outcome = probe.await;
+            if this.imp().activation.get() != activation {
+                return;
+            }
+            this.set_busy(false);
+            match outcome {
+                Ok(Ok(fingerprint)) => {
+                    this.ask_trust(&profile_name, &url, &fingerprint, activation);
+                }
+                Ok(Err(e)) => this.fail_activation(&profile_name, e.to_string()),
+                Err(_) => this
+                    .fail_activation(&profile_name, "the certificate check was cancelled".into()),
+            }
+        });
+        *self.imp().activation_task.borrow_mut() = Some(handle);
+    }
+
+    fn ask_trust(&self, name: &str, url: &str, fingerprint: &str, activation: u64) {
+        let Some(parent) = self.dialog_parent() else {
+            self.fail_activation(name, "no window to confirm the certificate".into());
+            return;
+        };
+        let this = self.clone();
+        let profile_name = name.to_string();
+        let fp = fingerprint.to_string();
+        let on_cancel_state = self.clone();
+        let on_cancel_name = name.to_string();
+        let dialog = crate::dialogs::confirm_fingerprint(
+            &parent,
+            url,
+            fingerprint,
+            move || {
+                if this.imp().activation.get() != activation {
+                    return;
+                }
+                this.pin_and_connect(&profile_name, &fp, activation);
+            },
+            move || {
+                if on_cancel_state.imp().activation.get() != activation {
+                    return;
+                }
+                on_cancel_state.set_busy(false);
+                on_cancel_state
+                    .set_status("Certificate was not trusted. The token was not sent.".to_string());
+                *on_cancel_state.imp().engine.borrow_mut() = None;
+                on_cancel_state.set_engine_state(EngineState::Failed {
+                    profile: on_cancel_name.clone(),
+                    message: "certificate was not trusted".into(),
+                });
+                on_cancel_state.restart_analysis();
+            },
+        );
+        let widget: gtk::Widget = dialog.upcast();
+        *self.imp().trust_dialog.borrow_mut() = Some(widget.downgrade());
+    }
+
+    /// Persists the fingerprint the user just accepted, then connects with that pin.
+    fn pin_and_connect(&self, name: &str, fingerprint: &str, activation: u64) {
+        {
+            let mut cfg = self.config_mut();
+            cfg.set_pin(name, fingerprint);
+        }
+        self.save_config();
+        let Some(profile) = self.config().profile(name).cloned() else {
+            self.fail_activation(name, format!("No engine profile named “{name}”"));
+            return;
+        };
+        self.set_busy(true);
+        self.set_status(String::new());
+        self.set_engine_state(EngineState::Starting {
+            profile: name.to_string(),
+        });
+        self.acquire_profile(name, profile, activation);
+    }
+
+    fn acquire_profile(&self, name: &str, profile: crate::config::EngineProfile, activation: u64) {
         let log_dir = crate::config::Config::data_dir()
             .unwrap_or_else(|_| std::env::temp_dir())
             .join("katago-logs");
@@ -859,39 +996,38 @@ impl AppState {
             this.set_busy(false);
             this.set_status(String::new());
             match result {
-                Ok((engine, fingerprint)) => {
-                    this.remember_active(&profile_name, fingerprint.as_deref());
+                Ok(engine) => {
+                    this.remember_active(&profile_name);
                     this.set_engine(Some(engine));
                 }
-                Err(e) => {
-                    let message = e.to_string();
-                    this.toast(format!("{profile_name}: {message}"));
-                    *this.imp().engine.borrow_mut() = None;
-                    this.set_engine_state(EngineState::Failed {
-                        profile: profile_name,
-                        message,
-                    });
-                    this.restart_analysis();
-                }
+                Err(e) => this.fail_activation(&profile_name, e),
             }
         });
         *self.imp().activation_task.borrow_mut() = Some(handle);
     }
 
-    /// Records the profile now in use, and any certificate fingerprint worth pinning.
-    fn remember_active(&self, name: &str, fingerprint: Option<&str>) {
+    fn fail_activation(&self, profile: &str, message: String) {
+        self.set_busy(false);
+        self.toast(format!("{profile}: {message}"));
+        *self.imp().engine.borrow_mut() = None;
+        self.set_engine_state(EngineState::Failed {
+            profile: profile.to_string(),
+            message,
+        });
+        self.restart_analysis();
+    }
+
+    /// Records the profile now in use. A certificate pin is written by
+    /// [`Self::pin_and_connect`], never from a connection that has already sent the token.
+    fn remember_active(&self, name: &str) {
         let changed = {
             let mut cfg = self.config_mut();
-            // A fingerprint only ever arrives from a first connect, so it is always news.
-            let mut changed = fingerprint.is_some();
-            if let Some(fp) = fingerprint {
-                cfg.set_pin(name, fp);
-            }
-            if cfg.active_engine.as_deref() != Some(name) {
+            if cfg.active_engine.as_deref() == Some(name) {
+                false
+            } else {
                 cfg.active_engine = Some(name.to_string());
-                changed = true;
+                true
             }
-            changed
         };
         if changed {
             self.save_config();
@@ -1060,6 +1196,41 @@ impl AppState {
 
     pub fn notify_batch_progress(&self, done: u32, total: u32) {
         self.changed(Change::BatchProgress(done, total));
+    }
+}
+
+/// Aborts a tokio task when dropped. A glib future holds one, so aborting that
+/// future — the one teardown path — cancels the network work too.
+pub(crate) struct AbortOnDrop<T> {
+    handle: Option<tokio::task::JoinHandle<T>>,
+}
+
+impl<T> AbortOnDrop<T> {
+    pub(crate) fn new(handle: tokio::task::JoinHandle<T>) -> Self {
+        Self {
+            handle: Some(handle),
+        }
+    }
+}
+
+impl<T> Future for AbortOnDrop<T> {
+    type Output = Result<T, tokio::task::JoinError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let handle = self
+            .get_mut()
+            .handle
+            .as_mut()
+            .expect("an aborted probe was polled again");
+        Pin::new(handle).poll(cx)
+    }
+}
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            handle.abort();
+        }
     }
 }
 

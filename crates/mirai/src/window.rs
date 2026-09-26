@@ -446,7 +446,9 @@ pub fn present(
     window.with_ui(install_autosave);
     connect_close(&window);
 
-    // Start the configured engine, if any.
+    // Start the configured engine, if any. The parent has to exist first: an unpinned
+    // remote profile probes and asks before it sends the token.
+    state.set_dialog_parent(&window);
     let active = state.config().active_profile().map(|p| p.name.clone());
     if let Some(name) = active {
         state.activate_profile(&name);

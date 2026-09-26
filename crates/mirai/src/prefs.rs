@@ -1162,8 +1162,9 @@ fn remote_editor(
     let trust = adw::PreferencesGroup::builder()
         .title("Certificate")
         .description(
-            "mirai pins the server certificate the first time it connects. \
-             Test the connection now to see the fingerprint before saving.",
+            "mirai checks the certificate before sending the token. \
+             Test the connection and compare the fingerprint with the one \
+             mirai-server printed at startup.",
         )
         .build();
     let trust_row = adw::ActionRow::builder()
@@ -1179,6 +1180,19 @@ fn remote_editor(
     editor.content.add(&trust);
 
     // -- test connection ------------------------------------------------------------
+    // The check in flight: re-testing replaces it, and leaving the editor drops it —
+    // Back and Save pop the subpage without closing the dialog, so its `hidden` counts as
+    // well as the dialog's `closed`. Either aborts the glib future, and with it the network
+    // task through `AbortOnDrop`, so no Trust prompt outlives the editor that asked.
+    let testing = Rc::new(TestSlot::default());
+    dialog.connect_closed({
+        let testing = testing.clone();
+        move |_| testing.abort()
+    });
+    editor.page.connect_hidden({
+        let testing = testing.clone();
+        move |_| testing.abort()
+    });
     let test_state = state.clone();
     let test_pin = pin.clone();
     let test_banner = editor.banner.clone();
@@ -1204,42 +1218,75 @@ fn remote_editor(
 
             test_banner.set_revealed(false);
             button.set_sensitive(false);
-            button.set_label("Connecting…");
+            button.set_label("Checking…");
 
-            let (tx, rx) = tokio::sync::oneshot::channel();
             let connect_url = url.clone();
-            test_state.runtime().spawn(async move {
-                let outcome =
-                    mirai_engine::RemoteEngine::connect(&connect_url, &token, engine, None)
-                        .await
-                        .map(|remote| remote.fingerprint().to_string());
-                let _ = tx.send(outcome);
-            });
+            let probe = crate::app::AbortOnDrop::new(test_state.runtime().spawn(async move {
+                mirai_engine::RemoteEngine::probe_fingerprint(&connect_url).await
+            }));
 
             let button = button.clone();
             let banner = test_banner.clone();
             let pin = test_pin.clone();
-            glib::spawn_future_local(async move {
-                let outcome = rx.await;
+            let runtime = test_state.runtime();
+            let token = token.clone();
+            let engine = engine.clone();
+            let slot = testing.clone();
+            let handle = glib::spawn_future_local(async move {
+                let outcome = probe.await;
                 button.set_sensitive(true);
                 button.set_label("Test Connection");
                 match outcome {
                     Ok(Ok(fingerprint)) => {
                         let pinned = (url.clone(), fingerprint.clone());
+                        let trust_pin = pin.clone();
+                        let trust_row = trust_row.clone();
+                        let trust_url = url.clone();
+                        let trust_fp = fingerprint.clone();
+                        let trust_banner = banner.clone();
                         crate::dialogs::confirm_fingerprint(
                             &dialog,
                             &url,
                             &fingerprint,
                             move || {
-                                *pin.borrow_mut() = Some(pinned.clone());
-                                trust_row.set_subtitle(&fingerprint_subtitle(&pin.borrow()));
+                                *trust_pin.borrow_mut() = Some(pinned.clone());
+                                trust_row.set_subtitle(&fingerprint_subtitle(&trust_pin.borrow()));
+                                let connect_url = trust_url.clone();
+                                let token = token.clone();
+                                let engine = engine.clone();
+                                let fp = trust_fp.clone();
+                                let attempt = crate::app::AbortOnDrop::new(runtime.spawn(async move {
+                                    mirai_engine::RemoteEngine::connect(
+                                        &connect_url,
+                                        &token,
+                                        engine,
+                                        fp,
+                                    )
+                                    .await
+                                    .map(|_| ())
+                                }));
+                                let banner = trust_banner.clone();
+                                slot.replace(glib::spawn_future_local(async move {
+                                    match attempt.await {
+                                        Ok(Ok(())) => {}
+                                        Ok(Err(e)) => complain(
+                                            &banner,
+                                            format!(
+                                                "Certificate trusted, but the connection failed: {e}"
+                                            ),
+                                        ),
+                                        Err(_) => complain(&banner, "The connection attempt was cancelled."),
+                                    }
+                                }));
                             },
+                            || {},
                         );
                     }
-                    Ok(Err(e)) => complain(&banner, format!("Could not connect: {e}")),
-                    Err(_) => complain(&banner, "The connection attempt was cancelled."),
+                    Ok(Err(e)) => complain(&banner, format!("Could not check the certificate: {e}")),
+                    Err(_) => complain(&banner, "The certificate check was cancelled."),
                 }
             });
+            testing.replace(handle);
         }
     ));
 
@@ -1272,8 +1319,8 @@ fn remote_editor(
                 let e = engine_row.text().trim().to_string();
                 (!e.is_empty()).then_some(e)
             };
-            // Keep the pin only if it was obtained from this very URL; otherwise the first
-            // connection performs TOFU again and `activate_profile` records the new one.
+            // Keep the pin only if it was obtained from this URL. A different URL is
+            // unpinned, and selecting the profile probes again before sending the token.
             let cert_sha256 = pin
                 .borrow()
                 .as_ref()
@@ -1300,12 +1347,7 @@ fn remote_editor(
 
 fn fingerprint_subtitle(pin: &Option<(String, String)>) -> String {
     match pin {
-        Some((_, fingerprint)) => fingerprint
-            .as_bytes()
-            .chunks(2)
-            .map(|c| String::from_utf8_lossy(c).into_owned())
-            .collect::<Vec<_>>()
-            .join(":"),
+        Some((_, fingerprint)) => mirai_proto::sha256::format_fingerprint(fingerprint),
         None => "Not pinned yet".to_string(),
     }
 }
@@ -1366,6 +1408,24 @@ fn commit_profile(state: &AppState, profile: EngineProfile, editing: Option<&str
 /// restarts. A spin row notifies on every step of a drag or key repeat; restarting KataGo
 /// for each of those would throw away a search that was about to be replaced again.
 const ANALYSIS_RESTART_DEBOUNCE: Duration = Duration::from_millis(300);
+
+/// The one connection check an engine editor has in flight.
+#[derive(Default)]
+struct TestSlot(RefCell<Option<glib::JoinHandle<()>>>);
+
+impl TestSlot {
+    fn replace(&self, handle: glib::JoinHandle<()>) {
+        if let Some(old) = self.0.borrow_mut().replace(handle) {
+            old.abort();
+        }
+    }
+
+    fn abort(&self) {
+        if let Some(old) = self.0.borrow_mut().take() {
+            old.abort();
+        }
+    }
+}
 
 /// One pending restart for the two rows that change a running search's limits.
 ///
