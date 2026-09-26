@@ -131,6 +131,23 @@ fn blob_alpha(visits: u32) -> f32 {
     BLOB_ALPHA_MIN + (BLOB_ALPHA_MAX - BLOB_ALPHA_MIN) * t
 }
 
+/// Which candidate variation to draw: pointer hover, else the pin.
+///
+/// A mark tool must not draw a line that is still pinned. A score overlay is the
+/// real position — territory and dead stones were counted there, and a click
+/// toggles those groups. Painting the variation would hide both.
+fn preview_index(
+    play_tool: bool,
+    scoring: bool,
+    hover: Option<usize>,
+    pinned: Option<usize>,
+) -> Option<usize> {
+    if !play_tool || scoring {
+        return None;
+    }
+    hover.or(pinned)
+}
+
 /// Black or white text, whichever reads better on `bg` — the blob already composited over
 /// the board, because a faint blob is mostly wood.
 fn text_on(bg: gdk::RGBA) -> gdk::RGBA {
@@ -580,8 +597,9 @@ mod imp {
 
             // The replay (board clone, move-number vec, rules) lives in `sync_pv_preview`.
             // Doing it here made every unrelated redraw — a sidebar fold, a spin — pay for
-            // a position the pointer had not moved. The editor-tool gate stays in
-            // `active_preview`: a mark tool must not draw a line that is still pinned.
+            // a position the pointer had not moved. The tool and score-overlay gates stay
+            // in `active_preview`: a mark tool must not draw a line that is still pinned,
+            // and a count is the real position.
             if let Some(idx) = self.obj().active_preview() {
                 let cached = self.pv_preview.borrow();
                 if let Some(cached) = cached.as_ref()
@@ -1314,6 +1332,11 @@ impl BoardView {
     }
 
     /// Extra dead-stone shading and territory squares drawn during scoring.
+    ///
+    /// Does not clear the pin. The analysis row is still selected, and this widget
+    /// does not talk to the list. [`Self::active_preview`] refuses to draw the
+    /// variation while the overlay is set, so the count is the real position; the
+    /// variation returns when the overlay is cleared.
     pub fn set_score_overlay(
         &self,
         dead: Option<mirai_core::DeadSet>,
@@ -1345,9 +1368,10 @@ impl BoardView {
     /// Rebuilds the cached PV board when the hover index, the pin, the report or the
     /// projection changed. `snapshot` only draws the result.
     ///
-    /// The editor-tool gate stays in [`Self::active_preview`] rather than here: a tool
-    /// change must not replay a line that is still pinned, and returning to Play must
-    /// not replay one that was built while the tool was away.
+    /// The editor-tool and score-overlay gates stay in [`Self::active_preview`] rather
+    /// than here. Changing tool, or putting the count up, must not drop a line that is
+    /// still pinned, and taking the gate away must not rebuild it: drawing is the only
+    /// thing the gate suppresses.
     fn sync_pv_preview(&self) {
         let Some(next) = self.projected_pv() else {
             return;
@@ -1430,11 +1454,18 @@ impl BoardView {
     }
 
     /// The candidate whose PV is currently previewed: pointer hover first, then the pin.
+    ///
+    /// Nothing while a mark tool is active, and nothing while a score overlay is up.
+    /// The pin is left set: the analysis row is still selected, and this widget does
+    /// not clear it. The variation returns when the count is dismissed.
     fn active_preview(&self) -> Option<usize> {
-        if self.state().editor_tool() != EditorTool::Play {
-            return None;
-        }
-        self.imp().hover.get().or_else(|| self.imp().pinned.get())
+        let imp = self.imp();
+        preview_index(
+            self.state().editor_tool() == EditorTool::Play,
+            imp.dead.borrow().is_some() || imp.territory.borrow().is_some(),
+            imp.hover.get(),
+            imp.pinned.get(),
+        )
     }
 
     // -- wiring -----------------------------------------------------------------------
@@ -1794,6 +1825,27 @@ mod tests {
         assert_eq!(LABEL_MIN_VISITS, full);
         assert!(crate::palette::is_known(1, full) && !crate::palette::is_known(1, full - 1));
         assert!(blob_alpha(full - 1) < BLOB_ALPHA_MAX);
+    }
+
+    /// Resign and time-loss do not move the cursor, so a row pinned during the game is
+    /// still pinned when the count appears. The overlay is the real position: drawing
+    /// the variation hides the territory, and a click still toggles the real groups.
+    #[test]
+    fn a_score_overlay_is_the_real_position_not_the_pinned_variation() {
+        assert_eq!(preview_index(true, false, None, Some(2)), Some(2));
+        assert_eq!(preview_index(true, false, Some(1), Some(2)), Some(1));
+        assert_eq!(
+            preview_index(true, true, None, Some(2)),
+            None,
+            "a pinned row must not hide the count"
+        );
+        assert_eq!(
+            preview_index(true, true, Some(1), Some(2)),
+            None,
+            "a hover during the count is the same"
+        );
+        assert_eq!(preview_index(false, false, None, Some(2)), None);
+        assert_eq!(preview_index(true, false, None, None), None);
     }
 
     /// The ring answers "where does the record go next?", so it has to read `children[0]` —
