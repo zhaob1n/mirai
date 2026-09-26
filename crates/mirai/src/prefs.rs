@@ -1948,20 +1948,30 @@ fn connect_appearance(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, 
         overlay_state.save_config();
     });
 
-    state.connect_ownership_overlay_notify(glib::clone!(
+    // These live on AppState, which outlives the dialog. Connecting again every time
+    // Preferences opens used to leave the previous handlers in place for the window's life.
+    let ownership_id = state.connect_ownership_overlay_notify(glib::clone!(
         #[weak]
         dialog,
         #[strong]
         overlay_syncing,
         move |state| sync_overlay_row(&dialog, state, &overlay_syncing)
     ));
-    state.connect_policy_overlay_notify(glib::clone!(
+    let policy_id = state.connect_policy_overlay_notify(glib::clone!(
         #[weak]
         dialog,
         #[strong]
         overlay_syncing,
         move |state| sync_overlay_row(&dialog, state, &overlay_syncing)
     ));
+    let watched = state.clone();
+    let ids = RefCell::new(Some((ownership_id, policy_id)));
+    dialog.connect_closed(move |_| {
+        if let Some((ownership, policy)) = ids.borrow_mut().take() {
+            watched.disconnect(ownership);
+            watched.disconnect(policy);
+        }
+    });
 
     widgets
         .save_analysis_row
