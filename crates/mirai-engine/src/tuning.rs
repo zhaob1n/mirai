@@ -42,6 +42,19 @@ pub struct EngineTuning {
 /// this is the figure to quote at the user.
 const CACHE_ENTRY_BYTES: u64 = 3 * 1024;
 
+/// Optional replacements for the four keys a generated analysis config writes.
+///
+/// `None` keeps [`EngineTuning::default`] for that key. This is not what a
+/// user-supplied analysis.cfg gets: that file owns every setting but the two
+/// thread counts, which are applied by [`crate::LocalEngineConfig::apply_config_overrides`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TuningOverrides {
+    pub analysis_threads: Option<u16>,
+    pub search_threads: Option<u16>,
+    pub nn_max_batch_size: Option<u16>,
+    pub nn_cache_size_power_of_two: Option<u8>,
+}
+
 impl Default for EngineTuning {
     fn default() -> EngineTuning {
         EngineTuning {
@@ -59,6 +72,21 @@ impl EngineTuning {
     pub const MAX_BATCH_SIZE: u16 = 1024;
     pub const MIN_CACHE_POWER: u8 = 14;
     pub const MAX_CACHE_POWER: u8 = 24;
+
+    /// User values over mirai's defaults. An absent field stays at the default.
+    pub fn with_overrides(overrides: TuningOverrides) -> Self {
+        let base = Self::default();
+        Self {
+            analysis_threads: overrides.analysis_threads.unwrap_or(base.analysis_threads),
+            search_threads: overrides.search_threads.unwrap_or(base.search_threads),
+            nn_max_batch_size: overrides
+                .nn_max_batch_size
+                .unwrap_or(base.nn_max_batch_size),
+            nn_cache_size_power_of_two: overrides
+                .nn_cache_size_power_of_two
+                .unwrap_or(base.nn_cache_size_power_of_two),
+        }
+    }
 
     /// Roughly how much memory the neural-net cache occupies once warm.
     pub fn cache_bytes(&self) -> u64 {

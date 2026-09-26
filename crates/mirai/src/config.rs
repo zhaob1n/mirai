@@ -6,7 +6,7 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use mirai_core::RuleSet;
-use mirai_engine::EngineTuning;
+use mirai_engine::{EngineTuning, TuningOverrides};
 use serde::{Deserialize, Serialize};
 
 /// The user-specific XDG root and the ordered system roots are kept separate because
@@ -261,7 +261,6 @@ impl ProfileKind {
     /// Meaningful only for a profile with no custom `config`; with one, KataGo reads the
     /// user's file and only the two thread values are passed as overrides.
     pub fn tuning(&self) -> EngineTuning {
-        let base = EngineTuning::default();
         let ProfileKind::Local {
             analysis_threads,
             search_threads,
@@ -270,15 +269,14 @@ impl ProfileKind {
             ..
         } = self
         else {
-            return base;
+            return EngineTuning::default();
         };
-        EngineTuning {
-            analysis_threads: analysis_threads.unwrap_or(base.analysis_threads),
-            search_threads: search_threads.unwrap_or(base.search_threads),
-            nn_max_batch_size: nn_max_batch_size.unwrap_or(base.nn_max_batch_size),
-            nn_cache_size_power_of_two: nn_cache_size_power_of_two
-                .unwrap_or(base.nn_cache_size_power_of_two),
-        }
+        EngineTuning::with_overrides(TuningOverrides {
+            analysis_threads: *analysis_threads,
+            search_threads: *search_threads,
+            nn_max_batch_size: *nn_max_batch_size,
+            nn_cache_size_power_of_two: *nn_cache_size_power_of_two,
+        })
     }
 }
 

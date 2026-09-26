@@ -36,7 +36,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Weak};
 
 use gtk::glib;
-use mirai_engine::{Engine, EngineError};
+use mirai_engine::{Engine, EngineError, TuningOverrides};
 use tokio::sync::oneshot;
 
 use crate::config::{EngineProfile, ProfileKind};
@@ -238,24 +238,27 @@ async fn build(profile: EngineProfile, log_dir: PathBuf) -> Result<Built, Engine
             ref config,
             analysis_threads,
             search_threads,
-            ..
+            nn_max_batch_size,
+            nn_cache_size_power_of_two,
         } => {
-            // A custom config is the user's file, used as it stands with only the two
-            // thread values overridable; otherwise mirai writes one next to the logs.
-            let (config, analysis_threads, search_threads) = match config {
-                Some(path) => (path.clone(), analysis_threads, search_threads),
-                None => {
-                    let tuning = profile.kind.tuning();
-                    let path = tuning.write_to(&log_dir).map_err(|e| {
-                        EngineError::Startup(format!(
-                            "could not write the analysis config into {}: {e}",
-                            log_dir.display()
-                        ))
-                    })?;
-                    // The generated file already carries them; passing them again would
-                    // only make the two sources of truth able to disagree.
-                    (path, None, None)
-                }
+            let overrides = TuningOverrides {
+                analysis_threads,
+                search_threads,
+                nn_max_batch_size,
+                nn_cache_size_power_of_two,
+            };
+            // A custom config is the user's file. It owns every setting but the two
+            // thread counts. Otherwise mirai writes one next to the logs, and that
+            // file is the only source of the four keys.
+            let custom = config.is_some();
+            let config = match config {
+                Some(path) => path.clone(),
+                None => profile.kind.tuning().write_to(&log_dir).map_err(|e| {
+                    EngineError::Startup(format!(
+                        "could not write the analysis config into {}: {e}",
+                        log_dir.display()
+                    ))
+                })?,
             };
 
             let mut cfg = mirai_engine::LocalEngineConfig::new(
@@ -265,8 +268,7 @@ async fn build(profile: EngineProfile, log_dir: PathBuf) -> Result<Built, Engine
                 config,
             );
             cfg.log_dir = log_dir;
-            cfg.analysis_threads = analysis_threads;
-            cfg.search_threads = search_threads;
+            cfg.apply_config_overrides(custom, overrides);
             let engine = mirai_engine::LocalEngine::spawn(cfg).await?;
             Ok(Arc::new(engine) as Arc<dyn Engine>)
         }

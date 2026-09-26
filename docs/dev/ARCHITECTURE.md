@@ -268,7 +268,7 @@ depend on is [§1](#1-the-system). User settings and shortcuts are
 | framing, QUIC, a `mirai://` URL, or a cert pin | `crates/mirai-proto/src/frame.rs`, `crates/mirai-proto/src/transport.rs`, `crates/mirai-proto/src/endpoint.rs`, `crates/mirai-proto/src/sha256.rs` | `read_msg`, `connect`, `parse_url`, `fingerprint` |
 | the engine contract | `crates/mirai-engine/src/lib.rs` | `Engine::subscribe` |
 | a KataGo query field, or how a response is read | `crates/mirai-engine/src/query.rs`, `crates/mirai-engine/src/decode.rs` | `build_query`, `decode_report` — the only JSON boundary |
-| the KataGo command line or its overrides | `crates/mirai-engine/src/local.rs` | `LocalEngine::spawn`, `override_config` |
+| the KataGo command line or its overrides | `crates/mirai-engine/src/local.rs` | `LocalEngine::spawn`, `apply_config_overrides`, `override_config` |
 | the generated analysis config, or automatic tuning | `crates/mirai-engine/src/tuning.rs`, `crates/mirai-engine/src/calibrate.rs` | `EngineTuning::render`, `calibrate`. The measured thread tradeoff is [§2.2](#22-mirai-generates-katagos-analysis-config) |
 | a remote engine connection | `crates/mirai-engine/src/remote.rs` | `RemoteEngine::connect` |
 | drive an engine with no GUI, or regenerate the self-play fixture | `crates/mirai-engine/examples/probe.rs`, `crates/mirai-engine/examples/sweep.rs`, `crates/mirai-client/examples/selfplay.rs` | flags in those files. How to read the result is [TESTING §4](TESTING.md#4-verifying-against-a-real-engine) |
@@ -581,9 +581,10 @@ stdio piped, `kill_on_drop` set. `override_config` always sets:
 | `logToStderr` | `false` | stderr is ours — we tail it for diagnostics |
 | `logAllRequests`, `logAllResponses` | `false` | detail stays in KataGo's own log |
 
-plus `numAnalysisThreads`, `numSearchThreadsPerAnalysisThread` and `nnCacheSizePowerOfTwo` when
-the caller set them — which the GUI does only for a custom config file; with mirai's generated
-config (§2.2) that file is the single source of those values and no thread override is passed.
+plus `numAnalysisThreads` and `numSearchThreadsPerAnalysisThread` when the caller set them
+— which both frontends do only for a user-supplied config file. That file owns every other
+setting, including `nnCacheSizePowerOfTwo`. With mirai's generated config (§2.2) the file is
+the single source of those values and no tuning override is passed.
 KataGo splits this value on commas, so a value containing one is rejected up front with a
 `Startup` error rather than producing a mangled config.
 

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, bail};
-use mirai_engine::{EngineTuning, LocalEngineConfig};
+use mirai_engine::{EngineTuning, LocalEngineConfig, TuningOverrides};
 use serde::Deserialize;
 
 pub const DEFAULT_LISTEN: &str = "0.0.0.0:9678";
@@ -69,7 +69,7 @@ pub struct EngineCfg {
     pub search_threads: Option<u16>,
     /// `nnMaxBatchSize`. Only used when `config` is omitted; a custom file must set it.
     pub nn_max_batch_size: Option<u16>,
-    /// `nnCacheSizePowerOfTwo`.
+    /// `nnCacheSizePowerOfTwo`. Only used when `config` is omitted; a custom file owns it.
     pub nn_cache_size_power_of_two: Option<u8>,
     /// How long to wait for the version/model handshake. First-run OpenCL tuning is slow;
     /// raise this if a cold GPU cache times out.
@@ -176,25 +176,23 @@ impl EngineCfg {
                 bail!("no home directory to keep KataGo's logs in; set log_dir in this [[engine]]")
             }
         };
+        let overrides = TuningOverrides {
+            analysis_threads: self.analysis_threads,
+            search_threads: self.search_threads,
+            nn_max_batch_size: self.nn_max_batch_size,
+            nn_cache_size_power_of_two: self.nn_cache_size_power_of_two,
+        };
         // No config file given: write the one mirai would generate, with this block's
-        // tuning applied over the defaults.
+        // tuning applied over the defaults. A user-supplied file owns every setting
+        // but the two thread counts.
+        let custom = self.config.is_some();
         let config = match &self.config {
             Some(path) => path.clone(),
-            None => {
-                let base = EngineTuning::default();
-                EngineTuning {
-                    analysis_threads: self.analysis_threads.unwrap_or(base.analysis_threads),
-                    search_threads: self.search_threads.unwrap_or(base.search_threads),
-                    nn_max_batch_size: self.nn_max_batch_size.unwrap_or(base.nn_max_batch_size),
-                    nn_cache_size_power_of_two: self
-                        .nn_cache_size_power_of_two
-                        .unwrap_or(base.nn_cache_size_power_of_two),
-                }
+            None => EngineTuning::with_overrides(overrides)
                 .write_to(&log_dir)
                 .with_context(|| {
                     format!("writing the analysis config into {}", log_dir.display())
-                })?
-            }
+                })?,
         };
 
         let mut lc = LocalEngineConfig::new(
@@ -204,13 +202,7 @@ impl EngineCfg {
             config,
         );
         lc.log_dir = log_dir;
-        // With a generated config these are already in the file; passing them again would
-        // give the same value two sources of truth.
-        if self.config.is_some() {
-            lc.analysis_threads = self.analysis_threads;
-            lc.search_threads = self.search_threads;
-            lc.nn_cache_size_power_of_two = self.nn_cache_size_power_of_two;
-        }
+        lc.apply_config_overrides(custom, overrides);
         if let Some(s) = self.startup_timeout_s {
             lc.startup_timeout = Duration::from_secs(s);
         }

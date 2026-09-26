@@ -22,7 +22,9 @@ use crate::config::{
 };
 use crate::preferences_shell::{PreferencesDialog, PreferencesWidgets};
 use crate::profile_editor::ProfileEditorPage;
-use mirai_engine::{CalibrationConfig, CalibrationProgress, CalibrationResult, EngineTuning};
+use mirai_engine::{
+    CalibrationConfig, CalibrationProgress, CalibrationResult, EngineTuning, TuningOverrides,
+};
 type WindowWatch = (gtk::Application, glib::SignalHandlerId);
 
 struct CalibrationRun {
@@ -874,14 +876,12 @@ fn local_editor(
 
             // Measure from where the user is now: whatever the rows say, with `0` meaning
             // mirai's default, exactly as a real start would read them.
-            let base = EngineTuning::default();
-            let tuning = EngineTuning {
-                analysis_threads: spin_value_u16(&tune_analysis).unwrap_or(base.analysis_threads),
-                search_threads: spin_value_u16(&tune_search).unwrap_or(base.search_threads),
-                nn_max_batch_size: spin_value_u16(&tune_batch).unwrap_or(base.nn_max_batch_size),
-                nn_cache_size_power_of_two: spin_value_u8(&tune_cache)
-                    .unwrap_or(base.nn_cache_size_power_of_two),
-            };
+            let tuning = EngineTuning::with_overrides(TuningOverrides {
+                analysis_threads: spin_value_u16(&tune_analysis),
+                search_threads: spin_value_u16(&tune_search),
+                nn_max_batch_size: spin_value_u16(&tune_batch),
+                nn_cache_size_power_of_two: spin_value_u8(&tune_cache),
+            });
             let name = match tune_name.text().trim() {
                 "" => "tuning".to_string(),
                 named => named.to_string(),

@@ -22,6 +22,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::decode::{RawResponse, decode_report};
 use crate::query::{action_query, build_query, terminate_query};
+use crate::tuning::TuningOverrides;
 use crate::{CancelGuard, Engine, EngineError, SubEvent, Subscription};
 
 /// How many stderr lines to keep for diagnosing a failed start.
@@ -44,8 +45,6 @@ pub struct LocalEngineConfig {
     pub analysis_threads: Option<u16>,
     /// `numSearchThreadsPerAnalysisThread`.
     pub search_threads: Option<u16>,
-    /// `nnCacheSizePowerOfTwo`.
-    pub nn_cache_size_power_of_two: Option<u8>,
     /// How long to wait for the startup handshake. The first OpenCL run tunes itself and
     /// can take minutes, hence the generous default.
     pub startup_timeout: Duration,
@@ -66,9 +65,21 @@ impl LocalEngineConfig {
             log_dir: std::env::temp_dir().join("mirai-katago-logs"),
             analysis_threads: None,
             search_threads: None,
-            nn_cache_size_power_of_two: None,
             startup_timeout: Duration::from_secs(180),
         }
+    }
+
+    /// Which tuning keys may be forced with `-override-config`.
+    ///
+    /// A user-supplied analysis.cfg (`custom`) owns every setting but the two
+    /// thread counts. A generated config already contains every key; overriding
+    /// them again would give one value two sources of truth.
+    pub fn apply_config_overrides(&mut self, custom: bool, overrides: TuningOverrides) {
+        (self.analysis_threads, self.search_threads) = if custom {
+            (overrides.analysis_threads, overrides.search_threads)
+        } else {
+            (None, None)
+        };
     }
 }
 
@@ -594,9 +605,6 @@ fn override_config(cfg: &LocalEngineConfig) -> Result<String, EngineError> {
     if let Some(n) = cfg.search_threads {
         pairs.push(("numSearchThreadsPerAnalysisThread", n.to_string()));
     }
-    if let Some(n) = cfg.nn_cache_size_power_of_two {
-        pairs.push(("nnCacheSizePowerOfTwo", n.to_string()));
-    }
     if let Some((key, value)) = pairs.iter().find(|(_, v)| v.contains(',')) {
         return Err(EngineError::Startup(format!(
             "{key}={value:?} contains a comma, which katago's -override-config cannot express"
@@ -670,11 +678,8 @@ mod tests {
         let mut cfg = cfg();
         cfg.analysis_threads = Some(4);
         cfg.search_threads = Some(8);
-        cfg.nn_cache_size_power_of_two = Some(21);
         let s = override_config(&cfg).unwrap();
-        assert!(s.ends_with(
-            "numAnalysisThreads=4,numSearchThreadsPerAnalysisThread=8,nnCacheSizePowerOfTwo=21"
-        ));
+        assert!(s.ends_with("numAnalysisThreads=4,numSearchThreadsPerAnalysisThread=8"));
         // -analysis-threads is a command-line flag KataGo refuses alongside the config key.
         assert!(!s.contains("analysis-threads"));
     }
@@ -787,5 +792,33 @@ mod tests {
             .handle(r#"{"id":"0","isDuringSearch":false,"moveInfos":[{"order":0}]}"#);
         assert!(engine.inner.subs().map.is_empty());
         assert!(lines.try_recv().is_err());
+    }
+
+    /// A user-supplied file owns every setting but the two thread counts; cache size
+    /// and batch size named by the caller must not reach `-override-config`. A
+    /// generated file is the only source of its keys, so it gets no thread override.
+    #[test]
+    fn a_custom_config_is_overridden_only_for_the_two_thread_counts() {
+        let overrides = TuningOverrides {
+            analysis_threads: Some(2),
+            search_threads: Some(8),
+            nn_max_batch_size: Some(32),
+            nn_cache_size_power_of_two: Some(23),
+        };
+        let mut custom = cfg();
+        custom.apply_config_overrides(true, overrides);
+        let line = override_config(&custom).unwrap();
+        assert!(
+            line.ends_with("numAnalysisThreads=2,numSearchThreadsPerAnalysisThread=8"),
+            "{line}"
+        );
+
+        let mut generated = cfg();
+        generated.analysis_threads = Some(4);
+        generated.apply_config_overrides(false, overrides);
+        assert_eq!(
+            override_config(&generated).unwrap(),
+            override_config(&cfg()).unwrap()
+        );
     }
 }

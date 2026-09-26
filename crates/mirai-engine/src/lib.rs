@@ -36,7 +36,7 @@ pub use mirai_proto::types::{
 #[cfg(feature = "remote")]
 pub use remote::RemoteEngine;
 #[cfg(feature = "local")]
-pub use tuning::EngineTuning;
+pub use tuning::{EngineTuning, TuningOverrides};
 
 /// Why an analysis stopped, or why an engine could not be used at all.
 #[derive(Clone, Debug, thiserror::Error)]
