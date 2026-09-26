@@ -351,8 +351,8 @@ and the file path do not.
 | Group | Field | Choices / default | Notes |
 |---|---|---|---|
 | Board | **Size** | 9×9, 13×13, **19×19**, Custom | *Custom* reveals **Custom Size**, accepting 2–19 |
-| | **Handicap** | **None**, 2–9 stones | places the standard points as Black; boards too small for the pattern get none |
-| | **Komi** | −150 … 150 by halves | follows the ruleset, but overridable; choosing a handicap sets it to 0.5 |
+| | **Handicap** | **None**, 2–9 stones | places the standard points as Black; unavailable, at None, except on odd square boards of 7×7 and up |
+| | **Komi** | −150 … 150 by halves | follows the ruleset, but overridable; placing a handicap sets it to 0.5 |
 | | **Rules** | nine rulesets, see below | |
 | Players | **You Play** | **Black**, White, Both (no engine) | *Both (no engine)* hides **Engine Strength**. The group then reads *Play both sides on this device*. Otherwise it reads *The engine takes the other colour* |
 | Time control | **Type** | **None**, Absolute, Byo-yomi, Fischer increment | |

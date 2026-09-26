@@ -7,7 +7,7 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{CompositeTemplate, glib};
 
-use mirai_core::{Color, RuleSet, Size, TimeControl};
+use mirai_core::{Color, RuleSet, Size, TimeControl, fixed_handicap};
 
 use crate::app::AppState;
 use crate::config::{
@@ -117,6 +117,7 @@ impl NewGameDialog {
                 "8 stones", "9 stones",
             ],
         );
+
         configure_spin(
             &imp.komi_row,
             -150.0,
@@ -134,6 +135,7 @@ impl NewGameDialog {
                 .position(|rules| *rules == play.rules)
                 .unwrap_or(1) as u32,
         );
+        self.refresh_handicap();
 
         set_items(&imp.colour_row, &["Black", "White", "Both (no engine)"]);
         set_items(
@@ -194,10 +196,18 @@ impl NewGameDialog {
         imp.size_row.connect_selected_notify(glib::clone!(
             #[weak(rename_to = dialog)]
             self,
-            move |row| dialog
-                .imp()
-                .custom_size_row
-                .set_visible(row.selected() == SIZE_CHOICES.len() as u32)
+            move |row| {
+                dialog
+                    .imp()
+                    .custom_size_row
+                    .set_visible(row.selected() == SIZE_CHOICES.len() as u32);
+                dialog.refresh_handicap();
+            }
+        ));
+        imp.custom_size_row.connect_value_notify(glib::clone!(
+            #[weak(rename_to = dialog)]
+            self,
+            move |_| dialog.refresh_handicap()
         ));
         imp.rules_row.connect_selected_notify(glib::clone!(
             #[weak(rename_to = dialog)]
@@ -237,12 +247,35 @@ impl NewGameDialog {
         ));
     }
 
+    fn selected_size(&self) -> Size {
+        let imp = self.imp();
+        match imp.size_row.selected() {
+            index if (index as usize) < SIZE_CHOICES.len() => {
+                Size::square(SIZE_CHOICES[index as usize])
+            }
+            _ => Size::square(imp.custom_size_row.value() as u8),
+        }
+    }
+
+    /// Handicap stones exist only on odd square boards of 7 and up. Anywhere else the
+    /// row is insensitive at None rather than accepting a count that places nothing.
+    fn refresh_handicap(&self) {
+        let imp = self.imp();
+        let takes_handicap = takes_handicap(self.selected_size());
+        imp.handicap_row.set_sensitive(takes_handicap);
+        // Unselecting notifies the handicap row, which re-derives komi. A size change
+        // that keeps the handicap leaves a komi override alone.
+        if !takes_handicap {
+            imp.handicap_row.set_selected(0);
+        }
+    }
+
     fn sync_komi(&self) {
         let imp = self.imp();
         if imp.syncing.replace(true) {
             return;
         }
-        let value = if imp.handicap_row.selected() > 0 {
+        let value = if selected_handicap(self.selected_size(), imp.handicap_row.selected()) > 0 {
             0.5
         } else {
             rules_at(imp.rules_row.selected()).default_komi() as f64
@@ -279,20 +312,8 @@ impl NewGameDialog {
 
     fn setup(&self) -> GameSetup {
         let imp = self.imp();
-        let size = match imp.size_row.selected() {
-            index if (index as usize) < SIZE_CHOICES.len() => {
-                Size::square(SIZE_CHOICES[index as usize])
-            }
-            _ => Size::new(
-                imp.custom_size_row.value() as u8,
-                imp.custom_size_row.value() as u8,
-            )
-            .unwrap_or(Size::square(19)),
-        };
-        let handicap = match imp.handicap_row.selected() {
-            0 => 0,
-            count => (count + 1) as u8,
-        };
+        let size = self.selected_size();
+        let handicap = selected_handicap(size, imp.handicap_row.selected());
         let human = match imp.colour_row.selected() {
             0 => Some(Color::Black),
             1 => Some(Color::White),
@@ -408,6 +429,18 @@ fn configure_spin(row: &adw::SpinRow, min: f64, max: f64, step: f64, digits: u32
     );
 }
 
+fn takes_handicap(size: Size) -> bool {
+    !fixed_handicap(size, 2).is_empty()
+}
+
+/// Stones for combo `selected` (`0` = None, then 2..=9) on `size`.
+fn selected_handicap(size: Size, selected: u32) -> u8 {
+    if selected == 0 || !takes_handicap(size) {
+        return 0;
+    }
+    (selected + 1) as u8
+}
+
 fn rules_at(index: u32) -> RuleSet {
     RuleSet::ALL
         .get(index as usize)
@@ -468,5 +501,22 @@ mod tests {
             strength_to_save(&saved, &Strength::Visits(250), false),
             StrengthSetting::Visits { visits: 250 }
         );
+    }
+
+    #[test]
+    fn a_board_without_handicap_points_takes_no_stones() {
+        for side in [2, 5, 6, 8, 10, 18] {
+            let size = Size::square(side);
+            assert_eq!(selected_handicap(size, 1), 0, "{side}x{side}");
+            assert_eq!(selected_handicap(size, 8), 0, "{side}x{side}");
+        }
+        for side in [7, 9, 13, 19] {
+            let size = Size::square(side);
+            for selected in 1..=8 {
+                let stones = selected_handicap(size, selected);
+                assert_eq!(fixed_handicap(size, stones).len(), usize::from(stones));
+            }
+            assert_eq!(selected_handicap(size, 0), 0);
+        }
     }
 }
