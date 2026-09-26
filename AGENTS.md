@@ -154,6 +154,10 @@ Full detail, including how to drive the GUI headlessly and verify against a real
 
 - **Never leave the tree broken.** `clippy -D warnings` and the full test suite pass on every
   commit. If your change needs a lint suppressed, justify it in a comment.
+- **Commit messages and pull requests say what changed and why.** They do not list the
+  routine checks — build, tests, clippy, fmt passing, or test counts. Passing them is what
+  every commit owes (above), not news. Quote evidence only when it is the point: a measured
+  number, or how a defect reproduces.
 - **Do not add dependencies.** Versions are pinned in the root `[workspace.dependencies]` and
   member crates use `dep.workspace = true`. If you truly need a crate, say so and why rather
   than adding it quietly. Two hard-won constraints: `rustls` is pinned to the `ring` provider
