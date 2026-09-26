@@ -64,6 +64,7 @@ mod imp {
         #[template_child]
         pub profile_row: TemplateChild<adw::EntryRow>,
         pub syncing: Cell<bool>,
+        pub coerced_strength: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -183,6 +184,8 @@ impl NewGameDialog {
                 u32::from(has_human_model) * 2
             }
         };
+        imp.coerced_strength
+            .set(matches!(play.strength, StrengthSetting::Human { .. }) && !has_human_model);
         imp.strength_row.set_selected(saved_mode);
     }
 
@@ -216,7 +219,15 @@ impl NewGameDialog {
         imp.strength_row.connect_selected_notify(glib::clone!(
             #[weak(rename_to = dialog)]
             self,
-            move |row| dialog.refresh_strength(row.selected())
+            move |row| {
+                dialog.imp().coerced_strength.set(false);
+                dialog.refresh_strength(row.selected());
+            }
+        ));
+        imp.visits_row.connect_value_notify(glib::clone!(
+            #[weak(rename_to = dialog)]
+            self,
+            move |_| dialog.imp().coerced_strength.set(false)
         ));
         self.refresh_players();
         imp.colour_row.connect_selected_notify(glib::clone!(
@@ -347,13 +358,11 @@ pub fn present(
         {
             let mut config = start_state.config_mut();
             config.play.rules = setup.rules;
-            config.play.strength = match &setup.strength {
-                Strength::Visits(visits) => StrengthSetting::Visits { visits: *visits },
-                Strength::TimeMs(time_ms) => StrengthSetting::Time { time_ms: *time_ms },
-                Strength::Human { profile } => StrengthSetting::Human {
-                    profile: profile.clone(),
-                },
-            };
+            config.play.strength = strength_to_save(
+                &config.play.strength,
+                &setup.strength,
+                start_dialog.imp().coerced_strength.get(),
+            );
         }
         start_state.save_config();
         start_dialog.close();
@@ -361,6 +370,23 @@ pub fn present(
     });
 
     dialog.present(Some(parent));
+}
+
+fn strength_to_save(
+    saved: &StrengthSetting,
+    selected: &Strength,
+    coerced: bool,
+) -> StrengthSetting {
+    if coerced {
+        return saved.clone();
+    }
+    match selected {
+        Strength::Visits(visits) => StrengthSetting::Visits { visits: *visits },
+        Strength::TimeMs(time_ms) => StrengthSetting::Time { time_ms: *time_ms },
+        Strength::Human { profile } => StrengthSetting::Human {
+            profile: profile.clone(),
+        },
+    }
 }
 
 fn set_items(row: &adw::ComboRow, items: &[&str]) {
@@ -425,4 +451,22 @@ fn grey_out_human(row: &adw::ComboRow, enabled: bool) {
     };
     row.set_factory(Some(&make_factory(false)));
     row.set_list_factory(Some(&make_factory(true)));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_human_model_does_not_replace_the_saved_profile() {
+        let saved = StrengthSetting::Human {
+            profile: "rank_3d".into(),
+        };
+        let fallback = Strength::Visits(DEFAULT_VISITS_PER_MOVE);
+        assert_eq!(strength_to_save(&saved, &fallback, true), saved);
+        assert_eq!(
+            strength_to_save(&saved, &Strength::Visits(250), false),
+            StrengthSetting::Visits { visits: 250 }
+        );
+    }
 }

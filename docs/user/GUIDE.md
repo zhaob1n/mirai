@@ -385,8 +385,10 @@ network to imitate a rank rather than to play well — it is unavailable unless 
 network carries a human-imitation model, which most do not. A running clock overrides all of
 this: the engine will not spend more time on a move than it can afford.
 
-The ruleset and the strength setting are remembered as next time's defaults. Preferences uses
-the same mode names: **Visits**, **Time per move**, **Human-like**.
+The ruleset and the strength setting are remembered as next time's defaults. If a saved
+Human-like profile is unavailable with the current engine, New Game uses Visits for that
+game without replacing the saved profile unless you change the strength yourself.
+Preferences uses the same mode names: **Visits**, **Time per move**, **Human-like**.
 
 ### While the game runs
 
