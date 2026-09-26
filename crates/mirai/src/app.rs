@@ -20,10 +20,11 @@ use gtk::subclass::prelude::*;
 
 use mirai_client::{GameSession, SpeedMeter};
 use mirai_core::{Color, GameTree, IllegalMove, NodeAnalysis, NodeId, Point, Position};
+use mirai_engine::remote::RemoteStatus;
 use mirai_engine::{AnalyzeReq, Engine, EngineDesc, EngineError, Report, SubEvent, Want};
 
 use crate::config::{Config, ConfigError, ProfileKind};
-use crate::engines::EnginePool;
+use crate::engines::{Built, EnginePool};
 
 /// How long settings may keep changing before they are written. A spin row saves on every
 /// step and a drag is dozens of steps; one write when it settles is enough.
@@ -92,6 +93,10 @@ pub enum Change {
     /// Stored analysis the graph reads may have changed.
     Samples,
     Engine,
+    /// The active remote engine's link came back after dropping. Nothing is replayed
+    /// across a reconnect, so live analysis has already been asked for again; the window
+    /// retries a play turn the drop stalled.
+    Reconnected,
     Toast(String),
     Play,
     BatchProgress(u32, u32),
@@ -226,6 +231,9 @@ mod imp {
         /// The live-analysis pump. Aborting it drops the `Subscription`, which terminates
         /// the KataGo query — that is the whole cancellation mechanism.
         pub pump: RefCell<Option<glib::JoinHandle<()>>>,
+        /// Follows the active remote engine's link. Replacing the engine or closing the
+        /// window aborts it; it holds this state weakly.
+        pub link_watch: RefCell<Option<glib::JoinHandle<()>>>,
         /// Bumped on every `activate_profile` so a slow engine start can tell it has been
         /// superseded by a newer selection.
         pub activation: Cell<u64>,
@@ -271,6 +279,7 @@ mod imp {
                 runtime: OnceCell::new(),
                 report: RefCell::new(None),
                 pump: RefCell::new(None),
+                link_watch: RefCell::new(None),
                 activation: Cell::new(0),
                 activation_task: RefCell::new(None),
                 generation: Cell::new(0),
@@ -876,10 +885,10 @@ impl AppState {
         self.changed(Change::Engine);
     }
 
-    pub fn set_engine(&self, engine: Option<Arc<dyn Engine>>) {
+    pub fn set_engine(&self, engine: Option<Built>) {
         let state = match &engine {
-            Some(engine) => {
-                let desc = engine.describe();
+            Some(built) => {
+                let desc = built.engine.describe();
                 let description = if desc.katago_version.is_empty() {
                     desc.name.clone()
                 } else {
@@ -892,9 +901,52 @@ impl AppState {
             }
             None => EngineState::None,
         };
-        *self.imp().engine.borrow_mut() = engine;
+        self.replace_engine(engine);
         self.set_engine_state(state);
         self.restart_analysis();
+    }
+
+    /// Every write to the engine slot comes through here, so the link being followed is
+    /// always the current engine's: a replaced remote engine coming back, still alive in
+    /// another window, must not restart this one's analysis.
+    fn replace_engine(&self, engine: Option<Built>) {
+        let imp = self.imp();
+        if let Some(task) = imp.link_watch.take() {
+            task.abort();
+        }
+        let Some(Built { engine, link }) = engine else {
+            imp.engine.replace(None);
+            return;
+        };
+        imp.engine.replace(Some(engine));
+        let Some(mut link) = link else {
+            return;
+        };
+        // Only a return is news. The link may already be down when a window adopts the
+        // engine, and the status it starts from asks for nothing. Sampled here, before
+        // `restart_analysis` subscribes, so a return between the two is still a change.
+        let mut up = *link.borrow_and_update() == RemoteStatus::Connected;
+        let weak = self.downgrade();
+        let task = glib::spawn_future_local(async move {
+            while link.changed().await.is_ok() {
+                let now = *link.borrow_and_update() == RemoteStatus::Connected;
+                if now
+                    && !up
+                    && let Some(state) = weak.upgrade()
+                {
+                    state.link_restored();
+                }
+                up = now;
+            }
+        });
+        imp.link_watch.replace(Some(task));
+    }
+
+    /// A dropped link failed every subscription on it, and remote subscriptions are never
+    /// replayed (PROTOCOL §8.6): the client asks again for what the user is looking at now.
+    fn link_restored(&self) {
+        self.restart_analysis();
+        self.changed(Change::Reconnected);
     }
 
     /// Starts (or connects to) the named profile and installs it as the active engine.
@@ -924,7 +976,7 @@ impl AppState {
             return;
         }
 
-        *self.imp().engine.borrow_mut() = None;
+        self.replace_engine(None);
         self.set_engine_state(EngineState::Starting {
             profile: profile.name.clone(),
         });
@@ -1025,7 +1077,7 @@ impl AppState {
                 on_cancel_state.set_busy(false);
                 on_cancel_state
                     .set_status("Certificate was not trusted. The token was not sent.".to_string());
-                *on_cancel_state.imp().engine.borrow_mut() = None;
+                on_cancel_state.replace_engine(None);
                 on_cancel_state.set_engine_state(EngineState::Failed {
                     profile: on_cancel_name.clone(),
                     message: "certificate was not trusted".into(),
@@ -1088,7 +1140,7 @@ impl AppState {
     fn fail_activation(&self, profile: &str, message: String) {
         self.set_busy(false);
         self.toast(format!("{profile}: {message}"));
-        *self.imp().engine.borrow_mut() = None;
+        self.replace_engine(None);
         self.set_engine_state(EngineState::Failed {
             profile: profile.to_string(),
             message,
@@ -1252,6 +1304,9 @@ impl AppState {
             task.abort();
         }
         if let Some(task) = imp.pump.borrow_mut().take() {
+            task.abort();
+        }
+        if let Some(task) = imp.link_watch.borrow_mut().take() {
             task.abort();
         }
         imp.generation.set(imp.generation.get().wrapping_add(1));
@@ -1441,5 +1496,86 @@ mod tests {
         let changes = take();
         assert!(changes.iter().any(|c| matches!(c, Change::Report)));
         assert!(!changes.iter().any(|c| matches!(c, Change::Samples)));
+    }
+
+    /// Counts what it was asked, and never answers.
+    struct Counting(Arc<std::sync::atomic::AtomicU32>);
+
+    impl Engine for Counting {
+        fn subscribe(&self, _req: AnalyzeReq) -> mirai_engine::Subscription {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let (tx, rx) = tokio::sync::watch::channel(SubEvent::Pending);
+            mirai_engine::Subscription::new(rx, mirai_engine::CancelGuard::new(move || drop(tx)))
+        }
+
+        fn describe(&self) -> EngineDesc {
+            EngineDesc::placeholder("counting")
+        }
+    }
+
+    /// A dropped remote link fails the live search and nothing replays it. When the link
+    /// returns, the window must ask again — and only for the engine it is still using.
+    #[test]
+    fn a_returning_link_asks_for_the_analysis_again() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::time::Duration;
+
+        glib::MainContext::new().block_on(async {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .expect("runtime");
+            let state = AppState::new(
+                Config::default(),
+                PathBuf::from("/tmp/mirai-reconnect-test.toml"),
+                runtime.handle().clone(),
+                Rc::new(EnginePool::default()),
+            );
+            let seen = Rc::new(RefCell::new(Vec::new()));
+            let log = Rc::clone(&seen);
+            state.set_change_hook(move |change| log.borrow_mut().push(change));
+            let reconnects = || {
+                std::mem::take(&mut *seen.borrow_mut())
+                    .iter()
+                    .filter(|c| matches!(c, Change::Reconnected))
+                    .count()
+            };
+            let settle = || glib::timeout_future(Duration::from_millis(10));
+
+            let asked = Arc::new(AtomicU32::new(0));
+            let (status, link) = tokio::sync::watch::channel(RemoteStatus::Connected);
+            state.set_live_analysis(true);
+            state.set_engine(Some(Built {
+                engine: Arc::new(Counting(Arc::clone(&asked))),
+                link: Some(link),
+            }));
+            settle().await;
+            assert_eq!(asked.load(Ordering::SeqCst), 1);
+            assert_eq!(reconnects(), 0, "the first status is not a return");
+
+            status.send_replace(RemoteStatus::Reconnecting { attempt: 1 });
+            settle().await;
+            assert_eq!(asked.load(Ordering::SeqCst), 1);
+            assert_eq!(reconnects(), 0);
+
+            status.send_replace(RemoteStatus::Connected);
+            settle().await;
+            assert_eq!(
+                asked.load(Ordering::SeqCst),
+                2,
+                "the live search was not asked again"
+            );
+            assert_eq!(reconnects(), 1, "a stalled play turn was not told");
+
+            // Replaced: that engine's link is none of this window's business any more.
+            state.set_engine(None);
+            status.send_replace(RemoteStatus::Reconnecting { attempt: 2 });
+            settle().await;
+            status.send_replace(RemoteStatus::Connected);
+            settle().await;
+            assert_eq!(asked.load(Ordering::SeqCst), 2);
+            assert_eq!(reconnects(), 0);
+
+            state.cancel_tasks();
+        });
     }
 }

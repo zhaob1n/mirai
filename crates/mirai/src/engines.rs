@@ -36,16 +36,38 @@ use std::rc::Rc;
 use std::sync::{Arc, Weak};
 
 use gtk::glib;
+use mirai_engine::remote::RemoteStatus;
 use mirai_engine::{Engine, EngineError, TuningOverrides};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 
 use crate::config::{EngineProfile, ProfileKind};
 
 /// A started engine. A remote profile is connected only when its certificate is already pinned.
-pub type Built = Arc<dyn Engine>;
+#[derive(Clone)]
+pub struct Built {
+    pub engine: Arc<dyn Engine>,
+    /// A remote engine's link state. `RemoteEngine` hands it out, `Arc<dyn Engine>` cannot:
+    /// without it here, nothing could tell a window that its dropped link has come back,
+    /// and the analysis that failed with it would never be asked for again.
+    pub link: Option<watch::Receiver<RemoteStatus>>,
+}
+
+impl Built {
+    fn entry(&self) -> Entry {
+        Entry::Ready {
+            engine: Arc::downgrade(&self.engine),
+            link: self.link.clone(),
+        }
+    }
+}
 
 enum Entry {
-    Ready(Weak<dyn Engine>),
+    /// Weak: the engine belongs to the windows using it. The link receiver keeps no engine
+    /// alive; once the engine drops, its sender goes with it.
+    Ready {
+        engine: Weak<dyn Engine>,
+        link: Option<watch::Receiver<RemoteStatus>>,
+    },
     /// A start is in flight. The pool's coordinator, not any one waiter, sends these.
     Pending(InFlight),
 }
@@ -79,11 +101,8 @@ impl EnginePool {
     /// Lets a window adopt another window's engine — or re-adopt its own — without going
     /// through the asynchronous path, so re-selecting the active profile neither restarts
     /// KataGo nor blanks the readout.
-    pub fn running(&self, profile: &EngineProfile) -> Option<Arc<dyn Engine>> {
-        match self.entries.borrow().get(&key(profile)) {
-            Some(Entry::Ready(weak)) => weak.upgrade(),
-            _ => None,
-        }
+    pub fn running(&self, profile: &EngineProfile) -> Option<Built> {
+        Self::ready(self.entries.borrow().get(&key(profile)))
     }
 
     /// Hands back the engine for `profile`, starting it or joining a start already in flight.
@@ -115,9 +134,7 @@ impl EnginePool {
         let key = key(&profile);
         let (launch, rx) = {
             let mut entries = self.entries.borrow_mut();
-            if let Some(Entry::Ready(weak)) = entries.get(&key)
-                && let Some(engine) = weak.upgrade()
-            {
+            if let Some(engine) = Self::ready(entries.get(&key)) {
                 return Ok(engine);
             }
             let (tx, rx) = oneshot::channel();
@@ -188,10 +205,20 @@ impl EnginePool {
         if let Ok(engine) = &result {
             self.entries
                 .borrow_mut()
-                .insert(key.to_string(), Entry::Ready(Arc::downgrade(engine)));
+                .insert(key.to_string(), engine.entry());
         }
         for tx in waiting {
             let _ = tx.send(result.clone());
+        }
+    }
+
+    fn ready(entry: Option<&Entry>) -> Option<Built> {
+        match entry {
+            Some(Entry::Ready { engine, link }) => engine.upgrade().map(|engine| Built {
+                engine,
+                link: link.clone(),
+            }),
+            _ => None,
         }
     }
 }
@@ -270,7 +297,10 @@ async fn build(profile: EngineProfile, log_dir: PathBuf) -> Result<Built, Engine
             cfg.log_dir = log_dir;
             cfg.apply_config_overrides(custom, overrides);
             let engine = mirai_engine::LocalEngine::spawn(cfg).await?;
-            Ok(Arc::new(engine) as Arc<dyn Engine>)
+            Ok(Built {
+                engine: Arc::new(engine),
+                link: None,
+            })
         }
         ProfileKind::Remote {
             url,
@@ -284,7 +314,11 @@ async fn build(profile: EngineProfile, log_dir: PathBuf) -> Result<Built, Engine
                 ));
             };
             let remote = mirai_engine::RemoteEngine::connect(&url, &token, engine, pin).await?;
-            Ok(Arc::new(remote) as Arc<dyn Engine>)
+            let link = Some(remote.subscribe_status());
+            Ok(Built {
+                engine: Arc::new(remote),
+                link,
+            })
         }
     }
 }
@@ -308,6 +342,13 @@ mod tests {
 
         fn describe(&self) -> EngineDesc {
             EngineDesc::placeholder("stub")
+        }
+    }
+
+    fn stub() -> Built {
+        Built {
+            engine: Arc::new(Stub),
+            link: None,
         }
     }
 
@@ -341,13 +382,38 @@ mod tests {
     fn a_dropped_engine_is_no_longer_running() {
         let pool = EnginePool::default();
         let profile = local("a", Some(16));
-        let engine: Arc<dyn Engine> = Arc::new(Stub);
+        let built = stub();
         pool.entries
             .borrow_mut()
-            .insert(key(&profile), Entry::Ready(Arc::downgrade(&engine)));
+            .insert(key(&profile), built.entry());
         assert!(pool.running(&profile).is_some());
-        drop(engine);
+        drop(built);
         assert!(pool.running(&profile).is_none());
+    }
+
+    /// A second window adopting a running remote engine must be able to see its link come
+    /// back. The pool used to keep only `Arc<dyn Engine>`, so the status channel was gone.
+    #[test]
+    fn an_adopted_engine_keeps_its_link_status() {
+        let pool = EnginePool::default();
+        let profile = local("a", Some(16));
+        let (status, link) = watch::channel(RemoteStatus::Connected);
+        let built = Built {
+            engine: Arc::new(Stub),
+            link: Some(link),
+        };
+        pool.entries
+            .borrow_mut()
+            .insert(key(&profile), built.entry());
+
+        let adopted = pool.running(&profile).expect("the engine is running");
+        let mut link = adopted.link.expect("the link travels with the engine");
+        status.send_replace(RemoteStatus::Reconnecting { attempt: 1 });
+        assert!(link.has_changed().expect("the link is still open"));
+        assert_eq!(
+            *link.borrow_and_update(),
+            RemoteStatus::Reconnecting { attempt: 1 }
+        );
     }
 
     fn on_main<T>(f: impl Future<Output = T>) -> T {
@@ -371,7 +437,7 @@ mod tests {
                     .take()
                     .expect("a second start ran for one profile");
                 rx.await.expect("the test dropped the start gate");
-                Ok(Arc::new(Stub) as Arc<dyn Engine>)
+                Ok(stub())
             })
         }
     }
@@ -433,7 +499,7 @@ mod tests {
             let running = pool
                 .running(&profile)
                 .expect("the finished start is installed");
-            assert!(Arc::ptr_eq(&built, &running));
+            assert!(Arc::ptr_eq(&built.engine, &running.engine));
         });
     }
 
@@ -476,7 +542,7 @@ mod tests {
                 .expect("second acquire hung")
                 .expect("acquire task")
                 .expect("start");
-            assert!(Arc::ptr_eq(&first, &second));
+            assert!(Arc::ptr_eq(&first.engine, &second.engine));
             assert_eq!(starts.get(), 1);
         });
     }
@@ -526,7 +592,7 @@ mod tests {
             drop(waiter);
             drop(pool);
             assert!(
-                gate_tx.send(Ok(Arc::new(Stub) as Arc<dyn Engine>)).is_err(),
+                gate_tx.send(Ok(stub())).is_err(),
                 "the start receiver was still alive after the pool dropped"
             );
         });

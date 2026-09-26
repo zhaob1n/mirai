@@ -647,9 +647,12 @@ retrying at maximum backoff in case the server is fixed and restarted.
 **No subscription replay.** On connection loss every live subscription fails with `Disconnected`
 and is forgotten, and requests made while the link is down fail immediately rather than queueing.
 That is INV-4 again: the GUI knows which node the user is looking at *now* and re-requests that
-one when the banner clears, whereas a queued stale query would only burn the server's search
-threads. Reconnects reuse the accepted fingerprint and the *resolved* engine name, so a server
-that gains engines later cannot silently switch the client to a different one.
+one once `RemoteStatus::Connected` returns, whereas a queued stale query would only burn the
+server's search threads. `EnginePool` keeps a remote engine's status receiver beside it, and
+each window's `AppState` follows the one for its own engine: on a return it restarts live
+analysis and emits `Change::Reconnected`, which retries a stalled play turn. Reconnects reuse
+the accepted fingerprint and the *resolved* engine name, so a server that gains engines later
+cannot silently switch the client to a different one.
 
 ### Local vs remote
 
@@ -660,7 +663,7 @@ that gains engines later cannot silently switch the client to a different one.
 | cancel | `terminate` action | `Cancel` message **and** `stop_sending` |
 | one query fails | KataGo per-query error | `SubMsg::Failed` / `ServerMsg::Error` with a sub id |
 | engine fails | process exit → fail all | connection loss → fail all, then reconnect |
-| recovery | none; the GUI clears the engine | automatic with backoff, never replayed |
+| recovery | none; the GUI clears the engine | automatic with backoff, never replayed; the GUI asks again on `Connected` |
 | `describe()` | from the startup handshake | from `Welcome`, narrowed to the picked engine |
 
 ---
@@ -709,6 +712,7 @@ refresh. This avoids several independently ordered signal callbacks observing ha
 | `Report` | `set_report`, and `moved_cursor` after the live report is cleared | refresh board textures and analysis rows; choose the analysis page. Does not walk the graph, move the slider or the position label |
 | `Samples` | `set_report` only when deeper analysis was stored | refresh graph samples; keep its GSK base node if the plotted values and axis range did not change |
 | `Engine` | engine-state transitions and profile edits | rebuild the engine menu, choose the analysis page, refresh the panel, update the subtitle |
+| `Reconnected` | `AppState`'s link watch, when the active remote engine returns to `Connected` after a drop; live analysis has already been restarted | retry a stalled play turn, which `retry_if_engine_ready` declines because the engine did not change |
 | `Toast(String)` | `AppState::toast` | add one `adw::Toast` |
 | `Play` | `notify_play_changed` | refresh clocks and play controls. Active play forces the editor revealer closed and disables its toggle |
 | `BatchProgress` | `notify_batch_progress` | the banner count is already current. The graph and blunder list refresh at most once per 250 ms while results land. Completion, cancel and failure emit `Tree`, which is the final refresh |
@@ -838,7 +842,7 @@ windows in one process is a normal state, not an edge case. Each owns a complete
 
 | Shared | Rule |
 |---|---|
-| Engines | `EnginePool` in `MiraiApplication`, keyed on the whole `EngineProfile`. A window adopts a running engine synchronously through `running`, or joins an in-flight start through `acquire`; entries are `Weak`, so KataGo exits with the last window using it. The start is owned by the pool: dropping one waiter (a superseded `activate_profile`) does not leave the entry pending, and a start that finishes with no waiter left drops the engine so the next acquire starts again. Dropping the pool aborts an in-flight coordinator before the runtime stops, so quit during startup closes KataGo's stdin instead of killing the child. The application owns the pool and runtime and releases both from its `shutdown` vfunc, with GObject disposal as the backstop |
+| Engines | `EnginePool` in `MiraiApplication`, keyed on the whole `EngineProfile`. A window adopts a running engine synchronously through `running`, or joins an in-flight start through `acquire`; entries are `Weak`, so KataGo exits with the last window using it. A remote entry also keeps the engine's `RemoteStatus` receiver, which `Arc<dyn Engine>` cannot hand out, so every window using it can follow a reconnect. The start is owned by the pool: dropping one waiter (a superseded `activate_profile`) does not leave the entry pending, and a start that finishes with no waiter left drops the engine so the next acquire starts again. Dropping the pool aborts an in-flight coordinator before the runtime stops, so quit during startup closes KataGo's stdin instead of killing the child. The application owns the pool and runtime and releases both from its `shutdown` vfunc, with GObject disposal as the backstop |
 | `config.toml` | Each window holds the `Config` it loaded, so writing the whole thing back would revert another window's edits. `Config::save_merged` applies only this window's own diff onto the file as it stands. A missing file is an empty merge base; any other read or parse error is returned and the file is left untouched. `AppState::save_config` debounces (300 ms) and merges on the runtime's blocking pool, because the file and its directory are synced (50–100 ms on an ordinary disk); `flush_config` writes synchronously when a window closes and before a new window loads the file. `engine_profile` is merged by `name`: a profile this window did not touch keeps the file's copy, including one only the other window added. If both edited the same profile, the save being written wins for that name |
 | Autosave | One file per window, `autosave-<pid>-<start>-<n>.sgf`. A clean close deletes it, waiting out an in-flight write first; anything found at startup is therefore a crash leftover, and each new window is offered one, most recent first. The scan, the write and opening an SGF run on the runtime's blocking pool so they do not stall the GTK thread. This replaced the single `autosave.sgf` plus `clean-exit` flag, which could not say which window had exited |
 

@@ -599,6 +599,11 @@ fn handle_change(ui: &Ui, change: Change) {
             maybe_auto_analyse(ui);
             ui.play.retry_if_engine_ready();
         }
+        Change::Reconnected => {
+            // The stalled turn's engine is the one that just came back, which
+            // `retry_if_engine_ready` rightly declines; a return is the signal to ask again.
+            ui.play.retry();
+        }
         Change::Toast(text) => ui.toasts.add_toast(adw::Toast::new(&text)),
         Change::Play => {
             update_clocks(ui);
