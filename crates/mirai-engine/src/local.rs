@@ -13,8 +13,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 
-use mirai_core::{Color, Size};
-use mirai_proto::types::{AnalyzeReq, EngineDesc, Report};
+use mirai_core::Size;
+use mirai_proto::types::{AnalyzeReq, EngineDesc};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter, Lines};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
@@ -102,10 +102,6 @@ struct Entry {
     tx: watch::Sender<SubEvent>,
     size: Size,
     max_candidates: Option<u8>,
-    turn: u16,
-    to_play: Color,
-    /// A `terminate` has been sent; the entry stays until KataGo's final response lands.
-    terminating: bool,
 }
 
 impl LocalEngine {
@@ -256,9 +252,6 @@ impl Engine for LocalEngine {
                     tx,
                     size: req.size,
                     max_candidates: req.max_candidates,
-                    turn: req.turn(),
-                    to_play: req.to_play(),
-                    terminating: false,
                 },
             );
             (id, rx)
@@ -297,12 +290,12 @@ impl Inner {
         self.subs.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Asks KataGo to stop a query. The entry stays until its final response arrives, so
-    /// the tail of a terminated search is still routed (and discarded) correctly.
+    /// Asks KataGo to stop a query and forgets it. The subscriber is gone, so a later
+    /// line is an unknown id: traced, not decoded. KataGo still writes a final line
+    /// for a terminated query, including `noResults` when the search never started.
     fn cancel(&self, id: u64) {
-        match self.subs().map.get_mut(&id) {
-            Some(entry) if !entry.terminating => entry.terminating = true,
-            _ => return,
+        if self.subs().map.remove(&id).is_none() {
+            return;
         }
         self.terminate(id);
     }
@@ -322,12 +315,7 @@ impl Inner {
             }
         };
         match RawResponse::classify(value) {
-            Ok(RawResponse::Analysis {
-                id,
-                terminal,
-                no_results,
-                body,
-            }) => self.deliver(&id, terminal, no_results, &body),
+            Ok(RawResponse::Analysis { id, terminal, body }) => self.deliver(&id, terminal, &body),
             Ok(RawResponse::Action { id, action, .. }) => {
                 tracing::trace!(id, action, "action acknowledged");
             }
@@ -354,47 +342,49 @@ impl Inner {
         }
     }
 
-    fn deliver(&self, id: &str, terminal: bool, no_results: bool, body: &Value) {
+    fn deliver(&self, id: &str, terminal: bool, body: &Value) {
         let Ok(key) = id.parse::<u64>() else {
             tracing::trace!(id, "response for a non-analysis id");
             return;
         };
-        let Some((size, cap, turn, to_play)) = self
-            .subs()
-            .map
-            .get(&key)
-            .map(|e| (e.size, e.max_candidates, e.turn, e.to_play))
-        else {
-            // The tail of a query we terminated and already finished with.
-            tracing::trace!(id, "response for an unknown query id");
-            return;
+        let (size, cap) = {
+            let subs = self.subs();
+            let Some(entry) = subs.map.get(&key) else {
+                // Tail of a query we already finished or cancelled. KataGo still writes a
+                // final line, including `noResults` when the search never started; trace,
+                // don't warn — a cancelled search can emit several.
+                tracing::trace!(id, "response for an unknown query id");
+                return;
+            };
+            if entry.tx.is_closed() {
+                // The subscriber is dropping. `cancel` removes the entry and sends
+                // terminate; decoding this line would only burn CPU.
+                return;
+            }
+            (entry.size, entry.max_candidates)
         };
 
-        let event = if no_results {
-            SubEvent::Done(Arc::new(Report::empty(turn, to_play)))
-        } else {
-            match decode_report(size, cap, body) {
-                Ok(report) => {
-                    let report = Arc::new(report);
-                    if terminal {
-                        SubEvent::Done(report)
-                    } else {
-                        SubEvent::Report(report)
-                    }
+        let event = match decode_report(size, cap, body) {
+            Ok(report) => {
+                let report = Arc::new(report);
+                if terminal {
+                    SubEvent::Done(report)
+                } else {
+                    SubEvent::Report(report)
                 }
-                Err(e) => {
-                    tracing::error!(id, %e, "could not decode a katago response");
-                    // The failure removes the entry, so Drop's cancel cannot send this.
-                    // Stop KataGo now, as on a consumer cancel (INV-3).
-                    let entry = self.subs().map.remove(&key);
-                    if let Some(entry) = entry {
-                        entry
-                            .tx
-                            .send_replace(SubEvent::Failed(EngineError::Protocol(e)));
-                        self.terminate(key);
-                    }
-                    return;
+            }
+            Err(e) => {
+                tracing::error!(id, %e, "could not decode a katago response");
+                // The failure removes the entry, so Drop's cancel cannot send this.
+                // Stop KataGo now, as on a consumer cancel (INV-3).
+                let entry = self.subs().map.remove(&key);
+                if let Some(entry) = entry {
+                    entry
+                        .tx
+                        .send_replace(SubEvent::Failed(EngineError::Protocol(e)));
+                    self.terminate(key);
                 }
+                return;
             }
         };
 
@@ -772,5 +762,30 @@ mod tests {
             lines.try_recv().is_err(),
             "drop must not terminate a second time"
         );
+    }
+
+    #[test]
+    fn dropping_a_subscription_forgets_it_before_the_tail_arrives() {
+        let (engine, mut lines) = detached();
+        let sub = engine.subscribe(req());
+        let _query = lines.try_recv().expect("query");
+        drop(sub);
+
+        let term = lines.try_recv().expect("drop must terminate");
+        let v: serde_json::Value = serde_json::from_str(&term).unwrap();
+        assert_eq!(v["action"], "terminate");
+        assert_eq!(v["terminateId"], "0");
+        assert!(
+            engine.inner.subs().map.is_empty(),
+            "a cancelled query must not keep its entry until KataGo answers"
+        );
+
+        // Would fail decode if the entry were still there. It must not revive the
+        // entry or send another terminate.
+        engine
+            .inner
+            .handle(r#"{"id":"0","isDuringSearch":false,"moveInfos":[{"order":0}]}"#);
+        assert!(engine.inner.subs().map.is_empty());
+        assert!(lines.try_recv().is_err());
     }
 }

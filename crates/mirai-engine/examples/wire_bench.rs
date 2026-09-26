@@ -73,15 +73,13 @@ fn main() -> Result<()> {
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
         let start = Instant::now();
         let value: Value = serde_json::from_str(line).context("a capture line is not JSON")?;
-        let Ok(RawResponse::Analysis {
-            terminal,
-            no_results: false,
-            body,
-            ..
-        }) = RawResponse::classify(value)
-        else {
+        let Ok(RawResponse::Analysis { terminal, body, .. }) = RawResponse::classify(value) else {
             continue;
         };
+        // A terminated query's last line carries no analysis.
+        if body.get("noResults").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
         let report = decode_report(size, None, &body).map_err(anyhow::Error::msg)?;
         parse += start.elapsed();
         lines += 1;

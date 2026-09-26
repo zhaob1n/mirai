@@ -605,8 +605,8 @@ engine dead under the subscription mutex and fails every live subscription. The 
 logs each line and keeps a bounded ring for error messages.
 
 **Routing.** A mutex around the query map and a `dead` flag. The map is keyed by a monotonic
-query id and holds the `watch::Sender` plus the three facts needed to decode that query's
-responses (size, turn, side to move). The id is stringified into the query and echoed back by
+query id and holds the `watch::Sender` plus what decoding that query's responses needs (board
+size, candidate cap). The id is stringified into the query and echoed back by
 KataGo. The table is shared across threads — `subscribe` and
 `cancel` run on the GTK thread or a runtime worker while the reader task delivers — but holds a
 handful of entries, is read about ten times a second per live query and written once per query
@@ -616,11 +616,11 @@ sharded map only wins under a writer that never stops, which nothing here is, an
 report line takes tens of microseconds to parse. `subscribe` checks `dead` under that mutex
 before inserting; the supervisor and an engine-fault line set it under the same mutex before
 draining, so a death cannot leave a subscription `Pending`. A terminal event removes the entry
-before sending; `cancel` instead keeps the entry and marks it terminating, so the tail of a
-terminated search is still routed and discarded correctly, and a response for an unknown id is a
-trace, not an error. A terminated query that never searched still terminates cleanly, as an empty
-`Done`. A decode failure also removes its entry and sends `terminate` itself — otherwise `Drop`
-finds nothing to cancel and the search runs to its visit cap.
+before sending. `cancel` removes it too and sends `terminate`: the subscriber is gone, so the
+tail is not decoded. KataGo still writes a final line for a terminated query, including
+`noResults` when the search never started; an unknown id is a trace, not an error. A decode
+failure removes the entry as well, so it sends `terminate` itself — otherwise `Drop` finds
+nothing to cancel and the search runs to its visit cap.
 
 ### RemoteEngine
 
