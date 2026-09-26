@@ -1426,15 +1426,20 @@ fn do_open(ui: &Ui) {
 fn do_download_fox(ui: &Ui) {
     let Some(window) = ui.window() else { return };
     let weak = ui.weak_window();
-    crate::fox::present(&window, &ui.fox_picker, move |download| {
-        with_window_ui(&weak, |ui| {
-            let moves = download.tree.main_line().len().saturating_sub(1);
-            adopt(ui, download.tree, None, true);
-            update_title(ui);
-            ui.state
-                .toast(format!("Downloaded {} ({moves} moves)", download.label));
-        });
-    });
+    crate::fox::present(
+        &window,
+        &ui.fox_picker,
+        ui.state.runtime(),
+        move |download| {
+            with_window_ui(&weak, |ui| {
+                let moves = download.tree.main_line().len().saturating_sub(1);
+                adopt(ui, download.tree, None, true);
+                update_title(ui);
+                ui.state
+                    .toast(format!("Downloaded {} ({moves} moves)", download.label));
+            });
+        },
+    );
 }
 
 /// Empty board, same size / rules / komi as `tree`. Identity and stones do not carry over.
