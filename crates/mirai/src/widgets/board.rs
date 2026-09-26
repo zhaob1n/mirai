@@ -126,7 +126,14 @@ const LABEL_MIN_VISITS: u32 = crate::palette::TRUSTED_VISITS;
 const CELL_SETTLED: u8 = 2;
 
 /// How opaque the blob for a candidate with this much search behind it is drawn.
-fn blob_alpha(visits: u32) -> f32 {
+///
+/// A known candidate — the engine's pick, or any move with
+/// [`crate::palette::TRUSTED_VISITS`] — is full strength. Fading is only for a move
+/// that has no colour yet ([`crate::palette::is_known`]).
+fn blob_alpha(rank: usize, visits: u32) -> f32 {
+    if crate::palette::is_known(rank, visits) {
+        return BLOB_ALPHA_MAX;
+    }
     let t = (visits as f32 / crate::palette::TRUSTED_VISITS as f32).min(1.0);
     BLOB_ALPHA_MIN + (BLOB_ALPHA_MAX - BLOB_ALPHA_MIN) * t
 }
@@ -931,7 +938,7 @@ mod imp {
                     ),
                     None => crate::palette::GRADE_RAMP[0],
                 };
-                let blob = rgba8(rgb, blob_alpha(info.visits));
+                let blob = rgba8(rgb, blob_alpha(rank, info.visits));
                 fill_disc(snapshot, cx, cy, l.stone_r, &blob);
                 let skip_overlay = marked[info.mv.index()];
                 let played = next == Some(info.mv);
@@ -1813,18 +1820,22 @@ mod tests {
     /// themselves — not with their share of a search that may have run for ten seconds — and it
     /// tops out at [`crate::palette::TRUSTED_VISITS`], the same visit at which the blob stops
     /// being grey and starts carrying figures. One threshold: a faded blob is always a grey
-    /// one, and a coloured blob is always full strength.
+    /// one, and a coloured blob is always full strength. The pick is coloured from the first
+    /// visit, so it is never faded.
     #[test]
     fn opacity_tracks_how_much_a_move_was_searched() {
-        assert_eq!(blob_alpha(0), BLOB_ALPHA_MIN);
-        assert!(blob_alpha(5) > blob_alpha(1));
-        assert!(blob_alpha(9) > blob_alpha(5));
+        assert_eq!(blob_alpha(1, 0), BLOB_ALPHA_MIN);
+        assert!(blob_alpha(1, 5) > blob_alpha(1, 1));
+        assert!(blob_alpha(1, 9) > blob_alpha(1, 5));
         let full = crate::palette::TRUSTED_VISITS;
-        assert!((blob_alpha(full) - BLOB_ALPHA_MAX).abs() < 1e-6);
-        assert_eq!(blob_alpha(50_000), blob_alpha(full));
+        assert!((blob_alpha(1, full) - BLOB_ALPHA_MAX).abs() < 1e-6);
+        assert_eq!(blob_alpha(1, 50_000), blob_alpha(1, full));
         assert_eq!(LABEL_MIN_VISITS, full);
         assert!(crate::palette::is_known(1, full) && !crate::palette::is_known(1, full - 1));
-        assert!(blob_alpha(full - 1) < BLOB_ALPHA_MAX);
+        assert!(blob_alpha(1, full - 1) < BLOB_ALPHA_MAX);
+        assert_eq!(blob_alpha(0, 0), BLOB_ALPHA_MAX);
+        assert_eq!(blob_alpha(0, 1), BLOB_ALPHA_MAX);
+        assert_eq!(blob_alpha(0, full - 1), BLOB_ALPHA_MAX);
     }
 
     /// Resign and time-loss do not move the cursor, so a row pinned during the game is
