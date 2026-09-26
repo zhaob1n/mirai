@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! End-to-end session behaviour of [`RemoteEngine`], driven by a scripted MRP/2 server over
+//! End-to-end session behaviour of [`RemoteEngine`], driven by a scripted MRP server over
 //! the real QUIC transport.
 //!
 //! `remote.rs`'s own unit tests cover what can be checked without a peer: the backoff
@@ -92,21 +92,25 @@ async fn frames_before_welcome_are_ignored_rather_than_fatal() {
     assert!(matches!(server.next().await, Seen::Control(_)));
 }
 
-/// §8.1: a peer that offered `mirai/2` without implementing it must not be analysed against.
+/// §8.1: a `Welcome` that is not `0.1.0` is unusable. ALPN carries no version, so the
+/// handshake completes and the refusal names both versions instead of failing in TLS.
 #[tokio::test]
 async fn a_welcome_with_the_wrong_protocol_version_is_refused() {
     let script = Script {
-        proto: mirai_proto::types::PROTO_VERSION + 1,
+        proto: mirai_proto::types::ProtoVersion::new(0, 2, 0),
         ..Script::offering(&["default"])
     };
     let server = TestServer::start(script).await;
 
     let err = connect(&server)
         .await
-        .expect_err("a future version was accepted");
-    assert!(matches!(err, EngineError::Protocol(_)), "{err}");
+        .expect_err("a different version was accepted");
+    assert!(
+        matches!(err, EngineError::Protocol(_)),
+        "a version mismatch failed in TLS instead of after the handshake: {err}"
+    );
     let msg = err.to_string();
-    assert!(msg.contains("MRP/"), "{msg}");
+    assert!(msg.contains("0.2.0") && msg.contains("0.1.0"), "{msg}");
 }
 
 /// §8.2 and §8.6: a rejected token is not a transient fault, so it must surface as an error

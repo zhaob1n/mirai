@@ -108,7 +108,7 @@ fn main() -> Result<()> {
         if args.policy { "kept" } else { "stripped" },
     );
 
-    let mut rows = vec![standalone("v1 live", &frames)];
+    let mut rows = vec![standalone("framed alone", &frames)];
     for f in &mut frames {
         for m in &mut f.report.moves {
             m.pv_visits.clear();
@@ -145,8 +145,8 @@ fn message(f: &Frame) -> SubMsg {
     }
 }
 
-/// Every report as its own frame through the control-stream codec, which is how MRP/1
-/// sent reports.
+/// Every report as its own frame through the control-stream codec, with nothing before
+/// it to compress against.
 fn standalone(name: &str, frames: &[Frame]) -> Row {
     let (mut wbuf, mut rbuf) = (FrameBuf::new(), FrameBuf::new());
     let mut row = Row::new(name, frames.len());

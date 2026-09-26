@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! `mirai-server` — a headless host that lends KataGo to mirai clients over MRP/2.
+//! `mirai-server` — a headless host that lends KataGo to mirai clients over MRP.
 //!
 //! One process owns one KataGo `analysis` subprocess per configured `[[engine]]` and
 //! multiplexes every connected client onto them; `numAnalysisThreads` is what makes that

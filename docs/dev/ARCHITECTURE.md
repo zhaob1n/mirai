@@ -33,7 +33,7 @@ flowchart TB
     gtk["mirai — GTK4 + libadwaita"]
     client["mirai-client — analysis / session"]
     engine["mirai-engine — Local / Remote"]
-    proto["mirai-proto — MRP/2 + QUIC"]
+    proto["mirai-proto — MRP + QUIC"]
     core["mirai-core — rules, tree, SGF"]
     server["mirai-server — headless"]
     katago["katago analysis"]
@@ -48,14 +48,14 @@ flowchart TB
     server --> engine
     server --> core
     engine -->|"spawn / stdio"| katago
-    gtk -->|"QUIC / MRP/2"| server
+    gtk -->|"QUIC / MRP"| server
     server --> katago
 ```
 
 | crate | owns | depends on | may **not** depend on |
 |---|---|---|---|
 | `mirai-core` | geometry, rulesets, legality, superko, scoring, game tree, SGF, time control | serde, smallvec, arrayvec, encoding_rs, base64, zstd, postcard | any workspace crate; GTK; tokio; anything doing real I/O |
-| `mirai-proto` | MRP/2 value types, messages, frame codec, QUIC transport, SHA-256 for cert pins | `mirai-core`, quinn, rustls, rcgen, postcard, zstd, bitflags, tokio | `mirai-engine`, `mirai`, serde_json, **anything KataGo-specific** |
+| `mirai-proto` | MRP value types, messages, frame codec, QUIC transport, SHA-256 for cert pins | `mirai-core`, quinn, rustls, rcgen, postcard, zstd, bitflags, tokio | `mirai-engine`, `mirai`, serde_json, **anything KataGo-specific** |
 | `mirai-engine` | the `Engine` trait and its two implementations; KataGo query building and response decoding | `mirai-core`, `mirai-proto`, tokio, serde_json, quinn | GTK/glib/adw, `mirai`, `mirai-server` |
 | `mirai-client` | shared application layer: analysis requests, sweep planning, play, Fox, TOFU session | `mirai-core`, `mirai-engine` (`remote` only), tokio, serde_json | GTK/glib/adw, `mirai`, `mirai-server`, KataGo JSON |
 | `mirai-server` | headless host: one KataGo per configured engine, multiplexed across clients, token auth | `mirai-core`, `mirai-engine`, `mirai-proto`, clap, toml, subtle, quinn | GTK, `mirai` |
@@ -217,8 +217,8 @@ Quantisation is part of the type: a candidate's win rate is a fixed-point intege
   The local and remote paths quantise with the same functions, so the two engines produce
   bit-identical reports — which is what permits one GUI code path. Ownership is one byte per
   point, as that section specifies.
-- **Costs.** Changing a scale is a protocol change: bump `PROTO_VERSION` and update
-  `wire_size.rs` and PROTOCOL together. One sentinel is burned because KataGo reports an
+- **Costs.** Changing a scale means updating `wire_size.rs` and PROTOCOL together. During
+  development the protocol version does not move. One sentinel is burned because KataGo reports an
   illegal prior as `-1`; the sentinel's value is in PROTOCOL, not here.
 
 ### 2.7 Custom `gsk` widgets, not `DrawingArea` + cairo (INV-9)
@@ -927,8 +927,8 @@ projection/cache state; it does not borrow `AppState` or replay the game tree.
 3. Handle it server-side in `session_loop` (`mirai-server/src/session.rs`) and client-side in
    `handle_int`/`handle_cmd` (`mirai-engine/src/remote.rs`). An unknown message must be an error
    with an `ErrCode`, never a panic.
-4. Bump `PROTO_VERSION` if an old peer would misread the stream; the handshake rejects a mismatch
-   with `ErrCode::BadVersion`.
+4. Peers must match `PROTO_VERSION` exactly; the handshake rejects a mismatch with
+   `ErrCode::BadVersion`. During development the version does not move when the protocol changes.
 5. If the message carries a report or a large payload, check `MAX_FRAME` and extend
    `tests/wire_size.rs`.
 

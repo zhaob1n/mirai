@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! The performance claim of MRP/2 is that a live analysis report costs well under a
+//! The performance claim of MRP is that a live analysis report costs well under a
 //! kilobyte on the wire, where KataGo's own JSON for it runs to tens of kilobytes, and that
 //! a subscription stream carries much less than that once it has seen the reports before.
 //! Real-search figures come from `wire_bench` (`docs/dev/TESTING.md` §4); these tests pin

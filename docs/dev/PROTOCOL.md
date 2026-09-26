@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- Copyright (C) 2026 Huang Zhaobin -->
 
-# MRP/2 — the mirai Remote Protocol, version 2
+# MRP — the mirai Remote Protocol, version 0.1.0
 
 Normative specification. Sufficient to implement an interoperable client or server without
 reading the Rust. Reference implementations: `crates/mirai-server/src/session.rs` (server) and
@@ -26,7 +26,7 @@ fixed for the life of a connection.
 | [7](#7-value-types-and-quantisation) | Value types and quantisation |
 | [8](#8-session-state-machine) | Session state machine |
 | [9](#9-errors-and-limits) | Errors and limits |
-| [10](#10-versioning-and-compatibility) | Versioning and compatibility |
+| [10](#10-version) | Version |
 | [11](#11-reference-figures) | Reference figures |
 | [12](#12-conformance-checklist) | Conformance checklist |
 | [A](#appendix-a-worked-exchange) | Worked exchange, byte for byte |
@@ -38,13 +38,13 @@ fixed for the life of a connection.
 
 | Item | Value | Constant |
 |---|---|---|
-| Version | 2, carried as `u16` | `PROTO_VERSION` (`mirai-proto/src/types.rs`) |
-| ALPN | `mirai/2` | `ALPN` (`mirai-proto/src/transport.rs`) |
+| Version | `0.1.0`, as `ProtoVersion { major, minor, patch }` each a `u16` | `PROTO_VERSION` (`mirai-proto/src/types.rs`) |
+| ALPN | `mirai` (no version) | `ALPN` (`mirai-proto/src/endpoint.rs`) |
 | Default port | UDP 9678 | `DEFAULT_PORT` (same file) |
 | URL scheme | `mirai://host[:port]` | `URL_SCHEME` (same file) |
 | Server default bind | `0.0.0.0:9678` | `DEFAULT_LISTEN` (`mirai-server/src/config.rs`) |
 
-MRP/2 carries Go position analysis between an analysis GUI and a server owning KataGo
+MRP carries Go position analysis between an analysis GUI and a server owning KataGo
 processes. Three properties define its shape:
 
 * **Stateless requests (INV-4).** Every request carries the whole position — initial stones,
@@ -82,7 +82,7 @@ No path, query or userinfo. Credentials travel in `Hello.token`, never in the UR
 |---|---|---|
 | Transport | MUST | QUIC v1 (RFC 9000) over UDP |
 | TLS | MUST | 1.3 only; older versions neither offered nor accepted |
-| ALPN | MUST | exactly `mirai/2`; anything else MUST fail the connection |
+| ALPN | MUST | exactly `mirai`; anything else MUST fail the connection |
 | Client certificates | MUST NOT | neither side requests nor sends them |
 | 0-RTT | MUST NOT be relied on | not enabled by either reference endpoint |
 
@@ -96,11 +96,11 @@ QUIC transport parameters (`transport.rs` — `transport_config`), shared by bot
 | `stream_receive_window` | 16 KiB | **Recommended for clients.** A server writing to a subscription stream blocks once it is one window ahead of what the client has read, and only then can it replace a queued report with a newer one. quinn's 1.25 MB default lets hundreds of stale reports queue on a slow link, all delivered late and in order. |
 | bidirectional streams | 1 per connection | A server MUST permit at least one; a client MUST NOT open a second. |
 
-Other flow-control windows, migration and datagrams are implementation choices outside MRP/2.
+Other flow-control windows, migration and datagrams are implementation choices outside MRP.
 
 ### 2.2 Certificates: trust on first use
 
-MRP/2 does not use PKI. Servers are LAN boxes; requiring a CA-issued certificate for
+MRP does not use PKI. Servers are LAN boxes; requiring a CA-issued certificate for
 `mirai://basement.local` would mean public DNS plus ACME, or a private CA the user installs.
 The client pins the key directly — the SSH host-key model.
 
@@ -134,7 +134,7 @@ every client pin and is a user-visible event.
 ```
                         client                                    server
                           |                                          |
-   QUIC connect, ALPN "mirai/2", TLS 1.3, leaf pinned                 |
+   QUIC connect, ALPN "mirai", TLS 1.3, leaf pinned                 |
                           |=========================================>|
    client-opened BIDIRECTIONAL control stream (exactly one)           |
                           |----- ClientMsg frames ------------------->|
@@ -265,7 +265,7 @@ Corroborated by postcard's `README.md` ("Variable Length Data"): *all signed and
 integers larger than eight bits are encoded using a varint, including slice lengths and enum
 discriminants.*
 
-Deliberately unused by MRP/2, therefore unspecified here: `f32`/`f64` (MRP/2 quantises
+Deliberately unused by MRP, therefore unspecified here: `f32`/`f64` (MRP quantises
 instead), `char`, maps, 32/64/128-bit signed integers, `u128`, COBS framing, CRC flavours.
 
 ### 5.2 Varints
@@ -291,15 +291,15 @@ encode(n):                              decode():
   `80 00` reads as `u16` 0. Encoders MUST NOT depend on that.
 
 **Length varints.** Sequence and string lengths use postcard's `usize` varint, whose decoder
-width follows the decoding machine's pointer size. MRP/2 removes the portability question: no
+width follows the decoding machine's pointer size. MRP removes the portability question: no
 frame may exceed `MAX_FRAME`, so no valid length exceeds 8388608, which is at most four varint
 bytes and decodes identically everywhere. Implementations MUST NOT emit a longer length.
 
 ### 5.3 Type-to-encoding map
 
-| MRP/2 value | Rust type | Wire encoding |
+| MRP value | Rust type | Wire encoding |
 |---|---|---|
-| protocol version | `u16` | varint (always 2 in v2) |
+| protocol version | `ProtoVersion` | three `u16` varints: `major`, `minor`, `patch` (`0.1.0` is `00 01 00`) |
 | subscription id | `u32` | varint — but **4 raw LE bytes** as the stream preamble ([§3](#3-stream-topology)) |
 | session id, ping nonce | `u64` | varint |
 | text | `String` | varint byte length + UTF-8 |
@@ -335,7 +335,7 @@ below. Declared in `mirai-proto/src/msg.rs`.
 
 | # | Variant | Field | Wire type | Semantics |
 |---|---|---|---|---|
-| **0** | `Hello` | `proto` | `u16` | Version the client speaks. MUST be 2. |
+| **0** | `Hello` | `proto` | `ProtoVersion` | Version the client speaks. MUST be `0.1.0`. |
 | | | `token` | `String` | Shared-secret credential. |
 | | | `client` | `String` | Free-form identification (`mirai/<version>`). Informational; MUST NOT affect authorisation. |
 | **1** | `Open` | `sub` | `u32` | Client-chosen id, unique among this connection's live subscriptions. |
@@ -349,7 +349,7 @@ below. Declared in `mirai-proto/src/msg.rs`.
 
 | # | Variant | Field | Wire type | Semantics |
 |---|---|---|---|---|
-| **0** | `Welcome` | `proto` | `u16` | Version the server speaks. MUST be 2. |
+| **0** | `Welcome` | `proto` | `ProtoVersion` | Version the server speaks. MUST be `0.1.0`. |
 | | | `server` | `String` | Server identification (`mirai-server/<version>`). |
 | | | `session` | `u64` | Server-assigned connection id for log correlation. Opaque. |
 | | | `engines` | `Vec<EngineDesc>` | Every engine offered, in configuration order; element 0 is the default. MAY be empty. |
@@ -374,7 +374,7 @@ At most one terminal message per stream, always the last frame.
 
 | # | Variant | `as_str()` | Sent when |
 |---|---|---|---|
-| **0** | `BadVersion` | `bad-version` | `Hello.proto != 2`. |
+| **0** | `BadVersion` | `bad-version` | `Hello.proto` is not `0.1.0`. The `msg` names both versions. |
 | **1** | `Unauthorized` | `unauthorized` | `Hello.token` matches no configured token. |
 | **2** | `NoSuchEngine` | `no-such-engine` | `Open.engine` names an unknown engine, or is `None` and no engine is configured. |
 | **3** | `TooManySubs` | `too-many-subs` | The token's `max_subs` is already reached. |
@@ -460,8 +460,8 @@ loosens it — a clipped value is still a lower bound — so a receiver MAY read
 
 ### 7.2.1 INV-2: Black perspective
 
-**Every winrate, score and utility on an MRP/2 wire is from Black's perspective.** There is no
-per-message perspective flag and v2 MUST NOT add one.
+**Every winrate, score and utility on an MRP wire is from Black's perspective.** There is no
+per-message perspective flag, and one MUST NOT be added.
 
 | Rule | Level |
 |---|---|
@@ -493,7 +493,7 @@ between requests.
 | 12 | `report_every_ms` | `Option<u16>` | **milliseconds** | Intermediate-report interval; absent = only the terminal message. Forwarded as `reportDuringSearchEvery` in seconds. |
 | 13 | `priority` | `i8` (1 raw byte) | | Higher runs first. A server MUST clamp it into `-8..=8` (`session.rs` — `PRIORITY_RANGE`) so one client cannot starve others. |
 | 14 | `avoid` | `Vec<AvoidSpec>` | | Move restrictions ([§7.8](#78-avoidspec)). |
-| 15 | `overrides` | `Vec<(String, String)>` | | Raw per-query KataGo `overrideSettings` entries. Servers SHOULD treat them as untrusted and MAY ignore them. The reference server forwards only `wideRootNoise` and `humanSLProfile` with values of at most 64 bytes, and silently drops every other entry ([§9.3](#93-limits)). |
+| 15 | `overrides` | `Vec<(String, String)>` | | Raw per-query KataGo `overrideSettings` entries. Servers SHOULD treat them as untrusted, MAY ignore them, and MUST NOT reject a request solely for an unknown key. The reference server forwards only `wideRootNoise` and `humanSLProfile` with values of at most 64 bytes, and silently drops every other entry ([§9.3](#93-limits)). |
 
 ### 7.4 Komi
 
@@ -534,7 +534,7 @@ KataGo (`RuleSet::katago_name`). Receivers MUST reject a discriminant above 8.
 | 0 | `0x01` | `OWNERSHIP` | `Report.ownership` populated (`w*h` entries). |
 | 1 | `0x02` | `POLICY` | `Report.policy` populated (`w*h + 1` entries). |
 | 2 | `0x04` | `PV_VISITS` | `MoveInfo.pv_visits` populated; otherwise empty. |
-| 3 | `0x08` | `MOVES_OWNERSHIP` | Requests per-move ownership from the engine. No MRP/2 field carries it ([B.2](#appendix-b-findings)). |
+| 3 | `0x08` | `MOVES_OWNERSHIP` | Reserved. No MRP field carries per-move ownership, so a producer MUST NOT request data it discards. The bit stays reserved until a wire field exists ([B.2](#appendix-b-findings)). |
 | 4 | `0x10` | `ROOT_RAW` | Nominally requests `RootInfo.raw_*`. Not consulted by the reference producer ([B.1](#appendix-b-findings)). |
 | 5–7 | `0xE0` | — | Reserved, MUST be 0. Receivers MUST ignore unknown bits rather than fail (`Want::from_bits_truncate`). |
 
@@ -626,7 +626,7 @@ still decodes every one.
 
 ```
 client                                                            server
-  | QUIC Initial, ALPN "mirai/2", TLS 1.3; leaf fingerprint pinned    |
+  | QUIC Initial, ALPN "mirai", TLS 1.3; leaf fingerprint pinned    |
   |----------------------------------------------------------------->|
   | open bidirectional stream; frame ClientMsg::Hello{proto,token,..} |
   |----------------------------------------------------------------->|
@@ -636,18 +636,19 @@ client                                                            server
 
 | # | Rule | Level |
 |---|---|---|
-| 1 | Complete the QUIC/TLS handshake with ALPN `mirai/2` and verify the leaf fingerprint before sending any frame. | MUST |
+| 1 | Complete the QUIC/TLS handshake with ALPN `mirai` and verify the leaf fingerprint before sending any frame. | MUST |
 | 2 | Open exactly one bidirectional stream and send `Hello` as its first frame. | MUST |
 | 3 | (Server) Treat any first control message other than `Hello` as fatal: `Error { None, BadRequest }`, then close the connection with application code 1. | MUST |
 | 4 | (Server) Send nothing before receiving `Hello`, except an `Error`. | MUST NOT |
 | 5 | (Client) Ignore, rather than fail on, any other message arriving before `Welcome`. | SHOULD |
 
-**Version negotiation** is two-layered and both layers are REQUIRED: ALPN `mirai/2` fails the
-handshake between incompatible major versions, and the `Hello`/`Welcome` `proto` check catches
-a peer that offered `mirai/2` without implementing it. A server MUST reject `Hello.proto != 2`
-with `BadVersion` and close; a client MUST treat `Welcome.proto != 2` as unusable and MUST NOT
-send `Open`. There is no other feature negotiation — capabilities MUST NOT be inferred from the
-`client`/`server` identification strings.
+**Version check.** ALPN is the fixed identifier `mirai` and carries no version, so a mismatch
+completes the TLS handshake and is reported as `BadVersion` rather than failing opaquely in
+TLS. Peers MUST require an exact match with the version they speak (`0.1.0`,
+[§10](#10-version)). A server MUST reject any other `Hello.proto` with `BadVersion`, naming
+both versions, and close. A client MUST treat any other `Welcome.proto` as unusable and MUST
+NOT send `Open`. There is no other feature negotiation — capabilities MUST NOT be inferred from
+the `client`/`server` identification strings.
 
 **Pre-authentication bound.** The reference server takes a session slot before the
 handshake (32, `MAX_SESSIONS` in `mirai-server`). A peer that finishes the handshake
@@ -766,7 +767,7 @@ watching.
 | `ErrCode` | `sub` | Trigger | Fatal to |
 |---|---|---|---|
 | `BadRequest` | `None` | first control message was not `Hello`, or exceeds the `Hello` bounds | **connection** (server closes, code 1) |
-| `BadVersion` | `None` | `Hello.proto != 2` | **connection** (code 1) |
+| `BadVersion` | `None` | `Hello.proto` is not `0.1.0` | **connection** (code 1) |
 | `Unauthorized` | `None` | token not recognised | **connection** (code 1) |
 | `BadRequest` | `None` | second `Hello` | nothing |
 | `BadRequest` | `Some(sub)` | `Open.sub` already live | that subscription |
@@ -809,7 +810,7 @@ reason. Dropping the attempt is that close. It is not an authentication failure.
 | `AnalyzeReq.priority` | clamped to `-8..=8` | server MUST clamp, not reject |
 | `AnalyzeReq.moves` + `initial_stones` | ≤ 4096 together on the reference server (`MAX_REQUEST_STONES`) | refused with `Error { Some(sub), BadRequest }`. Far past any real game on a 19×19 board; the bound stops a few KB of zstd inflating to millions of moves on the engine's input |
 | `AnalyzeReq.avoid` | ≤ 64 specs and ≤ 1024 points across them on the reference server (`MAX_AVOID_SPECS`, `MAX_AVOID_POINTS`) | refused with `Error { Some(sub), BadRequest }` |
-| `AnalyzeReq.overrides` | only `wideRootNoise` and `humanSLProfile`, values ≤ 64 bytes, on the reference server (`FORWARDED_OVERRIDES`, `MAX_OVERRIDE_VALUE`) | other entries dropped, not rejected ([§10.1](#101-what-a-v2-implementation-must-reject) forbids rejecting unknown keys) |
+| `AnalyzeReq.overrides` | only `wideRootNoise` and `humanSLProfile`, values ≤ 64 bytes, on the reference server (`FORWARDED_OVERRIDES`, `MAX_OVERRIDE_VALUE`) | other entries dropped, not rejected ([§7.3](#73-analyzereq) forbids rejecting unknown keys) |
 | Board size | `2..=19` per dimension | receiver MUST reject anything else |
 | Control streams | exactly 1 bidirectional | client MUST NOT open more |
 | Time to `Hello` | 10 s on the reference server (`PREAUTH_DEADLINE`) | frees the slot; keep-alives do not extend it. After the handshake: application code 1, reason `pre-authentication deadline`, no `Error` frame. During the handshake: transport `APPLICATION_ERROR`. A client SHOULD send `Hello` immediately |
@@ -822,66 +823,16 @@ either interpretation.
 
 ---
 
-## 10. Versioning and compatibility
+## 10. Version
 
-### 10.1 What a v2 implementation MUST reject
+The protocol version is `0.1.0` (`PROTO_VERSION` in `mirai-proto/src/types.rs`), carried as
+`ProtoVersion { major: u16, minor: u16, patch: u16 }` in `Hello` and `Welcome`. Peers MUST
+match it exactly; a mismatch is `BadVersion` ([§8.1](#81-handshake)), and the error names
+both versions.
 
-Postcard is positional: one misread byte desynchronises the rest of the frame, so leniency here
-produces silently wrong analysis rather than a clean failure.
-
-| # | Condition |
-|---|---|
-| 1 | ALPN other than `mirai/2`; TLS below 1.3. |
-| 2 | A leaf certificate whose SHA-256 differs from the stored pin. |
-| 3 | `Hello.proto != 2` (server) or `Welcome.proto != 2` (client). |
-| 4 | A first control message that is not `Hello`. |
-| 5 | Frame `len > MAX_FRAME`, before reading the body; a zstd payload whose plaintext would exceed `MAX_FRAME`; a frame truncated by end of stream. |
-| 6 | An enum discriminant out of range: `ClientMsg` 0–4, `ServerMsg` 0–4, `SubMsg` 0–2, `ErrCode` 0–6, `Color` 0–1, `RuleSet` 0–8. |
-| 7 | An `Option` tag or `bool` byte other than `0x00`/`0x01`. |
-| 8 | A varint longer than its type's maximum, or whose final byte overflows the type. |
-| 9 | A `String` that is not valid UTF-8. |
-| 10 | Trailing bytes after a fully decoded message within one frame. |
-| 11 | `Size` outside `2..=19`; `ownership` not `w*h` long; `policy` not `w*h + 1` long. |
-| 12 | A `flags` value the stream does not allow ([§4](#4-framing)); a subscription stream whose zstd window exceeds 2^16. |
-
-A v2 implementation MUST NOT reject: unknown `Want` bits (ignore them), unknown `overrides`
-keys, an empty `Welcome.engines`, or a `pv_visits` shorter than `pv`.
-
-### 10.2 Rules for a future v3
-
-With no field names, counts or type tags on the wire, **nothing may be added to an existing
-struct or enum in a way a v2 peer could encounter.**
-
-| Change | Compatible within v2? |
-|---|---|
-| New value in an existing string field | **Yes** |
-| New `Want` bit | **Yes** — receivers truncate unknown bits, and the bit only ever requests optional data |
-| New key in `AnalyzeReq.overrides` | **Yes** — an opaque string map |
-| New field appended to any struct | **No** — the decoder stops early, then rejects trailing bytes or mis-parses the next field |
-| New variant appended to any enum, including `ErrCode` | **No** — v2 rejects the unknown discriminant. `EngineFailed` and `Internal` already exist for engine-side and unclassified failures |
-| Any change to a scale constant, `POLICY_ILLEGAL`, or a quantisation formula | **No** — silently wrong numbers, the worst failure mode |
-| Field reordering | **No** |
-| New framing flag bit | **No** — receivers reject unknown flag bits ([B.7](#appendix-b-findings)), so a new bit needs a new version. Reserved bits stay zero for the life of v2 |
-
-A v3 MUST: use ALPN `mirai/3` so incompatible peers fail at the TLS handshake (a dual-stack
-server SHOULD offer both and behave per the negotiated one) · set `PROTO_VERSION = 3` so a
-wrong-ALPN peer is still caught · keep the 5-byte frame header byte-identical so a version
-mismatch can still be reported with a readable `Error` · append new enum variants only at the
-end and never renumber or repurpose a discriminant, so v3 tooling can still read v2 captures ·
-preserve INV-1, INV-2 and INV-4, which are meaning, not encoding.
-
-### 10.3 Changes from MRP/1
-
-MRP/2 replaced MRP/1 outright; the reference endpoints speak only v2, so a v1 peer fails at
-the TLS handshake.
-
-| # | Change |
-|---|---|
-| 1 | ALPN `mirai/2`, `PROTO_VERSION = 2`. |
-| 2 | `AnalyzeReq.max_candidates` ([§7.3](#73-analyzereq)): a client asks for only the candidates it shows. |
-| 3 | A subscription stream is one zstd stream, flags `0x02` ([§4.1](#41-subscription-streams-one-zstd-stream)); a report is compressed against those before it. |
-| 4 | Trailing bytes after a message are rejected. MRP/1 already required it, but its reference implementation ignored them: `postcard::from_bytes` does not check. |
-| 5 | On a subscription stream `Report.ownership` carries the change from the stream's last map ([§7.11](#711-report)). |
+While mirai is in development — any `0.x` version — the number does not change when the
+protocol changes. Peers are built from the same tree. The number starts moving once mirai
+has external users. There is nothing earlier to stay compatible with.
 
 ---
 
@@ -905,16 +856,16 @@ report, each row adding one change to the one above:
 
 | Wire | Policy off | Policy on |
 |---|---|---|
-| MRP/1, as live analysis requested it (every candidate, `pv_visits`) | 2318 B | 2656 B |
+| every candidate, with `pv_visits`, each report framed alone | 2318 B | 2656 B |
 | without `pv_visits`, which no client reads | 2185 B | 2594 B |
 | `max_candidates = 10`, what the board shows by default | 738 B | 1147 B |
 | one zstd stream per subscription ([§4.1](#41-subscription-streams-one-zstd-stream)) | 198 B | 197 B |
-| ownership as changes ([§7.11](#711-report)) — **MRP/2** | **148 B** | **148 B** |
+| ownership as changes ([§7.11](#711-report)) — current wire | **148 B** | **148 B** |
 
 What to expect from those numbers:
 
 * A live 19×19 analysis at `report_every_ms = 100` costs about **1.5 KB/s** per subscription,
-  against 23 KB/s under MRP/1 and 336 KB/s for KataGo's own JSON.
+  against 23 KB/s when every candidate was framed alone, and 336 KB/s for KataGo's own JSON.
 * The first frame of a stream has nothing to be compressed against, and costs what the report
   costs alone (654 B here). A client that steps through a game opens a new stream per move,
   so browsing pays that; pondering one position pays the stream rate.
@@ -933,7 +884,7 @@ KataGo falls from two busy cores to 0 % CPU within 250 ms.
 
 ### MUST
 
-1. Negotiate ALPN `mirai/2` over QUIC with TLS 1.3 only.
+1. Negotiate ALPN `mirai` over QUIC with TLS 1.3 only. ALPN carries no version.
 2. Pin the server leaf certificate by lowercase-hex SHA-256 of its DER; refuse on mismatch; do
    no chain, hostname or expiry validation; still verify the handshake signature.
 3. Use one client-opened bidirectional control stream, with `Hello` as its first frame.
@@ -955,7 +906,7 @@ KataGo falls from two busy cores to 0 % CPU within 250 ms.
     time.
 15. Apply the quantisation formulas and scale constants of §7.2 exactly.
 16. Carry komi as `komi_x2`, and the whole position in every request.
-17. Check `proto == 2` in `Hello`/`Welcome` and fail the session on mismatch.
+17. Check `Hello.proto` and `Welcome.proto` equal `0.1.0` and fail the session on mismatch, naming both versions.
 18. (Server) Compare tokens in constant time against every configured token.
 19. (Server) Clamp `priority` into `-8..=8`; enforce `max_subs` with `TooManySubs`; reject a
     duplicate live `sub` with `BadRequest`.
@@ -997,17 +948,17 @@ Every byte below was produced by an independent encoder written from this specif
 `Open` and `Report` sizes reproduce the reference implementation's measured frame sizes
 exactly. `|` marks the header/payload boundary for readability only.
 
-**0 — connect.** UDP to `box.local:9678`, QUIC + ALPN `mirai/2` + TLS 1.3. Hash the leaf DER
+**0 — connect.** UDP to `box.local:9678`, QUIC + ALPN `mirai` + TLS 1.3. Hash the leaf DER
 with SHA-256, render 64 lowercase hex characters, compare with the stored pin. No pin stored ⇒
 record and ask the user; mismatch ⇒ abort before any frame is sent.
 
-**1 — `Hello { proto: 2, token: "t0k", client: "demo/1" }`**
+**1 — `Hello { proto: 0.1.0, token: "t0k", client: "demo/1" }`**
 
 ```
-0d 00 00 00 | 00 | 00 02 03 74 30 6b 06 64 65 6d 6f 2f 31
-len=13       flags  ^  ^  ^  "t0k"  ^  "demo/1"
-                    |  |  len 3     len 6
-                    |  proto = 2
+0f 00 00 00 | 00 | 00 00 01 00 03 74 30 6b 06 64 65 6d 6f 2f 31
+len=15       flags  ^  ^  ^  ^  ^  "t0k"  ^  "demo/1"
+                    |  |  |  |  len 3     len 6
+                    |  major minor patch = 0.1.0
                     variant 0 = Hello
 ```
 
@@ -1015,11 +966,11 @@ len=13       flags  ^  ^  ^  "t0k"  ^  "demo/1"
 `{ "default", "1.16.4", "b18c384nbt", 4 threads, 19×19, no human model }`
 
 ```
-35 00 00 00 | 00 | 00 02 12 6d 69 72 61 69 2d 73 65 72 76 65 72 2f 30 2e 31 2e 30
+37 00 00 00 | 00 | 00 00 01 00 12 6d 69 72 61 69 2d 73 65 72 76 65 72 2f 30 2e 31 2e 30
                    01 01 07 64 65 66 61 75 6c 74 06 31 2e 31 36 2e 34
                    0a 62 31 38 63 33 38 34 6e 62 74 04 13 13 00
 
-00 variant 0 = Welcome · 02 proto · 12 "mirai-server/0.1.0" (len 18) · 01 session = 1
+00 variant 0 = Welcome · 00 01 00 proto 0.1.0 · 12 "mirai-server/0.1.0" (len 18) · 01 session = 1
 01 engines: 1 element · 07 "default" · 06 "1.16.4" · 0a "b18c384nbt"
 04 analysis_threads · 13 13 max_board 19x19 (raw u8) · 00 has_human_model = false
 ```
@@ -1107,12 +1058,12 @@ open. None blocks an interoperable implementation, and none corrupts a session o
 | # | Finding | Status | What an implementer should do |
 |---|---|---|---|
 | B.1 | `Want::ROOT_RAW` was documented as gating `RootInfo`'s `raw_*` fields, but nothing consulted it — KataGo has no switch for those values | **fixed** (documented as advisory) | Treat the raw fields as "present when the engine supplied them". Set the bit for forward compatibility; never rely on it to suppress them. |
-| B.2 | `Want::MOVES_OWNERSHIP` was forwarded as KataGo's `includeMovesOwnership`, but `MoveInfo` has no field for the result, so it was decoded and discarded | **fixed** (flag reserved; no longer requested) | Leave unset. The bit is reserved so a later version can add the field without reusing it. |
+| B.2 | `Want::MOVES_OWNERSHIP` was forwarded as KataGo's `includeMovesOwnership`, but `MoveInfo` has no field for the result, so it was decoded and discarded | **fixed** (flag reserved; no longer requested) | Leave unset. A producer MUST NOT request data it discards. The bit stays reserved until a wire field exists. |
 | B.3 | `EngineFailed` and `Internal` are never sent by the reference server; engine failures arrive as `SubMsg::Failed(String)`, losing the machine-readable code | open | Decode both anyway — the discriminants are part of the protocol and another server may use them. |
 | B.4 | `RAW_VAR_TIME_SCALE` was defined in `mirai-engine`, so `mirai-proto` alone was not enough to decode `raw_var_time_left` | **fixed** (moved beside the other scales in `types.rs`) | — |
 | B.5 | `max_subs` is enforced per connection, not per token, so one token on two connections gets twice its quota | open | A server MAY enforce it globally; a client must rely on neither. |
 | B.6 | The reference server accepts one bidirectional stream and never looks for another, so a second stalls rather than erroring. [INFERENCE] from the control flow; untested | open | Never open a second bidirectional stream. A stricter server would close the connection. |
-| B.7 | Unknown framing flag bits were ignored, so `flags = 0x02` parsed as uncompressed postcard | **fixed** (unknown bits are now a hard error) | Keep reserved bits zero; expect a peer to reject anything else ([§10.2](#102-rules-for-a-future-v3)). |
+| B.7 | Unknown framing flag bits were ignored, so `flags = 0x02` parsed as uncompressed postcard | **fixed** (unknown bits are now a hard error) | Keep reserved bits zero; expect a peer to reject anything else ([§4](#4-framing)). |
 | B.8 | Nothing validates a non-empty `MoveInfo.pv_visits` against the length of `pv` | open | Index defensively; do not assume the two are the same length. |
 
 Everything else read for this specification — framing, quantisation, the handshake, the

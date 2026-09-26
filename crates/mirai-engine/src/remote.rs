@@ -89,7 +89,7 @@ impl TofuStore {
     }
 }
 
-/// A `mirai-server` reached over MRP/2, behaving exactly like a local engine.
+/// A `mirai-server` reached over MRP, behaving exactly like a local engine.
 pub struct RemoteEngine {
     peer: Arc<Peer>,
     desc: EngineDesc,
@@ -300,7 +300,7 @@ async fn handshake(url: &str, token: &str, pin: Option<String>) -> Result<Sessio
             } => {
                 if proto != PROTO_VERSION {
                     return Err(EngineError::Protocol(format!(
-                        "the server speaks MRP/{proto}, this client speaks MRP/{PROTO_VERSION}"
+                        "the server speaks {proto}, this client speaks {PROTO_VERSION}"
                     )));
                 }
                 return Ok(Session {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! MRP/2 — the mirai remote-analysis protocol.
+//! MRP — the mirai Remote Protocol.
 //!
 //! * [`types`] — quantised wire values shared by the local and remote engine paths.
 //! * [`msg`] — control-stream and subscription-stream messages.
@@ -26,6 +26,6 @@ pub use endpoint::{ALPN, AddressError, DEFAULT_PORT, URL_SCHEME, parse_url};
 pub use frame::{FrameBuf, FrameError, MAX_FRAME, read_msg, write_msg};
 pub use msg::{ClientMsg, ErrCode, ServerMsg, SubMsg};
 pub use types::{
-    AnalyzeReq, AvoidSpec, EngineDesc, MoveInfo, POLICY_ILLEGAL, PROTO_VERSION, Report, RootInfo,
-    Want,
+    AnalyzeReq, AvoidSpec, EngineDesc, MoveInfo, POLICY_ILLEGAL, PROTO_VERSION, ProtoVersion,
+    Report, RootInfo, Want,
 };

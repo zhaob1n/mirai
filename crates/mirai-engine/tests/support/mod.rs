@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! A scripted MRP/2 server for driving [`RemoteEngine`] through the session rules in
+//! A scripted MRP server for driving [`RemoteEngine`] through the session rules in
 //! `docs/dev/PROTOCOL.md` §8.
 //!
 //! It speaks the real protocol over the real transport — same QUIC endpoint helper, same
@@ -21,13 +21,13 @@ use mirai_core::Point;
 use mirai_proto::frame::{self, FrameBuf, SUB_STREAM_LEVEL, SubStreamEncoder};
 use mirai_proto::msg::{ClientMsg, ErrCode, OwnershipDelta, ServerMsg, SubMsg, SubMsgRef};
 use mirai_proto::transport;
-use mirai_proto::types::{AnalyzeReq, EngineDesc, MoveInfo, PROTO_VERSION, Report};
+use mirai_proto::types::{AnalyzeReq, EngineDesc, MoveInfo, PROTO_VERSION, ProtoVersion, Report};
 use quinn::VarInt;
 use tokio::sync::mpsc;
 
 /// What the server does during the handshake, and what it claims afterwards.
 pub struct Script {
-    pub proto: u16,
+    pub proto: ProtoVersion,
     pub engines: Vec<EngineDesc>,
     /// Frames sent before `Welcome`. §8.1 rule 5: the client must ignore these.
     pub preamble: Vec<ServerMsg>,

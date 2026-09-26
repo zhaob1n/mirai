@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! MRP/2 value types.
+//! MRP value types.
 //!
 //! Quantisation is part of the type: every float that crosses the wire is stored as a
 //! fixed-point integer, and the conversion helpers live here so that the local KataGo
@@ -13,7 +13,35 @@
 use mirai_core::{Color, Point, RuleSet, Size};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-pub const PROTO_VERSION: u16 = 2;
+/// The three components of the protocol version, carried in `Hello` and `Welcome`.
+///
+/// Peers require an exact match. While mirai is in development the number stays
+/// [`PROTO_VERSION`] even when the protocol changes: peers are built from the same tree.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct ProtoVersion {
+    pub major: u16,
+    pub minor: u16,
+    pub patch: u16,
+}
+
+impl ProtoVersion {
+    pub const fn new(major: u16, minor: u16, patch: u16) -> ProtoVersion {
+        ProtoVersion {
+            major,
+            minor,
+            patch,
+        }
+    }
+}
+
+impl std::fmt::Display for ProtoVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+    }
+}
+
+/// The version this build speaks: `0.1.0`.
+pub const PROTO_VERSION: ProtoVersion = ProtoVersion::new(0, 1, 0);
 
 /// Sentinel stored in `Report::policy` for a move KataGo reported as illegal (`-1`).
 pub const POLICY_ILLEGAL: u16 = u16::MAX;
@@ -26,7 +54,7 @@ pub const STDEV_SCALE: f64 = 32.0;
 /// Steps per unit for [`RootInfo::raw_var_time_left`]. KataGo's `rawVarTimeLeft` is in "no
 /// particular units" and runs to a few hundred, so a quarter-unit step covers it in `u16`.
 ///
-/// It lives here with the other scales rather than beside its decoder: a peer decoding MRP/2
+/// It lives here with the other scales rather than beside its decoder: a peer decoding MRP
 /// must be able to learn every scale from this crate alone.
 pub const RAW_VAR_TIME_SCALE: f64 = 4.0;
 
@@ -114,9 +142,8 @@ bitflags::bitflags! {
         const POLICY = 2;
         /// Fill [`MoveInfo::pv_visits`].
         const PV_VISITS = 4;
-        /// Reserved. `MoveInfo` has no per-move ownership field, so there is nowhere for the
-        /// result to land; a v1 engine MUST NOT ask KataGo for it and burn search time on a
-        /// value it will discard. Kept so the bit is not reused before a v2 adds the field.
+        /// Reserved. `MoveInfo` has no per-move ownership field, so a producer MUST NOT
+        /// request data it will discard. The bit stays reserved until a wire field exists.
         const MOVES_OWNERSHIP = 8;
         /// Advisory. The `raw_*` fields of [`RootInfo`] are filled whenever the engine
         /// reported them, whether or not this bit is set — KataGo has no switch for it.
@@ -447,6 +474,15 @@ mod tests {
         }
         assert_eq!(dq_policy(q_policy(-1.0)), None);
         assert!((dq_policy(q_policy(0.25)).unwrap() - 0.25).abs() < 1e-4);
+    }
+
+    #[test]
+    fn protocol_version_is_0_1_0_encoded_as_three_varints() {
+        assert_eq!(PROTO_VERSION.to_string(), "0.1.0");
+        assert_eq!(postcard::to_stdvec(&PROTO_VERSION).unwrap(), [0, 1, 0]);
+        let other = ProtoVersion::new(0, 2, 0);
+        assert_ne!(other, PROTO_VERSION);
+        assert_eq!(other.to_string(), "0.2.0");
     }
 
     #[test]
