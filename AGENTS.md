@@ -7,8 +7,9 @@ one document your task points at. Do not re-explore the tree; it is mapped for y
 and play, either as a local subprocess or over a network via a purpose-built protocol
 (MRP). Six crates, GPL-3.0-or-later.
 
-The code is complete, reviewed and shipping. Treat it as a working system to extend carefully,
-not a draft to rewrite.
+The code is complete and reviewed, and it is still in development: there are no external
+users yet, so compatibility with older builds is not a constraint. Treat it as a working
+system to extend carefully, not a draft to rewrite.
 
 ---
 
