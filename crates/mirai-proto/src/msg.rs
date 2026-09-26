@@ -2,14 +2,14 @@
 // Copyright (C) 2026 Huang Zhaobin
 //! Control-stream and subscription-stream messages.
 
-use crate::types::{AnalyzeReq, EngineDesc, MoveInfo, Report, RootInfo};
+use crate::types::{AnalyzeReq, EngineDesc, MoveInfo, ProtoVersion, Report, RootInfo};
 use serde::{Deserialize, Serialize};
 
 /// Sent by the client on the bidirectional control stream.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub enum ClientMsg {
     Hello {
-        proto: u16,
+        proto: ProtoVersion,
         token: String,
         client: String,
     },
@@ -29,7 +29,7 @@ pub enum ClientMsg {
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub enum ServerMsg {
     Welcome {
-        proto: u16,
+        proto: ProtoVersion,
         server: String,
         session: u64,
         engines: Vec<EngineDesc>,
@@ -172,7 +172,8 @@ impl std::fmt::Display for ErrCode {
 mod tests {
     use super::*;
     use crate::frame::{self, FrameBuf, SUB_STREAM_LEVEL, SubStreamDecoder, SubStreamEncoder};
-    use mirai_core::{Color, Point};
+    use crate::types::PROTO_VERSION;
+    use mirai_core::{Color, Point, Size};
 
     fn sample_report() -> Report {
         let mut r = Report::empty(42, Color::White);
@@ -230,6 +231,56 @@ mod tests {
             bytes(&SubMsgRef::Failed("boom")),
             bytes(&SubMsg::Failed("boom".into())),
             "Failed variant"
+        );
+    }
+    /// Appendix A of PROTOCOL.md is normative for these two frames. A drift here is a
+    /// drift in the only byte-level example of the version encoding.
+    #[test]
+    fn appendix_hello_and_welcome_match_the_spec() {
+        let hello = frame::encode(
+            &mut FrameBuf::new(),
+            &ClientMsg::Hello {
+                proto: PROTO_VERSION,
+                token: "t0k".into(),
+                client: "demo/1".into(),
+            },
+        )
+        .unwrap()
+        .to_vec();
+        let welcome = frame::encode(
+            &mut FrameBuf::new(),
+            &ServerMsg::Welcome {
+                proto: PROTO_VERSION,
+                server: "mirai-server/0.1.0".into(),
+                session: 1,
+                engines: vec![EngineDesc {
+                    name: "default".into(),
+                    katago_version: "1.16.4".into(),
+                    model: "b18c384nbt".into(),
+                    analysis_threads: 4,
+                    max_board: Size::square(19),
+                    has_human_model: false,
+                }],
+            },
+        )
+        .unwrap()
+        .to_vec();
+        assert_eq!(
+            hello,
+            [
+                0x0f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x03, 0x74, 0x30, 0x6b, 0x06,
+                0x64, 0x65, 0x6d, 0x6f, 0x2f, 0x31,
+            ]
+        );
+        assert_eq!(
+            welcome,
+            [
+                0x37, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x12, 0x6d, 0x69, 0x72, 0x61,
+                0x69, 0x2d, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x2f, 0x30, 0x2e, 0x31, 0x2e, 0x30,
+                0x01, 0x01, 0x07, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x06, 0x31, 0x2e, 0x31,
+                0x36, 0x2e, 0x34, 0x0a, 0x62, 0x31, 0x38, 0x63, 0x33, 0x38, 0x34, 0x6e, 0x62, 0x74,
+                0x04, 0x13, 0x13, 0x00,
+            ]
         );
     }
 

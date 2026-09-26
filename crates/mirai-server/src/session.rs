@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Huang Zhaobin
 //! One QUIC connection: the control stream, and one task per live subscription.
 //!
-//! Stream topology is MRP/2's (see `mirai_proto::transport`): the client opens a single
+//! Stream topology is MRP's (see `mirai_proto::transport`): the client opens a single
 //! bidirectional control stream, and the server opens one unidirectional stream per
 //! subscription, prefixed with the 4-byte LE subscription id.
 //!
@@ -130,8 +130,8 @@ const MAX_AVOID_SPECS: usize = 64;
 const MAX_AVOID_POINTS: usize = 1024;
 
 /// The `overrides` keys forwarded to KataGo: what the reference client sends for play
-/// (`mirai-client` — `play.rs`, `ai_request`). PROTOCOL §7.3 has servers treat overrides as
-/// untrusted and lets them ignore any, and §10.1 forbids rejecting unknown keys, so every
+/// (`mirai-client` — `play.rs`, `ai_request`). PROTOCOL §7.3 treats overrides as
+/// untrusted: a server may ignore any key and must not reject an unknown one, so every
 /// other key is dropped: an arbitrary `overrideSettings` entry (`maxVisits`,
 /// `numSearchThreads`, …) can change what a shared search costs.
 const FORWARDED_OVERRIDES: &[&str] = &["wideRootNoise", "humanSLProfile"];
@@ -292,7 +292,7 @@ async fn session_loop(
             &mut wbuf,
             conn,
             ErrCode::BadVersion,
-            &format!("server speaks MRP/{PROTO_VERSION}, client offered MRP/{proto}"),
+            &format!("server speaks {PROTO_VERSION}, client offered {proto}"),
         )
         .await;
         anyhow::bail!("protocol version mismatch: client offered {proto}");
@@ -623,7 +623,7 @@ async fn stream_flush(tx: &mut SendStream) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use mirai_core::{Color, Point, RuleSet};
-    use mirai_proto::types::AvoidSpec;
+    use mirai_proto::types::{AvoidSpec, ProtoVersion};
 
     fn host(tokens: &[(&str, u32)]) -> Host {
         Host {
@@ -1366,6 +1366,41 @@ mod tests {
         assert!(
             !error.contains('\n') && !error.contains('\u{1b}'),
             "{error:?}"
+        );
+    }
+
+    /// ALPN is `mirai`, not a version, so a peer speaking `0.2.0` completes TLS and is
+    /// refused with `BadVersion` naming both versions.
+    #[tokio::test]
+    async fn a_mismatched_protocol_version_is_bad_version_not_a_tls_failure() {
+        let mut buf = FrameBuf::new();
+        let first = frame::encode(
+            &mut buf,
+            &ClientMsg::Hello {
+                proto: ProtoVersion::new(0, 2, 0),
+                token: "secret".into(),
+                client: "test".into(),
+            },
+        )
+        .expect("encode Hello")
+        .to_vec();
+        let (reply, error) = first_frame_exchange(first).await;
+        match reply {
+            ServerMsg::Error {
+                sub: None,
+                code: ErrCode::BadVersion,
+                msg,
+            } => {
+                assert!(
+                    msg.contains("0.1.0") && msg.contains("0.2.0"),
+                    "BadVersion did not name both versions: {msg}"
+                );
+            }
+            other => panic!("expected BadVersion after the TLS handshake, got {other:?}"),
+        }
+        assert!(
+            error.contains("0.2.0"),
+            "the session ended without naming the offered version: {error}"
         );
     }
 

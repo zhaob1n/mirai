@@ -3,7 +3,7 @@
 //! The application layer shared by mirai's frontends.
 //!
 //! `mirai-core` owns the rules, the tree and SGF; `mirai-engine` owns the engines and the
-//! MRP/2 session. This crate owns the part above them that is neither: which position to
+//! MRP session. This crate owns the part above them that is neither: which position to
 //! analyse, what a request should say, what the user's record is called, when it is dirty,
 //! and how a connection is trusted.
 //!
