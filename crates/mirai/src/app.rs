@@ -505,6 +505,39 @@ impl AppState {
         }
     }
 
+    /// Installs a profile discovered off the GTK thread.
+    ///
+    /// First-run seeding walks `PATH` and the model directories. The window opens with
+    /// an empty list and calls this when that walk finishes; a profile the user added
+    /// meanwhile wins. `load_failed` is how the window's config was obtained, decided
+    /// when it was loaded — not whether a file exists now, since this window or another
+    /// may have saved one while the walk ran. After a clean load (a missing file) the
+    /// seed is saved like any other edit, and `save_merged` adds it as a profile new
+    /// relative to the base. After a failed load [`Config::save_merged`] refuses to
+    /// overwrite the malformed file, so the seed goes into the base as well and a later
+    /// edit does not retry that write just to record it.
+    pub fn install_seed(&self, seeded: Config, load_failed: bool) {
+        if !self.config().engine_profiles.is_empty() || seeded.engine_profiles.is_empty() {
+            return;
+        }
+        let name = seeded.active_engine.clone();
+        {
+            let mut cfg = self.config_mut();
+            cfg.engine_profiles = seeded.engine_profiles.clone();
+            cfg.active_engine = seeded.active_engine.clone();
+        }
+        if load_failed {
+            let mut base = self.imp().config_base.borrow_mut();
+            base.engine_profiles = seeded.engine_profiles;
+            base.active_engine = seeded.active_engine;
+        } else {
+            self.save_config();
+        }
+        if let Some(name) = name {
+            self.activate_profile(&name);
+        }
+    }
+
     pub fn runtime(&self) -> tokio::runtime::Handle {
         self.imp()
             .runtime

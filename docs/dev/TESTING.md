@@ -409,9 +409,11 @@ something.
 ### Recipes
 
 Preconditions for anything that needs an engine: a debug build, and a profile
-already in the isolated `config.toml`. A *missing* file is not "no engine".
-`Config::load` calls `Config::seeded()`, which writes a local profile when it
-finds `katago` on `PATH` and a `*.bin.gz` in the discovery directories. An
+already in the isolated `config.toml`. A *missing* file is not "no engine", but
+it is not a synchronous seed either. `Config::load` returns an empty config;
+`Config::seeded()` then runs on the blocking pool and, when it finds `katago`
+on `PATH` and a `*.bin.gz`, installs that profile and starts it. Until the walk
+finishes the sidebar may show **No Engine Configured**. An
 explicit `engine_profile = []` is the empty case, and it does **not** open
 Preferences. The window comes up; the sidebar shows **No Engine Configured**
 with a Preferences button. Opening an SGF that has `MRAI` on the current node
@@ -737,7 +739,7 @@ A black external screenshot is §5, not a second essay.
 | "mirai did not shut down cleanly" on every start | The autosave is deleted by dropping the window's `Ui`. Either the process was killed, or a leftover from an earlier crash has not been answered | `Drop for Ui`, `window::stale_autosaves` |
 | The restore prompt offers an empty board | `GameTree::has_content` regressed. An autosave with no move, setup, mark, to-play override or comment is neither written nor offered | `tree.rs` |
 | Engine and runtime survive window close | A long-lived callback owns the window, or shutdown never took the `Ui`. There is no `Ui::shutdown`. `close-request`, `dispose` and `ApplicationImpl::shutdown` all call `MiraiWindow::shutdown`, which `take_ui`s once. `Drop for Ui` aborts tasks, flushes the comment, cancels batch, play and analysis, saves config, clears the engine, and drops the autosave | `MiraiWindow::shutdown`, `Drop for Ui`, weak-window callbacks in `window.rs`, `play.rs`, `batch.rs` |
-| Sidebar says **No Engine Configured**, and that is treated as a failed open | No profile, no live report, and the current node has no cached analysis. The window is up. The StatusPage button is `win.preferences`; `present` does not open the dialog. A *missing* file may still seed a discovered engine (`Config::seeded`). An explicit `engine_profile = []` is the empty case | `update_analysis_page`, `prefs::no_engine_status_page`. Recipe (h) |
+| Sidebar says **No Engine Configured**, and that is treated as a failed open | No profile, no live report, and the current node has no cached analysis. The window is up. The StatusPage button is `win.preferences`; `present` does not open the dialog. A *missing* file may still seed a discovered engine once `Config::seeded` finishes on the blocking pool. An explicit `engine_profile = []` is the empty case | `update_analysis_page`, `prefs::no_engine_status_page`. Recipe (h) |
 | Cached numbers missing on an SGF that has them, or a fake live speed with no engine | The panel is shown when the *current* node has analysis, even with an empty profile list. Speed is attached only to a live report | `update_analysis_page`, `AnalysisPanel::refresh` |
 | Sidebar reads 9.9% while the graph reads `Black 90.1%` | Not a double conversion. The sidebar is the side to move (`winrate_for`). The graph is always Black | `AnalysisPanel::refresh`; `WinrateGraph` cursor text and tooltip |
 | Editing tools are missing | They start collapsed. `win.toggle-editor`, or the nav button. A non-Play tool expands them. Active play forces them shut and disables the toggle | `set_editor_visible`; `window.blp` `editor_revealer` |

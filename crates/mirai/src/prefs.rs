@@ -369,14 +369,15 @@ fn open_editor(
     dialog.push_subpage(&page);
 }
 
-/// A read-only row showing a chosen path, with a button that opens a `gtk::FileDialog` and,
-/// when discovery found any, a chooser over those candidates.
+/// A read-only row showing a chosen path, with a button that opens a `gtk::FileDialog` and
+/// a slot for a chooser over discovered candidates. The slot starts empty when discovery
+/// has not finished; [`show_discovered`] fills it.
 fn file_row(
     title: &str,
     initial: PathBuf,
     candidates: Vec<PathBuf>,
     dialog: &adw::PreferencesDialog,
-) -> (adw::ActionRow, Rc<RefCell<PathBuf>>) {
+) -> (adw::ActionRow, Rc<RefCell<PathBuf>>, gtk::Box) {
     let cell = Rc::new(RefCell::new(initial));
 
     let row = adw::ActionRow::builder()
@@ -387,8 +388,10 @@ fn file_row(
     row.set_subtitle_lines(3);
 
     // Before the file button, so the discovered list is the first thing reached.
+    let slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    row.add_suffix(&slot);
     if let Some(chooser) = discovered_button(candidates, &row, &cell) {
-        row.add_suffix(&chooser);
+        slot.append(&chooser);
     }
 
     let button = gtk::Button::from_icon_name("document-open-symbolic");
@@ -433,7 +436,7 @@ fn file_row(
         }
     ));
 
-    (row, cell)
+    (row, cell, slot)
 }
 
 fn path_subtitle(path: &Path) -> String {
@@ -441,6 +444,33 @@ fn path_subtitle(path: &Path) -> String {
         "Not chosen".to_string()
     } else {
         path.display().to_string()
+    }
+}
+
+/// Puts discovered paths into `slot`. When `suggest` is set and the row is still empty,
+/// the first candidate becomes the displayed path — the suggestion a synchronous walk
+/// used to make before the editor opened.
+fn show_discovered(
+    slot: &gtk::Box,
+    row: &adw::ActionRow,
+    path: &Rc<RefCell<PathBuf>>,
+    candidates: Vec<PathBuf>,
+    suggest: bool,
+) {
+    // Read before the chain: the body borrows the cell mutably.
+    let empty = path.borrow().as_os_str().is_empty();
+    if suggest
+        && empty
+        && let Some(first) = candidates.first()
+    {
+        row.set_subtitle(&path_subtitle(first));
+        *path.borrow_mut() = first.clone();
+    }
+    if slot.first_child().is_some() || candidates.is_empty() {
+        return;
+    }
+    if let Some(chooser) = discovered_button(candidates, row, path) {
+        slot.append(&chooser);
     }
 }
 
@@ -703,14 +733,10 @@ fn local_editor(
             _ => (PathBuf::new(), PathBuf::new(), None, None, None, None, None),
         };
     let custom = config.is_some();
-    let model_candidates = crate::config::discover_models();
-    let config_candidates = crate::config::discover_analysis_configs();
-    // Discovery only supplies chooser entries. Managed mode remains selected until the user
-    // explicitly switches to Custom file.
-    let suggested_config = config
-        .clone()
-        .or_else(|| config_candidates.first().cloned())
-        .unwrap_or_default();
+    // Discovery only supplies chooser entries. It walks directories, so the editor opens
+    // first and the list buttons appear when the walk finishes. Managed mode remains
+    // selected until the user explicitly switches to Custom file.
+    let suggested_config = config.clone().unwrap_or_default();
 
     let editor = editor_shell(if editing.is_some() {
         "Edit Local Engine"
@@ -728,8 +754,9 @@ fn local_editor(
         .title("KataGo")
         .description("Both must exist before the profile can be saved.")
         .build();
-    let (katago_row, katago_path) = file_row("KataGo binary", katago, Vec::new(), dialog);
-    let (model_row, model_path) = file_row("Neural network model", model, model_candidates, dialog);
+    let (katago_row, katago_path, _) = file_row("KataGo binary", katago, Vec::new(), dialog);
+    let (model_row, model_path, model_slot) =
+        file_row("Neural network model", model, Vec::new(), dialog);
     paths.add(&katago_row);
     paths.add(&model_row);
     editor.content.add(&paths);
@@ -745,10 +772,10 @@ fn local_editor(
         .model(&gtk::StringList::new(&["Managed by mirai", "Custom file"]))
         .selected(u32::from(custom))
         .build();
-    let (config_row, config_path) = file_row(
+    let (config_row, config_path, config_slot) = file_row(
         "Custom analysis config",
         suggested_config,
-        config_candidates,
+        Vec::new(),
         dialog,
     );
     source.add(&mode);
@@ -1050,6 +1077,38 @@ fn local_editor(
     };
     apply_mode(custom);
     mode.connect_selected_notify(move |row| apply_mode(row.selected() == 1));
+
+    let discover = state.runtime().spawn_blocking(|| {
+        (
+            crate::config::discover_models(),
+            crate::config::discover_analysis_configs(),
+        )
+    });
+    let found_model_slot = model_slot.clone();
+    let found_model_row = model_row.clone();
+    let found_model_path = model_path.clone();
+    let found_config_slot = config_slot.clone();
+    let found_config_row = config_row.clone();
+    let found_config_path = config_path.clone();
+    glib::spawn_future_local(async move {
+        let Ok((models, configs)) = discover.await else {
+            return;
+        };
+        show_discovered(
+            &found_model_slot,
+            &found_model_row,
+            &found_model_path,
+            models,
+            false,
+        );
+        show_discovered(
+            &found_config_slot,
+            &found_config_row,
+            &found_config_path,
+            configs,
+            true,
+        );
+    });
 
     let save_state = state.clone();
     let banner = editor.banner.clone();
