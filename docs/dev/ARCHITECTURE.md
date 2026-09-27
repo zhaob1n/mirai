@@ -196,6 +196,7 @@ boundaries are [§1](#1-the-system). User settings and shortcuts are in
 | show or hide the editor toolbar | `crates/mirai/src/window.blp`, `crates/mirai/src/window.rs` | `editor_revealer`, `set_editor_visible` |
 | where the board menu pops up | `crates/mirai/src/window.rs`, `crates/mirai/src/widgets/board.rs` | `BoardView::show_menu` |
 | the move-tree layout | `crates/mirai/src/widgets/tree.rs` | `lay_out` |
+| the move-tree node menu (main line, delete branch) | `crates/mirai/src/widgets/tree.rs` | `MoveTreeView::show_menu_at` |
 | the win-rate graph | `crates/mirai/src/widgets/winrate.rs` | `WinrateGraph::refresh` |
 | blunder colour, or the list row | `crates/mirai/src/widgets/winrate.rs`, `crates/mirai/src/panels/analysis.rs` | `severity_of_drop`, `update_blunder_row` |
 | the analysis sidebar | `crates/mirai/src/panels/analysis.rs`, `crates/mirai/src/panels/analysis.blp` | `refresh`, `set_detailed_columns`, `set_blunders` |

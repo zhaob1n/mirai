@@ -244,12 +244,13 @@ without adding an undo step. During a game it stays closed and disabled.
 **Variations and the move tree.** Playing before the end creates a variation, leaving the
 original continuation intact. In Moves, the main line runs downwards with variations to
 the right; a hollow node is a start or setup position, a bar through one is a pass and the
-current node has a ring. Click a node to navigate.
+current node has a ring. Click a node to navigate; right-click one for *Set as Main Line*
+(offered only off the main line) and *Delete Branch* (not offered on the start).
 
 | Operation | How |
 |---|---|
-| Promote a variation to the main line | Shift+right-click or **Board Menu** → *Set as Main Line* |
-| Delete this move and everything after it | Right-click in Play, <kbd>Delete</kbd>, or **Board Menu** → *Delete Branch* |
+| Promote a variation to the main line | Right-click its node in Moves → *Set as Main Line*; <kbd>Ctrl</kbd>+<kbd>↑</kbd> for the current node; or Shift+right-click / **Board Menu** → *Set as Main Line* |
+| Delete this move and everything after it | Right-click in Play, <kbd>Delete</kbd>, right-click its node in Moves → *Delete Branch*, or **Board Menu** → *Delete Branch* |
 | Undo / redo the last edit | <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> |
 
 The start of the game cannot be deleted. Setup on a node that already has a move or a
@@ -556,7 +557,7 @@ logs and the generated analysis config live under `$XDG_DATA_HOME/mirai/`.
 | <kbd>←</kbd> <kbd>→</kbd> | one move | <kbd>Ctrl</kbd>+<kbd>E</kbd> | estimate score | <kbd>Ctrl</kbd>+<kbd>Z</kbd> | last edit | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> | save as |
 | <kbd>Page Up/Down</kbd> | ten moves | <kbd>o</kbd> | ownership overlay | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> | redo | <kbd>Ctrl</kbd>+<kbd>C</kbd> | copy record |
 | <kbd>↑</kbd> <kbd>↓</kbd> | variations | <kbd>y</kbd> | policy overlay | <kbd>Delete</kbd> | delete branch | <kbd>Ctrl</kbd>+<kbd>V</kbd> | paste record |
-| | | <kbd>c</kbd> | coordinates | | | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> | download from Fox |
+| | | <kbd>c</kbd> | coordinates | <kbd>Ctrl</kbd>+<kbd>↑</kbd> | set as main line | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> | download from Fox |
 | | | <kbd>n</kbd> | move numbers | | | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> | clear board |
 | | | <kbd>F9</kbd> | show/hide sidebar | | | | |
 | | | <kbd>g</kbd> | show/hide win-rate graph | | | | |

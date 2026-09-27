@@ -549,6 +549,7 @@ fn handle_change(ui: &Ui, change: Change) {
         }
         Change::Tree => {
             ui.board.close_menu();
+            ui.move_tree.close_menu();
             update_scale(ui);
             update_analysis_page(ui);
             update_title(ui);
@@ -796,8 +797,10 @@ fn update_editor_actions(ui: &Ui) {
     if let Some(action) = win_simple(ui, "delete-branch-at") {
         action.set_enabled(!active);
     }
-    if let Some(action) = win_simple(ui, "delete-branch") {
-        action.set_enabled(!active);
+    for name in ["delete-branch", "promote-line"] {
+        if let Some(action) = win_simple(ui, name) {
+            action.set_enabled(!active);
+        }
     }
 }
 
@@ -1992,6 +1995,7 @@ fn show_shortcuts(ui: &Ui) {
                 ("Undo Last Edit", "win.undo"),
                 ("Redo", "win.redo"),
                 ("Delete Branch", "win.delete-branch"),
+                ("Set as Main Line", "win.promote-line"),
             ][..],
         ),
         (
@@ -2433,6 +2437,10 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
     add("undo", Box::new(do_undo));
     add("redo", Box::new(do_redo));
     add("delete-branch", Box::new(delete_branch));
+    add(
+        "promote-line",
+        Box::new(|ui| promote_line_id(ui, ui.state.cursor())),
+    );
     add("resign", Box::new(|ui| ui.play.resign()));
     add("retry-ai", Box::new(|ui| ui.play.retry()));
     add(
@@ -2651,6 +2659,7 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
             ("win.undo", &["<Control>z"]),
             ("win.redo", &["<Control><Shift>z"]),
             ("win.delete-branch", &["Delete"]),
+            ("win.promote-line", &["<Control>Up"]),
             ("win.open", &["<Control>o"]),
             ("win.download-fox", &["<Control><Shift>o"]),
             ("win.clear-board", &["<Control><Shift>n"]),

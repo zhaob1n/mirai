@@ -32,6 +32,8 @@ enum Step {
     WaitStatus(String),
     Action(String, Option<String>),
     Board(String, String),
+    /// Press a move-tree cell, `primary` or `secondary`, given as `depth:lane`.
+    Tree(String, String),
     /// Activate a matching button or enabled menu item in the active window.
     Press(String),
     /// Open a PreferencesDialog page by title.
@@ -75,6 +77,13 @@ fn parse(script: &str) -> Vec<Step> {
                     Some((button, point)) => Some(Step::Board(button.into(), point.into())),
                     None => {
                         eprintln!("harness: board {rest:?} -> FAILED: expected button:GTP");
+                        None
+                    }
+                },
+                "tree" => match rest.split_once(':') {
+                    Some((button, cell)) => Some(Step::Tree(button.into(), cell.into())),
+                    None => {
+                        eprintln!("harness: tree {rest:?} -> FAILED: expected button:depth:lane");
                         None
                     }
                 },
@@ -200,6 +209,15 @@ pub fn install(app: &adw::Application) {
                         Ok(()) => eprintln!("harness: board {button}:{point} -> ok"),
                         Err(error) => {
                             eprintln!("harness: board {button}:{point} -> FAILED: {error}")
+                        }
+                    }
+                    glib::timeout_future(Duration::from_millis(120)).await;
+                }
+                Step::Tree(button, cell) => {
+                    match tree_press(&app, &button, &cell) {
+                        Ok(()) => eprintln!("harness: tree {button}:{cell} -> ok"),
+                        Err(error) => {
+                            eprintln!("harness: tree {button}:{cell} -> FAILED: {error}")
                         }
                     }
                     glib::timeout_future(Duration::from_millis(120)).await;
@@ -739,6 +757,39 @@ fn board_click(app: &adw::Application, button: &str, coordinate: &str) -> Result
     } else {
         board.click_at(button, modifiers, x, y);
     }
+    Ok(())
+}
+
+fn tree_press(app: &adw::Application, button: &str, cell: &str) -> Result<(), String> {
+    use crate::widgets::MoveTreeView;
+    use gtk::gdk;
+
+    fn find_tree(widget: &gtk::Widget) -> Option<MoveTreeView> {
+        if let Some(tree) = widget.downcast_ref::<MoveTreeView>() {
+            return tree.is_mapped().then(|| tree.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            if let Some(tree) = find_tree(&current) {
+                return Some(tree);
+            }
+            child = current.next_sibling();
+        }
+        None
+    }
+
+    let button = match button {
+        "primary" => gdk::BUTTON_PRIMARY,
+        "secondary" => gdk::BUTTON_SECONDARY,
+        _ => return Err("unknown button".into()),
+    };
+    let (depth, lane) = cell
+        .split_once(':')
+        .and_then(|(d, l)| Some((d.parse().ok()?, l.parse().ok()?)))
+        .ok_or("expected depth:lane")?;
+    let window = app.active_window().ok_or("no active window")?;
+    let tree = find_tree(window.upcast_ref()).ok_or("no mapped move tree (stack:Moves)")?;
+    tree.press_cell(button, depth, lane);
     Ok(())
 }
 

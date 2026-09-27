@@ -281,6 +281,7 @@ Traps:
 | `sort:<column title>` | Sort the first `GtkColumnView` by that column, and flip direction if it is already primary | 250 ms |
 | `fill:<placeholder>=<text>` | Fill the first visible `gtk::SearchEntry` or `gtk::Entry` whose placeholder matches | 120 ms |
 | `board:<primary\|secondary\|menu\|hover>:<GTP>` | Click the mapped board through its production handler, or with `hover` move the pointer there through the motion handler (ghost stone, candidate preview). `menu` is Shift+secondary. Invalid, pass and off-board coordinates fail without editing | 120 ms |
+| `tree:<primary\|secondary>:<depth>:<lane>` | Press the move-tree cell at that grid position (root is `0:0`, the main line is lane 0) through its production handler: `primary` navigates, `secondary` opens the node menu. `no mapped move tree` unless `stack:Moves` is showing | 120 ms |
 | `shot:<path.png>` | Render the active window to PNG | see below |
 | `shot:<path.png>=<widget id>` | Same render, cropped to one widget. Ids are Blueprint's (`blunder_expander`, `nav`, …) | see below |
 | `divider:<px>` | Move the board/graph divider so the graph is that tall, through the `set_position` a drag ends in; the paned clamps it at the graph's minimum (80 once laid out). `NOT LAID OUT` while the graph is hidden or unallocated | 250 ms |
@@ -319,6 +320,13 @@ draws no ancestor background. Ids resolve by `GtkWidget:name` or buildable id.
 `no widget id "x"` means the id is wrong; `"x" is not mapped yet` means the
 widget is hidden — the blunder expander is invisible until a sweep finds
 something.
+
+**Menus need focus.** A context popover is an xdg_popup with a grab, and the
+compositor refuses the grab for a window without keyboard focus: the popover
+stays unmapped and the `press:` that follows reports `NOT FOUND`. The
+`open-focused false` rule below therefore rules out `tree:secondary` →
+`press:`; focus the harness window for those runs. A popover is its own
+surface, so `shot:` never shows it — shoot the result after `press:` instead.
 
 ### Recipes
 
