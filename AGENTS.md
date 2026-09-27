@@ -196,7 +196,7 @@ Full detail, including how to drive the GUI headlessly and verify against a real
   than adding it quietly. Two hard-won constraints: `rustls` is pinned to the `ring` provider
   (`default-features = false`) because a second crypto provider makes
   `ClientConfig::builder()` panic at runtime; SHA-256 is implemented in-tree
-  (`mirai-proto/src/sha256.rs`) rather than pulled in for 60 lines.
+  (`mirai-proto/src/sha256.rs`) rather than pulled in for under 100 lines.
 - **Keep the tree rustfmt- and clippy-clean.** Both are clean across the workspace today
   (`cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings` exit
   0), so day to day you only need them on what you touched: `cargo fmt`, `cargo clippy -p

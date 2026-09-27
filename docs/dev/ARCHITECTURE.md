@@ -45,17 +45,17 @@ flowchart TB
     server --> katago
 ```
 
-| crate | owns | depends on | may **not** depend on |
+| crate | owns | workspace crates it uses | may **not** depend on |
 |---|---|---|---|
-| `mirai-core` | geometry, rulesets, legality, superko, scoring, game tree, SGF, time control | serde, smallvec, arrayvec, encoding_rs, base64, zstd, postcard | any workspace crate; GTK; tokio; anything doing real I/O |
-| `mirai-proto` | MRP value types, messages, frame codec, QUIC transport, SHA-256 for cert pins | `mirai-core`, quinn, rustls, rcgen, postcard, zstd, bitflags, tokio | `mirai-engine`, `mirai`, serde_json, **anything KataGo-specific** |
-| `mirai-engine` | the `Engine` trait and its two implementations; KataGo query building and response decoding | `mirai-core`, `mirai-proto`, tokio, serde_json, quinn | GTK/glib/adw, `mirai`, `mirai-server` |
-| `mirai-client` | shared application layer: analysis requests, sweep planning, play, Fox, TOFU session | `mirai-core`, `mirai-engine` (`remote` only), tokio, serde_json | GTK/glib/adw, `mirai`, `mirai-server`, KataGo JSON |
-| `mirai-server` | headless host: one KataGo per configured engine, multiplexed across clients, token auth | `mirai-core`, `mirai-engine`, `mirai-proto`, clap, toml, subtle, quinn | GTK, `mirai` |
-| `mirai` | `AppState`, window, custom `gsk` widgets, GTK adapters over `mirai-client`, preferences, config | all four libraries, gtk4, libadwaita, glib, tokio, toml, directories | — |
+| `mirai-core` | geometry, rulesets, legality, superko, scoring, game tree, SGF, time control | — | any workspace crate; GTK; tokio; anything doing real I/O |
+| `mirai-proto` | MRP value types, messages, frame codec, QUIC transport, SHA-256 for cert pins | `mirai-core` | `mirai-engine`, `mirai`, serde_json, **anything KataGo-specific** |
+| `mirai-engine` | the `Engine` trait and its two implementations; KataGo query building and response decoding | `mirai-core`, `mirai-proto` | GTK/glib/adw, `mirai`, `mirai-server` |
+| `mirai-client` | shared application layer: analysis requests, sweep planning, play, Fox, TOFU session | `mirai-core`, `mirai-engine` (`remote` feature) | GTK/glib/adw, `mirai`, `mirai-server`, KataGo JSON |
+| `mirai-server` | headless host: one KataGo per configured engine, multiplexed across clients, token auth | `mirai-core`, `mirai-engine`, `mirai-proto` | GTK, `mirai` |
+| `mirai` | `AppState`, window, custom `gsk` widgets, GTK adapters over `mirai-client`, preferences, config | all four libraries | — |
 
-Versions are pinned in the root `[workspace.dependencies]`. `mirai` and `mirai-server` are
-binaries; nothing depends on either. The table's dependency boundaries are rules: a GTK import
+Third-party dependencies are each crate's `Cargo.toml`, with versions pinned in the root
+`[workspace.dependencies]`. `mirai` and `mirai-server` are binaries; nothing depends on either. The table's dependency boundaries are rules: a GTK import
 outside `mirai` or KataGo JSON in `mirai-proto` is a design break.
 
 ---
@@ -247,7 +247,8 @@ Suicide is legal only under `multi_stone_suicide` and only for chains larger tha
 subtree without cloning; `restore_branch` restores the same ids and sibling index.
 `delete_branch` drops a detached branch. Use `get`/`contains` when an id may be tombstoned:
 `node(id)` panics. `len()` counts live nodes, not arena slots. Mutations bump `revision()`;
-`MoveTreeView` relies on it to avoid unnecessary relayout.
+changes to the shape of the tree also bump `structure_revision()`, which `MoveTreeView` keys
+its layout on so a comment or mark does not relayout it.
 
 `Position` is derived state: board, side to move, move number and superko histories.
 `position(id)` returns a cached position for the same id, applies one node if the cache is
@@ -266,9 +267,11 @@ autosave and crash restore use. Stored lines are displayed even if a move is ill
 
 `NodeAnalysis` is stored, dequantised Black-perspective evaluation with at most 50 candidates
 (`AnalysisSettings::stored_suggestion_limit`); ownership remains quantised. It keeps the graph
-and move tree available after the live `Report` is gone. `analysis_of` stores a live result only
-when its generation and captured `position_revision` still match and it has more visits than
-the prior result, preserving a finished sweep against early pondering. `last_report` remains
+and move tree available after the live `Report` is gone. `analysis_of` converts a `Report`;
+`AppState::set_report` stores the result only when it has more visits than what the node holds
+(`replaces_stored_analysis`), so early pondering cannot overwrite a finished sweep, and
+`GameSession::set_analysis_at` refuses it if the `position_revision` it was requested at is
+stale. `last_report` remains
 quantised and is discarded on cursor or position changes. Marks and comments do not bump
 `position_revision`.
 
@@ -337,9 +340,10 @@ thread.
   handshake can take minutes; use the oneshot crossing above.
 - **No waiting synchronously for a subscription.** `finish()` belongs to the probe and server,
   not GUI handlers.
-- **No synced write, directory scan, `PATH` search or SGF parse.** Config save, autosave,
-  SGF opening/parsing and crash-leftover scanning run on `spawn_blocking` and return through
-  the weak window. `write_atomic*` syncs the file and directory (50–100 ms on an ordinary
+- **No synced write, directory scan or `PATH` search.** Config save, autosave, opening an
+  SGF file (read and parse), KataGo discovery, the Fox search cache and crash-leftover
+  scanning run on `spawn_blocking` and return through the weak window. A pasted record is
+  already in memory and is parsed in place. `write_atomic*` syncs the file and directory (50–100 ms on an ordinary
   disk). `flush_config` on close and user-initiated Save remain synchronous: a subsequent
   reader must see the former, while moving Save would need autosave's document-token snapshot
   and exit gate to avoid being overtaken by quit.
@@ -461,7 +465,7 @@ oneshot: on handle drop it waits a short grace period and then kills, and on exi
 engine dead under the subscription mutex and fails every live subscription. The *stderr drain*
 logs each line and keeps a bounded ring for error messages.
 
-**Routing.** A `Mutex<HashMap>` maps monotonic query ids to report senders and decode
+**Routing.** One mutex guards a map from monotonic query ids to report senders and decode
 parameters; no lock spans `.await`. At about ten reports/s per live query, a plain mutex
 lookup measured ~18 ns versus ~20 ns with sharded `DashMap` (writers up to 1000/s);
 parsing a report takes tens of microseconds. `subscribe` checks `dead` under the same lock
@@ -486,7 +490,7 @@ unpinned connect: `probe_fingerprint` does the TLS handshake, returns the leaf f
 and closes with application code 0, and the token is sent only on the later pinned
 connection. Its error classification is load-bearing: `EngineError::Protocol` means
 reconnecting cannot help (bad token, version mismatch, fingerprint mismatch), `Disconnected`
-means retry. Backoff is 0.5 s, 1 s, 2 s, 4 s then capped; while waiting,
+means retry. Backoff doubles from 0.5 s to a cap of 8 s (`MAX_BACKOFF_MS`); while waiting,
 commands are still answered so the handle never deadlocks. `RemoteStatus::Failed` is sticky for
 unfixable causes so the UI can say something truthful instead of spinning, while the task keeps
 retrying at maximum backoff in case the server is fixed and restarted.
@@ -576,8 +580,8 @@ The graph `Paned` does not shrink either child. An unset divider would size the 
 from its minimum request, so `WinrateGraph` pins its remembered `ui.graph_height` until
 first allocation, fixes the divider there, then releases its minimum to 80 px so users
 can drag it both ways. `Ui::drop` persists the last allocated height. `fit_default_size`
-caps a remembered graph height against the shortest monitor (85%, at most 960 px tall)
-so the board remains docked alongside the sidebar. Play/scoring hides the graph,
+makes a new window 85% of the shortest monitor's height, at most 960 px, and exactly as wide
+as the square board that leaves plus the sidebar, so no bare background shows beside it. Play/scoring hides the graph,
 navigation and sidebar; finishing restores their prior state. `sync_graph` combines the
 user's `ui.show_graph` preference with whether play is active.
 
@@ -690,8 +694,8 @@ projection/cache state; it does not borrow `AppState` or replay the game tree.
 4. Add its refresh call to the appropriate arm of `window::handle_change`; do not install a
    second AppState dispatcher or accept references to sibling widgets (INV-7). Widget-internal
    selection hooks still route through the window.
-5. Store any user-visible option in `UiSettings` in `mirai/src/config.rs` and mirror it in
-   `AppState::save_config`.
+5. Store any user-visible option in `UiSettings` in `mirai/src/config.rs` and copy it back in
+   `AppState::capture_display_settings`, which every `save_config` runs first.
 
 ### A new board overlay
 
@@ -754,4 +758,4 @@ Deliberate. Each is commented at the source; do not "fix" one by accident.
 | **A mid-record setup/`PL` node is a reconstruction boundary** for `AnalyzeReq`: snapshot that board as unique row-major `initialStones`, send only later real moves, and under territory scoring fold the *boundary* prisoner counts into `komi_x2` (never rewriting `KM`). Ordinary move-only games keep an unadjusted move list | `mirai_client::request_for_node` | KataGo cannot express a setup in the middle of a move list; a later setup must not discard the moves after it either |
 | **Replay never rejects an illegal move** | the private `step` in `mirai-core/src/tree.rs` | A stored line is history. Refusing to display a file because it contains an illegal move would be worse than showing it |
 | **`max_board` is fixed at 19x19** | `LocalEngine::spawn`'s `EngineDesc` | Stock KataGo builds cap `MAX_LEN` at 19; a larger board would need a custom build, and nothing else in the tree assumes otherwise |
-| **SHA-256 is implemented in-tree** | `mirai-proto/src/sha256.rs` | ~60 lines on no hot path, versus a dependency and its API churn. Pinned by the standard test vectors |
+| **SHA-256 is implemented in-tree** | `mirai-proto/src/sha256.rs` | under 100 lines on no hot path, versus a dependency and its API churn. Pinned by the standard test vectors |

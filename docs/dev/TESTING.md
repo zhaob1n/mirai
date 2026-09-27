@@ -43,7 +43,7 @@ needed, `cargo test -p <crate> -- --list`.
 | `mirai-engine` | The JSON handed to KataGo (empty `avoidMoves` dropped, never `analyzeTurns`, `terminate` behind INV-3); decode order and Black-perspective values; a candidate cap keeps the engine's best, not KataGo's first; reporting perspective forced on the command line; a comma in an override path is an error; a user-supplied config is overridden only for the two thread counts; the generated analysis config carries every key KataGo demands and is not rewritten when unchanged; calibration selects the measured winner and covers the thread product; dropping a subscription forgets it before the tail is decoded; a decode failure still terminates the search; a dead remote address fails instead of hanging; the MRP session rules against a scripted server; a probe returns the fingerprint and sends no Hello, and a wrong pin fails before Hello | `cargo test -p mirai-engine`. These tests never start KataGo. A real engine is §4 |
 | `mirai-client` | A request built from the last setup/`PL` boundary, with territory komi taken from that boundary; a sweep hands back a result before the rest of the plan is dispatched; blunder drop measured from the mover, above the 2% noise floor; an illegal move changes nothing; dirty is a document token; an unpinned connect probes and waits, and Trust is what sends the pin; temperature 0 is deterministic and one bad report does not resign; Fox dialect normalised before `sgf::parse` | `cargo test -p mirai-client` |
 | `mirai-server` | Token shape; a misspelled key is an error; relative paths resolve against the config directory; the example config parses; exact-match auth (no `[[token]]` rejects everyone); a client cannot raise its own priority; an off-board or oversized request is refused with `BadRequest` before the engine sees it, and only allow-listed overrides reach the engine; a silent pre-auth connection is closed and its session slot returns; a cancelled subscription stops even when its stream is not read, and keeps its `max_subs` slot until it has; an oversized first frame, compressed or not, or `Hello` field is refused as `BadRequest` and kept out of the log | `cargo test -p mirai-server`. Example: `crates/mirai-server/server.example.toml` |
-| `mirai` | Display-free projections only: config merge and discovery order, Clear Board keeps size/rules/komi, the slider spans the line through the cursor, Fox normalisation, widget geometry lifted out of `snapshot()`, harness grammar, a dropped engine acquire does not strand the profile, two acquires share one start, and dropping the pool mid-start closes that start's receiver. Nothing drawn | `cargo test -p mirai`. What the window looks like is §5 |
+| `mirai` | Display-free projections and dispatch only: a comment or mark does not run the `Tree` refresh and one move projects once; a returning remote link re-requests analysis, only for the window's current engine; a score overlay is drawn on the real position, never a pinned variation; a pick is never faded; config merge and discovery order; a missing Human model does not overwrite the saved strength; handicap only where the board has points; cache power 0 or at least 2^14; Clear Board keeps size/rules/komi; the slider spans the line through the cursor; widget geometry lifted out of `snapshot()`; harness grammar; `EnginePool` sharing, stranding and teardown. Nothing drawn | `cargo test -p mirai`. What the window looks like is §5 |
 
 ## 3. Testing philosophy
 
@@ -423,8 +423,8 @@ the preceding `wait:`. A toast that there is no engine to estimate with means
 KataGo never came up; check the log directory (§7).
 
 **(d) Whole-game analysis.** `win.analyse-game` is `BatchAnalysis::start`. Each
-node is analysed to `analysis.batch_visits` (100 by default). Concurrency follows
-`numAnalysisThreads` and saturates at sixteen.
+node is analysed to `analysis.batch_visits` (100 by default), with twice
+`numAnalysisThreads` queries in flight, at most sixteen (`mirai_client::batch::in_flight`).
 
 ```sh
 MIRAI_HARNESS="wait:2000,action:win.analyse-game,wait:90000,shot:/tmp/mirai-batch.png,shot:/tmp/mirai-blunders.png=blunder_expander,quit" \
@@ -541,9 +541,8 @@ INFO certificate fingerprint (compare this with the client before trusting) sha2
 **Point a client at it.**
 
 `probe --remote` is the fastest check (§4). For the GUI, add a remote profile
-(`url`, `token`, optional `engine`) to the isolated `config.toml`. Field
-meanings are the client settings document [`AGENTS.md`](../../AGENTS.md) points
-at. Leave `cert_sha256` out: selecting the profile probes and shows
+(`url`, `token`, optional `engine`) to the isolated `config.toml`; the fields are
+[GUIDE §8](../user/GUIDE.md#the-settings-file). Leave `cert_sha256` out: selecting the profile probes and shows
 `dialogs::confirm_fingerprint` with the colon-grouped digits before any token is
 sent. Trust writes the pin via `Config::set_pin` and then connects; Cancel
 persists nothing. Compare it with the server's startup log (the same grouping;
@@ -608,7 +607,7 @@ Symptom, cause or guard, and location. Rendering mechanics live in
 | The sidebar page switcher is missing, and a stray `✕` sits in its place | `adw::HeaderBar::show_title(false)` hides the *title widget*. That widget **is** the `InlineViewSwitcher`. The `✕` is a second set of window controls | `window.blp` sidebar header: `show-start-title-buttons` / `show-end-title-buttons` false, `show-title` left on |
 | An engine connects, then vanishes seconds later; the server logs a connection with no subscription | Activation race. `activate_profile` is async and a local KataGo takes seconds, so an older activation can finish last | The activation counter in `AppState::activate_profile`. `discarding a superseded engine activation` at debug means the guard worked |
 | Live analysis restarts, but reports keep arriving for the old position | `generation`, bumped by `restart_analysis` and checked before a report is applied | `app.rs` `restart_analysis` |
-| "mirai did not shut down cleanly" on every start | The autosave is deleted by dropping the window's `Ui`. Either the process was killed, or a leftover from an earlier crash has not been answered | `Drop for Ui`, `window::stale_autosaves` |
+| "mirai did not shut down cleanly" on every start | The autosave is deleted by dropping the window's `Ui`. Either the process was killed, or a leftover from an earlier crash has not been answered | `Drop for Ui`, `window::collect_stale_autosaves` |
 | The restore prompt offers an empty board | `GameTree::has_content` regressed. An autosave with no move, setup, mark, to-play override or comment is neither written nor offered | `tree.rs` |
 | Engine and runtime survive window close | A long-lived callback owns the window, or shutdown never took the `Ui`. There is no `Ui::shutdown`. `close-request`, `dispose` and `ApplicationImpl::shutdown` all call `MiraiWindow::shutdown`, which `take_ui`s once. `Drop for Ui` aborts tasks, flushes the comment, cancels batch, play and analysis, saves config, clears the engine, and drops the autosave | `MiraiWindow::shutdown`, `Drop for Ui`, weak-window callbacks in `window.rs`, `play.rs`, `batch.rs` |
 | Sidebar says **No Engine Configured**, and that is treated as a failed open | No profile, no live report, and the current node has no cached analysis. The window is up. The StatusPage button is `win.preferences`; `present` does not open the dialog. A *missing* file may still seed a discovered engine once `Config::seeded` finishes on the blocking pool. An explicit `engine_profile = []` is the empty case | `update_analysis_page`, `prefs::no_engine_status_page`. Recipe (h) |
