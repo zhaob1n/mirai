@@ -340,12 +340,12 @@ window can also steal keyboard focus.
 
 With `MIRAI_HARNESS` set, `harness::application_flags` adds `NON_UNIQUE` (debug
 builds only), so a harnessed run is its own primary instance, and
-`harness::application_id` makes it `io.github.mirai.Mirai.Harness` — the Wayland
+`harness::application_id` makes it `io.github.zhaob1n.Mirai.Harness` — the Wayland
 `app_id` a compositor matches. Keep focus with a rule on that id; on niri:
 
 ```kdl
 window-rule {
-    match app-id="io.github.mirai.Mirai.Harness"
+    match app-id="io.github.zhaob1n.Mirai.Harness"
     open-floating true
     open-focused false
 }

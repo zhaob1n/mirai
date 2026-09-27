@@ -291,7 +291,7 @@ fn generate_token() -> Result<String, &'static str> {
 }
 
 fn default_config_path() -> PathBuf {
-    directories::ProjectDirs::from("io.github", "mirai", "mirai")
+    directories::ProjectDirs::from("io.github", "zhaob1n", "mirai")
         .map(|d| d.config_dir().join("server.toml"))
         .unwrap_or_else(|| PathBuf::from("server.toml"))
 }
@@ -299,7 +299,7 @@ fn default_config_path() -> PathBuf {
 /// KataGo's log directory for an `[[engine]]` without `log_dir`: the one the desktop
 /// application uses, in this user's own data directory, never the shared temp directory.
 fn default_log_dir() -> Option<PathBuf> {
-    directories::ProjectDirs::from("io.github", "mirai", "mirai")
+    directories::ProjectDirs::from("io.github", "zhaob1n", "mirai")
         .map(|d| d.data_dir().join("katago-logs"))
 }
 

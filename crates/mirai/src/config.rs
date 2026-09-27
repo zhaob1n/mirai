@@ -442,14 +442,14 @@ pub struct Config {
 impl Config {
     /// `$XDG_CONFIG_HOME/mirai/config.toml`.
     pub fn default_path() -> Result<PathBuf, ConfigError> {
-        let dirs = directories::ProjectDirs::from("io.github", "mirai", "mirai")
+        let dirs = directories::ProjectDirs::from("io.github", "zhaob1n", "mirai")
             .ok_or(ConfigError::NoHome)?;
         Ok(dirs.config_dir().join("config.toml"))
     }
 
     /// `$XDG_DATA_HOME/mirai`, for the autosave and KataGo logs.
     pub fn data_dir() -> Result<PathBuf, ConfigError> {
-        let dirs = directories::ProjectDirs::from("io.github", "mirai", "mirai")
+        let dirs = directories::ProjectDirs::from("io.github", "zhaob1n", "mirai")
             .ok_or(ConfigError::NoHome)?;
         Ok(dirs.data_dir().to_path_buf())
     }

@@ -2019,7 +2019,7 @@ fn show_shortcuts(ui: &Ui) {
 fn show_about(ui: &Ui) {
     let about = adw::AboutDialog::builder()
         .application_name("mirai")
-        .application_icon("io.github.mirai.Mirai")
+        .application_icon("io.github.zhaob1n.Mirai")
         .version(env!("CARGO_PKG_VERSION"))
         .developer_name("Huang Zhaobin")
         .comments("A KataGo analysis and playing board for GNOME.")

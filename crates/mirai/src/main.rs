@@ -30,8 +30,8 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 
-const APP_ID: &str = "io.github.mirai.Mirai";
-const RESOURCE_PREFIX: &str = "/io/github/mirai/Mirai";
+const APP_ID: &str = "io.github.zhaob1n.Mirai";
+const RESOURCE_PREFIX: &str = "/io/github/zhaob1n/Mirai";
 
 fn main() -> glib::ExitCode {
     tracing_subscriber::fmt()

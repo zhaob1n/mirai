@@ -8,7 +8,7 @@
 #   tools/ui/sized-shot.sh WIDTH HEIGHT "wait:3000,shot:/tmp/x.png,quit" [mirai args…]
 #
 # niri tiles new windows and ignores the default size unless a window rule floats the harness
-# id, io.github.mirai.Mirai.Harness. With one, 0 0 shows exactly the size mirai asked for. A
+# id, io.github.zhaob1n.Mirai.Harness. With one, 0 0 shows exactly the size mirai asked for. A
 # nonzero size floats the window if no rule already has, then sets that size from outside, to
 # check the layout at a size mirai did not choose. Copies ~/.config/mirai/config.toml when
 # present, so the engine profile survives; set MIRAI_NO_CONFIG=1 for the empty case.
