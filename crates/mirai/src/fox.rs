@@ -13,6 +13,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use adw::prelude::*;
+use glib::clone;
 use gtk::{gio, glib};
 use mirai_client::fox;
 pub(crate) use mirai_client::fox::FoxGame;
@@ -273,44 +274,44 @@ impl FoxPickerDialog {
         let widgets = dialog.widgets();
         widgets.stack.set_visible_child(&widgets.status_page);
 
-        widgets.cancel_button.connect_clicked(glib::clone!(
+        widgets.cancel_button.connect_clicked(clone!(
             #[weak]
             dialog,
             move |_| {
                 dialog.close();
             }
         ));
-        widgets.entry.connect_search_changed(glib::clone!(
+        widgets.entry.connect_search_changed(clone!(
             #[weak]
             dialog,
             move |_| dialog.refresh_actions()
         ));
-        widgets.entry.connect_activate(glib::clone!(
+        widgets.entry.connect_activate(clone!(
             #[weak]
             dialog,
             move |_| dialog.start_search()
         ));
-        widgets.search_button.connect_clicked(glib::clone!(
+        widgets.search_button.connect_clicked(clone!(
             #[weak]
             dialog,
             move |_| dialog.start_search()
         ));
-        widgets.open_button.connect_clicked(glib::clone!(
+        widgets.open_button.connect_clicked(clone!(
             #[weak]
             dialog,
             move |_| dialog.start_download()
         ));
-        dialog.connect_selection_changed(glib::clone!(
+        dialog.connect_selection_changed(clone!(
             #[weak]
             dialog,
             move || dialog.refresh_actions()
         ));
-        widgets.result_list.connect_activate(glib::clone!(
+        widgets.result_list.connect_activate(clone!(
             #[weak]
             dialog,
             move |_, _| dialog.start_download()
         ));
-        dialog.connect_closed(glib::clone!(
+        dialog.connect_closed(clone!(
             #[weak]
             dialog,
             move |_| {

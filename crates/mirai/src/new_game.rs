@@ -5,6 +5,7 @@ use std::cell::Cell;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
+use glib::clone;
 use gtk::{CompositeTemplate, glib};
 
 use mirai_core::{Color, RuleSet, Size, TimeControl, fixed_handicap};
@@ -193,7 +194,7 @@ impl NewGameDialog {
 
     fn connect_dynamic_rows(&self) {
         let imp = self.imp();
-        imp.size_row.connect_selected_notify(glib::clone!(
+        imp.size_row.connect_selected_notify(clone!(
             #[weak(rename_to = dialog)]
             self,
             move |row| {
@@ -204,29 +205,29 @@ impl NewGameDialog {
                 dialog.refresh_handicap();
             }
         ));
-        imp.custom_size_row.connect_value_notify(glib::clone!(
+        imp.custom_size_row.connect_value_notify(clone!(
             #[weak(rename_to = dialog)]
             self,
             move |_| dialog.refresh_handicap()
         ));
-        imp.rules_row.connect_selected_notify(glib::clone!(
+        imp.rules_row.connect_selected_notify(clone!(
             #[weak(rename_to = dialog)]
             self,
             move |_| dialog.sync_komi()
         ));
-        imp.handicap_row.connect_selected_notify(glib::clone!(
+        imp.handicap_row.connect_selected_notify(clone!(
             #[weak(rename_to = dialog)]
             self,
             move |_| dialog.sync_komi()
         ));
         self.refresh_time(imp.time_row.selected());
-        imp.time_row.connect_selected_notify(glib::clone!(
+        imp.time_row.connect_selected_notify(clone!(
             #[weak(rename_to = dialog)]
             self,
             move |row| dialog.refresh_time(row.selected())
         ));
         self.refresh_strength(imp.strength_row.selected());
-        imp.strength_row.connect_selected_notify(glib::clone!(
+        imp.strength_row.connect_selected_notify(clone!(
             #[weak(rename_to = dialog)]
             self,
             move |row| {
@@ -234,13 +235,13 @@ impl NewGameDialog {
                 dialog.refresh_strength(row.selected());
             }
         ));
-        imp.visits_row.connect_value_notify(glib::clone!(
+        imp.visits_row.connect_value_notify(clone!(
             #[weak(rename_to = dialog)]
             self,
             move |_| dialog.imp().coerced_strength.set(false)
         ));
         self.refresh_players();
-        imp.colour_row.connect_selected_notify(glib::clone!(
+        imp.colour_row.connect_selected_notify(clone!(
             #[weak(rename_to = dialog)]
             self,
             move |_| dialog.refresh_players()
@@ -367,7 +368,7 @@ pub fn present(
     let has_human_model = state.engine_desc().is_some_and(|desc| desc.has_human_model);
     let dialog = NewGameDialog::new(&play, has_human_model);
 
-    dialog.imp().cancel_button.connect_clicked(glib::clone!(
+    dialog.imp().cancel_button.connect_clicked(clone!(
         #[weak]
         dialog,
         move |_| {
@@ -375,7 +376,7 @@ pub fn present(
         }
     ));
 
-    dialog.imp().start_button.connect_clicked(glib::clone!(
+    dialog.imp().start_button.connect_clicked(clone!(
         #[weak]
         dialog,
         #[weak]

@@ -12,6 +12,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use adw::prelude::*;
+use glib::clone;
 use gtk::{gio, glib};
 
 use mirai_core::RuleSet;
@@ -139,7 +140,7 @@ pub fn engine_menu_model(state: &AppState) -> gio::Menu {
 
 fn connect_engines(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state: &AppState) {
     let local_state = state.clone();
-    widgets.add_local_button.connect_activated(glib::clone!(
+    widgets.add_local_button.connect_activated(clone!(
         #[weak]
         dialog,
         #[weak(rename_to = group)]
@@ -150,7 +151,7 @@ fn connect_engines(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, sta
     ));
 
     let remote_state = state.clone();
-    widgets.add_remote_button.connect_activated(glib::clone!(
+    widgets.add_remote_button.connect_activated(clone!(
         #[weak]
         dialog,
         #[weak(rename_to = group)]
@@ -238,7 +239,7 @@ fn refresh_profiles(
         edit.add_css_class("flat");
         let edit_state = state.clone();
         let edit_profile = profile.clone();
-        edit.connect_clicked(glib::clone!(
+        edit.connect_clicked(clone!(
             #[weak]
             dialog,
             #[weak]
@@ -262,7 +263,7 @@ fn refresh_profiles(
         delete.add_css_class("flat");
         let delete_state = state.clone();
         let delete_name = name.clone();
-        delete.connect_clicked(glib::clone!(
+        delete.connect_clicked(clone!(
             #[weak]
             dialog,
             #[weak]
@@ -297,7 +298,7 @@ fn confirm_delete(
     let state = state.clone();
     alert.connect_response(
         None,
-        glib::clone!(
+        clone!(
             #[weak]
             dialog,
             #[weak]
@@ -405,7 +406,7 @@ fn file_row(
 
     let prompt = format!("Select the {}", title.to_lowercase());
     let cell_for_click = cell.clone();
-    button.connect_clicked(glib::clone!(
+    button.connect_clicked(clone!(
         #[weak]
         row,
         #[weak]
@@ -506,7 +507,7 @@ fn discovered_button(
         button.add_css_class("flat");
         let candidate = candidate.clone();
         let path = path.clone();
-        button.connect_clicked(glib::clone!(
+        button.connect_clicked(clone!(
             #[weak]
             row,
             #[weak]
@@ -912,7 +913,7 @@ fn local_editor(
     let tune_search = search_row.clone();
     let tune_batch = batch_row.clone();
     let tune_cache = cache_row.clone();
-    tune.connect_clicked(glib::clone!(
+    tune.connect_clicked(clone!(
         #[weak]
         dialog,
         #[weak]
@@ -1159,7 +1160,7 @@ fn local_editor(
 
     let save_state = state.clone();
     let banner = editor.banner.clone();
-    editor.save.connect_clicked(glib::clone!(
+    editor.save.connect_clicked(clone!(
         #[weak]
         dialog,
         #[weak]
@@ -1305,7 +1306,7 @@ fn remote_editor(
     let test_url = url_row.clone();
     let test_token = token_row.clone();
     let test_engine = engine_row.clone();
-    test.connect_clicked(glib::clone!(
+    test.connect_clicked(clone!(
         #[weak]
         dialog,
         #[weak]
@@ -1399,7 +1400,7 @@ fn remote_editor(
     // -- save -------------------------------------------------------------------------
     let save_state = state.clone();
     let banner = editor.banner.clone();
-    editor.save.connect_clicked(glib::clone!(
+    editor.save.connect_clicked(clone!(
         #[weak]
         dialog,
         #[weak]
@@ -1706,13 +1707,11 @@ fn connect_analysis(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, st
 
     let reset_state = state.clone();
     let reset_syncing = syncing.clone();
-    widgets
-        .analysis_reset_button
-        .connect_activated(glib::clone!(
-            #[weak]
-            dialog,
-            move |_| reset_analysis(&dialog, &reset_state, &reset_syncing)
-        ));
+    widgets.analysis_reset_button.connect_activated(clone!(
+        #[weak]
+        dialog,
+        move |_| reset_analysis(&dialog, &reset_state, &reset_syncing)
+    ));
 }
 
 /// Pushes `config.analysis` into the preference rows.
@@ -1764,7 +1763,7 @@ fn reset_analysis(dialog: &PreferencesDialog, state: &AppState, syncing: &Rc<Cel
     let undo_state = state.clone();
     let undo_syncing = syncing.clone();
     let toast = undo_toast("Analysis settings restored");
-    toast.connect_button_clicked(glib::clone!(
+    toast.connect_button_clicked(clone!(
         #[weak]
         dialog,
         move |_| apply_analysis(&dialog, &undo_state, &undo_syncing, previous.clone())
@@ -1887,7 +1886,7 @@ fn connect_play(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state:
 
     let reset_state = state.clone();
     let reset_syncing = syncing.clone();
-    widgets.play_reset_button.connect_activated(glib::clone!(
+    widgets.play_reset_button.connect_activated(clone!(
         #[weak]
         dialog,
         move |_| reset_play(&dialog, &reset_state, &reset_syncing)
@@ -1981,7 +1980,7 @@ fn reset_play(dialog: &PreferencesDialog, state: &AppState, syncing: &Rc<Cell<bo
     let undo_state = state.clone();
     let undo_syncing = syncing.clone();
     let toast = undo_toast("Play settings restored");
-    toast.connect_button_clicked(glib::clone!(
+    toast.connect_button_clicked(clone!(
         #[weak]
         dialog,
         move |_| apply_play(&dialog, &undo_state, &undo_syncing, previous.clone())
@@ -2018,14 +2017,14 @@ fn connect_general(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, sta
 
     // These live on AppState, which outlives the dialog. Connecting again every time
     // Preferences opens used to leave the previous handlers in place for the window's life.
-    let ownership_id = state.connect_ownership_overlay_notify(glib::clone!(
+    let ownership_id = state.connect_ownership_overlay_notify(clone!(
         #[weak]
         dialog,
         #[strong]
         overlay_syncing,
         move |state| sync_overlay_row(&dialog, state, &overlay_syncing)
     ));
-    let policy_id = state.connect_policy_overlay_notify(glib::clone!(
+    let policy_id = state.connect_policy_overlay_notify(clone!(
         #[weak]
         dialog,
         #[strong]
@@ -2057,7 +2056,7 @@ fn connect_general(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, sta
     });
 
     let reset_state = state.clone();
-    widgets.general_reset_button.connect_activated(glib::clone!(
+    widgets.general_reset_button.connect_activated(clone!(
         #[weak]
         dialog,
         move |_| reset_ui(&dialog, &reset_state)
@@ -2135,7 +2134,7 @@ fn reset_ui(dialog: &PreferencesDialog, state: &AppState) {
 
     let undo_state = state.clone();
     let toast = undo_toast("General settings restored");
-    toast.connect_button_clicked(glib::clone!(
+    toast.connect_button_clicked(clone!(
         #[weak]
         dialog,
         move |_| apply_ui(&dialog, &undo_state, previous.clone())

@@ -3,6 +3,7 @@
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
+use glib::clone;
 use gtk::{CompositeTemplate, glib};
 
 use mirai_core::Point;
@@ -80,7 +81,7 @@ pub(crate) fn present(window: &MiraiWindow, point: Point) {
     let entry = dialog.imp().entry.get();
     entry.set_text(&prefill);
 
-    dialog.imp().cancel_button.connect_clicked(glib::clone!(
+    dialog.imp().cancel_button.connect_clicked(clone!(
         #[weak]
         dialog,
         move |_| {
@@ -91,7 +92,7 @@ pub(crate) fn present(window: &MiraiWindow, point: Point) {
     let weak = window.downgrade();
     dialog.imp().apply_button.connect_clicked({
         let weak = weak.clone();
-        glib::clone!(
+        clone!(
             #[weak]
             dialog,
             move |_| apply_label(&dialog, &weak, node, point)
@@ -99,7 +100,7 @@ pub(crate) fn present(window: &MiraiWindow, point: Point) {
     });
     entry.connect_activate({
         let weak = weak.clone();
-        glib::clone!(
+        clone!(
             #[weak]
             dialog,
             move |_| apply_label(&dialog, &weak, node, point)

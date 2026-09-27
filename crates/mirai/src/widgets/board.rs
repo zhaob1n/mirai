@@ -7,6 +7,7 @@
 //! once into a throwaway `gtk::Snapshot`, turned into a `gsk::RenderNode` and replayed with a
 //! single `append_node` every frame.
 
+use glib::clone;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use gtk::{gdk, glib, graphene, gsk, pango};
@@ -1458,7 +1459,7 @@ impl BoardView {
         ] {
             state.connect_notify_local(
                 Some(property),
-                glib::clone!(
+                clone!(
                     #[weak(rename_to = view)]
                     self,
                     move |_, _| {
@@ -1578,7 +1579,7 @@ impl BoardView {
         for button in [gdk::BUTTON_PRIMARY, gdk::BUTTON_SECONDARY] {
             let gesture = gtk::GestureClick::new();
             gesture.set_button(button);
-            gesture.connect_released(glib::clone!(
+            gesture.connect_released(clone!(
                 #[weak(rename_to = view)]
                 self,
                 move |gesture, _, x, y| {
@@ -1589,7 +1590,7 @@ impl BoardView {
         }
 
         let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
-        scroll.connect_scroll(glib::clone!(
+        scroll.connect_scroll(clone!(
             #[weak(rename_to = view)]
             self,
             #[upgrade_or]
@@ -1606,12 +1607,12 @@ impl BoardView {
         self.add_controller(scroll);
 
         let motion = gtk::EventControllerMotion::new();
-        motion.connect_motion(glib::clone!(
+        motion.connect_motion(clone!(
             #[weak(rename_to = view)]
             self,
             move |_, x, y| view.update_hover(Some((x, y)))
         ));
-        motion.connect_leave(glib::clone!(
+        motion.connect_leave(clone!(
             #[weak(rename_to = view)]
             self,
             move |_| view.update_hover(None)
