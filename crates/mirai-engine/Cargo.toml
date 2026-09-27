@@ -3,6 +3,10 @@ name = "mirai-engine"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+description = "KataGo analysis for mirai, as a local subprocess or a remote MRP server"
+repository.workspace = true
+keywords = ["go", "baduk", "katago", "analysis"]
+categories = ["games"]
 
 [features]
 # Both drivers, so desktop and server builds are unchanged. A consumer that only talks to

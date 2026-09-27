@@ -3,6 +3,11 @@ name = "mirai-server"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+description = "Headless host sharing KataGo with mirai clients over QUIC"
+repository.workspace = true
+readme.workspace = true
+keywords = ["go", "baduk", "katago", "quic"]
+categories = ["games", "network-programming", "command-line-utilities"]
 
 [[bin]]
 name = "mirai-server"

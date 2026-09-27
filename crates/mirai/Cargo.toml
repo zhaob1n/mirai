@@ -3,6 +3,11 @@ name = "mirai"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+description = "GTK4/libadwaita Go board for analysis, review and play with KataGo"
+repository.workspace = true
+readme.workspace = true
+keywords = ["go", "baduk", "weiqi", "katago", "gtk"]
+categories = ["games", "gui"]
 
 [[bin]]
 name = "mirai"

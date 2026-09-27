@@ -3,6 +3,10 @@ name = "mirai-proto"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+description = "MRP, the mirai remote-analysis protocol: message types, frame codec and QUIC transport"
+repository.workspace = true
+keywords = ["go", "katago", "quic", "protocol"]
+categories = ["network-programming", "games"]
 
 [features]
 # The Quinn client/server. On by default so desktop and server builds are unchanged; a

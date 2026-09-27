@@ -3,6 +3,10 @@ name = "mirai-core"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+description = "Go board geometry, rules, scoring, game tree and SGF for mirai"
+repository.workspace = true
+keywords = ["go", "baduk", "weiqi", "sgf"]
+categories = ["games", "parser-implementations"]
 
 [dependencies]
 serde.workspace = true

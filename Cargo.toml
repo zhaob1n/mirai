@@ -13,14 +13,18 @@ members = [
 edition = "2024"
 version = "0.1.0"
 license = "GPL-3.0-or-later"
+repository = "https://github.com/zhaob1n/mirai"
+readme = "README.md"
 
 [workspace.dependencies]
-mirai-core = { path = "crates/mirai-core" }
+# The `version` makes the path dependencies packageable. Cargo does not tie it to the
+# workspace version above: bump all four by hand with it, or packaging fails.
+mirai-core = { path = "crates/mirai-core", version = "0.1.0" }
 # Off by default: stable Cargo refuses a member's `default-features = false` when the
 # workspace entry leaves defaults on, so each member names the features it uses.
-mirai-proto = { path = "crates/mirai-proto", default-features = false }
-mirai-engine = { path = "crates/mirai-engine", default-features = false }
-mirai-client = { path = "crates/mirai-client" }
+mirai-proto = { path = "crates/mirai-proto", version = "0.1.0", default-features = false }
+mirai-engine = { path = "crates/mirai-engine", version = "0.1.0", default-features = false }
+mirai-client = { path = "crates/mirai-client", version = "0.1.0" }
 
 gtk = { package = "gtk4", version = "0.11.5", features = ["blueprint", "gnome_50"] }
 adw = { package = "libadwaita", version = "0.9.2", features = ["v1_9"] }
