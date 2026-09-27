@@ -6,7 +6,8 @@ normatively in [`PROTOCOL.md`](PROTOCOL.md); how to prove a change works is
 [`../archive/RETROSPECTIVE.md`](../archive/RETROSPECTIVE.md); the user's view is
 [`../user/GUIDE.md`](../user/GUIDE.md). Candidate colour versus KataGo's `order` is
 [`CANDIDATE_COLOUR.md`](CANDIDATE_COLOUR.md). Fox HTTP and its SGF dialect are
-[`FOX_KIFU_API_SPEC.md`](FOX_KIFU_API_SPEC.md).
+[`FOX_KIFU_API_SPEC.md`](FOX_KIFU_API_SPEC.md). Arch packaging is
+[`PACKAGING.md`](PACKAGING.md).
 
 §3 maps tasks to files; paths there are from the repository root. Signatures and field lists
 live in code. Invariants are defined in [`../../AGENTS.md`](../../AGENTS.md) §2; wire rules
