@@ -207,12 +207,15 @@ impl PlayController {
             // Owned by the search stream and the count; leave whatever they wrote.
             PlayState::AiThinking => return,
             PlayState::AiStalled(reason) => reason.clone(),
-            PlayState::Scoring => match self.play.borrow().result_phrase() {
-                Some(phrase) => format!("{phrase} — click a group to mark it dead"),
+            PlayState::Scoring => match self.play.borrow().result() {
+                Some(result) => format!(
+                    "{} — click a group to mark it dead",
+                    mirai_client::play::result_phrase(result)
+                ),
                 None => return,
             },
-            PlayState::Over(_) => match self.play.borrow().result_phrase() {
-                Some(phrase) => phrase,
+            PlayState::Over(_) => match self.play.borrow().result() {
+                Some(result) => mirai_client::play::result_phrase(result),
                 None => return,
             },
         };

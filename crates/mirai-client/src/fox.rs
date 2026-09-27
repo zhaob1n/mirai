@@ -93,18 +93,19 @@ impl FoxGame {
         )
     }
 
-    /// SGF result text: `"B+3.5"`, `"W+R"`, or `"No result"` when Fox reported no winner.
+    /// SGF result text: `"B+3.5"`, `"W+R"`, `"B+"` for an unrecorded margin, or empty when
+    /// Fox reported no winner.
     pub fn result(&self) -> String {
         let colour = match self.winner {
             1 => "B",
             2 => "W",
-            _ => return "No result".to_string(),
+            _ => return String::new(),
         };
         match self.point {
             -1 => format!("{colour}+R"),
             -2 => format!("{colour}+T"),
             n if n >= 0 => format!("{colour}+{}", hundredths(n as u32)),
-            _ => format!("{colour} wins"),
+            _ => format!("{colour}+"),
         }
     }
 }

@@ -255,7 +255,12 @@ fn list_row(game: &FoxGame) -> FoxRow {
     }
     details.push(format!("{}×{}", game.board_size, game.board_size));
     details.push(format!("{} moves", game.moves));
-    details.push(game.result());
+    let result = game.result();
+    details.push(if result.is_empty() {
+        "No result".to_string()
+    } else {
+        result
+    });
     if !game.title.is_empty() {
         details.push(fox::display_text(&game.title));
     }
