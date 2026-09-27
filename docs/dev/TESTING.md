@@ -9,13 +9,10 @@ How to prove a change to mirai works. Contributor entry is
 [`AGENTS.md`](../../AGENTS.md). Frame cost is [`RENDERING.md`](RENDERING.md); the
 candidate-colour ramp is [`CANDIDATE_COLOUR.md`](CANDIDATE_COLOUR.md).
 
-This is a GTK4 app on Wayland. An external grab of the XWayland root is black, so
-the application screenshots itself (§5). A `shot:` proves *what* is drawn, not how
-fast: capture re-enters `snapshot()` after the geometry has settled
-([`RENDERING.md`](RENDERING.md) §6). Do not rerun frame benchmarks after every
-iteration. Measure the completed feature set before merging, or sooner when a
-change touches a per-frame path or a stutter was observed. The instrument is
-`crates/mirai/src/render_probe.rs` and `tools/perf/`.
+Wayland root grabs are black. Use the in-process harness (§5) for screenshots;
+`shot:` proves what is drawn, not frame time. For per-frame changes or observed
+stutter, measure with `MIRAI_FRAMES=1` and `tools/perf/` as in
+[`RENDERING.md`](RENDERING.md).
 
 ## 1. Quick reference
 
@@ -26,23 +23,12 @@ cargo build --release --workspace
 cargo test -p mirai-proto --test wire_size -- --nocapture   # prints the measured byte budget
 ```
 
-For documentation edits, run `python tools/docs/check-links.py`: it checks local files and
-heading anchors outside fenced examples, and reports the optional adjacent `mirai-hmos`
-link separately.
-
-`cargo fmt --all --check`, `blueprint-compiler lint crates/mirai/src/window.blp
-crates/mirai/src/new_game.blp crates/mirai/src/label_editor.blp
-crates/mirai/src/preferences.blp crates/mirai/src/profile_editor.blp
-crates/mirai/src/fox_picker.blp crates/mirai/src/panels/analysis.blp`, and the clippy line above are quiet under the current
-stable toolchain. Between full runs, `cargo fmt` and `cargo clippy -p <crate>` on what you touched are
-enough. A toolchain bump that lights up untouched code is its own change.
-
-| Never run casually | Why |
-|---|---|
-| `cargo clippy --fix` | Rewrites files you did not read and may be held by another agent. Fix lints individually. |
-
-There are no doc-tests: the `//!` examples in `harness.rs` and `probe.rs` are plain `text`
-fences and are never compiled. They can rot; treat them as prose.
+For documentation edits, run `python tools/docs/check-links.py`. It checks local
+files and heading anchors; the optional adjacent `mirai-hmos` link is reported
+separately. For Rust, run `cargo fmt --all --check`; for Blueprint, run
+`blueprint-compiler lint crates/mirai/src/{window,preferences,new_game,fox_picker,label_editor,profile_editor}.blp crates/mirai/src/panels/analysis.blp`.
+Avoid `cargo clippy --fix`: it rewrites files you have not reviewed.
+`harness.rs` and `probe.rs` have prose examples, not doc-tests.
 
 ## 2. What is covered where
 
@@ -60,19 +46,10 @@ needed, `cargo test -p <crate> -- --list`.
 
 ## 3. Testing philosophy
 
-What deserves a test, and what does not, is [AGENTS.md](../../AGENTS.md) (Testing
-expectations). This section is only the boundary `cargo test` cannot cross.
-
-The suite is headless. It does not start GTK and it does not start KataGo. Two
-defects it structurally cannot catch:
-
-1. **Rendered output.** A transposed overlay is obvious in a PNG and invisible to
-   any affordable assertion about `snapshot()`. Drive it through §5 and look at
-   the picture.
-2. **Real concurrent timing.** The engine-activation race needed two engines with
-   different startup latencies selected in quick succession. Its guard is the
-   activation counter in `AppState::activate_profile`. Its proof is a log beside
-   a screenshot, not another unit test.
+Test expectations are in [AGENTS.md](../../AGENTS.md#testing-expectations).
+`cargo test` starts neither GTK nor KataGo. Check rendered output with a harness
+PNG (§5); check timing-sensitive engine behaviour with a real engine and logs
+(§§4–6). The suite cannot prove either.
 
 ## 4. Verifying against a real engine
 
@@ -84,16 +61,8 @@ list. The ones that matter are `--katago/--model/--config` (local),
 `--visits/--size/--moves/--komi/--rules/--report-every-ms` (the position).
 
 ```sh
-# KataGo on PATH, a network, and the analysis config mirai generated for itself —
-# the same three the application runs with. The model path below is one net the
-# empty-board figures in this section were measured on, not a claim about which
-# net is current. Another net moves those figures.
-#
-# `a4-s16-b64-c20` in the config name *is* `EngineTuning::default()`: 4 analysis
-# threads, 16 search threads, batch 64, cache 2^20. Change anything in
-# Preferences → Engines and mirai writes a differently named file beside it.
-# `sweep` and the fixture generator write the default themselves when `--config`
-# is omitted.
+# Use the same KataGo binary, model and generated config as the GUI.
+# The model below was used for the example numbers in this section; other nets differ.
 export KATA=katago
 export MODEL=~/.katago/models/b10c512h8nbt3tflrs-fson-silu-rsnh.bin.gz
 export CFG=~/.local/share/mirai/katago-logs/katago-analysis-a4-s16-b64-c20.cfg
@@ -146,12 +115,9 @@ cargo run -p mirai-engine --example sweep -- \
     --katago "$KATA" --model "$MODEL" --visits 1000 --every 4 game.sgf > sweep.csv
 ```
 
-`--config` is optional; without it the built-in tuning writes one into the
-temporary directory. The shipped ramp was fitted on a 197-move Fox game at 1 000
-and 5 000 root visits, a 29-move engine self-play record, a decided 9×9 endgame
-and a 9×9 opening. Search depth below ten visits is not a colour, not a label
-and not full opacity (`TRUSTED_VISITS`). A breakpoint moved next should be
-remeasured this way, not reasoned about.
+`--config` is optional; without it built-in tuning writes a temporary config.
+Re-measure ramp changes against real games; the fitted samples and visit floor
+are in [`CANDIDATE_COLOUR.md`](CANDIDATE_COLOUR.md).
 
 ### Measuring the wire
 
@@ -204,11 +170,9 @@ asserts structure and legality rather than which moves were chosen. Byte length,
 node count and candidate count come from the file — take the new ones from what
 the run prints.
 
-A replacement for the second fixture has to come from some *other* program's
-writer. Do not reach for a downloaded human game: it is somebody's property
-([`FOX_KIFU_API_SPEC.md`](FOX_KIFU_API_SPEC.md) §11), and the Fox dialect is
-already covered by the tests in `mirai-client/src/fox.rs`, which run before
-`sgf::parse` sees those bytes.
+The second fixture must come from another writer. Do not substitute a downloaded
+human game; see [`FOX_KIFU_API_SPEC.md` §9](FOX_KIFU_API_SPEC.md).
+Fox normalisation is already covered in `mirai-client/src/fox.rs`.
 
 ### Telling a defect from a model difference
 
@@ -244,23 +208,9 @@ printf '%s\n' '{"id":"gt","boardXSize":19,"boardYSize":19,"rules":"chinese","kom
 
 ## 5. Testing the GUI
 
-Derived from `crates/mirai/src/harness.rs`, `window.rs`, `window_shell.rs` and
-`main.rs`. Recipes are for a **debug** build. Tune `wait:` for the local engine.
-stderr is the record of which steps completed.
-
-The window this drives is review-first. The editor toolbar starts collapsed
-(`editor_revealer`, `reveal-child: false`); `action:win.toggle-editor` opens it.
-Navigation sits under the board only — first/prev/next/last, branch, slider,
-`move_position` (`n / N · B|W`), Editing Tools, Board Menu — not in a
-window-wide bottom bar, and not as a second analysis readout. Clocks, Undo,
-Pass and Resign are a separate `play_bar`, hidden until a game is active; while
-one is running or being scored, the graph, `nav` and the sidebar are hidden.
-The sidebar's candidate list shows `# / Move / Win / Score / Visits`. Loss and
-Prior stay hidden until `action:win.toggle-candidate-details`. The graph is
-always Black's (`Black 36.0%` on the cursor; tooltip names Black win rate and
-Black score lead). The sidebar opens with one status line — the side-to-move
-stone, visits, and speed while a live search runs — and its rows are the side
-to move.
+The harness lives in `crates/mirai/src/harness.rs`; use a **debug** build. Tune
+`wait:` for the local engine. Stderr records completed steps. Window layout is
+mapped in [`ARCHITECTURE.md` §7](ARCHITECTURE.md#7-gui-architecture).
 
 Action names are whatever `window::install_actions` registers. A typo logs
 `MISSING`. The recipes below name the actions they need. `win.open` and
@@ -269,71 +219,33 @@ command line.
 
 ### Why the process screenshots itself
 
-The session is Wayland, with XWayland for X11 clients. The compositor owns
-window contents, so a grab of the XWayland root is black. `GDK_BACKEND=x11`
-makes an external grab work and is **not acceptable**: mirai ships on Wayland,
-and a test that only passes on another backend is not testing the shipped
-configuration. There is no `GDK_BACKEND` in the repo. Adding one is a regression
-in the test, not a fix.
-
-`harness::shot` asks the window's own GSK renderer:
-
-```rust
-let paintable = gtk::WidgetPaintable::new(Some(&window));
-let snapshot = gtk::Snapshot::new();
-paintable.snapshot(&snapshot, w as f64, h as f64);
-let node = snapshot.to_node().ok_or("nothing was drawn")?;
-
-let renderer = window.native().and_then(|n| n.renderer()).ok_or("the window has no renderer")?;
-let texture = renderer.render_texture(&node, None);
-texture.save_to_png(path)
-```
-
-That is the native Wayland backend, and it includes the custom `snapshot()` of
-`BoardView`, `WinrateGraph` and `MoveTreeView` (INV-9).
+The compositor owns Wayland window contents; an XWayland root grab is black.
+Do not force `GDK_BACKEND=x11`: test the shipped backend. `harness::shot` uses
+the window's `WidgetPaintable` and GSK renderer, including custom widgets'
+`snapshot()` (INV-9).
 
 ### Real code paths, not a test-only path
 
-`harness::activate` calls `WidgetExt::activate_action` on the active window.
-`action:win.toggle-analysis` therefore reaches **exactly the handler
-<kbd>space</kbd> reaches**: the same `GAction`, installed once in
-`window::install_actions`. Names beginning `app.` go to the application.
+`action:` activates the window's production `GAction` (or the application for
+`app.`); `action:win.toggle-analysis` reaches the same handler as <kbd>space</kbd>.
+`press:` searches the visible dialog if present, otherwise the window. It
+matches mapped, sensitive controls by label/title, nested label or tooltip;
+use `press:Edit this profile` for an icon button. Menu buttons open their
+popover; wait for it to map before choosing an item:
+`board:menu:D4,wait:1000,press:Set as Main Line`. Action rows and expanders
+activate by title or label (`press:Blunders`).
 
-`harness::press` walks the visible dialog when one is presented, otherwise the
-window. It matches only visible, mapped, sensitive controls, so a modal toast's
-**Undo** cannot hit the background editor's **Undo**. For a `gtk::Button` it
-tries the label, then the first `gtk::Label` in the subtree (an
-`adw::ButtonContent`), then the tooltip — which is how `press:Edit this profile`
-and `press:Editing Tools` reach an icon-only button. A matching `gtk::MenuButton`
-is popped up; its entries are then ordinary buttons. A visible menu item
-(`MenuItem`, `MenuItemCheckbox`, `MenuItemRadio`) is activated by label, which
-is how a board context-menu item is chosen after `board:menu:`. Allow the
-popover to map first: `board:menu:D4,wait:1000,press:Set as Main Line`.
+`page:` needs an open Preferences dialog (`action:win.preferences`); switch to
+the desired page before `press:Restore Defaults` because several pages have
+that button. `set:` targets numeric rows (`set:Maximum Visits=2000`), which
+have no steppers for `press:`. `stack:Moves` selects the sidebar page;
+`press:Moves` cannot activate its switcher. `sort:` targets column titles;
+show Loss and Prior with `win.toggle-candidate-details` before sorting them.
+Hiding the sorted column resets sorting to `#`.
 
-Native `adw::ButtonRow` and `adw::ActionRow` controls activate by title.
-`gtk::Expander` toggles by label: `press:Blunders` folds the list. A blunder row
-is one line: emoji stone, move number, loss, played point, and an optional best,
-with the severity class on the title. `press:played` activates the first row
-because that word is in the title.
-
-`page:` opens a Preferences page by title (`Engines`, `Analysis`, `Play`,
-`Appearance`). The dialog must already be up (`action:win.preferences`). Three
-pages each end in **Restore Defaults**; switch the page first, then
-`press:Restore Defaults`, so the visible row is the one you mean.
-`set:` writes an `adw::SpinRow` by title (`set:Maximum Visits=2000`). Those rows
-have no steppers, so `press:` cannot reach a number.
-`stack:` shows an `adw::ViewStack` page. The sidebar switcher is not a
-`GtkButton`, so `press:Moves` does not work; `stack:Moves` does.
-`sort:` sorts the first `GtkColumnView` by column title. A header is not a
-button. Repeating the step flips direction. Loss and Prior are not sortable
-targets until `win.toggle-candidate-details` has shown them; hiding the column
-that is the current sort returns the sort to `#`.
-
-`board:` finds the mapped board, computes the intersection from its layout, and
-calls the same hit-test handler as the released mouse gesture. In review,
-`board:secondary:` deletes the branch in Play, toggles the opposite colour in
-Setup, and does nothing with mark tools. `board:menu:` never edits. This
-verifies the production handler, not physical Wayland delivery.
+`board:` enters the production hit-test handler, not physical Wayland input.
+In review, secondary-click deletes a branch in Play, toggles the opposite
+colour in Setup, and does nothing with mark tools; `board:menu:` never edits.
 
 Traps:
 
@@ -342,9 +254,10 @@ Traps:
   switch the page first when titles repeat.
 - A popover lives on its own surface, so its contents never appear in a `shot`.
   Verify a chooser by what picking an entry *does*.
-- `adw::AlertDialog` responses are response ids, not buttons we construct.
-  [INFERENCE] `press:Close` works only if libadwaita realises them as labelled
-  buttons; unverified. End such recipes with `shot` then `quit`.
+- `press:` walks visible dialog controls, including mapped response buttons
+  when libadwaita renders them as `gtk::Button`; response ids alone are not
+  matching labels. If no matching button is mapped, capture with `shot:` and
+  end with `quit`.
 - Fox's search entry debounces. Use
   `fill:Exact Fox nickname=…,wait:500,press:Search`, not an immediate press
   while Search is disabled.
@@ -408,20 +321,11 @@ something.
 
 ### Recipes
 
-Preconditions for anything that needs an engine: a debug build, and a profile
-already in the isolated `config.toml`. A *missing* file is not "no engine", but
-it is not a synchronous seed either. `Config::load` returns an empty config;
-`Config::seeded()` then runs on the blocking pool and, when it finds `katago`
-on `PATH` and a `*.bin.gz`, installs that profile and starts it. Until the walk
-finishes the sidebar may show **No Engine Configured**. An
-explicit `engine_profile = []` is the empty case, and it does **not** open
-Preferences. The window comes up; the sidebar shows **No Engine Configured**
-with a Preferences button. Opening an SGF that has `MRAI` on the current node
-shows the analysis panel instead, with no visits/s speed. See recipe (h).
-
-A local KataGo takes several seconds to load its net, which is why the first
-`wait:` is generous. Toggling analysis before it is ready is safe:
-`AppState::set_engine` calls `restart_analysis` when the engine lands.
+Engine recipes need a debug build and a profile in isolated `config.toml`.
+If the file is missing, `Config::seeded()` may discover KataGo and a network
+asynchronously; allow time for it. Explicit `engine_profile = []` prevents
+discovery (recipe (h)). KataGo takes seconds to load; toggling analysis before
+it is ready is safe because `AppState::set_engine` restarts it on arrival.
 
 ```sh
 export SGF=$PWD/crates/mirai-core/tests/data/katago-selfplay.sgf
@@ -429,13 +333,9 @@ export RUST_LOG=info,mirai=debug
 ```
 
 **Isolation — a harness run must not touch the developer's session.**
-
-| Shared thing | What happens without isolation |
-|---|---|
-| The bus name | mirai is a unique `GApplication`. A second launch hands its SGF to the running instance and exits 0, so the script runs nowhere |
-| `~/.config/mirai/config.toml` | close saves config, so a run that changed a display option persists it into the developer's settings. `save_merged` keeps other *windows'* keys, not other people's |
-| `$XDG_DATA_HOME/mirai` | autosaves and `katago-logs` live here. A crash leaves the developer a restore prompt for a record they never opened |
-| Keyboard focus | the compositor focuses a new window. A scripted run takes the developer's focus mid-keystroke, though no step needs it |
+The unique `GApplication` otherwise forwards a second launch to the existing
+window. Config writes and autosaves use the active XDG directories; a scripted
+window can also steal keyboard focus.
 
 With `MIRAI_HARNESS` set, `harness::application_flags` adds `NON_UNIQUE` (debug
 builds only), so a harnessed run is its own primary instance, and
@@ -469,13 +369,9 @@ rm -rf "$scratch"
 sets the window size: `0 0` keeps the size mirai asked for (needs a window rule that floats
 the harness id), a nonzero size floats the window and forces that size.
 
-**Never use `dbus-run-session` to get a second instance.** It costs the login
-session its accessibility bus: the GTK client activates `org.a11y.Bus` on the
-private bus, `at-spi-bus-launcher` rewrites `$XDG_RUNTIME_DIR/at-spi/bus_0`, and
-when the private session exits the socket file outlives its listener. Every GTK
-application started afterwards logs `Unable to connect to the accessibility bus`
-until `systemctl --user restart at-spi-dbus-bus`. `GTK_A11Y=none` does not
-prevent it. `NON_UNIQUE` removes the reason to want a private bus.
+Do not use `dbus-run-session` for a second instance: it can leave the login
+session's accessibility bus socket without a listener. Debug harness runs
+already set `NON_UNIQUE`.
 
 **(a) Load an SGF, navigate, live analysis, screenshot.** A positional path is
 opened through `connect_open`.
@@ -503,20 +399,9 @@ MIRAI_HARNESS="wait:2000,action:win.last,action:win.toggle-analysis,wait:15000,a
   cargo run -p mirai -- "$SGF"
 ```
 
-Correct: dark shading sits over Black's stones and the territory they surround,
-light over White's. On this fixture the dark region is the bottom-left.
-
-```text
-correct (index = y*w + x)        transposed (index = x*h + y)
-+-------------------+            +-------------------+
-|                   |            |     ##            |
-|                   |            |     ##            |
-|  ####             |            |     ##            |
-|  ######   O       |            |  ..........       |
-|  ####             |            |                   |
-+-------------------+            +-------------------+
- shading covers the stones        mirrored about the main diagonal
-```
+Correct: dark shading covers Black's stones and the bottom-left territory;
+light covers White's. A transpose reflects this asymmetric region across the
+diagonal.
 
 A vertical flip is subtler: right shape, reflected top-to-bottom. Either way the
 giveaway is shading that does not touch the stones it belongs to.
@@ -528,14 +413,9 @@ MIRAI_HARNESS="wait:8000,action:win.new-game,wait:800,press:Start Game,wait:1200
   cargo run -p mirai
 ```
 
-| Step | Why it works |
-|---|---|
-| `wait:8000` | `new_game::present` reads `engine_desc()` before offering human-like strength, so the engine should be up first |
-| `press:Start Game` | Dialog defaults: 19×19, Chinese, komi 7.5, no handicap, you play Black, no time control, 800 visits per engine move |
-| `action:win.pass` | With a session active this routes to `PlayController::pass`, accepted only on the human's turn. Black passes; the engine replies. The editor stays collapsed and its toggle is disabled for the game |
-| `shot:…play1.png` | One White stone. Clocks, Undo, Pass and Resign are on `play_bar`, under the board nav, not in the header |
-| `action:win.undo` | `PlayController::undo` removes up to two nodes so the human is on move again |
-| `action:win.score` | `window::do_score` subscribes at high priority with `Want::OWNERSHIP` and shows the result dialog |
+The first wait lets KataGo load before `new_game::present` offers engine
+strength. Expect a White reply to Black's pass in the first PNG; Undo returns
+to the human's turn. `win.score` opens the ownership-based result dialog.
 
 `press:Start Game` logging `NOT FOUND` means the dialog was not up yet — raise
 the preceding `wait:`. A toast that there is no engine to estimate with means
@@ -550,12 +430,8 @@ MIRAI_HARNESS="wait:2000,action:win.analyse-game,wait:90000,shot:/tmp/mirai-batc
   cargo run -p mirai -- "$SGF"
 ```
 
-Expect the graph filled end to end, blunder marks on the worst moves, and
-one-line blunder rows (emoji stone, coloured title, `played` / optional `best`
-in the same line). If the progress indicator is still running, raise the wait.
-The second capture is the list alone. A record where one side answers a corner
-with `A19` produces both colours and all three severities within ten moves,
-which reviews the row without a 90 s sweep.
+Expect a filled graph, blunder marks and rows; the second capture isolates the
+list. If progress is still running, lengthen the wait.
 
 **(e) Clean shutdown.** `close-window` calls `gtk::Window::close` on the active
 window, the same path as the title-bar button. `dispose` is the backstop.
@@ -571,10 +447,8 @@ ls "$XDG_DATA_HOME/mirai"       # no autosave-*.sgf
 pgrep -a katago                 # nothing left from this run
 ```
 
-`MiraiWindow::shutdown` runs once and drops the window's `Ui`. `Drop for Ui` is
-the release: flush the comment, cancel batch, play and analysis, save config,
-clear the engine, delete the autosave. `exit=0`, no autosave, no orphaned
-KataGo. There is no `Ui::shutdown`.
+Expect `exit=0`, no autosave and no orphaned KataGo. `MiraiWindow::shutdown`
+drops `Ui` once; its `Drop` handles release (INV-8).
 
 `kill -9` bypasses both close and dispose. A loaded record leaves its autosave,
 and the next start offers it. That asymmetry is intentional.
@@ -717,16 +591,13 @@ read _ _ _ _ _ _ _ _ _ _ _ _ _ u2 s2 _ < /proc/$pid/stat
 echo "$(( (u2+s2-u1-s1) * 100 / (4 * $(getconf CLK_TCK)) ))% CPU over 4s"   # expect 0
 ```
 
-`ps` `%CPU` is a lifetime average and read 11.4% for a completely idle process
-in the recorded check. To prove something stopped, measure a rate, not a total.
-The same sampling proves the local path, where the subscription guard enqueues
-a KataGo `terminate`.
+Measure `/proc` deltas, not `ps %CPU` (a lifetime average). This also checks
+that a dropped local subscription stopped KataGo.
 
 ## 7. Debugging playbook
 
-Symptom, then the cause or the guard, then where it lives. Measurements that
-are already a section of [`RENDERING.md`](RENDERING.md) are not copied here.
-A black external screenshot is §5, not a second essay.
+Symptom, cause or guard, and location. Rendering mechanics live in
+[`RENDERING.md`](RENDERING.md); black external grabs are covered in §5.
 
 | Symptom | Cause / protection | Where |
 |---|---|---|
@@ -751,12 +622,12 @@ A black external screenshot is §5, not a second essay.
 | `Startup(…)` mentioning `logDir` or a config key | A comma in a path. KataGo splits `-override-config` on commas | `local.rs` `override_config` |
 | Client cannot connect though the server is up | Fingerprint mismatch after a regenerated cert, wrong token, or wrong `[[engine]]` name | `--print-fingerprint` versus `cert_sha256`. §6 |
 | Cancellation looks like 30 s | The client was `kill -9`'d. UDP has no FIN. Ctrl-C through `probe`'s `ctrl_c` arm is the measurement | §6 |
-| A `queue_draw` from inside `snapshot()` does nothing | GTK clears `draw_needed` *after* the vfunc returns. The next frame is a tick callback, not a GLib idle — an idle runs between frames, at a priority the frame clock outranks, and its repaint can land mid-animation | `BoardView::redraw_next_frame`. [`RENDERING.md`](RENDERING.md) §6 |
-| `size_allocate` goes quiet on the plateau frames of a spring | `gtk_widget_allocate` returns early when the pixel size, baseline and `alloc_needed` are unchanged. Do not use it as "something is still animating", and do not key text deferral on it | `board.rs` `snapshot`; [`RENDERING.md`](RENDERING.md) §6 |
-| Board text stutters in one direction of a sidebar fold, and not the other | Glyphs are cached per `PangoFont`, so moving the board is free and a `cell` change is not. `Layout::cell` tracks the sidebar only while the board is width-limited. Defer text while `cell` is moving, and only then | [`RENDERING.md`](RENDERING.md) §6 |
-| A geometry value repeating for one frame is treated as the animation ending; the next frame flickers | Width is an integer. A spring's last frames move under a pixel. One repeat paints a cold glyph pass and throws it away. `BoardView` waits for `CELL_SETTLED` (2) | `board.rs`; [`RENDERING.md`](RENDERING.md) §6 |
-| A frame-timing bug that reproduces only on an idle machine | Load coarsens the fold — about 13–16 animation frames instead of 22–31 — and a coarse animation never lands on a repeated value. Check `/proc/loadavg` and frames per fold before trusting a clean run. A `shot:` cannot see this: capture re-enters `snapshot()` at the current `cell`, so the PNG always has its text | [`RENDERING.md`](RENDERING.md) §6 |
-| Frames drop while the engine is searching, and the GPU sits at 99% | Not the GPU. Another process pinning the same card costs this one nothing. Replacing the `GtkColumnView` model per report rebuilds every row widget: a full window relayout (measured 7–17 ms) and a hovered row that flickers. Mutate `CandidateObject`s in place and bind cells with expressions. Blunder rows are kept and updated in place for the same reason | `AnalysisPanel::refresh`, `Row::apply`, `set_blunders`. [`RENDERING.md`](RENDERING.md) §7 |
+| A `queue_draw` inside `snapshot()` does nothing | Use a tick callback for the next frame | [`RENDERING.md` §6](RENDERING.md#6-candidate-labels) |
+| `size_allocate` goes quiet during a fold | A plateau needs no new allocation; do not use allocation as the text-deferral signal | [`RENDERING.md` §6](RENDERING.md#6-candidate-labels) |
+| Board text stutters only in one fold direction | Defer text only while `Layout::cell` changes | [`RENDERING.md` §6](RENDERING.md#6-candidate-labels) |
+| A one-frame geometry repeat makes text flicker | Wait for two repeats (`CELL_SETTLED`) | [`RENDERING.md` §6](RENDERING.md#6-candidate-labels) |
+| The frame bug appears only on an idle machine | Check `/proc/loadavg` and frames per fold; a `shot:` cannot measure this | [`RENDERING.md` §6](RENDERING.md#6-candidate-labels) |
+| Frames drop during search; GPU is at 99% | Keep list objects stable and mutate in place, not a model splice per report | [`RENDERING.md` §7](RENDERING.md#7-a-report-cost-a-layout-and-it-was-never-the-gpu) |
 | Whole-game analysis sits at 0/N and then completes in one jump | A loop that awaits a permit per position dispatches the *whole* plan before it joins anything, so the first result arrives only once all but `concurrency` searches are done. Refill the `JoinSet` inside the join loop. `running.len() < concurrency` is the whole cap | `mirai_client::batch::sweep` |
 | `harness: action … -> MISSING` | No such action on the active window, or a typo. `app.*` goes to the application | `harness::activate`, `window::install_actions` |
 | `harness: screenshot failed: nothing was drawn` | The window never mapped, or a modal grabbed before `present()` | Lengthen the preceding `wait:` |
@@ -774,27 +645,23 @@ A black external screenshot is §5, not a second essay.
 
 ## 8. Before declaring work done
 
-The workspace commands are §1. Do not paste them again. What else the change
-owes:
+Run §1; choose evidence for the surface changed:
 
 | Change touches | Evidence |
 |---|---|
-| `mirai-core` rules, scoring, SGF | `cargo test -p mirai-core` is enough; the workspace run is §1 |
-| `mirai-proto` types, scales, framing | the `wire_size` command in §1, and read the printed numbers |
-| `mirai-engine` query or decode | `probe` locally, and diff a `[final]` against raw `katago analysis` on the identical query (§4) |
-| `remote.rs` or `mirai-server` | both probe modes on the same position, the subscription log, and the cancellation rate in §6 |
-| Anything drawn | at least one harness recipe, and look at the PNG. Recipe (b) for anything touching `Point`, ownership or policy |
-| Anything drawn *per frame* — a new pass in `snapshot()`, or text on the board | `MIRAI_FRAMES=1` over a sidebar fold with the search **finished**, then `tools/perf/frame-stats.py`. No animation frame past the refresh interval. A fold *during* a search misses frames on the report's own layout whatever you drew — that is not your regression ([`RENDERING.md`](RENDERING.md) §6–§8) |
-| Signals, properties, `Rc` capture, teardown | Recipe (e): `exit=0`, the autosave gone, no orphaned `katago` |
-| A new `GAction` or accelerator | Drive it once through `action:` and confirm `ok`, not `MISSING` |
-| Engine config generation (`tuning.rs`, `engines.rs`) or the local-engine page | Recipe (g) in both modes, and look at both PNGs |
+| Core rules, scoring, SGF | `cargo test -p mirai-core` |
+| Wire types or framing | Run `wire_size` (§1) and read the numbers |
+| Engine query or decode | Diff local `probe` `[final]` against raw KataGo on the identical query (§4) |
+| Remote engine or server | Compare both probe modes and check subscription/cancellation (§6) |
+| Drawn output | Inspect a harness PNG; use recipe (b) for point, ownership or policy changes |
+| Per-frame drawing | Measure `MIRAI_FRAMES=1` with a finished search during a sidebar fold; use `tools/perf/frame-stats.py` and [`RENDERING.md` §§6–8](RENDERING.md) |
+| Signals, properties, capture or teardown | Recipe (e): exit 0, no autosave or orphaned KataGo |
+| New action | Drive `action:` and confirm `ok`, not `MISSING` |
+| Engine config generation or editor | Recipe (g), both modes and PNGs |
 
-- [ ] Every new `.rs` file carries the `SPDX-License-Identifier: GPL-3.0-or-later` header.
-- [ ] No `GDK_BACKEND` anywhere in the tree.
-- [ ] No test-only branch inside feature code.
-- [ ] §1 is clean on what you touched, and on the workspace before merge.
-- [ ] Invariants you touched still read true in [`ARCHITECTURE.md`](ARCHITECTURE.md) and
-      [`PROTOCOL.md`](PROTOCOL.md).
+Check new `.rs` files for the SPDX header, never set `GDK_BACKEND` in test or
+production code, avoid test-only branches in production, and recheck affected invariants
+in [`AGENTS.md` §2](../../AGENTS.md#2-non-negotiable-invariants).
 
 ## 9. Known gaps
 
@@ -802,7 +669,5 @@ These are ability boundaries, not a backlog. Do not file them as missing tests.
 
 | Boundary | What it means |
 |---|---|
-| The harness does not deliver physical Wayland input | `action:`, `press:`, `page:`, `set:`, `board:` and the rest call production handlers. They do not synthesize a key, a double-click, or a compositor event. Say so if that is what was checked |
-| No image golden | A person reads the PNG. That is the check. A pixel oracle fails on the next margin and is not a gap to fill |
-| GUI claims need a real run | `cargo test` stays headless. A green suite does not show the window, and it does not start KataGo |
-| A `shot:` is not a frame time | Capture re-enters `snapshot()` after geometry has settled, so the PNG always has the text a moving board deferred. Per-frame cost is `MIRAI_FRAMES` and [`RENDERING.md`](RENDERING.md) |
+| The harness does not deliver physical Wayland input | `action:`, `press:`, `page:`, `set:`, `board:` and the rest call production handlers. They do not synthesise a key, a double-click or a compositor event. Say so if that is what was checked |
+| No image golden | Inspect the PNG; a pixel oracle breaks with the next margin change |

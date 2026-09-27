@@ -43,9 +43,7 @@ refused.
 
 - Rust 1.92 or newer (edition 2024). `rust-toolchain.toml` selects the current stable.
 - GTK 4.22+, libadwaita 1.9+, and Blueprint Compiler 0.22+ with their development packages.
-- A KataGo binary and a network model. Any recent KataGo works; mirai uses the JSON analysis
-  engine (`katago analysis`), never GTP, and writes the analysis config itself unless you
-  supply one. mirai does not download KataGo.
+- A KataGo binary and network model (JSON analysis mode, not GTP). mirai does not download KataGo.
 
 On Arch: `pacman -S gtk4 libadwaita blueprint-compiler`. On Debian/Ubuntu, install
 `libgtk-4-dev`, `libadwaita-1-dev`, and `blueprint-compiler`.
@@ -63,16 +61,9 @@ cargo run -p mirai
 cargo run -p mirai -- game.sgf
 ```
 
-On first run mirai looks for `katago` on `PATH` and a network in the usual model directories.
-A find becomes the `local-default` profile and starts. If nothing is found, the Analysis page
-shows **No Engine Configured** and a **Preferences** button. Preferences does not open by
-itself; the board and its navigation still work.
-
-Add the binary and model, open a record, then press <kbd>Space</kbd> for live analysis. A
-file that already stores analysis shows those numbers even when no engine is configured.
-
-The window, keys, Fox, settings and a remote engine are in the
-[user guide](docs/user/GUIDE.md).
+If KataGo and a model are found, mirai starts automatically; otherwise add them in
+Preferences. Open a record and press <kbd>Space</kbd> for live analysis. See the
+[user guide](docs/user/GUIDE.md#2-first-run) for setup and first-run behaviour.
 
 ---
 
@@ -85,12 +76,8 @@ mirai-server --generate-token
 mirai-server --config server.toml
 ```
 
-The server prints its certificate fingerprint at boot (`--print-fingerprint` prints it
-alone). Compare that string with the one the client shows before you trust the server. A
-different certificate afterwards is a hard connection failure, not a warning.
-
-The token, the UDP port and the annotated server file are in the
-[user guide](docs/user/GUIDE.md#7-using-a-remote-engine).
+For the token, UDP port, server configuration and certificate verification, see
+the [remote-engine guide](docs/user/GUIDE.md#7-using-a-remote-engine).
 
 ---
 

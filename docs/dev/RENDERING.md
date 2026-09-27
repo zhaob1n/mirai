@@ -5,59 +5,40 @@ Copyright (C) 2026 Huang Zhaobin
 
 # Rendering performance
 
-Why mirai's custom widgets draw with quads and not with paths, and the measurements that
-settled it.
-[architecture](ARCHITECTURE.md) · [testing](TESTING.md) ·
-[retrospective](../archive/RETROSPECTIVE.md) · [AGENTS.md](../../AGENTS.md).
+Measurements and rationale for drawing mirai's custom widgets with quads instead
+of paths. [architecture](ARCHITECTURE.md) · [testing](TESTING.md) ·
+[AGENTS.md](../../AGENTS.md).
 
-**The rule, if you read nothing else:** in `snapshot()`, never hand GSK a `fill` or `stroke`
-node for a shape a colour node, a border node or a rounded clip can draw. Paths are for ink
-that is genuinely curved or diagonal — the win-rate curve, the triangle and cross marks — and
-only where the node's bounds stay small. The helpers in
-[`crates/mirai/src/widgets/paint.rs`](../../crates/mirai/src/widgets/paint.rs) exist so this
-costs nothing to obey.
+**Rule (INV-9):** in `snapshot()`, use colour, border or rounded-clip nodes
+instead of fill/stroke paths for shapes they can draw. Keep necessary paths
+(curves and diagonal marks) small or cached. Use the helpers in
+[`widgets/paint.rs`](../../crates/mirai/src/widgets/paint.rs).
 
 ---
 
 ## 1. The symptom
 
-Folding the sidebar (<kbd>F9</kbd>) visibly stuttered. The animation is time-based and about
-300 ms long, so it should be ~18 frames at 60 Hz; it was drawing 3–7.
-
-The same cost was there all along in a much worse place: stepping through a *late-game*
-position repainted the board in 90–120 ms, which is 8–11 fps for ordinary review work. The
-sidebar animation only made it obvious, because it is the one interaction that needs many
-consecutive frames.
+Folding the sidebar visibly stuttered: its ~300 ms animation drew 3–7 frames
+instead of ~18 at 60 Hz. Stepping through a late-game position repainted the
+board in 90–120 ms (8–11 fps). Both exposed the same rendering cost.
 
 ## 2. How it was measured
 
-`perf` is not installed on the development machine and external screen capture is black under
-Wayland, so the application measures itself. The instrument lives in the tree rather than on a
-branch, because it gets reused:
+The in-app instrument, [`render_probe.rs`](../../crates/mirai/src/render_probe.rs),
+logs frame cadence (`frame-dt`) and GTK update, layout and paint phases
+(`frame-phases`). `Timer` measures the drawing passes. It is disabled in release
+builds. [`frame-stats.py`](../../tools/perf/frame-stats.py) aggregates those
+logs. [`dense-board.py`](../../tools/perf/dense-board.py) produces the 285-stone
+worst case; [`numbered-game.py`](../../tools/perf/numbered-game.py) exercises
+190 numbered moves, which setup stones cannot test. `MIRAI_NO_BOARD`,
+`MIRAI_NO_GRAPH`, `MIRAI_NO_LABEL_DEFER`, `MIRAI_SPIN` and `MIRAI_DUMP_NODE`
+are available for ablation and render-node capture in debug builds.
 
-- **`crates/mirai/src/render_probe.rs`** — `frame-dt` lines (the frame clock's own cadence:
-  `16.67` is a hit on a 60 Hz output, `50.00` means two frames were missed) and
-  `frame-phases` lines, which split each frame into GTK's phases: `update` (animations),
-  `layout` (measure and allocate), `paint` (snapshot the widget tree, then GSK renders it).
-  `Timer` brackets one drawing pass and `trace` records a scalar beside it. Everything is
-  behind `cfg!(debug_assertions)`, so a release build folds the module away.
-- **Ablation flags** — `MIRAI_NO_BOARD`, `MIRAI_NO_GRAPH`, `MIRAI_NO_LABEL_DEFER` (§6),
-  `MIRAI_COLLAPSED`, `MIRAI_SPIN`, `MIRAI_DUMP_NODE` (writes the window's render node for
-  `gtk4-rendernode-tool`).
-- **`tools/perf/frame-stats.py`** — aggregates the stderr into a per-action table.
-- **`tools/perf/dense-board.py`** — the 285-stone position used as the worst case.
-- **`tools/perf/numbered-game.py`** — 190 real moves, the worst case for move numbers;
-  setup stones carry no numbers, so `dense-board.py` cannot exercise the text passes.
-
-Runs use an isolated `XDG_CONFIG_HOME`/`XDG_DATA_HOME`, whose `[ui]` block has to be reset
-between runs because the view toggles are persisted. §3–§5 ran with no engine, so nothing in
-those numbers is KataGo's — and, it turned out, nothing in them is analysis labels either (§6).
-The window is whatever niri gives it, ~1486×1634 on a 6016×3384@60 Hz output at scale 2;
-`niri msg action set-window-width/-height` is how it was resized for the sweep, and there is
-deliberately no in-process size knob because a tiling compositor ignores `set_default_size`.
-Pin the output before comparing runs: a second monitor at 160 Hz moves the deadline from
-16.7 ms to 6.2 ms. Check `/proc/loadavg` too — a busy machine coarsens the animation into fewer,
-larger steps, which is enough to hide a whole class of defect (§6).
+Measurements in §§3–5 used no engine, a ~1486×1634 window on a
+6016×3384@60 Hz output at scale 2. Reset persisted `[ui]` toggles between
+runs in the isolated profile. Pin the output: a 160 Hz display allows 6.2 ms
+rather than 16.7 ms. Check `/proc/loadavg` and frames per fold; a busy machine
+can hide the plateau defect in §6.
 
 ```sh
 tools/perf/dense-board.py /tmp/dense.sgf
@@ -84,8 +65,8 @@ fill rate:
 | `cairo` | 27.8 ms | | 1100×940 | 1.03 Mpx | 98.8 ms |
 | | | | 1400×1200 | 1.68 Mpx | 72.7 ms |
 
-**Removing one drawing pass at a time finds the cost.** Sidebar animation, empty board, before
-the fix:
+**Historical ablations** (`MIRAI_NO_WOOD`/`MIRAI_NO_GRID` were temporary):
+sidebar fold on an empty board before the fix.
 
 | build | slow frames per animation | paint median |
 |---|---|---|
@@ -96,10 +77,9 @@ the fix:
 | `MIRAI_NO_BOARD` (graph only) | 4 | 9.2 ms |
 | `MIRAI_NO_BOARD` + `MIRAI_NO_GRAPH` | 0 | — (max 1.5 ms) |
 
-Every expensive item is an `append_fill` or an `append_stroke`: the wood rounded-rect fill
-(~10 ms), the grid and border strokes (~12 ms), the stone shadow path and one circle fill plus
-one circle stroke per stone (the 90–120 ms of a full board). The rest of the window — header
-bar, view switcher, `ColumnView`, text — never showed up at all.
+The board's historical ablations isolated wood (~10 ms), grid and border
+(~12 ms), and per-stone paths (90–120 ms on a full board). Header, list and
+other GTK controls did not account for this paint cost.
 
 **The last experiment names the mechanism.** `MIRAI_SPIN` redraws an *unchanging* scene every
 frame:
@@ -109,46 +89,30 @@ frame:
 | empty board, same nodes re-rendered | **0.26 ms** | 16.7 ms |
 | 285 stones, nodes rebuilt each snapshot | **58.0 ms** | 68.1 ms |
 
-Re-rendering the *same* fill node is free, so GSK caches the rasterisation. Reading
-`gsk/gpu/gskgpucachedfill.c` in GTK confirms the key and explains why the cache never helped
-us: it is the `GskPath` **pointer**, the scale and the subpixel offset. A path built fresh in
-every `snapshot()` can only miss. Rebuilding the node is the whole cost: the stones are built
-fresh each snapshot, and the board's cached static layer is rebuilt whenever the allocation
-changes — which is exactly what a sidebar animation does, frame after frame.
-`gtk4-rendernode-tool benchmark` agrees from outside the process, and shows the same asymmetry
-because it replays one identical node: 13 ms per render for the old full board against 4 ms
-for the new one.
-
-That is the root cause: **GSK rasterises a fill or stroke node the first time it sees that
-path, and mirai handed it a new one every frame.**
+An unchanged fill node is cheap to re-render: GSK caches its rasterisation by
+the `GskPath` **pointer**, scale and subpixel offset
+(`gsk/gpu/gskgpucachedfill.c`). Fresh paths in every `snapshot()` miss the
+cache; the static board layer is likewise rebuilt when allocation changes.
+A sidebar fold changes allocation every frame. Replaying an identical render
+node with `gtk4-rendernode-tool benchmark` took 13 ms for the old full board
+against 4 ms for the new one.
 
 ## 4. The fix
 
-`crates/mirai/src/widgets/paint.rs` — `fill_disc` (rounded clip + colour node), `stroke_disc`
-and `stroke_rect` (border nodes), `hline`/`vline` (colour nodes), and `over` for pre-blending
-translucent ink. Then:
+[`widgets/paint.rs`](../../crates/mirai/src/widgets/paint.rs) provides discs
+as rounded clips and colour nodes, outlines as border nodes, lines as colour
+rectangles, and `over()` for pre-blending. Wood, grid, stones, marks, tree
+elbows and graph guides now use these primitives rather than freshly built
+fill/stroke paths.
 
-| was | is now |
-|---|---|
-| wood: rounded-rect path fill | colour node in a rounded clip |
-| grid: one stroked path, 38 segments across the board | one colour-node rectangle per line |
-| board border: stroked rectangle path | border node |
-| star points, stones, shadows, last-move dot, candidate blobs, label discs, tree nodes | `fill_disc` |
-| stone rims, candidate rings, circle and square marks, territory outlines, tree outlines | `stroke_disc` / `stroke_rect` |
-| move tree: one stroked path of right-angle elbows | one rectangle per run, one trunk per parent |
-| graph: horizontal guides as a stroked path | `hline` per guide |
+Two pixel constraints matter: opaque grid ink must be pre-blended against wood
+to prevent double-blending where rectangles overlap; the tree uses one trunk
+per parent for the same reason. Stone shadow discs do not overlap because
+stones are 0.96 cells across.
 
-Two details that keep the pixels honest:
-
-- Translucent ink drawn as overlapping rectangles blends twice. The grid ink is therefore
-  pre-blended against the wood with `over()` and drawn opaque, and the move tree draws one
-  trunk rectangle per parent instead of one per child.
-- Stones are 0.96 cells across, so per-stone shadow discs never overlap and blend exactly like
-  the single combined path they replaced.
-
-Still paths, deliberately: the win-rate and score-lead curves, the dashed 50 % line, and the
-triangle and cross marks. Curves are not quads, the dash pattern is not a rectangle, and the
-marks each cover one stone, so the bounds GSK has to rasterise are a cell rather than a board.
+The win-rate and score-lead curves, dashed 50 % line, triangle and cross marks
+remain paths: they need curves, dashes or diagonals. Marks cover one stone;
+the plot-wide curve is cached and rebuilt only when its data changes (INV-9).
 
 ## 5. After
 
@@ -161,18 +125,14 @@ Same machine, same scenes, same instrument:
 | `MIRAI_SPIN`, 285 stones | paint 58.0 ms, clock at 68 ms | paint 3.5 ms, clock at 16.7 ms |
 | stepping a real game record (`win.next`) | — | paint 0.9–2.6 ms |
 
-Visual verification: the app screenshots itself (`shot:` steps) before and after, with the same
-scripts, on an empty board with coordinates, the 285-stone position, a real record at move 10
-with and without move numbers, and the move tree. Differences are confined to antialiasing on
-the edges of stones and grid lines — at 8× magnification the two are indistinguishable, and
-outside the board the only differing pixels are header text that depends on run timing.
+Before/after in-app screenshots of the empty and dense boards, numbered
+stones and move tree showed shape differences limited to edge antialiasing;
+header text also varied with run timing.
 
 ## 6. Candidate labels
 
-The probe above ran with no engine, so the quad rewrite never saw analysis numbers. Those are
-pango glyphs sized to `Layout::cell`, and they are not a fourth kind of path — GSK keeps a
-separate cache for them with a different key. Three caches, three keys, and the difference is
-the whole of this section:
+Candidate labels are Pango glyphs sized to `Layout::cell`, unlike the paths
+measured with no engine in §§3–5. Their different cache key explains the cost:
 
 | node | cache key (GTK `gsk/gpu/`) | consequence for us |
 |---|---|---|
@@ -185,46 +145,24 @@ re-rasterises all of them. Measured on one fold, in the same run: the candidate 
 **0.68 ms** on a frame whose `cell` was unchanged and **13.6 ms** (worst 27.8) on a frame whose
 `cell` moved.
 
-`cell` is `min(width/units_x, height/units_y)`, so it tracks the sidebar only while the board
-is width-limited. That makes the two directions of one animation behave differently, and it is
-why the first attempt at this looked right: it *was* inside budget, it just hid text that cost
-nothing to keep.
+`cell` is `min(width/units_x, height/units_y)`: it follows sidebar width only
+while the board is width-limited, so the two fold directions differ.
 
 | fold, ~15 animation frames | frames where `cell` changed |
 |---|---|
 | hiding the sidebar (board grows, becomes height-limited) | 2–5 |
 | showing it (board shrinks, stays width-limited) | 11–13 |
 
-**The rule: defer text while `cell` is moving, and only then.** Blobs, stones and marks are
-quads and always paint. "Moving" needs one qualification, below: a single repeated value is not
-a stop.
+**Defer text only while `cell` moves.** Blobs, stones and marks remain visible.
+After two consecutive repeats at the same `cell`, a one-shot tick callback
+repaints text in the next frame.
 
-```mermaid
-flowchart LR
-    S["snapshot()"] --> Q{"cell repeated<br/>twice running?"}
-    Q -- yes --> P["paint text"]
-    Q -- no --> D["quads only"]
-    D --> T["one-shot tick callback"]
-    T --> S
-```
-
-Two GTK details decide the shape of that loop:
-
-- **The allocation is not the signal.** `gtk_widget_allocate` returns early when
-  `!alloc_needed && !size_changed && !baseline_changed`, so `size_allocate` goes quiet exactly
-  on the plateau frames a spring produces near its end — while a fold that leaves `cell` alone
-  still allocates on every frame. Keying on it therefore suppressed frames that were already
-  cheap, and can fall silent on frames that are not. The over-suppression was measured; the
-  silence follows from the code path and was never reproduced here, so treat it as unsound
-  rather than as a bug that bit.
-- **`queue_draw` inside `snapshot` is lost.** `gtk_widget_do_snapshot` clears `draw_needed`
-  *after* the vfunc returns, so the deferral needs *some* cross-frame hop — the first version
-  was right about that. A GLib idle is the wrong one: it runs between frames at a priority the
-  frame clock outranks, so its repaint can land mid-animation. A tick callback runs in the next
-  frame's update phase, ahead of layout and paint, and is served by that same frame.
-
-No timeout, in either version: libadwaita's split-view animation is a spring, not a duration,
-and `show-sidebar` flips when F9 is pressed rather than when the pixels settle.
+`size_allocate` is not a settling signal: GTK can skip it when size and
+baseline are unchanged, precisely on a spring's plateau, but may call it when
+`cell` is unchanged. `queue_draw` in `snapshot()` is lost because GTK clears
+`draw_needed` after the vfunc returns. An idle can repaint mid-animation; a
+tick callback runs in the next frame's update phase before paint. A timeout
+cannot detect settling in libadwaita's spring animation.
 
 Measured with `tools/perf/dense-board.py`, live analysis on (20 candidates, 10 Hz), six folds
 per run, debug build, 6016×3384@60 Hz at scale 2. `over` counts animation frames past the
@@ -236,20 +174,16 @@ per run, debug build, 6016×3384@60 Hz at scale 2. `over` counts animation frame
 | defer whenever `size_allocate` ran | 12 % | 4.3 ms | 1 % |
 | defer while `cell` moves | **44 %** | 4.0 ms | 2 % |
 
-The deferral is worth having — 29 % of frames miss without it. Keying it on `cell` then keeps
-the numbers on screen about four times as often for the same frame cost: 1 % against 2 % is one
-frame either way out of ninety, and the machine was not idle. What makes the fold smooth is the
-quad rewrite of §4; this section only decides how much of the board's text survives it.
+Deferral cuts missed frames from 29 % to 2 %. Unlike allocation-based deferral,
+tracking `cell` retains text on 44 % rather than 12 % of animation frames at
+nearly the same cost (a one-frame difference in ~90, on a busy machine).
 
 ### One repeat is not a stop
 
-`cell` can repeat *mid*-animation: width is an integer, and a spring near its end moves less
-than a pixel per frame. Taking one repeat as "settled" therefore paints text on a plateau
-frame — and that paint is always a cold one, because the previous frame skipped it, so it
-rasterises glyphs at a size the next frame throws away again. Measured on a 29-frame fold:
-`...NNNNN.....................N.N`, where the lone `N` cost 19.3 ms and blew its frame at
-30 ms. `745da27` predicted exactly this and was dismissed on the grounds that painting at an
-unchanged `cell` is cheap; it is cheap only when the *previous* frame painted too.
+Width is integer and a spring can repeat one `cell` mid-animation. Painting
+text on that plateau incurs a cold glyph pass, then discards it at the next
+size: one measured false settle cost 19.3 ms and made a 30 ms frame. A repeat
+is cheap only if the preceding frame already painted that size.
 
 So text waits for `CELL_SETTLED = 2` repeats. Same binary, six folds each, 60 Hz, move numbers
 on a 190-move record and no engine:
@@ -259,34 +193,25 @@ on a 190-move record and no engine:
 | 1 | 3, in 2 of 6 folds | 3 |
 | **2** | **0** | 1 |
 
-The remaining one is the settle frame: the first paint at a size never seen before has to
-rasterise the glyphs, 16.5–21.8 ms, against 2.6 ms when that size is still cached (folding back
-to a width already visited). No rule avoids it — it is one frame at the end of an animation.
-A plateau long enough to fool two repeats is one the eye cannot tell from a stop, so treating
-it as a stop is the intended behaviour rather than a hole.
+The remaining slow frame is the first paint at a new, settled font size:
+16.5–21.8 ms versus 2.6 ms at a cached size. Two repeats remove mid-fold
+flicker without hiding the text after the visible animation ends.
 
-**A loaded machine hides this.** The first six folds measured for this section produced 13–16
-animation frames each and never plateaued; the same folds on an idle machine produce 22–31, and
-that is where the flicker appears. Frames per animation is the variable to watch — it rises
-with idle CPU and with refresh rate, and a coarse animation simply cannot land on a repeat.
+Load matters: a busy machine produced only 13–16 frames per fold, with no
+plateau; idle folds had 22–31 frames and exposed the flicker. Verified on the
+190-move record with no engine: numbers return two frames after `cell` settles.
+`shot:` cannot verify this timing because capture re-enters `snapshot()` at
+the current size; use the frame timeline.
 
-Verified with `tools/perf/numbered-game.py` and **no engine at all**, so that nothing but the
-tick callback could bring the text back: numbers vanish while `cell` moves and return two
-frames after it stops. A `shot:` screenshot cannot see any of this — capturing re-enters
-`snapshot()` at the current `cell`, which by definition matches, so the capture always has its
-text. The frame timeline is the instrument here, not the screenshot.
-
-Not done, deliberately: quantising the font size so that a fold visits three sizes instead of
-twelve would keep the text up throughout, at the cost of type that steps while the board
-scales. The measured 2 % is not worth that. Coordinate labels live in the static layer and are
-rebuilt whenever the allocation changes; they were left alone because a board missing its
-letters mid-fold reads as broken, and at 0.68 ms for the whole text pass they are not the
-problem.
+Font-size quantisation would preserve text throughout the fold but visibly
+step its type; 2 % missed frames did not justify it. Coordinate labels remain
+in the static layer: hiding the letters would make the board unreadable, and
+the unchanged-size text pass is only 0.68 ms.
 
 ## 7. A report cost a layout, and it was never the GPU
 
-Folding the sidebar during a search missed frames. KataGo has the GPU at 99 % while it thinks,
-which makes "the GPU is saturated" the obvious reading. It was the wrong one.
+Sidebar folds dropped frames during engine searches even though drawing was
+already cheap. The following isolates report-driven layout from GPU load.
 
 Same dense board (285 stones, 20 candidates), same ~1486×1634 window, six folds per run, debug
 build. `over` counts frames past the 16.7 ms deadline in the 900 ms after each toggle; `layout`
@@ -299,62 +224,33 @@ is the frame clock's layout→paint span, which is GTK measuring and allocating 
 | **another process** pinning the GPU, own search finished | **99 %** | — | 61–62 | **1 %** | 1.55 ms |
 | engine searching, `report_interval_ms = 1000` | 99 % | 1 Hz | 57–60 | 5 % | 16.0 ms |
 
-Row three settles the GPU question: a second mirai hammering the same card costs this one
-nothing. Row four says the cost scaled with the report *rate*. Nor was it CPU starvation —
-KataGo sat at ~2.2 of 16 cores and `/proc/loadavg` read 4 in every run above, the smooth ones
-included.
+The independent GPU-saturating process did not slow the app, whereas reducing
+reports to 1 Hz reduced missed frames: this is report-rate work, not GPU
+contention. KataGo used ~2.2 of 16 CPU cores and load averaged 4 in both
+slow and smooth runs.
 
-It was the candidate list. `AnalysisPanel::refresh` replaced the whole model on every report
-(`store.splice(0, n, &objects)`), and a `GtkColumnView` handed different objects rebuilds every
-row widget: one full window measure-and-allocate, 7–17 ms, once per report. Ablating that single
-call — everything else untouched — took the folds from 26–29 % over and 8–10 layouts past 5 ms
-down to 2–10 % and **zero**. The wrong first guess is instructive: removing the board and the
-graph (`MIRAI_NO_BOARD=1 MIRAI_NO_GRAPH=1`) and hiding the sidebar left the cost in place, which
-looked like proof that the bottom-bar readout was to blame. A hidden `AdwOverlaySplitView` child
-is still in the tree, and its splice still relayouts the window.
+Previously `AnalysisPanel::refresh` replaced the entire `GtkColumnView` model
+per report. Recreating rows forced a 7–17 ms full-window layout and visibly
+reset hover shading at 10 Hz. Ablating just `store.splice` cut missed frames
+from 26–29 % to 2–10 % and layouts over 5 ms from 8–10 to zero per fold.
+Hiding the sidebar did not help: its child still participates in layout.
 
-The same churn was visible without any instrument: a row under the pointer lost its `:hover`
-shading ten times a second, because the widget carrying that state was thrown away and rebuilt.
-
-The fix is the GTK list pattern rather than a throttle: **stable objects, mutated in place.**
-`Row::apply` writes only the properties that moved, cells are bound with
-`gtk::ListItem::this_expression("item").chain_property::<CandidateObject>(…)` so a `notify`
-updates one label, and `width_chars`/`max_width_chars` pin each numeric cell so changing digits
-cannot re-measure its column. Row widgets are now created once — 120 for 20 rows × 6 columns,
-counted over ~100 reports — the selection survives without being restored by hand, and a fold
-during a search sits at 2–7 % over with no layout past 5 ms, which is the engine-idle baseline.
-
-What remains is worth knowing: **the animation was never the bug.** 22 % of frames missed in
-*steady state*, with nothing animating; a fold is simply the one interaction that needs fifty
-frames in a row, so a hitch every 100 ms is where the eye catches it. Anything else that wants to
-update at report rate — a new sidebar list, a new readout — has to follow the same rule.
+The fix is stable `CandidateObject`s updated in place. `Row::apply` only
+notifies changed properties; expression-bound cells update individually and
+fixed numeric widths avoid re-measuring columns. In a 20-row, six-column
+list, 120 row widgets were created once over ~100 reports. With the engine
+searching, folds missed 2–7 % of frames, with no layout over 5 ms — the
+idle baseline. A steady, unanimated view had missed 22 % before the fix:
+any new report-rate list or readout must avoid per-report widget churn.
 
 ## 8. Keeping it
 
-- `paint.rs` is the only place these primitives are defined; use them.
-- If a new widget needs a path, keep the node's bounds small and its segment count low, then
-  measure it with `MIRAI_FRAMES=1` before assuming it is fine.
-- Pango on the board is sized to `cell`. Text may be deferred while `cell` moves, never merely
-  because the widget was reallocated; "stopped" means two repeats, not one; and the redraw that
-  brings it back belongs on a tick callback. A new overlay that draws per-intersection text has
-  to do the same.
-- `MIRAI_SPIN` on a dense board is the cheapest regression check: it should stay a
-  single-digit millisecond paint. `MIRAI_NO_LABEL_DEFER=1` is the check for §6 — with an engine
-  running, folding the sidebar should go from 0–2 % missed frames to about 30 %.
-- Measure a *drawing* change with the search **finished**, not running: §7 shows a fold during
-  a search missing 25–31 % of its frames on the report's own layout, which swamps anything a
-  new pass in `snapshot()` can do. Cap `live_max_visits` low, let the search end, then fold.
-- There is deliberately no unit test for any of this: a headless test cannot see a frame, and
-  asserting on node types would pin the implementation rather than the behaviour.
-
-## 9. Native Adwaita controls integration
-
-One merge-time smoke run on native Wayland, debug build, DP-1 at 60 Hz, 1280×860,
-isolated profile, real engine ready but live search off. `MIRAI_FRAMES=1` and
-`tools/perf/frame-stats.py` on the 285-setup-stone fixture recorded zero missed
-intervals over one sidebar close/open pair: paint median/max 7.7/8.8 ms closing
-and 8.4/10.5 ms opening; layout stayed below 0.47 ms. A separate sweep of the
-27-position self-play record missed two of 397 frame intervals while analysing
-(max 33.3 ms, layout max 21.51 ms), then one interval after completion (33.2 ms).
-These are scoped integration observations, not a before/after speedup claim;
-the sweep's layout outlier remains worth watching.
+- Use `paint.rs` primitives; keep unavoidable paths' bounds and segment
+  counts small, then measure them with `MIRAI_FRAMES=1`.
+- For per-intersection text, defer only while `cell` changes, wait two repeats
+  and repaint via a tick callback (§6).
+- `MIRAI_SPIN` on a dense board should paint in single-digit milliseconds;
+  `MIRAI_NO_LABEL_DEFER=1` checks the text cost while folding with live analysis.
+- Measure drawing with the search **finished**: report-driven layouts during
+  search mask changes to `snapshot()` (§7). The [testing guide](TESTING.md)
+  has the GUI verification recipes.

@@ -28,31 +28,15 @@ fixed for the life of a connection.
 | [9](#9-errors-and-limits) | Errors and limits |
 | [10](#10-version) | Version |
 | [11](#11-reference-figures) | Reference figures |
-| [12](#12-conformance-checklist) | Conformance checklist |
 | [A](#appendix-a-worked-exchange) | Worked exchange, byte for byte |
-| [B](#appendix-b-findings) | Findings and under-specified points |
 
 ---
 
 ## 1. Status and scope
 
-| Item | Value | Constant |
-|---|---|---|
-| Version | `0.1.0`, as `ProtoVersion { major, minor, patch }` each a `u16` | `PROTO_VERSION` (`mirai-proto/src/types.rs`) |
-| ALPN | `mirai` (no version) | `ALPN` (`mirai-proto/src/endpoint.rs`) |
-| Default port | UDP 9678 | `DEFAULT_PORT` (same file) |
-| URL scheme | `mirai://host[:port]` | `URL_SCHEME` (same file) |
-| Server default bind | `0.0.0.0:9678` | `DEFAULT_LISTEN` (`mirai-server/src/config.rs`) |
-
-MRP carries Go position analysis between an analysis GUI and a server owning KataGo
-processes. Three properties define its shape:
-
-* **Stateless requests (INV-4).** Every request carries the whole position — initial stones,
-  moves, rules, komi. Servers keep no position state; nothing needs resynchronising after a
-  reconnect.
-* **Streamed results.** One request yields a stream of progressively refined reports until a
-  terminal message or a cancellation.
-* **Quantised values.** No float ever crosses the wire ([§7](#7-value-types-and-quantisation)).
+MRP carries Go position analysis between a client and a server running KataGo. Each
+request contains the whole position (INV-4); results stream until completion or
+cancellation. Wire values are quantised, not floating-point ([§7](#7-value-types-and-quantisation)).
 
 ### URL syntax
 
@@ -93,63 +77,36 @@ QUIC transport parameters (`transport.rs` — `transport_config`), shared by bot
 |---|---|---|
 | `keep_alive_interval` | 5 s | **Advisory.** Any interval, or none. ≤ ⅓ of the peer's idle timeout is RECOMMENDED. |
 | `max_idle_timeout` | 30 s | **Advisory value, normative kind.** QUIC takes the minimum of the two advertised values; an implementation MUST tolerate any peer value. |
-| `max_concurrent_uni_streams` | 256 | **Normative floor.** The server opens one unidirectional stream per subscription, so a client MUST advertise at least its intended concurrent subscription count. |
+| `max_concurrent_uni_streams` | 256 | **Normative floor.** A client MUST advertise at least its intended concurrent subscription count and SHOULD leave spare capacity. |
 | `stream_receive_window` | 16 KiB | **Recommended for clients.** A server writing to a subscription stream blocks once it is one window ahead of what the client has read, and only then can it replace a queued report with a newer one. quinn's 1.25 MB default lets hundreds of stale reports queue on a slow link, all delivered late and in order. |
-| bidirectional streams | 1 per connection | A server MUST permit at least one; a client MUST NOT open a second. |
+| bidirectional streams | 1 per connection | A server MUST permit the control stream ([§3](#3-stream-topology)). |
 
 Other flow-control windows, migration and datagrams are implementation choices outside MRP.
 
 ### 2.2 Certificates: trust on first use
 
-MRP does not use PKI. Servers are LAN boxes; requiring a CA-issued certificate for
-`mirai://basement.local` would mean public DNS plus ACME, or a private CA the user installs.
-The client pins the key directly — the SSH host-key model.
+MRP pins certificates instead of using PKI, so a LAN server needs no public DNS or CA.
 
 | Rule | Level |
 |---|---|
 | The pin is the **lowercase hex SHA-256 of the leaf certificate's DER**, 64 characters, no separators. Only the leaf is hashed; intermediates are ignored. | MUST |
 | Self-signed leaves are expected and normal. | — |
 | First contact with no stored pin: perform a TLS handshake, record the leaf fingerprint, and close with application code 0 **without opening a stream or sending a frame**. Show that fingerprint to the user and persist it only after they accept it. | MUST |
-| A client MUST NOT send `Hello` or a token on a connection whose leaf fingerprint the user has not accepted. The token-bearing connection is a later, pinned handshake. | MUST NOT |
+| A client MUST NOT send `Hello` or a token before the user has accepted the leaf fingerprint. The token-bearing connection is a later, pinned handshake. | MUST NOT |
 | Later connections: compare, and abort the TLS handshake on mismatch. A mismatch is a **hard failure** — no fallback check, no one-time override, no retry of that connection. | MUST |
 | Do NOT validate against a trust store, do NOT validate hostname/SAN, do NOT reject on `notBefore`/`notAfter`. The fingerprint is the entire check. | MUST |
 | Still verify the TLS 1.3 `CertificateVerify` signature against the leaf's public key. Pinning replaces chain validation, not proof of key possession. | MUST |
 | Normalise a user-supplied pin — trim, lowercase, strip `:` — so a fingerprint pasted from `openssl x509 -fingerprint -sha256` works. | SHOULD |
 
-Reference: `transport.rs` — `probe` is the unpinned handshake (no stream); `connect` requires a
-pin and is the only path that may be followed by `Hello`. `normalize_fingerprint` canonicalises
-that pin once before the verifier is built; `TofuVerifier` compares it and delegates signature
-checking to rustls. The accept-anything verifier is used only by `probe`. `fingerprint_of` /
-`sha256.rs` — `fingerprint` produce the pin; `format_fingerprint` is the colon-grouped form a
-person compares with the server's startup log.
+**SNI.** A client connecting to an IP literal sends `localhost` as SNI. Servers MUST NOT
+route or authorise on SNI, or reject a handshake because SNI disagrees with the certificate.
 
-**SNI.** rustls requires a syntactically valid server name, so a client whose URL host is an IP
-literal sends the SNI name `localhost` (`transport.rs` — `connect`). Servers MUST NOT route or
-authorise on SNI, and MUST NOT reject a handshake because SNI disagrees with the certificate.
-
-**Provisioning.** A server MAY generate a self-signed certificate on first start
-(`transport.rs` — `load_or_generate_cert`: rcgen pair for the configured hostnames, key written
-`0600`, reused on later starts so the pin stays stable). Rotating the certificate invalidates
-every client pin and is a user-visible event.
+**Provisioning.** A server MAY generate a self-signed certificate on first start and
+reuse it. Rotation invalidates every client pin and requires user approval.
 
 ---
 
 ## 3. Stream topology
-
-```
-                        client                                    server
-                          |                                          |
-   QUIC connect, ALPN "mirai", TLS 1.3, leaf pinned                 |
-                          |=========================================>|
-   client-opened BIDIRECTIONAL control stream (exactly one)           |
-                          |----- ClientMsg frames ------------------->|
-                          |<---- ServerMsg frames --------------------|
-                          |          (lives for the whole session)    |
-   server-opened UNIDIRECTIONAL stream, one per subscription:         |
-      sub 1               |<-- [01 00 00 00] SubMsg frames ... Done --|
-      sub 2               |<-- [02 00 00 00] SubMsg frames ... Done --|
-      sub 7               |<-- [07 00 00 00] SubMsg frames ... RESET -|  (cancelled)
-```
 
 | # | Rule | Level |
 |---|---|---|
@@ -161,9 +118,8 @@ every client pin and is a user-visible event.
 | 6 | `SubMsg` never appears on the control stream; `ServerMsg` never appears on a subscription stream. | MUST NOT |
 | 7 | A subscription stream ends with either a `Done`/`Failed` frame plus a clean FIN, or a QUIC `RESET_STREAM`. | MUST |
 
-Why a stream per subscription: cancellation must *discard* in-flight reports. On one ordered
-byte stream they would still have to be received and parsed before later data. With one QUIC
-stream per subscription, `STOP_SENDING` and `RESET_STREAM` drop them inside the transport.
+One stream per subscription lets `STOP_SENDING` and `RESET_STREAM` discard unread reports
+without delaying another subscription on the same ordered byte stream.
 
 ---
 
@@ -190,16 +146,15 @@ Every message on every stream is one frame:
 | `0x01` | the control stream | a standalone zstd frame (RFC 8878) whose plaintext is the postcard encoding |
 | `0x02` | subscription streams | the next chunk of the stream's zstd stream ([§4.1](#41-subscription-streams-one-zstd-stream)), which decompresses to the postcard encoding |
 
-Constants (`mirai-proto/src/frame.rs`): `MAX_FRAME` = 8 MiB = 8388608 · `COMPRESS_THRESHOLD` =
-4096 · `FLAG_ZSTD` = `0x01` · `FLAG_SUB_ZSTD` = `0x02` · control-stream zstd level 1, window
-2^19 (`CONTROL_WINDOW_LOG`) · subscription window 2^16 (`SUB_WINDOW_LOG`) · `SUB_STREAM_LEVEL`,
-the reference sender's level.
+Constants: `MAX_FRAME` = 8 MiB (8388608 bytes); `COMPRESS_THRESHOLD` = 4096;
+`FLAG_ZSTD` = `0x01`; `FLAG_SUB_ZSTD` = `0x02`. The reference sender uses
+zstd level 1 and window 2^19 on control streams; subscription windows are 2^16.
 
 | # | Rule | Level |
 |---|---|---|
 | 1 | Never emit `len > MAX_FRAME`. | MUST NOT |
 | 2 | Read the 5-byte header first and reject `len > MAX_FRAME` **before** reading or allocating the body. | MUST |
-| 3 | **Decompression-bomb guard:** bound each frame's decompressed size and abort as soon as the plaintext would exceed `MAX_FRAME`. Never trust a content-size field inside the zstd frame. (`frame.rs` — `decode_payload` on the control stream, `SubStreamDecoder::inflate` on subscription streams.) A receiver MAY apply a smaller bound where it expects a small message (`read_msg_within`, [§9.3](#93-limits)). The zstd window is allocated from the header before any plaintext byte, so that bound does not cover it: a control frame's window is at most 2^19 (`CONTROL_WINDOW_LOG`, what the reference encoder declares at level 1), and a receiver MUST refuse a larger one. | MUST |
+| 3 | Bound each frame's decompressed size to `MAX_FRAME`; abort inflation as soon as it would exceed the bound. Do not trust the zstd content-size field. A receiver MAY use a smaller plaintext limit where appropriate ([§9.3](#93-limits)). Separately, refuse control-frame zstd windows larger than 2^19: the window is allocated from its header before the plaintext bound applies. | MUST |
 | 4 | Reject a `flags` value the stream does not allow. | MUST |
 | 5 | A payload decodes to exactly one message; reject trailing bytes after it. | MUST |
 | 6 | Control stream: compress iff the postcard payload is **strictly greater than** `COMPRESS_THRESHOLD`. Interop does not depend on it: receivers MUST accept either form at any size, so a minimal implementation MAY always send `flags = 0x00`. | SHOULD / MUST |
@@ -221,8 +176,8 @@ framed one by one ([§11](#11-reference-figures)).
 | 1 | The receiver decodes every frame of the stream, in order, including one whose report it then drops: each `0x02` frame continues the zstd stream. | MUST |
 | 2 | The sender flushes at the end of every frame. A receiver MUST NOT need the next frame to finish decoding this one. | MUST |
 | 3 | The zstd window is at most 2^16 bytes. It bounds each stream's memory on the client, which MUST refuse a stream that declares a larger one. | MUST |
-| 4 | A `0x00` frame stays outside the zstd stream, which it neither advances nor resets. Any frame MAY be sent that way. | MAY |
-| 5 | Level, checksum and content-size flag are the sender's choice; the reference sender uses `SUB_STREAM_LEVEL` with neither checksum nor content size. | — |
+| 4 | A `0x00` frame stays outside the zstd stream, which it neither advances nor resets. Any frame MAY be sent that way; send subscription frames as `0x02` where possible. | MAY / SHOULD |
+| 5 | Level, checksum and content-size flag are the sender's choice; the reference sender uses zstd level 6 (`SUB_STREAM_LEVEL`) with neither checksum nor content size. | — |
 
 A stream's zstd state never crosses into another stream, so cancelling one — which throws its
 unread bytes away ([§8.4](#84-cancellation-inv-3)) — cannot desynchronise any other.
@@ -248,28 +203,20 @@ every struct MUST be encoded in exactly the order given in [§6](#6-message-cata
 
 ### 5.1 Encoding rules
 
-Each row below was verified against postcard 1.1.3's own sources and README rather than
-assumed; the last column names what was read (paths relative to the crate root
-`~/.cargo/registry/src/*/postcard-1.1.3/`).
-
-| Construct | Encoding | Confirmed in |
-|---|---|---|
-| `bool` | one byte, `0x00` / `0x01` | `src/ser/serializer.rs` — `serialize_bool` |
-| `u8` | one raw byte, **no varint** | `serialize_u8` |
-| `i8` | one raw byte, two's complement, **no varint, no zigzag** | `serialize_i8` |
-| `u16`, `u32`, `u64` | unsigned LEB128 varint | `serialize_u16/u32/u64`, `src/varint.rs` |
-| `i16` | **zigzag, then varint**: `zz = ((v << 1) ^ (v >> 15)) as u16`, then varint(`zz`) | `serialize_i16` + `zig_zag_i16`; decode `src/de/deserializer.rs` — `deserialize_i16` |
-| `Option<T>` | `0x00` = none; `0x01` + value = some | `serialize_none` / `serialize_some`; decode rejects any other tag (`DeserializeBadOption`) |
-| enum variant | varint of the **zero-based declaration-order index**, then the variant's fields (nothing extra for a unit variant) | `serialize_unit_variant`, `serialize_newtype_variant`, `serialize_tuple_variant`, `serialize_struct_variant`; decode `variant_seed` |
-| `Vec<T>`, sequences | varint element **count**, then elements back to back | `serialize_seq`; decode `deserialize_seq` |
-| `String`, `&str` | varint **byte** length, then UTF-8 bytes | `serialize_str`; decode rejects invalid UTF-8 |
-| tuple, tuple struct, struct | fields in declaration order, concatenated; no length, no framing | `serialize_tuple`, `serialize_tuple_struct`, `serialize_struct` |
-| newtype struct (`Point(u16)`) | transparent — the inner value's encoding | `serialize_newtype_struct` |
-| unit, unit struct | zero bytes | `serialize_unit`, `serialize_unit_struct` |
-
-Corroborated by postcard's `README.md` ("Variable Length Data"): *all signed and unsigned
-integers larger than eight bits are encoded using a varint, including slice lengths and enum
-discriminants.*
+| Construct | Encoding |
+|---|---|
+| `bool` | one byte, `0x00` / `0x01` |
+| `u8` | one raw byte, **no varint** |
+| `i8` | one raw byte, two's complement, **no varint, no zigzag** |
+| `u16`, `u32`, `u64` | unsigned LEB128 varint |
+| `i16` | **zigzag, then varint**: `zz = ((v << 1) ^ (v >> 15)) as u16`, then varint(`zz`) |
+| `Option<T>` | `0x00` = none; `0x01` + value = some; reject any other tag |
+| enum variant | varint of the **zero-based declaration-order index**, then its fields (nothing extra for a unit variant); reject unknown discriminants |
+| `Vec<T>`, sequences | varint element **count**, then elements back to back |
+| `String`, `&str` | varint **byte** length, then UTF-8 bytes; reject invalid UTF-8 |
+| tuple, tuple struct, struct | fields in declaration order, concatenated; no length, no framing |
+| newtype struct (`Point(u16)`) | transparent — the inner value's encoding |
+| unit, unit struct | zero bytes |
 
 Deliberately unused by MRP, therefore unspecified here: `f32`/`f64` (MRP quantises
 instead), `char`, maps, 32/64/128-bit signed integers, `u128`, COBS framing, CRC flavours.
@@ -287,12 +234,10 @@ encode(n):                              decode():
 ```
 
 * Seven bits per byte, **least-significant group first**; high bit set on all but the last byte.
-* Maximum lengths: `u16` → 3 bytes, `u32` → 5, `u64` → 10 (`src/varint.rs` — `varint_max`).
-* Encoders MUST emit the minimal byte count.
-* Decoders MUST reject a varint running past its type's maximum length, and MUST reject a final
-  byte whose value exceeds the bits the type has left — e.g. a five-byte `u32` ending in
-  `> 0x0F` (`deserializer.rs` — `try_take_varint_u16/u32/u64`, `varint.rs` — `max_of_last_byte`;
-  postcard's own `varint_boundary_canon` test pins `[FF FF FF FF 1F]` as invalid for `u32`).
+* Maximum lengths: `u16` → 3 bytes, `u32` → 5, `u64` → 10.
+* Encoders MUST emit the minimal byte count. Decoders MUST reject a varint exceeding
+  its type's maximum length or remaining bits (e.g. a five-byte `u32` ending in
+  `> 0x0F`).
 * Decoders MAY accept a non-minimal encoding that still fits the budget — postcard's does, e.g.
   `80 00` reads as `u16` 0. Encoders MUST NOT depend on that.
 
@@ -303,26 +248,12 @@ bytes and decodes identically everywhere. Implementations MUST NOT emit a longer
 
 ### 5.3 Type-to-encoding map
 
-| MRP value | Rust type | Wire encoding |
-|---|---|---|
-| protocol version | `ProtoVersion` | three `u16` varints: `major`, `minor`, `patch` (`0.1.0` is `00 01 00`) |
-| subscription id | `u32` | varint — but **4 raw LE bytes** as the stream preamble ([§3](#3-stream-topology)) |
-| session id, ping nonce | `u64` | varint |
-| text | `String` | varint byte length + UTF-8 |
-| board point | `Point(u16)` | varint; `index = y*w + x`, `65535` = pass |
-| board size | `Size { w: u8, h: u8 }` | two raw bytes, each `2..=19` |
-| colour | `Color` | varint variant: `0` Black, `1` White |
-| ruleset | `RuleSet` | varint variant `0..=8` ([§7.5](#75-ruleset)) |
-| requested extras | `Want` | **one raw byte** (custom `Serialize` calling `serialize_u8`) |
-| komi | `i16` (`komi_x2`) | zigzag + varint |
-| priority | `i8` | one raw byte |
-| quantised probability / policy | `u16` | varint |
-| quantised signed scalar | `i16` | zigzag + varint |
-| ownership cell | `i8` | one raw byte |
-| visit counts | `u32` | varint |
-| optional field | `Option<T>` | `0x00` / `0x01` + value |
-| list | `Vec<T>` | varint count + elements |
-| pair | `(A, B)` | `A` then `B`, nothing else |
+The primitives above compose the wire types in [§6](#6-message-catalogue) and
+[§7](#7-value-types-and-quantisation). `ProtoVersion` is three `u16` varints
+(`major`, `minor`, `patch`); `Color` is an enum discriminant, `0` Black or `1`
+White. `Point` is a transparent `u16` varint; `Size` is two raw `u8` bytes
+(`w`, then `h`). A subscription id is a `u32` varint inside a message;
+its stream preamble is specified in [§3](#3-stream-topology).
 
 ---
 
@@ -385,7 +316,7 @@ At most one terminal message per stream, always the last frame.
 | **2** | `NoSuchEngine` | `no-such-engine` | `Open.engine` names an unknown engine, or is `None` and no engine is configured. |
 | **3** | `TooManySubs` | `too-many-subs` | The token's `max_subs` is already reached. |
 | **4** | `BadRequest` | `bad-request` | First control message was not `Hello`, or exceeds the `Hello` bounds ([§9.3](#93-limits)); a second `Hello`; `Open.sub` duplicates a live id; `Open.req` is off the board or over a §9.3 request limit. |
-| **5** | `EngineFailed` | `engine-failed` | Reserved. Not emitted by the reference server — engine failures arrive as `SubMsg::Failed` ([B.3](#appendix-b-findings)). |
+| **5** | `EngineFailed` | `engine-failed` | Reserved. Not emitted by the reference server — engine failures arrive as `SubMsg::Failed`. |
 | **6** | `Internal` | `internal` | Reserved. Not emitted by the reference server. |
 
 A client MUST decode and handle all seven, including the two the reference server never sends.
@@ -399,15 +330,9 @@ Declared in `mirai-proto/src/types.rs`; `Point`, `Size`, `Color` and `RuleSet` i
 
 ### 7.1 INV-1: point and array ordering
 
-```
-index = y * width + x            y = 0 is the TOP row, x = 0 the LEFT column
-
- 19x19 board indices                    policy array
- x:   0    1    2  ...  18              [   0 .. 360 ]  board, same order
- y=0 [0]  [1]  [2]  ... [18]   TOP      [ 361 ]         pass
- y=1 [19] [20] [21] ... [37]
- y=18[342] ...          [360]  BOTTOM
-```
+`index = y * width + x`; `y = 0` is the **top** row, `x = 0` the left column.
+On a 19×19 board, indices 0–18 are the top row, 342–360 the bottom row,
+and policy index 361 is pass.
 
 | Rule | Level |
 |---|---|
@@ -416,13 +341,10 @@ index = y * width + x            y = 0 is the TOP row, x = 0 the LEFT column
 | `Report.ownership`, when present, has exactly `w*h` entries in that order. | MUST |
 | `Report.policy`, when present, has exactly `w*h + 1` entries: the board, then **one pass slot last**. | MUST |
 | Both board dimensions are in `2..=19` (`MIN_DIM`/`MAX_DIM`, KataGo's stock `MAX_LEN`); receivers reject anything else. | MUST |
-| (Client) A report that breaks any rule above fails its subscription, which the client then cancels exactly as in [§8.4](#84-cancellation-inv-3) — `STOP_SENDING` and `Cancel` — so the server stops the search and frees its slot; none of the report is delivered (`remote.rs` — `misfit`). | MUST |
+| (Client) A report with invalid dimensions, points, or array lengths fails its subscription; discard the report and cancel as in [§8.4](#84-cancellation-inv-3). | MUST |
 
-This is KataGo's own ordering, which is the reason for choosing it: `ownership` and `policy`
-index identically to the board array, so overlays need no remapping. Reversing it would
-silently mirror every overlay. Pinned by `mirai-engine/src/decode.rs` —
-`ownership_keeps_katago_row_major_top_left_order` and
-`policy_has_a_pass_slot_and_marks_illegal_moves`.
+This is KataGo's ordering: `ownership` and `policy` index identically to the
+board array. Reversing it silently mirrors overlays.
 
 ### 7.2 Quantisation
 
@@ -496,10 +418,10 @@ between requests.
 | 9 | `pv_len` | `Option<u8>` | moves | Maximum PV length (`analysisPVLen`). |
 | 10 | `max_candidates` | `Option<u8>` | candidates | Keep only the first `n` candidates by KataGo's `order`; absent = all. The server applies it before quantising, so cut moves are neither decoded nor sent. |
 | 11 | `want` | `Want` (1 raw byte) | bit flags | Optional extras ([§7.7](#77-want)). |
-| 12 | `report_every_ms` | `Option<u16>` | **milliseconds** | Intermediate-report interval; absent = only the terminal message. Forwarded as `reportDuringSearchEvery` in seconds. |
+| 12 | `report_every_ms` | `Option<u16>` | **milliseconds** | Intermediate-report interval; absent = only the terminal message. Forwarded as `reportDuringSearchEvery` in seconds. Clients SHOULD request periodic reports only for live views. |
 | 13 | `priority` | `i8` (1 raw byte) | | Higher runs first. A server MUST clamp it into `-8..=8` (`session.rs` — `PRIORITY_RANGE`) so one client cannot starve others. |
 | 14 | `avoid` | `Vec<AvoidSpec>` | | Move restrictions ([§7.8](#78-avoidspec)). |
-| 15 | `overrides` | `Vec<(String, String)>` | | Raw per-query KataGo `overrideSettings` entries. Servers SHOULD treat them as untrusted, MAY ignore them, and MUST NOT reject a request solely for an unknown key. The reference server forwards only `wideRootNoise` and `humanSLProfile` with values of at most 64 bytes, and silently drops every other entry ([§9.3](#93-limits)). |
+| 15 | `overrides` | `Vec<(String, String)>` | | Raw per-query KataGo `overrideSettings` entries. Servers SHOULD treat them as untrusted, MAY ignore them, and MUST NOT reject a request solely for an unknown key. See [§9.3](#93-limits) for the reference server's allowlist. |
 
 ### 7.4 Komi
 
@@ -540,8 +462,8 @@ KataGo (`RuleSet::katago_name`). Receivers MUST reject a discriminant above 8.
 | 0 | `0x01` | `OWNERSHIP` | `Report.ownership` populated (`w*h` entries). |
 | 1 | `0x02` | `POLICY` | `Report.policy` populated (`w*h + 1` entries). |
 | 2 | `0x04` | `PV_VISITS` | `MoveInfo.pv_visits` populated; otherwise empty. |
-| 3 | `0x08` | `MOVES_OWNERSHIP` | Reserved. No MRP field carries per-move ownership, so a producer MUST NOT request data it discards. The bit stays reserved until a wire field exists ([B.2](#appendix-b-findings)). |
-| 4 | `0x10` | `ROOT_RAW` | Nominally requests `RootInfo.raw_*`. Not consulted by the reference producer ([B.1](#appendix-b-findings)). |
+| 3 | `0x08` | `MOVES_OWNERSHIP` | Reserved. No MRP field carries per-move ownership; producers MUST leave it unset. |
+| 4 | `0x10` | `ROOT_RAW` | Advisory request for `RootInfo.raw_*`: fields are present whenever the engine supplies them, whether or not the bit is set. Set it for forward compatibility; do not rely on it to suppress them. |
 | 5–7 | `0xE0` | — | Reserved, MUST be 0. Receivers MUST ignore unknown bits rather than fail (`Want::from_bits_truncate`). |
 
 ### 7.8 `AvoidSpec`
@@ -576,7 +498,7 @@ One candidate move; all values Black-perspective.
 | 12 | `order` | `u8` raw byte | — | KataGo ranking; 0 is the engine's first choice. |
 | 13 | `play_value` | `u32` varint | — | KataGo's `playSelectionValue`, rounded; drives play-mode sampling. |
 | 14 | `pv` | `Vec<Point>` | — | Principal variation from this move, in order. |
-| 15 | `pv_visits` | `Vec<u32>` | — | Per-ply visits along `pv`. Empty unless `PV_VISITS` was requested; when non-empty it SHOULD match `pv` in length ([B.8](#appendix-b-findings)). |
+| 15 | `pv_visits` | `Vec<u32>` | — | Per-ply visits along `pv`. Empty unless `PV_VISITS` was requested; when non-empty it SHOULD match `pv` in length. A client MUST NOT assume equal lengths. |
 
 ### 7.10 `RootInfo`
 
@@ -602,8 +524,8 @@ Intermediate and final reports have the same shape; only the wrapping `SubMsg` v
 | 1 | `turn` | `u16` varint | Turn of the analysed position: 0 = before the first move, else the request's move count. |
 | 2 | `root` | `RootInfo` | Root statistics. |
 | 3 | `moves` | `Vec<MoveInfo>` | Candidates **sorted ascending by `order`**; `moves[0]` is the engine's choice. Servers MUST sort; clients MAY rely on it. |
-| 4 | `ownership` | `Option<Vec<i8>>` | Exactly `w*h` entries when present; any other length MUST be rejected. On a subscription stream it may carry changes rather than the map, below. |
-| 5 | `policy` | `Option<Vec<u16>>` | Exactly `w*h + 1` entries when present, pass last; any other length MUST be rejected. |
+| 4 | `ownership` | `Option<Vec<i8>>` | Map or stream delta; see [§7.1](#71-inv-1-point-and-array-ordering) for length and [below](#711-report) for restoration. |
+| 5 | `policy` | `Option<Vec<u16>>` | See [§7.1](#71-inv-1-point-and-array-ordering) for length and pass slot. |
 
 **Ownership on a subscription stream.** Between two reports of one search most points move by
 a step or two. Sent as those changes, a live report measured a quarter smaller
@@ -616,13 +538,9 @@ stream carried:
 | 2 | Either way the map, not the difference, becomes the stream's last map. A report without `ownership` leaves it unchanged. | MUST |
 | 3 | Every other field is sent as is. | — |
 
-Both ends apply the same rule to the same sequence, so they cannot disagree; the state lives
-and dies with the stream (`msg.rs` — `OwnershipDelta`).
-
-Once decoded and restored, every report is a complete snapshot: a client MAY drop an older one
-the moment a newer arrives. The frames underneath are not independent
-([§4.1](#41-subscription-streams-one-zstd-stream), and the ownership rule above): the client
-still decodes every one.
+The last map is scoped to the stream. After restoration, each report is a complete
+snapshot, so a client MAY drop older reports without delivering them. Frame
+decoding still follows [§4.1](#41-subscription-streams-one-zstd-stream).
 
 ---
 
@@ -630,23 +548,14 @@ still decodes every one.
 
 ### 8.1 Handshake
 
-```
-client                                                            server
-  | QUIC Initial, ALPN "mirai", TLS 1.3; leaf fingerprint pinned    |
-  |----------------------------------------------------------------->|
-  | open bidirectional stream; frame ClientMsg::Hello{proto,token,..} |
-  |----------------------------------------------------------------->|
-  |                                    frame ServerMsg::Welcome{...}  |
-  |<-----------------------------------------------------------------|
-```
+The client pins the leaf certificate ([§2.2](#22-certificates-trust-on-first-use)),
+then opens the control stream and sends `Hello` ([§3](#3-stream-topology)).
 
-| # | Rule | Level |
-|---|---|---|
-| 1 | Complete the QUIC/TLS handshake with ALPN `mirai` and verify the leaf fingerprint before sending any frame. A client with no accepted pin MUST [`probe`](#22-certificates-trust-on-first-use) instead of sending `Hello`. | MUST |
-| 2 | Open exactly one bidirectional stream and send `Hello` as its first frame. | MUST |
-| 3 | (Server) Treat any first control message other than `Hello` as fatal: `Error { None, BadRequest }`, then close the connection with application code 1. | MUST |
-| 4 | (Server) Send nothing before receiving `Hello`, except an `Error`. | MUST NOT |
-| 5 | (Client) Ignore, rather than fail on, any other message arriving before `Welcome`. | SHOULD |
+| Rule | Level |
+|---|---|
+| (Server) A first control message other than `Hello` is fatal: `Error { None, BadRequest }`, then close with application code 1. | MUST |
+| (Server) Send nothing before receiving `Hello`, except an `Error`. | MUST NOT |
+| (Client) Ignore, rather than fail on, any other message arriving before `Welcome`. | SHOULD |
 
 **Version check.** ALPN is the fixed identifier `mirai` and carries no version, so a mismatch
 completes the TLS handshake and is reported as `BadVersion` rather than failing opaquely in
@@ -685,42 +594,17 @@ The credential is the opaque UTF-8 `Hello.token`, checked against a server-side 
 | A server with no configured tokens rejects every client. | MUST |
 | On failure reply `Error { None, Unauthorized }`, then close with application code 1; do not distinguish "unknown" from "wrong" in `msg`. | MUST |
 | Tokens carry ≥ 128 bits of entropy. `mirai-server --generate-token` emits 64 lowercase hex characters. | SHOULD |
-| The token is sent nowhere but inside `Hello` on a TLS 1.3 connection pinned to a fingerprint the user has accepted. An unpinned connection MUST NOT carry it. | MUST NOT (otherwise) |
 
 ### 8.3 Subscription lifecycle
 
-```mermaid
-stateDiagram-v2
-    [*] --> Idle
-    Idle --> Requested: ClientMsg::Open
-    Requested --> Rejected: ServerMsg::Error Some(sub)
-    Requested --> Active: ServerMsg::Opened
-    Active --> Active: SubMsg::Report
-    Active --> Done: SubMsg::Done
-    Active --> FailedFin: SubMsg::Failed
-    Active --> Cancelled: ClientMsg::Cancel
-    Active --> FailedLost: connection lost
-    Rejected --> [*]
-    Done --> [*]
-    FailedFin --> [*]
-    Cancelled --> [*]
-    FailedLost --> [*]
-
-    Rejected: REJECTED
-    Done: DONE — stream FIN
-    FailedFin: FAILED — stream FIN
-    Cancelled: CANCELLED — stream RESET
-    FailedLost: FAILED — never replayed
-```
-
-All terminal states are final: the id is retired and the stream closed.
+A subscription id is retired when its request is rejected, it is cancelled, or
+its stream ends. Stream termination follows [§3](#3-stream-topology);
+`Done` and `Failed` are terminal messages ([§6.3](#63-submsg)).
 
 | Rule | Level |
 |---|---|
 | `sub` is client-chosen and unique among the connection's live subscriptions. The reference client counts up from 1 and never reuses an id within a connection. | MUST |
 | (Server) Reject a duplicate live id with `Error { Some(sub), BadRequest }`, and reap finished subscriptions before applying that and the `max_subs` check. | MUST |
-| `Opened` and the subscription stream are independent; neither side may require one before the other. | MUST NOT |
-| (Server) End a subscription with exactly one `Done` or `Failed`, then **finish** (not reset) the stream. | MUST |
 | (Client) Treat a subscription stream that reaches clean EOF without `Done`/`Failed` as failed — never as success, never waiting indefinitely. | MUST |
 
 ### 8.4 Cancellation (INV-3)
@@ -729,12 +613,12 @@ Cancellation must *discard* in-flight reports, so it is propagated on both strea
 
 | Actor | Required actions, in order |
 |---|---|
-| **Client** | 1. `STOP_SENDING` on that subscription's stream with application code 1 — this drops reports already buffered in the receive window instead of decoding and delivering them. 2. Send `ClientMsg::Cancel { sub }` on the control stream. 3. Retire the id and ignore anything further for it. |
-| **Server** | Stop the search and **reset** the subscription stream with application code 1 (`session.rs` — `pump`, `CODE_CANCELLED`). Resetting is REQUIRED: finishing would deliver exactly the stale reports the client just refused. Stopping MUST NOT wait on the client: a stream it no longer reads is blocked on flow control, and the search must end anyway. Cancelling an unknown id is not an error and MUST be ignored silently. |
+| **Client** | 1. If the subscription stream has arrived, `STOP_SENDING` on it with application code 1 to discard buffered reports. 2. Send `ClientMsg::Cancel { sub }` on the control stream. 3. Retire the id and ignore later reports for it. |
+| **Server** | On `Cancel`, stop the search and **reset** any open subscription stream with application code 1 (`CODE_CANCELLED`). Do not wait for the client to read: flow control may block writes. Ignore unknown ids silently. |
 
-A client MAY send only one of the two and a server MUST cope, but doing both is RECOMMENDED:
-`STOP_SENDING` acts in the transport immediately, while `Cancel` waits on the peer's control
-loop. Connection loss cancels everything implicitly.
+Both actions matter: `STOP_SENDING` discards buffered reports immediately; `Cancel`
+stops the search even if there is no stream yet or the stream is blocked on flow
+control. Connection loss cancels everything implicitly.
 
 ### 8.5 Other control requests
 
@@ -742,7 +626,6 @@ loop. Connection loss cancels everything implicitly.
 |---|---|---|
 | `Ping(n)` | `Pong(n)` | `n` echoed unchanged. Unsolicited `Pong` MUST NOT be sent. QUIC keep-alive already covers transport liveness. |
 | `ListEngines` | `Engines(..)` | Current engine list; MAY differ from `Welcome.engines`. |
-| second `Hello` | `Error { None, BadRequest, "already greeted" }` | Non-fatal; the connection continues. |
 
 ### 8.6 Connection loss and shutdown
 
@@ -758,11 +641,10 @@ Rationale: analysis requests are cheap to reissue and expensive to run. Replayin
 stale positions after a five-second outage burns search threads on positions nobody is
 watching.
 
-| Shutdown path | Action |
-|---|---|
-| Client finished | close the QUIC connection, application code **0**, reason `bye`. |
-| Server, normal end or control-stream EOF | close, application code **0**, reason `bye`. |
-| Server, rejecting a handshake | write the `Error` frame, **flush and finish the control stream and wait for the peer's acknowledgement**, then close with application code **1** and the `ErrCode::as_str()` name as the reason. Flushing first is REQUIRED — closing immediately would discard the explanation. |
+Both peers close normally with application code 0 and reason `bye` ([§9.2](#92-quic-application-codes)).
+On a fatal handshake rejection the server MUST flush and finish the `Error` frame
+and wait for its acknowledgement before closing with code 1 and the
+`ErrCode::as_str()` reason. Closing immediately could discard the explanation.
 
 ---
 
@@ -770,17 +652,14 @@ watching.
 
 ### 9.1 Scope and fatality
 
-| `ErrCode` | `sub` | Trigger | Fatal to |
-|---|---|---|---|
-| `BadRequest` | `None` | first control message was not `Hello`, or exceeds the `Hello` bounds | **connection** (server closes, code 1) |
-| `BadVersion` | `None` | `Hello.proto` is not `0.1.0` | **connection** (code 1) |
-| `Unauthorized` | `None` | token not recognised | **connection** (code 1) |
-| `BadRequest` | `None` | second `Hello` | nothing |
-| `BadRequest` | `Some(sub)` | `Open.sub` already live | that subscription |
-| `BadRequest` | `Some(sub)` | `Open.req` has a board size, move, stone or avoid point off the board, or exceeds a §9.3 request limit | that subscription |
-| `TooManySubs` | `Some(sub)` | token's `max_subs` reached | that subscription |
-| `NoSuchEngine` | `Some(sub)` | unknown engine, or `None` with none configured | that subscription |
-| `SubMsg::Failed` | sub stream | the search itself failed | that subscription |
+| Error | Scope and effect |
+|---|---|
+| `BadRequest` on the first control message, `BadVersion`, `Unauthorized` | Connection closes with application code 1 after an `Error { None, .. }`. |
+| `BadRequest` on a second `Hello` | Non-fatal `Error { None, .. }`; the connection continues. |
+| `BadRequest`, `TooManySubs`, `NoSuchEngine` on `Open` | `Error { Some(sub), .. }` rejects that subscription; the connection continues. |
+| `SubMsg::Failed` | Ends its subscription stream with FIN ([§6.3](#63-submsg)). |
+
+Triggers are in [§6.4](#64-errcode); request bounds are in [§9.3](#93-limits).
 
 Client rules: fail exactly the named subscription on `Error { Some(sub) }` and keep the
 connection · on `Error { None }` do not tear down subscriptions unilaterally; surface it and
@@ -793,40 +672,26 @@ signal — a server MAY close without sending one.
 | Where | Code | Meaning |
 |---|---|---|
 | connection close, either side | 0 (`bye`) | orderly shutdown |
-| connection close, server | 1 | `Error` frame, then close: `BadVersion`, `Unauthorized`, or a first control message that was not `Hello` or exceeds its bounds |
-| connection close, server | 1 | reason `pre-authentication deadline`, no `Error` frame: handshake finished, `Hello` not received in time |
+| connection close, server | 1 | fatal handshake rejection ([§8.1](#81-handshake), [§8.2](#82-authentication)) or post-handshake pre-authentication deadline ([§8.1](#81-handshake)) |
 | `RESET_STREAM` on a subscription stream (server) | 1 | subscription cancelled |
 | `STOP_SENDING` on a subscription stream (client) | 1 | subscription cancelled |
 
 No other code carries meaning beyond "the peer is gone".
 
-If `PREAUTH_DEADLINE` expires before the handshake finishes, the reference server does
-not send application code 1. There are no 1-RTT keys, so an application close would be
-rewritten as a transport `CONNECTION_CLOSE` with `APPLICATION_ERROR` and an empty
-reason. Dropping the attempt is that close. It is not an authentication failure.
-
 ### 9.3 Limits
 
 | Limit | Value | Enforcement |
 |---|---|---|
-| Frame payload | ≤ `MAX_FRAME` (8 MiB) | sender MUST NOT exceed; receiver MUST reject before allocating |
-| Decompressed payload | ≤ `MAX_FRAME` | receiver MUST abort decompression past the limit |
-| Control-stream zstd window | ≤ 2^19 (`CONTROL_WINDOW_LOG`) | receiver MUST refuse a larger window. The reference encoder at level 1 declares this for a max-size frame. The window is allocated from the header, before the plaintext bound applies; 2^27, the library default, is about 128 MiB |
-| Concurrent subscriptions | per-token `max_subs`, default 4 | server MUST refuse further `Open` with `TooManySubs`. The reference server counts a cancelled subscription until its search has stopped; an `Open` at the limit waits up to 1 s (`CANCEL_GRACE`) for a cancelled one to stop before refusing, so `Cancel` then `Open` at the limit is served |
-| Server-opened uni streams | client's `max_concurrent_uni_streams` | QUIC flow control; client MUST advertise ≥ its intended subscription count |
-| `AnalyzeReq.priority` | clamped to `-8..=8` | server MUST clamp, not reject |
-| `AnalyzeReq.moves` + `initial_stones` | ≤ 4096 together on the reference server (`MAX_REQUEST_STONES`) | refused with `Error { Some(sub), BadRequest }`. Far past any real game on a 19×19 board; the bound stops a few KB of zstd inflating to millions of moves on the engine's input |
+| Concurrent subscriptions | token's `max_subs`, default 4; per connection on the reference server | server MUST refuse further `Open` with `TooManySubs`. The reference server counts a cancelled subscription until its search has stopped; an `Open` at the limit waits up to 1 s (`CANCEL_GRACE`) for a cancelled one to stop before refusing. Servers MAY enforce a global token quota; clients MUST NOT assume either model |
+| `AnalyzeReq.moves` + `initial_stones` | ≤ 4096 together on the reference server (`MAX_REQUEST_STONES`) | refused with `Error { Some(sub), BadRequest }`; limits zstd-inflated engine input |
 | `AnalyzeReq.avoid` | ≤ 64 specs and ≤ 1024 points across them on the reference server (`MAX_AVOID_SPECS`, `MAX_AVOID_POINTS`) | refused with `Error { Some(sub), BadRequest }` |
-| `AnalyzeReq.overrides` | only `wideRootNoise` and `humanSLProfile`, values ≤ 64 bytes, on the reference server (`FORWARDED_OVERRIDES`, `MAX_OVERRIDE_VALUE`) | other entries dropped, not rejected ([§7.3](#73-analyzereq) forbids rejecting unknown keys) |
-| Board size | `2..=19` per dimension | receiver MUST reject anything else |
-| Control streams | exactly 1 bidirectional | client MUST NOT open more |
-| Time to `Hello` | 10 s on the reference server (`PREAUTH_DEADLINE`) | frees the slot; keep-alives do not extend it. After the handshake: application code 1, reason `pre-authentication deadline`, no `Error` frame. During the handshake: transport `APPLICATION_ERROR`. A client SHOULD send `Hello` immediately |
-| First control frame | payload ≤ 1024 bytes, and zstd plaintext ≤ 1024 bytes, on the reference server (`MAX_HELLO_FRAME`) | the length is checked on the header, before the body is read, and inflating stops at the bound: `Error { None, BadRequest }`, close with code 1. A `Hello` within the field bounds is about 520 bytes of postcard |
-| `Hello.token`, `Hello.client` | ≤ 256 bytes each on the reference server (`MAX_HELLO_FIELD`) | `Error { None, BadRequest }`, close with code 1, before the token is checked. Both arrive unauthenticated and `client` is logged; a server MUST NOT log it unbounded or unescaped |
+| `AnalyzeReq.overrides` | only `wideRootNoise` and `humanSLProfile`, values ≤ 64 bytes, on the reference server (`FORWARDED_OVERRIDES`, `MAX_OVERRIDE_VALUE`) | other entries dropped, not rejected ([§7.3](#73-analyzereq)) |
+| First control frame | payload and decompressed plaintext each ≤ 1024 bytes on the reference server (`MAX_HELLO_FRAME`) | header checked before reading the body; inflation stops at the bound; `Error { None, BadRequest }`, then close with code 1 |
+| `Hello.token`, `Hello.client` | ≤ 256 bytes each on the reference server (`MAX_HELLO_FIELD`) | `Error { None, BadRequest }`, then close with code 1, before checking the token. A server MUST NOT log untrusted `client` unbounded or unescaped |
 
-`max_subs` is counted **per connection** in the reference server, not summed per token across
-connections ([B.5](#appendix-b-findings)); a client MUST NOT rely on
-either interpretation.
+Other bounds: framing [§4](#4-framing), stream counts [§2.1](#21-quic-and-tls)
+and [§3](#3-stream-topology), board dimensions [§7.1](#71-inv-1-point-and-array-ordering),
+priority [§7.3](#73-analyzereq), and time to `Hello` [§8.1](#81-handshake).
 
 ---
 
@@ -837,9 +702,8 @@ The protocol version is `0.1.0` (`PROTO_VERSION` in `mirai-proto/src/types.rs`),
 match it exactly; a mismatch is `BadVersion` ([§8.1](#81-handshake)), and the error names
 both versions.
 
-While mirai is in development — any `0.x` version — the number does not change when the
-protocol changes. Peers are built from the same tree. The number starts moving once mirai
-has external users. There is nothing earlier to stay compatible with.
+During development, peers are built from the same tree and the version does not
+change for every protocol edit. It starts moving when external users need compatibility.
 
 ---
 
@@ -869,87 +733,12 @@ report, each row adding one change to the one above:
 | one zstd stream per subscription ([§4.1](#41-subscription-streams-one-zstd-stream)) | 198 B | 197 B |
 | ownership as changes ([§7.11](#711-report)) — current wire | **148 B** | **148 B** |
 
-What to expect from those numbers:
-
-* A live 19×19 analysis at `report_every_ms = 100` costs about **1.5 KB/s** per subscription,
-  against 23 KB/s when every candidate was framed alone, and 336 KB/s for KataGo's own JSON.
-* The first frame of a stream has nothing to be compressed against, and costs what the report
-  costs alone (654 B here). A client that steps through a game opens a new stream per move,
-  so browsing pays that; pondering one position pays the stream rate.
-* An unchanged policy costs one back-reference, which is why the overlay adds nothing once a
-  stream is running.
-* Encoding a report takes about 14 µs at `SUB_STREAM_LEVEL` and decoding about 3 µs.
-* `MAX_FRAME` is ~3000× a full report. It is a safety ceiling, not a working budget.
-
-Verified end to end against KataGo 1.18.0, locally and through `mirai-server`. A client
-SIGINT makes the server drop the subscription within 50 µs of the connection closing, and
-KataGo falls from two busy cores to 0 % CPU within 250 ms.
-
----
-
-## 12. Conformance checklist
-
-### MUST
-
-1. Negotiate ALPN `mirai` over QUIC with TLS 1.3 only. ALPN carries no version.
-2. Pin the server leaf certificate by lowercase-hex SHA-256 of its DER; refuse on mismatch; do
-   no chain, hostname or expiry validation; still verify the handshake signature.
-3. Use one client-opened bidirectional control stream, with `Hello` as its first frame.
-4. Prefix each server-opened unidirectional stream with the 4-byte little-endian subscription
-   id, outside the framing.
-5. Frame every message as `[len: u32 LE][flags: u8][payload]`.
-6. Reject `len > MAX_FRAME` before allocating or reading the body.
-7. Bound decompressed payloads to `MAX_FRAME` and abort decompression that would exceed it.
-   Refuse a control frame whose zstd window exceeds 2^19, and a subscription stream whose
-   zstd window exceeds 2^16.
-8. Encode payloads as postcard v1 in exactly the field order of §6 and §7.
-9. Encode `u16`/`u32`/`u64`, all lengths and all discriminants as unsigned LEB128 varints;
-   `u8`/`i8` as one raw byte; `i16` as zigzag-then-varint; `bool` as one `0x00`/`0x01` byte.
-10. Encode `Option` as `0x00`, or `0x01` + value, and reject any other tag.
-11. Reject unknown discriminants, malformed varints, invalid UTF-8, trailing bytes, and a
-    `flags` value the stream does not allow.
-12. Use `index = y*w + x` with `y = 0` at the top, and `65535` for pass.
-13. Send `ownership` with `w*h` entries and `policy` with `w*h + 1`, pass last, `65535` illegal.
-14. Treat every winrate, score and utility as Black-perspective, converting only at display
-    time.
-15. Apply the quantisation formulas and scale constants of §7.2 exactly.
-16. Carry komi as `komi_x2`, and the whole position in every request.
-17. Check `Hello.proto` and `Welcome.proto` equal `0.1.0` and fail the session on mismatch, naming both versions.
-18. (Server) Compare tokens in constant time against every configured token.
-19. (Server) Clamp `priority` into `-8..=8`; enforce `max_subs` with `TooManySubs`; reject a
-    duplicate live `sub` with `BadRequest`.
-20. (Server) Send exactly one `Done` or `Failed` per subscription, then finish the stream.
-21. (Server) On `Cancel`, reset the subscription stream rather than finishing it.
-22. (Client) On cancel, send `STOP_SENDING` and `Cancel`, then retire the id.
-23. Fail every live subscription on connection loss, and never replay one across a reconnect.
-24. Treat a subscription stream that reaches EOF without a terminal message as failed.
-25. (Server) Flush the `Error` frame before closing a rejected connection.
-26. Decode and handle all seven `ErrCode` values.
-27. Decode every frame of a subscription stream, in order, and restore ownership from the
-    stream's last map (§7.11).
-
-### SHOULD
-
-28. Control stream: compress payloads above 4096 bytes with zstd and set `flags = 0x01`.
-    Subscription streams: send every frame as `0x02`.
-29. Advertise `max_concurrent_uni_streams` well above the intended subscription count.
-30. Send QUIC keep-alives at roughly ⅓ of the negotiated idle timeout.
-31. Normalise a user-supplied fingerprint (trim, lowercase, strip `:`) before comparing.
-    Probe an unpinned server, show the fingerprint, and only then connect with that pin.
-    A client MUST NOT send a token over an unpinned connection.
-32. Use ≥ 128 bits of entropy per token.
-33. Reconnect with capped exponential backoff, distinguishing "reconnecting" from "permanently
-    rejected" in anything the user sees.
-34. Sort `Report.moves` ascending by `order` before sending.
-35. Set `report_every_ms` only when a live view is wanted, so the server does not serialise
-    reports nobody reads.
-36. (Client) Send `Hello` immediately after the handshake. The reference server frees
-    the session slot if it has not arrived within 10 s, and keep-alives do not extend
-    that. After the handshake the close is application code 1 with reason
-    `pre-authentication deadline`; during the handshake it is a transport
-    `APPLICATION_ERROR`.
-
----
+At `report_every_ms = 100`, the current wire costs about **1.5 KB/s** per
+subscription, against 23 KB/s when every candidate was framed alone and 336 KB/s for
+KataGo JSON. The first frame has no history to compress against (654 B in this run);
+a new stream per position pays that cost each time. An unchanged policy costs one
+back-reference. Encoding takes about 14 µs at zstd level 6, decoding about
+3 µs. `MAX_FRAME` is a safety ceiling, not a working budget.
 
 ## Appendix A: worked exchange
 
@@ -1056,25 +845,3 @@ stream plus `Cancel { sub: 1 }` — `02 00 00 00 00 02 01` — and the server wo
 stream with code 1 rather than finishing it. Note that those bytes are identical to
 `Opened { sub: 1 }`: frames carry no type tag, and direction is what tells them apart.
 
----
-
-## Appendix B: findings
-
-Raised while writing this specification. B.1, B.2, B.4 and B.7 were fixed in the reference
-implementation as a result and are recorded here only so the reasoning survives; the rest are
-open. None blocks an interoperable implementation, and none corrupts a session or a result.
-
-| # | Finding | Status | What an implementer should do |
-|---|---|---|---|
-| B.1 | `Want::ROOT_RAW` was documented as gating `RootInfo`'s `raw_*` fields, but nothing consulted it — KataGo has no switch for those values | **fixed** (documented as advisory) | Treat the raw fields as "present when the engine supplied them". Set the bit for forward compatibility; never rely on it to suppress them. |
-| B.2 | `Want::MOVES_OWNERSHIP` was forwarded as KataGo's `includeMovesOwnership`, but `MoveInfo` has no field for the result, so it was decoded and discarded | **fixed** (flag reserved; no longer requested) | Leave unset. A producer MUST NOT request data it discards. The bit stays reserved until a wire field exists. |
-| B.3 | `EngineFailed` and `Internal` are never sent by the reference server; engine failures arrive as `SubMsg::Failed(String)`, losing the machine-readable code | open | Decode both anyway — the discriminants are part of the protocol and another server may use them. |
-| B.4 | `RAW_VAR_TIME_SCALE` was defined in `mirai-engine`, so `mirai-proto` alone was not enough to decode `raw_var_time_left` | **fixed** (moved beside the other scales in `types.rs`) | — |
-| B.5 | `max_subs` is enforced per connection, not per token, so one token on two connections gets twice its quota | open | A server MAY enforce it globally; a client must rely on neither. |
-| B.6 | The reference server accepts one bidirectional stream and never looks for another, so a second stalls rather than erroring. [INFERENCE] from the control flow; untested | open | Never open a second bidirectional stream. A stricter server would close the connection. |
-| B.7 | Unknown framing flag bits were ignored, so `flags = 0x02` parsed as uncompressed postcard | **fixed** (unknown bits are now a hard error) | Keep reserved bits zero; expect a peer to reject anything else ([§4](#4-framing)). |
-| B.8 | Nothing validates a non-empty `MoveInfo.pv_visits` against the length of `pv` | open | Index defensively; do not assume the two are the same length. |
-
-Everything else read for this specification — framing, quantisation, the handshake, the
-subscription state machine, cancellation, and both endpoint implementations — behaves as
-specified above.
