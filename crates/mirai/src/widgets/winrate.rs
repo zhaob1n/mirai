@@ -761,7 +761,8 @@ impl WinrateGraph {
         );
         if let Some(winrate) = samples[cursor_index].winrate {
             fill_disc(snapshot, x, geom.y_winrate(winrate), 3.0, &accent);
-            let text = format!("Black {:.1}%", winrate * 100.0);
+            // Black's, as every figure on the graph is; the tooltip says so once.
+            let text = format!("{:.1}%", winrate * 100.0);
             let layout = self.create_pango_layout(Some(&text));
             let tx = (x + 5.0)
                 .min(geom.right - layout.pixel_size().0 as f32)
