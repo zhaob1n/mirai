@@ -126,9 +126,33 @@ const LABEL_MIN_VISITS: u32 = crate::palette::TRUSTED_VISITS;
 const CELL_SETTLED: u8 = 2;
 
 /// How opaque the blob for a candidate with this much search behind it is drawn.
-fn blob_alpha(visits: u32) -> f32 {
+///
+/// A known candidate — the engine's pick, or any move with
+/// [`crate::palette::TRUSTED_VISITS`] — is full strength. Fading is only for a move
+/// that has no colour yet ([`crate::palette::is_known`]).
+fn blob_alpha(rank: usize, visits: u32) -> f32 {
+    if crate::palette::is_known(rank, visits) {
+        return BLOB_ALPHA_MAX;
+    }
     let t = (visits as f32 / crate::palette::TRUSTED_VISITS as f32).min(1.0);
     BLOB_ALPHA_MIN + (BLOB_ALPHA_MAX - BLOB_ALPHA_MIN) * t
+}
+
+/// Which candidate variation to draw: pointer hover, else the pin.
+///
+/// A mark tool must not draw a line that is still pinned. A score overlay is the
+/// real position — territory and dead stones were counted there, and a click
+/// toggles those groups. Painting the variation would hide both.
+fn preview_index(
+    play_tool: bool,
+    scoring: bool,
+    hover: Option<usize>,
+    pinned: Option<usize>,
+) -> Option<usize> {
+    if !play_tool || scoring {
+        return None;
+    }
+    hover.or(pinned)
 }
 
 /// Black or white text, whichever reads better on `bg` — the blob already composited over
@@ -580,8 +604,9 @@ mod imp {
 
             // The replay (board clone, move-number vec, rules) lives in `sync_pv_preview`.
             // Doing it here made every unrelated redraw — a sidebar fold, a spin — pay for
-            // a position the pointer had not moved. The editor-tool gate stays in
-            // `active_preview`: a mark tool must not draw a line that is still pinned.
+            // a position the pointer had not moved. The tool and score-overlay gates stay
+            // in `active_preview`: a mark tool must not draw a line that is still pinned,
+            // and a count is the real position.
             if let Some(idx) = self.obj().active_preview() {
                 let cached = self.pv_preview.borrow();
                 if let Some(cached) = cached.as_ref()
@@ -735,8 +760,10 @@ mod imp {
             fd.set_weight(pango::Weight::Bold);
             // One layout for the whole pass: creating a PangoLayout is a GObject construction
             // plus a font-map lookup, and a numbered 200-move game would otherwise pay that
-            // once per stone per frame.
+            // once per stone per frame. The digits stay in a stack buffer, the same one the
+            // candidate figures use, so the pass does not allocate a String per stone either.
             let layout = obj.create_pango_layout(None);
+            let mut text = StackLabel::new();
             for y in 0..size.h {
                 for x in 0..size.w {
                     let p = size.point(x, y);
@@ -748,15 +775,18 @@ mod imp {
                         continue;
                     }
                     let Some(color) = board.at(p) else { continue };
-                    let text = n.to_string();
-                    let scale = match text.len() {
+                    text.write(|buf| {
+                        use std::fmt::Write;
+                        write!(buf, "{n}")
+                    });
+                    let scale = match text.len {
                         1 => 0.48,
                         2 => 0.42,
                         3 => 0.32,
                         _ => 0.26,
                     };
                     fd.set_absolute_size((l.cell * scale) as f64 * pango::SCALE as f64);
-                    layout.set_text(&text);
+                    layout.set_text(text.as_str());
                     layout.set_font_description(Some(&fd));
                     let fg = if highlight == Some(p) {
                         last_move_tint(color)
@@ -894,9 +924,9 @@ mod imp {
             // Losses are pick.utility − candidate.utility, so the pick is always the coolest
             // blob and a candidate that reads better than it clamps there too.
             let pick_utility = report.moves.first().map(|m| m.utility_for(to_play));
-            let obj = self.obj();
-            let mut fd = obj.pango_context().font_description().unwrap_or_default();
-            let layout = obj.create_pango_layout(None);
+            // Figures are pango. A frame that deferred them, or a board of unlabelled
+            // blobs, must not construct a layout it will not draw: build it on first use.
+            let mut figures: Option<(pango::FontDescription, pango::Layout)> = None;
             let mut ringed = false;
 
             for (rank, info) in report.moves.iter().take(max).enumerate() {
@@ -913,7 +943,7 @@ mod imp {
                     ),
                     None => crate::palette::GRADE_RAMP[0],
                 };
-                let blob = rgba8(rgb, blob_alpha(info.visits));
+                let blob = rgba8(rgb, blob_alpha(rank, info.visits));
                 fill_disc(snapshot, cx, cy, l.stone_r, &blob);
                 let skip_overlay = marked[info.mv.index()];
                 let played = next == Some(info.mv);
@@ -924,12 +954,17 @@ mod imp {
 
                 // The engine's pick and the record's move keep their numbers whatever their
                 // search: a played move the engine dismissed is exactly the one to read.
-                if skip_overlay
-                    || (info.visits < LABEL_MIN_VISITS && rank != 0 && !played)
-                    || !labels
-                {
+                if skip_overlay || (info.visits < LABEL_MIN_VISITS && rank != 0 && !played) {
                     continue;
                 }
+                if !labels {
+                    continue;
+                }
+                let (fd, layout) = figures.get_or_insert_with(|| {
+                    let obj = self.obj();
+                    let fd = obj.pango_context().font_description().unwrap_or_default();
+                    (fd, obj.create_pango_layout(None))
+                });
 
                 let fg = text_on(over(blob, wood_color(dark)));
                 // Three lines, formatted into stack buffers. A `Vec<(String, f32)>` here
@@ -959,7 +994,7 @@ mod imp {
                 for i in 0..n {
                     fd.set_absolute_size((l.cell * scales[i]) as f64 * pango::SCALE as f64);
                     layout.set_text(lines[i].as_str());
-                    layout.set_font_description(Some(&fd));
+                    layout.set_font_description(Some(fd));
                     let h = layout.pixel_size().1 as f32;
                     heights[i] = h;
                     total += h;
@@ -968,8 +1003,8 @@ mod imp {
                 for i in 0..n {
                     fd.set_absolute_size((l.cell * scales[i]) as f64 * pango::SCALE as f64);
                     layout.set_text(lines[i].as_str());
-                    layout.set_font_description(Some(&fd));
-                    draw_text(snapshot, &layout, cx, ty + heights[i] * 0.5, &fg);
+                    layout.set_font_description(Some(fd));
+                    draw_text(snapshot, layout, cx, ty + heights[i] * 0.5, &fg);
                     ty += heights[i];
                 }
             }
@@ -1083,9 +1118,10 @@ fn policy_texture(report: &mirai_engine::Report, size: Size) -> Option<gdk::Text
     Some(texture(buf, size))
 }
 
-/// One candidate label, formatted in place. Three of these replace the
-/// `Vec<(String, f32)>` a labelled blob used to allocate on every snapshot.
-/// 24 bytes covers the longest `pct1` / `signed1` / `si_visits` (`+1024.0`, `4295.0m`).
+/// One board label, formatted in place. Three of these replace the
+/// `Vec<(String, f32)>` a labelled blob used to allocate on every snapshot;
+/// a fourth holds each stone's move number. 24 bytes covers the longest
+/// `pct1` / `signed1` / `si_visits` (`+1024.0`, `4295.0m`).
 #[derive(Clone, Copy)]
 struct StackLabel {
     bytes: [u8; 24],
@@ -1102,11 +1138,11 @@ impl StackLabel {
 
     fn write(&mut self, f: impl FnOnce(&mut Self) -> std::fmt::Result) {
         self.len = 0;
-        f(self).expect("a candidate label fits in 24 bytes");
+        f(self).expect("a board label fits in 24 bytes");
     }
 
     fn as_str(&self) -> &str {
-        std::str::from_utf8(&self.bytes[..self.len as usize]).expect("a candidate label is utf-8")
+        std::str::from_utf8(&self.bytes[..self.len as usize]).expect("a board label is utf-8")
     }
 }
 
@@ -1314,6 +1350,11 @@ impl BoardView {
     }
 
     /// Extra dead-stone shading and territory squares drawn during scoring.
+    ///
+    /// Does not clear the pin. The analysis row is still selected, and this widget
+    /// does not talk to the list. [`Self::active_preview`] refuses to draw the
+    /// variation while the overlay is set, so the count is the real position; the
+    /// variation returns when the overlay is cleared.
     pub fn set_score_overlay(
         &self,
         dead: Option<mirai_core::DeadSet>,
@@ -1345,9 +1386,10 @@ impl BoardView {
     /// Rebuilds the cached PV board when the hover index, the pin, the report or the
     /// projection changed. `snapshot` only draws the result.
     ///
-    /// The editor-tool gate stays in [`Self::active_preview`] rather than here: a tool
-    /// change must not replay a line that is still pinned, and returning to Play must
-    /// not replay one that was built while the tool was away.
+    /// The editor-tool and score-overlay gates stay in [`Self::active_preview`] rather
+    /// than here. Changing tool, or putting the count up, must not drop a line that is
+    /// still pinned, and taking the gate away must not rebuild it: drawing is the only
+    /// thing the gate suppresses.
     fn sync_pv_preview(&self) {
         let Some(next) = self.projected_pv() else {
             return;
@@ -1430,11 +1472,18 @@ impl BoardView {
     }
 
     /// The candidate whose PV is currently previewed: pointer hover first, then the pin.
+    ///
+    /// Nothing while a mark tool is active, and nothing while a score overlay is up.
+    /// The pin is left set: the analysis row is still selected, and this widget does
+    /// not clear it. The variation returns when the count is dismissed.
     fn active_preview(&self) -> Option<usize> {
-        if self.state().editor_tool() != EditorTool::Play {
-            return None;
-        }
-        self.imp().hover.get().or_else(|| self.imp().pinned.get())
+        let imp = self.imp();
+        preview_index(
+            self.state().editor_tool() == EditorTool::Play,
+            imp.dead.borrow().is_some() || imp.territory.borrow().is_some(),
+            imp.hover.get(),
+            imp.pinned.get(),
+        )
     }
 
     // -- wiring -----------------------------------------------------------------------
@@ -1782,18 +1831,43 @@ mod tests {
     /// themselves — not with their share of a search that may have run for ten seconds — and it
     /// tops out at [`crate::palette::TRUSTED_VISITS`], the same visit at which the blob stops
     /// being grey and starts carrying figures. One threshold: a faded blob is always a grey
-    /// one, and a coloured blob is always full strength.
+    /// one, and a coloured blob is always full strength. The pick is coloured from the first
+    /// visit, so it is never faded.
     #[test]
     fn opacity_tracks_how_much_a_move_was_searched() {
-        assert_eq!(blob_alpha(0), BLOB_ALPHA_MIN);
-        assert!(blob_alpha(5) > blob_alpha(1));
-        assert!(blob_alpha(9) > blob_alpha(5));
+        assert_eq!(blob_alpha(1, 0), BLOB_ALPHA_MIN);
+        assert!(blob_alpha(1, 5) > blob_alpha(1, 1));
+        assert!(blob_alpha(1, 9) > blob_alpha(1, 5));
         let full = crate::palette::TRUSTED_VISITS;
-        assert!((blob_alpha(full) - BLOB_ALPHA_MAX).abs() < 1e-6);
-        assert_eq!(blob_alpha(50_000), blob_alpha(full));
+        assert!((blob_alpha(1, full) - BLOB_ALPHA_MAX).abs() < 1e-6);
+        assert_eq!(blob_alpha(1, 50_000), blob_alpha(1, full));
         assert_eq!(LABEL_MIN_VISITS, full);
         assert!(crate::palette::is_known(1, full) && !crate::palette::is_known(1, full - 1));
-        assert!(blob_alpha(full - 1) < BLOB_ALPHA_MAX);
+        assert!(blob_alpha(1, full - 1) < BLOB_ALPHA_MAX);
+        assert_eq!(blob_alpha(0, 0), BLOB_ALPHA_MAX);
+        assert_eq!(blob_alpha(0, 1), BLOB_ALPHA_MAX);
+        assert_eq!(blob_alpha(0, full - 1), BLOB_ALPHA_MAX);
+    }
+
+    /// Resign and time-loss do not move the cursor, so a row pinned during the game is
+    /// still pinned when the count appears. The overlay is the real position: drawing
+    /// the variation hides the territory, and a click still toggles the real groups.
+    #[test]
+    fn a_score_overlay_is_the_real_position_not_the_pinned_variation() {
+        assert_eq!(preview_index(true, false, None, Some(2)), Some(2));
+        assert_eq!(preview_index(true, false, Some(1), Some(2)), Some(1));
+        assert_eq!(
+            preview_index(true, true, None, Some(2)),
+            None,
+            "a pinned row must not hide the count"
+        );
+        assert_eq!(
+            preview_index(true, true, Some(1), Some(2)),
+            None,
+            "a hover during the count is the same"
+        );
+        assert_eq!(preview_index(false, false, None, Some(2)), None);
+        assert_eq!(preview_index(true, false, None, None), None);
     }
 
     /// The ring answers "where does the record go next?", so it has to read `children[0]` —
