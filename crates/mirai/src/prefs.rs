@@ -2139,8 +2139,12 @@ fn reset_ui(dialog: &PreferencesDialog, state: &AppState) {
     dialog.add_toast(toast);
 }
 
+/// `AppState` is the source: `sync_create` copies source to target, and binding from the
+/// row copied the template's unset `active = false` over the setting whenever Preferences
+/// opened, turning coordinates off.
 fn bind_switch(row: &adw::SwitchRow, state: &AppState, property: &'static str) {
-    row.bind_property("active", state, property)
+    state
+        .bind_property(property, row, "active")
         .bidirectional()
         .sync_create()
         .build();
