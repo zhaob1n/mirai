@@ -18,7 +18,9 @@ use mirai_core::RuleSet;
 
 use crate::app::{AppState, Change};
 use crate::config::{
-    AnalysisSettings, EngineProfile, PlaySettings, ProfileKind, StrengthSetting, UiSettings,
+    AnalysisSettings, DEFAULT_SECONDS_PER_MOVE, DEFAULT_VISITS_PER_MOVE, EngineProfile,
+    MAX_SECONDS_PER_MOVE, MAX_VISITS_PER_MOVE, MIN_SECONDS_PER_MOVE, PlaySettings, ProfileKind,
+    StrengthSetting, UiSettings,
 };
 use crate::preferences_shell::{PreferencesDialog, PreferencesWidgets};
 use crate::profile_editor::ProfileEditorPage;
@@ -369,14 +371,15 @@ fn open_editor(
     dialog.push_subpage(&page);
 }
 
-/// A read-only row showing a chosen path, with a button that opens a `gtk::FileDialog` and,
-/// when discovery found any, a chooser over those candidates.
+/// A read-only row showing a chosen path, with a button that opens a `gtk::FileDialog` and
+/// a slot for a chooser over discovered candidates. The slot starts empty when discovery
+/// has not finished; [`show_discovered`] fills it.
 fn file_row(
     title: &str,
     initial: PathBuf,
     candidates: Vec<PathBuf>,
     dialog: &adw::PreferencesDialog,
-) -> (adw::ActionRow, Rc<RefCell<PathBuf>>) {
+) -> (adw::ActionRow, Rc<RefCell<PathBuf>>, gtk::Box) {
     let cell = Rc::new(RefCell::new(initial));
 
     let row = adw::ActionRow::builder()
@@ -387,8 +390,10 @@ fn file_row(
     row.set_subtitle_lines(3);
 
     // Before the file button, so the discovered list is the first thing reached.
+    let slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    row.add_suffix(&slot);
     if let Some(chooser) = discovered_button(candidates, &row, &cell) {
-        row.add_suffix(&chooser);
+        slot.append(&chooser);
     }
 
     let button = gtk::Button::from_icon_name("document-open-symbolic");
@@ -433,7 +438,7 @@ fn file_row(
         }
     ));
 
-    (row, cell)
+    (row, cell, slot)
 }
 
 fn path_subtitle(path: &Path) -> String {
@@ -441,6 +446,33 @@ fn path_subtitle(path: &Path) -> String {
         "Not chosen".to_string()
     } else {
         path.display().to_string()
+    }
+}
+
+/// Puts discovered paths into `slot`. When `suggest` is set and the row is still empty,
+/// the first candidate becomes the displayed path — the suggestion a synchronous walk
+/// used to make before the editor opened.
+fn show_discovered(
+    slot: &gtk::Box,
+    row: &adw::ActionRow,
+    path: &Rc<RefCell<PathBuf>>,
+    candidates: Vec<PathBuf>,
+    suggest: bool,
+) {
+    // Read before the chain: the body borrows the cell mutably.
+    let empty = path.borrow().as_os_str().is_empty();
+    if suggest
+        && empty
+        && let Some(first) = candidates.first()
+    {
+        row.set_subtitle(&path_subtitle(first));
+        *path.borrow_mut() = first.clone();
+    }
+    if slot.first_child().is_some() || candidates.is_empty() {
+        return;
+    }
+    if let Some(chooser) = discovered_button(candidates, row, path) {
+        slot.append(&chooser);
     }
 }
 
@@ -572,7 +604,8 @@ fn spin_value_u8(row: &adw::SpinRow) -> Option<u8> {
 }
 
 /// KataGo's own estimate is about 3 KiB per cached evaluation once ownership is included,
-/// and mirai asks for ownership on nearly every query.
+/// and mirai asks for ownership on nearly every query. The row never shows a power between
+/// 0 and [`EngineTuning::MIN_CACHE_POWER`], so the figure is always whole MiB.
 fn cache_subtitle(power: u8) -> String {
     if power == 0 {
         return format!(
@@ -580,10 +613,44 @@ fn cache_subtitle(power: u8) -> String {
             EngineTuning::default().nn_cache_size_power_of_two
         );
     }
+    let bytes = EngineTuning {
+        nn_cache_size_power_of_two: power,
+        ..EngineTuning::default()
+    }
+    .cache_bytes();
     format!(
         "2^{power} evaluations, roughly {} MiB once warm",
-        (3u64 << power) / 1024
+        bytes / (1024 * 1024)
     )
+}
+
+/// `0` is the sentinel for mirai's default; anything else lies in
+/// [`EngineTuning::MIN_CACHE_POWER`]`..=`[`EngineTuning::MAX_CACHE_POWER`]. The spinner's
+/// next step after `0` is the minimum, and the step down from the minimum is `0`: a value
+/// in the gap follows the direction of the change, and one with no previous (`0`) is raised.
+fn snap_cache_power(previous: u8, value: u8) -> u8 {
+    if value == 0
+        || (EngineTuning::MIN_CACHE_POWER..=EngineTuning::MAX_CACHE_POWER).contains(&value)
+    {
+        return value;
+    }
+    if value > EngineTuning::MAX_CACHE_POWER {
+        return EngineTuning::MAX_CACHE_POWER;
+    }
+    if value < previous {
+        0
+    } else {
+        EngineTuning::MIN_CACHE_POWER
+    }
+}
+
+/// `None` keeps the default. A value the spinner should not have offered is clamped
+/// rather than written through.
+fn stored_cache_power(power: u8) -> Option<u8> {
+    match snap_cache_power(0, power) {
+        0 => None,
+        power => Some(power),
+    }
 }
 
 /// Both halves of a thread setting, in the words the two rows above the tuning group use.
@@ -703,14 +770,10 @@ fn local_editor(
             _ => (PathBuf::new(), PathBuf::new(), None, None, None, None, None),
         };
     let custom = config.is_some();
-    let model_candidates = crate::config::discover_models();
-    let config_candidates = crate::config::discover_analysis_configs();
-    // Discovery only supplies chooser entries. Managed mode remains selected until the user
-    // explicitly switches to Custom file.
-    let suggested_config = config
-        .clone()
-        .or_else(|| config_candidates.first().cloned())
-        .unwrap_or_default();
+    // Discovery only supplies chooser entries. It walks directories, so the editor opens
+    // first and the list buttons appear when the walk finishes. Managed mode remains
+    // selected until the user explicitly switches to Custom file.
+    let suggested_config = config.clone().unwrap_or_default();
 
     let editor = editor_shell(if editing.is_some() {
         "Edit Local Engine"
@@ -728,8 +791,9 @@ fn local_editor(
         .title("KataGo")
         .description("Both must exist before the profile can be saved.")
         .build();
-    let (katago_row, katago_path) = file_row("KataGo binary", katago, Vec::new(), dialog);
-    let (model_row, model_path) = file_row("Neural network model", model, model_candidates, dialog);
+    let (katago_row, katago_path, _) = file_row("KataGo binary", katago, Vec::new(), dialog);
+    let (model_row, model_path, model_slot) =
+        file_row("Neural network model", model, Vec::new(), dialog);
     paths.add(&katago_row);
     paths.add(&model_row);
     editor.content.add(&paths);
@@ -745,10 +809,10 @@ fn local_editor(
         .model(&gtk::StringList::new(&["Managed by mirai", "Custom file"]))
         .selected(u32::from(custom))
         .build();
-    let (config_row, config_path) = file_row(
+    let (config_row, config_path, config_slot) = file_row(
         "Custom analysis config",
         suggested_config,
-        config_candidates,
+        Vec::new(),
         dialog,
     );
     source.add(&mode);
@@ -786,14 +850,24 @@ fn local_editor(
         u32::from(batch.unwrap_or(0)),
         f64::from(EngineTuning::MAX_BATCH_SIZE),
     );
+    let cache_shown = snap_cache_power(0, cache.unwrap_or(0));
     let cache_row = tuned_row(
         "Neural-net cache",
-        &cache_subtitle(cache.unwrap_or(0)),
-        u32::from(cache.unwrap_or(0)),
+        &cache_subtitle(cache_shown),
+        u32::from(cache_shown),
         f64::from(EngineTuning::MAX_CACHE_POWER),
     );
-    cache_row.connect_value_notify(|row| {
-        row.set_subtitle(&cache_subtitle(row.value() as u8));
+    let cache_previous = Rc::new(Cell::new(cache_shown));
+    cache_row.connect_value_notify(move |row| {
+        let value = row.value() as u8;
+        let snapped = snap_cache_power(cache_previous.get(), value);
+        if snapped != value {
+            cache_previous.set(snapped);
+            row.set_value(f64::from(snapped));
+            return;
+        }
+        cache_previous.set(snapped);
+        row.set_subtitle(&cache_subtitle(snapped));
     });
     memory.add(&batch_row);
     memory.add(&cache_row);
@@ -1051,6 +1125,38 @@ fn local_editor(
     apply_mode(custom);
     mode.connect_selected_notify(move |row| apply_mode(row.selected() == 1));
 
+    let discover = state.runtime().spawn_blocking(|| {
+        (
+            crate::config::discover_models(),
+            crate::config::discover_analysis_configs(),
+        )
+    });
+    let found_model_slot = model_slot.clone();
+    let found_model_row = model_row.clone();
+    let found_model_path = model_path.clone();
+    let found_config_slot = config_slot.clone();
+    let found_config_row = config_row.clone();
+    let found_config_path = config_path.clone();
+    glib::spawn_future_local(async move {
+        let Ok((models, configs)) = discover.await else {
+            return;
+        };
+        show_discovered(
+            &found_model_slot,
+            &found_model_row,
+            &found_model_path,
+            models,
+            false,
+        );
+        show_discovered(
+            &found_config_slot,
+            &found_config_row,
+            &found_config_path,
+            configs,
+            true,
+        );
+    });
+
     let save_state = state.clone();
     let banner = editor.banner.clone();
     editor.save.connect_clicked(glib::clone!(
@@ -1095,7 +1201,7 @@ fn local_editor(
                     search_threads: spin_value_u16(&search_row),
                     nn_max_batch_size: (!custom).then(|| spin_value_u16(&batch_row)).flatten(),
                     nn_cache_size_power_of_two: (!custom)
-                        .then(|| spin_value_u8(&cache_row))
+                        .then(|| stored_cache_power(cache_row.value() as u8))
                         .flatten(),
                 },
             };
@@ -1526,7 +1632,8 @@ fn connect_analysis(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, st
 
     let interval_state = state.clone();
     let interval_syncing = syncing.clone();
-    let interval_restart = restart;
+    let interval_restart = Rc::clone(&restart);
+    let suggestions_restart = restart;
     widgets
         .analysis_interval_row
         .connect_value_notify(move |row| {
@@ -1555,8 +1662,9 @@ fn connect_analysis(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, st
             };
             suggestions_state.save_config();
             // The live request carries the old cap: the engine never sends the extra moves.
+            // Same pause as the visit cap — a key repeat must not restart on every step.
             if grew {
-                suggestions_state.restart_analysis();
+                suggestions_restart.schedule(&suggestions_state);
             }
             // The board and the candidate list truncate to this, so redraw them now.
             suggestions_state.changed(Change::Report);
@@ -1670,8 +1778,14 @@ fn connect_play(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state:
     widgets
         .play_strength_kind_row
         .set_model(Some(&gtk::StringList::new(&STRENGTH_KINDS)));
-    configure_spin(&widgets.play_visits_row, 1.0, 1_000_000.0, 100.0, 0);
-    configure_spin(&widgets.play_seconds_row, 0.1, 300.0, 0.5, 1);
+    configure_spin(&widgets.play_visits_row, 1.0, MAX_VISITS_PER_MOVE, 100.0, 0);
+    configure_spin(
+        &widgets.play_seconds_row,
+        MIN_SECONDS_PER_MOVE,
+        MAX_SECONDS_PER_MOVE,
+        0.5,
+        1,
+    );
     configure_spin(&widgets.play_temperature_row, 0.0, 2.0, 0.05, 2);
     configure_spin(&widgets.play_threshold_row, 0.0, 0.5, 0.01, 2);
     configure_spin(&widgets.play_streak_row, 1.0, 10.0, 1.0, 0);
@@ -1799,8 +1913,10 @@ fn store_strength(widgets: &PreferencesWidgets, state: &AppState) {
 fn load_play(widgets: &PreferencesWidgets, state: &AppState, syncing: &Cell<bool>) {
     let play = state.config().play.clone();
     syncing.set(true);
-    widgets.play_visits_row.set_value(800.0);
-    widgets.play_seconds_row.set_value(5.0);
+    widgets
+        .play_visits_row
+        .set_value(f64::from(DEFAULT_VISITS_PER_MOVE));
+    widgets.play_seconds_row.set_value(DEFAULT_SECONDS_PER_MOVE);
     widgets
         .play_human_row
         .set_text(crate::play::DEFAULT_HUMAN_PROFILE);
@@ -1889,20 +2005,30 @@ fn connect_appearance(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, 
         overlay_state.save_config();
     });
 
-    state.connect_ownership_overlay_notify(glib::clone!(
+    // These live on AppState, which outlives the dialog. Connecting again every time
+    // Preferences opens used to leave the previous handlers in place for the window's life.
+    let ownership_id = state.connect_ownership_overlay_notify(glib::clone!(
         #[weak]
         dialog,
         #[strong]
         overlay_syncing,
         move |state| sync_overlay_row(&dialog, state, &overlay_syncing)
     ));
-    state.connect_policy_overlay_notify(glib::clone!(
+    let policy_id = state.connect_policy_overlay_notify(glib::clone!(
         #[weak]
         dialog,
         #[strong]
         overlay_syncing,
         move |state| sync_overlay_row(&dialog, state, &overlay_syncing)
     ));
+    let watched = state.clone();
+    let ids = RefCell::new(Some((ownership_id, policy_id)));
+    dialog.connect_closed(move |_| {
+        if let Some((ownership, policy)) = ids.borrow_mut().take() {
+            watched.disconnect(ownership);
+            watched.disconnect(policy);
+        }
+    });
 
     widgets
         .save_analysis_row
@@ -2061,5 +2187,29 @@ mod tests {
                 ("analysis-fast.cfg".to_string(), None),
             ]
         );
+    }
+
+    #[test]
+    fn cache_power_steps_from_zero_to_the_minimum_and_clamps_on_save() {
+        assert_eq!(snap_cache_power(0, 1), EngineTuning::MIN_CACHE_POWER);
+        assert_eq!(
+            snap_cache_power(
+                EngineTuning::MIN_CACHE_POWER,
+                EngineTuning::MIN_CACHE_POWER - 1
+            ),
+            0
+        );
+        assert_eq!(snap_cache_power(0, 0), 0);
+        assert_eq!(snap_cache_power(20, 20), 20);
+        assert_eq!(snap_cache_power(0, 10), EngineTuning::MIN_CACHE_POWER);
+        assert_eq!(snap_cache_power(20, 10), 0);
+        assert_eq!(stored_cache_power(0), None);
+        assert_eq!(stored_cache_power(1), Some(EngineTuning::MIN_CACHE_POWER));
+        assert_eq!(stored_cache_power(20), Some(20));
+        assert_eq!(
+            stored_cache_power(EngineTuning::MAX_CACHE_POWER + 1),
+            Some(EngineTuning::MAX_CACHE_POWER)
+        );
+        assert!(cache_subtitle(20).contains("3072 MiB"));
     }
 }

@@ -354,6 +354,12 @@ impl Default for AnalysisSettings {
     }
 }
 
+pub const MIN_SECONDS_PER_MOVE: f64 = 0.1;
+pub const MAX_SECONDS_PER_MOVE: f64 = 600.0;
+pub const MAX_VISITS_PER_MOVE: f64 = 1_000_000.0;
+pub const DEFAULT_VISITS_PER_MOVE: u32 = 800;
+pub const DEFAULT_SECONDS_PER_MOVE: f64 = 5.0;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum StrengthSetting {
@@ -364,7 +370,9 @@ pub enum StrengthSetting {
 
 impl Default for StrengthSetting {
     fn default() -> Self {
-        StrengthSetting::Visits { visits: 800 }
+        StrengthSetting::Visits {
+            visits: DEFAULT_VISITS_PER_MOVE,
+        }
     }
 }
 
@@ -446,14 +454,18 @@ impl Config {
         Ok(dirs.data_dir().to_path_buf())
     }
 
-    /// Loads the configuration, seeding a first-run one when the file does not exist.
-    /// A missing file is not an error; a malformed one is.
+    /// Loads the configuration. A missing file is an empty config, not an error; a
+    /// malformed one is an error.
+    ///
+    /// Discovery of a local KataGo is [`Config::seeded`]. That walks `PATH` and the
+    /// model directories, so it runs on the runtime's blocking pool and the window
+    /// applies the result when it lands — not from here.
     pub fn load(path: &Path) -> Result<Config, ConfigError> {
         match std::fs::read_to_string(path) {
             Ok(text) => {
                 toml::from_str(&text).map_err(|e| ConfigError::Parse(path.to_path_buf(), e))
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::seeded()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
             Err(e) => Err(ConfigError::Io(path.to_path_buf(), e)),
         }
     }
@@ -510,6 +522,9 @@ impl Config {
 
     /// A first-run configuration: a working local profile if a KataGo installation can be
     /// found, otherwise an empty profile list so the UI prompts for one.
+    ///
+    /// Walks `PATH` and the model directories. Call it on the blocking pool; the window
+    /// installs the result when the walk finishes.
     pub fn seeded() -> Config {
         let mut cfg = Config::default();
         if let Some((katago, model)) = discover_katago() {
@@ -1278,15 +1293,14 @@ save_analysis_in_sgf = false
     }
 
     #[test]
-    fn missing_file_yields_a_seeded_config_not_an_error() {
+    fn missing_file_is_an_empty_config_not_an_error() {
         let path = std::env::temp_dir().join("mirai-no-such-config-9f3a.toml");
         let _ = std::fs::remove_file(&path);
         let cfg = Config::load(&path).expect("a missing config is not an error");
-        // Seeding is environment-dependent; what must hold is that it parses and that a
-        // seeded profile is consistent with `active_engine`.
-        if let Some(active) = &cfg.active_engine {
-            assert!(cfg.profile(active).is_some());
-        }
+        // Discovery walks directories and used to run here, on whatever thread called
+        // load. A missing file is empty; `Config::seeded` is the walk, and it is not
+        // this function's job.
+        assert_eq!(cfg, Config::default());
     }
 
     #[test]

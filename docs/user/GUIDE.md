@@ -351,8 +351,8 @@ and the file path do not.
 | Group | Field | Choices / default | Notes |
 |---|---|---|---|
 | Board | **Size** | 9×9, 13×13, **19×19**, Custom | *Custom* reveals **Custom Size**, accepting 2–19 |
-| | **Handicap** | **None**, 2–9 stones | places the standard points as Black; boards too small for the pattern get none |
-| | **Komi** | −150 … 150 by halves | follows the ruleset, but overridable; choosing a handicap sets it to 0.5 |
+| | **Handicap** | **None**, 2–9 stones | places the standard points as Black; unavailable, at None, except on odd square boards of 7×7 and up |
+| | **Komi** | −150 … 150 by halves | follows the ruleset, but overridable; placing a handicap sets it to 0.5 |
 | | **Rules** | nine rulesets, see below | |
 | Players | **You Play** | **Black**, White, Both (no engine) | *Both (no engine)* hides **Engine Strength**. The group then reads *Play both sides on this device*. Otherwise it reads *The engine takes the other colour* |
 | Time control | **Type** | **None**, Absolute, Byo-yomi, Fischer increment | |
@@ -385,8 +385,10 @@ network to imitate a rank rather than to play well — it is unavailable unless 
 network carries a human-imitation model, which most do not. A running clock overrides all of
 this: the engine will not spend more time on a move than it can afford.
 
-The ruleset and the strength setting are remembered as next time's defaults. Preferences uses
-the same mode names: **Visits**, **Time per move**, **Human-like**.
+The ruleset and the strength setting are remembered as next time's defaults. If a saved
+Human-like profile is unavailable with the current engine, New Game uses Visits for that
+game without replacing the saved profile unless you change the strength yourself.
+Preferences uses the same mode names: **Visits**, **Time per move**, **Human-like**.
 
 ### While the game runs
 
@@ -547,7 +549,7 @@ the reference for what the client settings mean and for a hand-edited config. Th
 | *local* Positions in parallel | 0, meaning 4 | `numAnalysisThreads`: positions searched at once. Four keeps a whole-game sweep and a cursor move from queueing behind each other |
 | *local* Threads per position | 0, meaning 16 | `numSearchThreadsPerAnalysisThread`: how hard one position is searched. Raise on a many-core CPU, but the returns fall off past 16 |
 | *local* GPU batch size | 0, meaning 64 | `nnMaxBatchSize`. Wants to be at least positions × threads. Hidden while a custom config is selected |
-| *local* Neural-net cache | 0, meaning 20 | `nnCacheSizePowerOfTwo`: 2^20 cached evaluations, roughly 3 GiB once warm. Hidden while a custom config is selected |
+| *local* Neural-net cache | 0, meaning 20 | `nnCacheSizePowerOfTwo`: 2^20 cached evaluations, roughly 3 GiB once warm. 0 is the default; the next step is 14. Hidden while a custom config is selected |
 | *local* Automatic tuning | off | **Tune…** measures the selected binary and model, updates the three performance rows, and waits for **Save Profile** before applying them. Managed configs only |
 | *remote* Server URL / Token / Engine name (optional) | — / — / blank | blank engine name means the server's first engine |
 | *remote* Pinned fingerprint | not pinned | read-only; set by **Test Connection** and **Trust** |
@@ -581,10 +583,11 @@ to persist and activate them. The neural-net cache is not changed.
 | **Visits per Move** | 100 | 100 – 100 000 | reviewing: 100 is quick, 5 000 is thorough |
 | **Analyse on Open** | off | on / off | turn on to start a whole-game sweep whenever a record is opened, pasted or downloaded |
 
-Changing **Maximum Visits** or **Report Interval** restarts a search that is already running,
-after a brief pause so dragging or key-repeating the row does not restart on every step.
-**Suggestions Shown** restarts only when the cap grows. The number is written to disk
-immediately either way. The numeric rows accept typing, scrolling and the keyboard's arrow
+Changing **Maximum Visits**, **Report Interval**, or a larger **Suggestions Shown**
+restarts a search that is already running, after a brief pause so dragging or
+key-repeating the row does not restart on every step. Shrinking **Suggestions Shown**
+only redraws: the engine already sent every move the board now keeps. The number is
+written to disk immediately either way. The numeric rows accept typing, scrolling and the keyboard's arrow
 keys. Each page ends with **Restore Defaults**. Its toast offers **Undo**. Restoring a page
 does not delete engine profiles.
 
@@ -594,7 +597,7 @@ does not delete engine profiles.
 |---|---|---|---|
 | **Mode** | Visits | Visits / Time per move / Human-like | the same three names as New Game |
 | **Visits per Move** | 800 | 1 – 1 000 000 | you want a weaker or stronger opponent |
-| **Seconds per Move** | 5.0 | 0.1 – 300 | using Time per move. New Game allows up to 600 |
+| **Seconds per Move** | 5.0 | 0.1 – 600 | using Time per move, in both Preferences and New Game |
 | **Human Model Profile** | `rank_5k` | free text | the network supports human imitation and you want another rank |
 | **Temperature** | 0.00 | 0 – 2 | 0 always plays the best move; 0.2–0.4 varies the opening |
 | **Resign Threshold** | 0.05 | 0 – 0.5 | 0 makes the engine play every game out |

@@ -85,6 +85,9 @@ mod imp {
         pub(super) busy: Cell<bool>,
         pub(super) task: RefCell<Option<glib::JoinHandle<()>>>,
         pub(super) on_open: RefCell<Option<OpenHandler>>,
+        /// The application runtime: the last-search file is read and written on its
+        /// blocking pool (INV-11).
+        pub(super) runtime: OnceCell<tokio::runtime::Handle>,
     }
 
     #[glib::object_subclass]
@@ -173,6 +176,14 @@ impl FoxPickerDialog {
 
     pub(crate) fn install_handler(&self, handler: impl Fn(crate::fox::DownloadedGame) + 'static) {
         *self.imp().on_open.borrow_mut() = Some(Box::new(handler));
+    }
+
+    pub(crate) fn set_runtime(&self, runtime: tokio::runtime::Handle) {
+        let _ = self.imp().runtime.set(runtime);
+    }
+
+    pub(crate) fn runtime(&self) -> &tokio::runtime::Handle {
+        self.imp().runtime.get().expect("present sets the runtime")
     }
 
     pub(crate) fn is_busy(&self) -> bool {

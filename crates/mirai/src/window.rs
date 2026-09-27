@@ -234,13 +234,20 @@ pub fn present(
         }
     }
     let config_path = Config::default_path().unwrap_or_else(|_| PathBuf::from("mirai.toml"));
-    let config = match Config::load(&config_path) {
-        Ok(c) => c,
+    // `Some(load_failed)` when there is no usable file to take profiles from.
+    let (config, seed) = match Config::load(&config_path) {
+        Ok(config) => {
+            let missing = !config_path.is_file();
+            (config, missing.then_some(false))
+        }
         Err(e) => {
             tracing::warn!(%e, "falling back to a seeded configuration");
-            Config::seeded()
+            (Config::default(), Some(true))
         }
     };
+    // `which` and the model directories are the slow part of a first run. The window
+    // opens without that walk; the engine appears when it finishes.
+    let seed_job = seed.map(|load_failed| (load_failed, runtime.spawn_blocking(Config::seeded)));
     let state = AppState::new(config, config_path, runtime, pool);
     let window = MiraiWindow::new(app);
     let toasts = window.toasts();
@@ -452,6 +459,20 @@ pub fn present(
     let active = state.config().active_profile().map(|p| p.name.clone());
     if let Some(name) = active {
         state.activate_profile(&name);
+    }
+    if let Some((load_failed, job)) = seed_job {
+        let weak = window.downgrade();
+        // Finite and transient: a window that is gone by the time the walk lands has
+        // nothing to install the profile into.
+        glib::spawn_future_local(async move {
+            let Ok(seeded) = job.await else {
+                return;
+            };
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            window.with_ui(|ui| ui.state.install_seed(seeded, load_failed));
+        });
     }
 
     fit_default_size(&window, &winrate);
@@ -1426,15 +1447,20 @@ fn do_open(ui: &Ui) {
 fn do_download_fox(ui: &Ui) {
     let Some(window) = ui.window() else { return };
     let weak = ui.weak_window();
-    crate::fox::present(&window, &ui.fox_picker, move |download| {
-        with_window_ui(&weak, |ui| {
-            let moves = download.tree.main_line().len().saturating_sub(1);
-            adopt(ui, download.tree, None, true);
-            update_title(ui);
-            ui.state
-                .toast(format!("Downloaded {} ({moves} moves)", download.label));
-        });
-    });
+    crate::fox::present(
+        &window,
+        &ui.fox_picker,
+        ui.state.runtime(),
+        move |download| {
+            with_window_ui(&weak, |ui| {
+                let moves = download.tree.main_line().len().saturating_sub(1);
+                adopt(ui, download.tree, None, true);
+                update_title(ui);
+                ui.state
+                    .toast(format!("Downloaded {} ({moves} moves)", download.label));
+            });
+        },
+    );
 }
 
 /// Empty board, same size / rules / komi as `tree`. Identity and stones do not carry over.

@@ -9,7 +9,7 @@
 //! the URL builders with the pure parsers instead.
 
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use adw::prelude::*;
@@ -60,8 +60,27 @@ fn last_search_path() -> Option<PathBuf> {
         .map(|dir| dir.join("fox-last-search.json"))
 }
 
-static LAST_SEARCH: LazyLock<Mutex<Option<LastSearch>>> =
-    LazyLock::new(|| Mutex::new(load_last_search()));
+struct SearchCache {
+    /// False until the file has been read, or a search has been stored. The static starts
+    /// cold so the first time the picker opens does not `read_to_string` on the GTK thread.
+    loaded: bool,
+    value: Option<LastSearch>,
+}
+
+static LAST_SEARCH: Mutex<SearchCache> = Mutex::new(SearchCache {
+    loaded: false,
+    value: None,
+});
+
+/// Serialises cache writes. A later search must not be overwritten by an earlier write
+/// that finishes second; the writer re-reads the cache under this lock.
+static WRITE_GATE: Mutex<()> = Mutex::new(());
+
+fn cache_lock() -> std::sync::MutexGuard<'static, SearchCache> {
+    LAST_SEARCH
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn load_last_search() -> Option<LastSearch> {
     last_search_path().and_then(|path| read_last_search(&path))
@@ -81,21 +100,48 @@ fn write_last_search(path: &Path, search: &LastSearch) -> Result<(), String> {
 }
 
 fn cached_search() -> Option<LastSearch> {
-    LAST_SEARCH
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
+    cache_lock().value.clone()
 }
 
-fn remember_search(search: LastSearch) {
-    if let Some(path) = last_search_path()
-        && let Err(error) = write_last_search(&path, &search)
-    {
-        tracing::warn!(%error, "could not cache the Fox search");
+/// Reads the cache file once, unless a search was stored while the read was in flight.
+fn load_cache_if_cold() -> Option<LastSearch> {
+    if cache_lock().loaded {
+        return cached_search();
     }
-    *LAST_SEARCH
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(search);
+    let loaded = load_last_search();
+    let mut cache = cache_lock();
+    if !cache.loaded {
+        cache.loaded = true;
+        cache.value = loaded;
+    }
+    cache.value.clone()
+}
+
+fn store_cached(search: LastSearch) {
+    let mut cache = cache_lock();
+    cache.loaded = true;
+    cache.value = Some(search);
+}
+
+/// Updates the in-memory cache immediately and writes the file on the runtime's blocking
+/// pool. The write syncs the file and its directory; doing that before the result list
+/// appears dropped the frame that showed the search.
+fn remember_search(search: LastSearch, runtime: &tokio::runtime::Handle) {
+    store_cached(search);
+    runtime.spawn_blocking(|| {
+        let _gate = WRITE_GATE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(search) = cached_search() else {
+            return;
+        };
+        let Some(path) = last_search_path() else {
+            return;
+        };
+        if let Err(error) = write_last_search(&path, &search) {
+            tracing::warn!(%error, "could not cache the Fox search");
+        }
+    });
 }
 
 /// Fetches `url` as text, retrying a few times with a growing pause.
@@ -333,11 +379,14 @@ impl FoxPickerDialog {
         self.set_busy(false);
         match result {
             Ok(found) => {
-                remember_search(LastSearch {
-                    query,
-                    account: found.account.clone(),
-                    rows: found.rows.clone(),
-                });
+                remember_search(
+                    LastSearch {
+                        query,
+                        account: found.account.clone(),
+                        rows: found.rows.clone(),
+                    },
+                    self.runtime(),
+                );
                 self.show_search(found);
             }
             Err(error) => {
@@ -382,14 +431,30 @@ impl FoxPickerDialog {
     }
 
     fn restore_last_search(&self) {
-        let Some(last) = cached_search() else {
-            return;
-        };
-        self.widgets().entry.set_text(&last.query);
-        self.show_search(Games {
-            account: last.account,
-            rows: last.rows,
+        // The file read used to run inside the `LazyLock`, on the frame that first
+        // opened the picker. The list fills when the blocking pool finishes.
+        let weak = self.downgrade();
+        let job = self.runtime().spawn_blocking(load_cache_if_cold);
+        let task = glib::spawn_future_local(async move {
+            let Ok(last) = job.await else {
+                return;
+            };
+            let Some(last) = last else {
+                return;
+            };
+            let Some(dialog) = weak.upgrade() else {
+                return;
+            };
+            if dialog.has_games() || dialog.is_busy() {
+                return;
+            }
+            dialog.widgets().entry.set_text(&last.query);
+            dialog.show_search(Games {
+                account: last.account,
+                rows: last.rows,
+            });
         });
+        self.replace_task(task);
     }
 
     fn start_download(&self) {
@@ -444,12 +509,14 @@ impl FoxPickerDialog {
 pub(crate) fn present(
     parent: &impl IsA<gtk::Widget>,
     slot: &std::cell::RefCell<Option<FoxPickerDialog>>,
+    runtime: tokio::runtime::Handle,
     on_open: impl Fn(DownloadedGame) + 'static,
 ) {
     let dialog = slot
         .borrow_mut()
         .get_or_insert_with(FoxPickerDialog::wired)
         .clone();
+    dialog.set_runtime(runtime);
     dialog.install_handler(on_open);
     dialog.prepare_to_show();
     dialog.present(Some(parent));
