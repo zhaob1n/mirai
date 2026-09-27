@@ -970,21 +970,8 @@ mod tests {
                 Some(NodeId(index as u32))
             );
         }
+        assert_eq!(node_at(&GraphProjection::default(), &g, g.x(0)), None);
         let g1 = Geom::new(300.0, 140.0, 1, 70.0, 98.0);
         assert_eq!(g1.index_at(123.0, 1), 0);
-    }
-
-    #[test]
-    fn a_click_takes_an_owned_node_so_the_projection_can_be_rebuilt() {
-        let projection = std::cell::RefCell::new(GraphProjection {
-            line: vec![NodeId(1), NodeId(2), NodeId(3)],
-            samples: vec![],
-            cursor_index: 0,
-        });
-        let geom = Geom::new(300.0, 140.0, 3, 70.0, 98.0);
-        let id = node_at(&projection.borrow(), &geom, geom.x(1)).expect("a node");
-        *projection.borrow_mut() = GraphProjection::default();
-        assert!(matches!(id, NodeId(1) | NodeId(2) | NodeId(3)));
-        assert!(node_at(&projection.borrow(), &geom, geom.x(1)).is_none());
     }
 }

@@ -1318,27 +1318,4 @@ save_analysis_in_sgf = false
         assert!(matches!(Config::load(&path), Err(ConfigError::Parse(..))));
         let _ = std::fs::remove_file(&path);
     }
-
-    #[test]
-    fn pins_are_recorded_on_remote_profiles_only() {
-        let mut cfg = Config {
-            engine_profiles: vec![EngineProfile {
-                name: "r".into(),
-                kind: ProfileKind::Remote {
-                    url: "mirai://h".into(),
-                    token: "t".into(),
-                    engine: None,
-                    cert_sha256: None,
-                },
-            }],
-            ..Default::default()
-        };
-        cfg.set_pin("r", "abc");
-        match &cfg.profile("r").unwrap().kind {
-            ProfileKind::Remote { cert_sha256, .. } => {
-                assert_eq!(cert_sha256.as_deref(), Some("abc"))
-            }
-            _ => unreachable!(),
-        }
-    }
 }

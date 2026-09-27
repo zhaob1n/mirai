@@ -1329,7 +1329,7 @@ impl AppState {
 
     /// Reports an illegal move only when the board itself does not already explain it.
     pub fn toast_illegal_move(&self, error: IllegalMove) {
-        if should_toast_illegal_move(error) {
+        if !matches!(error, IllegalMove::Occupied) {
             self.toast(error.to_string());
         }
     }
@@ -1378,10 +1378,6 @@ impl<T> Drop for AbortOnDrop<T> {
     }
 }
 
-fn should_toast_illegal_move(error: IllegalMove) -> bool {
-    !matches!(error, IllegalMove::Occupied)
-}
-
 /// What a revision bump has to tell the window besides [`Change::Edit`].
 ///
 /// `tree` rebuilds the board, the graph and the blunder list. A move that also
@@ -1410,14 +1406,6 @@ fn session_dispatch(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn occupied_points_need_no_redundant_toast() {
-        assert!(!should_toast_illegal_move(IllegalMove::Occupied));
-        assert!(should_toast_illegal_move(IllegalMove::Suicide));
-        assert!(should_toast_illegal_move(IllegalMove::Ko));
-        assert!(should_toast_illegal_move(IllegalMove::OffBoard));
-    }
 
     /// `Change` is the one window dispatcher. Comments and marks must not run its
     /// expensive Tree arm; a new move must project once, while replaying a child

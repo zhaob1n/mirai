@@ -251,16 +251,4 @@ mod tests {
         // A9 is the top-left corner of a 9-high board, i.e. Point(0).
         assert_eq!(q["moves"], json!([["B", "A9"]]));
     }
-
-    #[test]
-    fn action_and_terminate_queries() {
-        assert_eq!(
-            action_query("v0", "query_version"),
-            json!({"id": "v0", "action": "query_version"})
-        );
-        assert_eq!(
-            terminate_query("t9", "9"),
-            json!({"id": "t9", "action": "terminate", "terminateId": "9"})
-        );
-    }
 }

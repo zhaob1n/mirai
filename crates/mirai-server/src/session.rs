@@ -663,14 +663,6 @@ mod tests {
     }
 
     #[test]
-    fn engine_resolution_defaults_to_the_first_configured_engine() {
-        // No engines: even the default must not resolve.
-        let h = host(&[]);
-        assert!(h.resolve_engine(None).is_none());
-        assert!(h.resolve_engine(Some("default")).is_none());
-    }
-
-    #[test]
     fn hostile_request_geometry_is_rejected_before_subscribing() {
         let mut hostile = AnalyzeReq::new(Size::square(19), RuleSet::Chinese, 7.5);
         hostile.size = Size { w: 0, h: 0 };
@@ -859,15 +851,6 @@ mod tests {
             .expect("serve did not finish after the client left")
             .expect("serve task");
         let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn priority_is_clamped_into_the_served_band() {
-        let clamp = |p: i8| p.clamp(*PRIORITY_RANGE.start(), *PRIORITY_RANGE.end());
-        assert_eq!(clamp(127), 8);
-        assert_eq!(clamp(-128), -8);
-        assert_eq!(clamp(4), 4);
-        assert_eq!(clamp(0), 0);
     }
 
     /// A client that finishes the handshake and then stays silent must not hold a

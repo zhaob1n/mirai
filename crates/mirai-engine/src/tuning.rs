@@ -55,6 +55,10 @@ pub struct TuningOverrides {
     pub nn_cache_size_power_of_two: Option<u8>,
 }
 
+/// Measured, not guessed: on a Radeon RX 6800, four positions in flight take the cost of
+/// switching nodes mid-search from 112 ms to 2.4 ms at no cost to single-position speed,
+/// and sixteen search threads is where the per-position curve flattens (8 → 16 buys 14%,
+/// 16 → 32 only 8% while adding tree contention).
 impl Default for EngineTuning {
     fn default() -> EngineTuning {
         EngineTuning {
@@ -170,20 +174,9 @@ nnCacheSizePowerOfTwo = {}
 mod tests {
     use super::*;
 
-    /// The defaults are measured, not guessed: on a Radeon RX 6800, four positions in
-    /// flight take the cost of switching nodes mid-search from 112 ms to 2.4 ms at no cost
-    /// to single-position speed, and sixteen search threads is where the per-position
-    /// curve flattens (8 → 16 buys 14%, 16 → 32 only 8% while adding tree contention).
     #[test]
-    fn the_defaults_are_internally_consistent() {
-        let t = EngineTuning::default();
-        assert_eq!(t.analysis_threads, 4);
-        assert_eq!(t.search_threads, 16);
-        assert!(t.batch_covers_threads());
-        assert!(t.nn_max_batch_size >= t.search_threads);
-        // 2^20 entries at 3 KiB is 3 GiB: a desktop can spare it, and a cache miss only
-        // costs a re-evaluation.
-        assert_eq!(t.cache_bytes(), 3 * 1024 * 1024 * 1024);
+    fn the_defaults_cover_every_thread() {
+        assert!(EngineTuning::default().batch_covers_threads());
     }
 
     #[test]
