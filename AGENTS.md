@@ -60,8 +60,8 @@ Do not modify this section without explicit approval.
 | Touch anything the HarmonyOS client depends on | [`../mirai-hmos/docs/dev/UPSTREAM.md`](../mirai-hmos/docs/dev/UPSTREAM.md) — optional adjacent checkout, not a path in this repository. Present only if `mirai-hmos` is checked out beside this one; that client's ledger of what it reuses from here |
 | Why is it built this way? What already went wrong? | [`docs/archive/RETROSPECTIVE.md`](docs/archive/RETROSPECTIVE.md) — decisions, obstacles, defects found |
 | What was originally specified, before any code | [`docs/archive/PLAN.md`](docs/archive/PLAN.md) — historical; the code, not the plan, is authoritative |
-| What does the application do, from a user's seat | [`docs/user/GUIDE.md`](docs/user/GUIDE.md) |
-| Project front page and install | [`README.md`](README.md) — product, and Requirements (build dependencies and commands) |
+| What does the application do, from a user's seat | [`docs/user/GUIDE.md`](docs/user/GUIDE.md); `GUIDE.zh-CN.md` beside it is the Simplified Chinese translation — change both |
+| Project front page and install | [`README.md`](README.md) — product, and Requirements (build dependencies and commands); `README.zh-CN.md` is its translation — change both |
 | Client settings, including a hand-edited config | [`docs/user/GUIDE.md`](docs/user/GUIDE.md#8-settings-reference) |
 
 Search user-facing questions in `README.md docs/user/` and implementation questions in

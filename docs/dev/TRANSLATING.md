@@ -6,7 +6,8 @@ Copyright (C) 2026 Huang Zhaobin
 # Translating mirai
 
 mirai is translated with GNU gettext, as GNOME applications are. The interface, the desktop
-entry and the AppStream metainfo share one catalogue per language in `po/`; developer
+entry and the AppStream metainfo share one catalogue per language in `po/`. User documents
+are translated as separate files (`README.zh-CN.md`, `docs/user/GUIDE.zh-CN.md`); developer
 documents stay English.
 
 ## Adding or updating a language

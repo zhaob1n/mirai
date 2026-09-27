@@ -51,7 +51,7 @@ install part="all": && refresh
         done
         install -Dm644 "{{ icons }}/scalable/apps/{{ appid }}.svg" -t "{{ root }}/share/icons/hicolor/scalable/apps/"
         install -Dm644 "{{ icons }}/symbolic/apps/{{ appid }}-symbolic.svg" -t "{{ root }}/share/icons/hicolor/symbolic/apps/"
-        install -Dm644 README.md docs/user/GUIDE.md -t "{{ root }}/share/doc/mirai/"
+        install -Dm644 README.md README.zh-CN.md docs/user/GUIDE.md docs/user/GUIDE.zh-CN.md -t "{{ root }}/share/doc/mirai/"
         { set +x; } 2>/dev/null
     fi
     if [ "{{ part }}" != mirai ]; then
@@ -75,7 +75,8 @@ uninstall part="all": && refresh
         done
         rm -f "{{ root }}/share/icons/hicolor/scalable/apps/{{ appid }}.svg"
         rm -f "{{ root }}/share/icons/hicolor/symbolic/apps/{{ appid }}-symbolic.svg"
-        rm -f "{{ root }}/share/doc/mirai/README.md" "{{ root }}/share/doc/mirai/GUIDE.md"
+        rm -f "{{ root }}/share/doc/mirai/README.md" "{{ root }}/share/doc/mirai/README.zh-CN.md"
+        rm -f "{{ root }}/share/doc/mirai/GUIDE.md" "{{ root }}/share/doc/mirai/GUIDE.zh-CN.md"
         rmdir --ignore-fail-on-non-empty "{{ root }}/share/doc/mirai" 2>/dev/null || true
     fi
     if [ "{{ part }}" != mirai ]; then
