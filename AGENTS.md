@@ -26,6 +26,8 @@ Do not modify this section without explicit approval.
   reader should recover the decisions and the scars from these files, the
   comments, and the Git history.
 - Prefer mermaid over ASCII diagrams.
+- Prefer lsp over grep when feasible
+- Don't spawn a subagent when you already have all the context to finish the task.
 
 ### Development
 
