@@ -43,21 +43,26 @@ refused.
 
 - The current stable Rust (edition 2024), which `rust-toolchain.toml` selects. No older compiler is supported.
 - GTK 4.22+, libadwaita 1.9+, and Blueprint Compiler 0.22+ with their development packages.
+- [`just`](https://github.com/casey/just), to install.
 - A KataGo binary and network model (JSON analysis mode, not GTP). mirai does not download KataGo.
 
-On Arch: `pacman -S gtk4 libadwaita blueprint-compiler`. On Debian/Ubuntu, install
-`libgtk-4-dev`, `libadwaita-1-dev`, and `blueprint-compiler`.
+On Arch: `pacman -S gtk4 libadwaita blueprint-compiler just`. On Debian/Ubuntu, install
+`libgtk-4-dev`, `libadwaita-1-dev`, `blueprint-compiler` and `just`; on Fedora,
+`gtk4-devel`, `libadwaita-devel`, `blueprint-compiler` and `just`. Check the versions: a
+distribution release older than GNOME 50 ships a GTK and libadwaita too old to build mirai.
 
 ```
-cargo build --release --workspace
+just build
+sudo just install        # both; or `just install mirai` / `just install server`
+sudo just uninstall      # likewise
 ```
 
-An Arch PKGBUILD in [`packaging/aur/`](packaging/aur/) builds the GitHub head into
-`mirai-git` and `mirai-server-git`; it is not published yet.
-
-```
-cd packaging/aur && makepkg -si
-```
+This installs `mirai`, `mirai-server`, the desktop entry, metainfo and icons under
+`/usr/local`; `just prefix=$HOME/.local install` needs no root. On Arch, the PKGBUILD in
+[`packaging/aur/`](packaging/aur/) builds `mirai-git` and `mirai-server-git` instead (not
+published yet). `tools/packaging/makepkg-local.sh` builds it from this checkout's last
+commit rather than from GitHub; add `-d` when cargo comes from rustup, then
+`sudo pacman -U target/archpkg/*.pkg.tar.zst`.
 
 ---
 
