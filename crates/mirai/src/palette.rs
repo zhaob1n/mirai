@@ -94,9 +94,20 @@ pub const TRUSTED_VISITS: u32 = 10;
 /// a blunder tick.
 pub const UNKNOWN_RGB: [u8; 3] = [0x9E, 0x98, 0x8C];
 
-/// Sentinel [`colour_stop`] returns for an unsearched candidate. Not an index into
-/// [`GRADE_RAMP`].
-pub const UNKNOWN_STOP: u32 = u32::MAX;
+/// Sentinel [`colour_level`] returns for an unsearched candidate. Not a level on the ramp.
+pub const UNKNOWN_LEVEL: u32 = u32::MAX;
+
+/// How finely the ramp is cut between two adjacent stops.
+///
+/// The board and the list draw a grade at the same level, so a blob and its badge are one
+/// colour. Rounding the badge to the nearest *stop* while the board interpolated was not
+/// invisible, as once assumed: green and yellow are far apart, and a move between them was a
+/// yellow-green blob beside a yellow badge. An eighth of a segment is a step no eye separates
+/// on two discs, and it keeps the list's stylesheet to one rule per level.
+pub const LEVELS_PER_STOP: u32 = 8;
+
+/// The warmest level: the last stop of [`GRADE_RAMP`].
+const LAST_LEVEL: u32 = (GRADE_RAMP.len() as u32 - 1) * LEVELS_PER_STOP;
 
 /// How much a candidate loses in KataGo `utility`, as a position along [`GRADE_RAMP`].
 ///
@@ -126,21 +137,21 @@ pub fn is_known(rank: usize, visits: u32) -> bool {
 }
 
 /// RGB the board and the list share: unknown grey below [`TRUSTED_VISITS`], otherwise the
-/// loss ramp at `grade`.
+/// loss ramp at `grade`'s level.
 pub fn colour(grade: f32, rank: usize, visits: u32) -> [u8; 3] {
     if is_known(rank, visits) {
-        grade_rgb(grade)
+        level_rgb(grade_level(grade))
     } else {
         UNKNOWN_RGB
     }
 }
 
-/// Badge stop for the same reading as [`colour`]. [`UNKNOWN_STOP`] when unsearched.
-pub fn colour_stop(grade: f32, rank: usize, visits: u32) -> u32 {
+/// Badge level for the same reading as [`colour`]. [`UNKNOWN_LEVEL`] when unsearched.
+pub fn colour_level(grade: f32, rank: usize, visits: u32) -> u32 {
     if is_known(rank, visits) {
-        grade_stop(grade)
+        grade_level(grade)
     } else {
-        UNKNOWN_STOP
+        UNKNOWN_LEVEL
     }
 }
 
@@ -159,18 +170,28 @@ fn along(loss: f32, at: &[f32; GRADE_RAMP.len()]) -> f32 {
     (at.len() - 1) as f32
 }
 
-/// The colour for a grade, interpolated between the two stops it falls between.
-pub fn grade_rgb(grade: f32) -> [u8; 3] {
-    let last = GRADE_RAMP.len() - 1;
+/// The level a grade is drawn at: its position on the ramp, rounded to [`LEVELS_PER_STOP`].
+fn grade_level(grade: f32) -> u32 {
     if grade.is_nan() || grade <= 0.0 {
-        return GRADE_RAMP[0];
+        return 0;
     }
-    if grade >= last as f32 {
-        return GRADE_RAMP[last];
-    }
-    let i = grade as usize;
-    let f = grade - i as f32;
-    let (a, b) = (GRADE_RAMP[i], GRADE_RAMP[i + 1]);
+    ((grade * LEVELS_PER_STOP as f32 + 0.5) as u32).min(LAST_LEVEL)
+}
+
+/// The level a ramp stop sits on, for a mark that is exactly one stop — a blunder's badge.
+pub fn stop_level(stop: u32) -> u32 {
+    (stop * LEVELS_PER_STOP).min(LAST_LEVEL)
+}
+
+/// The colour of a level, interpolated between the two stops it falls between.
+fn level_rgb(level: u32) -> [u8; 3] {
+    let level = level.min(LAST_LEVEL);
+    let i = (level / LEVELS_PER_STOP) as usize;
+    let a = GRADE_RAMP[i];
+    let Some(&b) = GRADE_RAMP.get(i + 1) else {
+        return a;
+    };
+    let f = (level % LEVELS_PER_STOP) as f32 / LEVELS_PER_STOP as f32;
     [
         lerp8(a[0], b[0], f),
         lerp8(a[1], b[1], f),
@@ -183,27 +204,12 @@ fn lerp8(a: u8, b: u8, f: f32) -> u8 {
     (a as f32 + (b as f32 - a as f32) * f).round() as u8
 }
 
-/// The nearest stop to a grade, for the list's badge.
-///
-/// The board interpolates; a 20-pixel pill cannot show the difference, and CSS cannot carry a
-/// per-row colour without a style provider per widget.
-pub fn grade_stop(grade: f32) -> u32 {
-    let last = (GRADE_RAMP.len() - 1) as u32;
-    if grade.is_nan() || grade <= 0.0 {
-        return 0;
-    }
-    ((grade + 0.5) as u32).min(last)
-}
-
-/// The badge class for a stop: `mirai-grade-1` … `mirai-grade-6`, or `mirai-grade-unknown`.
-pub fn grade_class(stop: u32) -> String {
-    if stop == UNKNOWN_STOP {
+/// The badge class for a level: `mirai-grade-0` … `mirai-grade-40`, or `mirai-grade-unknown`.
+pub fn grade_class(level: u32) -> String {
+    if level == UNKNOWN_LEVEL {
         "mirai-grade-unknown".to_string()
     } else {
-        format!(
-            "mirai-grade-{}",
-            (stop as usize).min(GRADE_RAMP.len() - 1) + 1
-        )
+        format!("mirai-grade-{}", level.min(LAST_LEVEL))
     }
 }
 
@@ -215,16 +221,21 @@ pub fn is_light(r: f32, g: f32, b: f32) -> bool {
     0.299 * r + 0.587 * g + 0.114 * b > 0.58
 }
 
-/// The stylesheet for the list's badges, generated from [`GRADE_RAMP`] so the badge and the blob
-/// for one move can never drift apart.
+/// The stylesheet for the list's badges: one rule per level, filled by [`level_rgb`] exactly
+/// as the board fills a blob, so the badge and the blob for one move cannot drift apart.
 ///
 /// The numeral's colour is picked here too, by the same luminance rule the board uses for the
 /// text on a blob. An unsearched candidate is not a grade, so its badge is not a fill: a faint
 /// chip of the list's own ink, which neither theme turns into a slab of grey.
 pub fn grade_css() -> String {
-    let mut css = String::with_capacity((GRADE_RAMP.len() + 1) * 96);
-    for (i, rgb) in GRADE_RAMP.iter().enumerate() {
-        push_grade_rule(&mut css, i + 1, *rgb);
+    let mut css = String::with_capacity((LAST_LEVEL as usize + 2) * 96);
+    for level in 0..=LAST_LEVEL {
+        let [r, g, b] = level_rgb(level);
+        let light = is_light(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+        let ink = if light { "#1c1c1c" } else { "#ffffff" };
+        css.push_str(&format!(
+            ".mirai-grade-{level} {{ background-color: #{r:02x}{g:02x}{b:02x}; color: {ink}; }}\n"
+        ));
     }
     css.push_str(
         ".mirai-grade-unknown { background-color: color-mix(in srgb, currentColor 10%, transparent); \
@@ -233,17 +244,33 @@ pub fn grade_css() -> String {
     css
 }
 
-fn push_grade_rule(css: &mut String, stop: usize, [r, g, b]: [u8; 3]) {
-    let light = is_light(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
-    let ink = if light { "#1c1c1c" } else { "#ffffff" };
-    css.push_str(&format!(
-        ".mirai-grade-{stop} {{ background-color: #{r:02x}{g:02x}{b:02x}; color: {ink}; }}\n"
-    ));
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A searched candidate's badge in the list is filled with exactly the colour of its blob
+    /// on the board, wherever its loss falls between two stops. The list used to round to the
+    /// nearest stop while the board interpolated, so a move two thirds of the way from green
+    /// to yellow was a yellow-green blob beside a yellow badge.
+    #[test]
+    fn a_badge_is_filled_with_its_blob_colour() {
+        let css = grade_css();
+        let last = (GRADE_RAMP.len() - 1) as f32;
+        for step in 0..=500 {
+            let grade = last * step as f32 / 500.0;
+            let [r, g, b] = colour(grade, 1, TRUSTED_VISITS);
+            let class = grade_class(colour_level(grade, 1, TRUSTED_VISITS));
+            let rule = css
+                .lines()
+                .find(|rule| rule.starts_with(&format!(".{class} ")))
+                .unwrap_or_else(|| panic!("no rule for {class}"));
+            let fill = format!("background-color: #{r:02x}{g:02x}{b:02x};");
+            assert!(
+                rule.contains(&fill),
+                "grade {grade}: blob {fill}, badge {rule}"
+            );
+        }
+    }
 
     /// The engine's pick is the coolest stop whatever else is true of it, and a candidate that
     /// reads better than the pick does not wrap around.
@@ -251,7 +278,7 @@ mod tests {
     fn the_pick_is_always_the_coolest_stop() {
         assert_eq!(grade(0.0), 0.0);
         assert_eq!(grade(-0.07), 0.0);
-        assert_eq!(grade_rgb(grade(0.0)), GRADE_RAMP[0]);
+        assert_eq!(colour(grade(0.0), 1, TRUSTED_VISITS), GRADE_RAMP[0]);
     }
 
     /// The utility table hits its own stops, and a better reading than the pick does not
@@ -301,8 +328,8 @@ mod tests {
         assert_eq!(colour(last, 1, TRUSTED_VISITS - 1), UNKNOWN_RGB);
         assert_eq!(colour(last, 1, TRUSTED_VISITS), GRADE_RAMP[5]);
         assert_eq!(colour(0.0, 1, 100_000), GRADE_RAMP[0]);
-        assert_eq!(colour_stop(last, 1, 1), UNKNOWN_STOP);
-        assert_eq!(colour_stop(last, 1, TRUSTED_VISITS), 5);
+        assert_eq!(colour_level(last, 1, 1), UNKNOWN_LEVEL);
+        assert_eq!(colour_level(last, 1, TRUSTED_VISITS), stop_level(5));
         assert!(!is_known(1, 0));
         assert!(is_known(1, TRUSTED_VISITS));
     }
@@ -313,20 +340,21 @@ mod tests {
     fn the_pick_is_never_unknown() {
         assert!(is_known(0, 0));
         assert_eq!(colour(0.0, 0, 0), GRADE_RAMP[0]);
-        assert_eq!(colour_stop(0.0, 0, 1), 0);
-        assert_eq!(colour_stop(0.0, 1, 1), UNKNOWN_STOP);
+        assert_eq!(colour_level(0.0, 0, 1), 0);
+        assert_eq!(colour_level(0.0, 1, 1), UNKNOWN_LEVEL);
     }
 
     /// The ramp hands back its own table at the stops and stays between neighbours in between.
     #[test]
     fn the_ramp_hits_its_stops_and_clamps_outside_them() {
+        let paint = |grade: f32| colour(grade, 1, TRUSTED_VISITS);
         for (i, stop) in GRADE_RAMP.iter().enumerate() {
-            assert_eq!(grade_rgb(i as f32), *stop, "stop {i}");
+            assert_eq!(paint(i as f32), *stop, "stop {i}");
         }
-        assert_eq!(grade_rgb(-1.0), GRADE_RAMP[0]);
-        assert_eq!(grade_rgb(99.0), GRADE_RAMP[GRADE_RAMP.len() - 1]);
-        assert_eq!(grade_rgb(f32::NAN), GRADE_RAMP[0]);
-        let mid = grade_rgb(3.5);
+        assert_eq!(paint(-1.0), GRADE_RAMP[0]);
+        assert_eq!(paint(99.0), GRADE_RAMP[GRADE_RAMP.len() - 1]);
+        assert_eq!(paint(f32::NAN), GRADE_RAMP[0]);
+        let mid = paint(3.5);
         for c in 0..3 {
             let (a, b) = (GRADE_RAMP[3][c], GRADE_RAMP[4][c]);
             assert!(
@@ -336,33 +364,30 @@ mod tests {
         }
     }
 
-    /// The badge stylesheet and the blob colours come from one table: a rule per stop, each
-    /// naming that stop's own hex, and a grade lands on the nearest one.
+    /// A mark that sits on one stop — a blunder's loss badge — is filled with that stop's own
+    /// hex, the one the win-rate graph ticks the move with.
     #[test]
-    fn badges_cover_every_stop_and_snap_to_the_nearest() {
+    fn a_stop_badge_is_the_stop_hex() {
         let css = grade_css();
-        assert_eq!(css.lines().count(), GRADE_RAMP.len() + 1);
         for (i, [r, g, b]) in GRADE_RAMP.iter().enumerate() {
-            let fill = format!(
-                ".mirai-grade-{} {{ background-color: #{r:02x}{g:02x}{b:02x};",
-                i + 1
+            let rule = format!(
+                ".{} {{ background-color: #{r:02x}{g:02x}{b:02x};",
+                grade_class(stop_level(i as u32))
             );
-            assert!(css.contains(&fill), "missing {fill}");
-            assert_eq!(grade_stop(i as f32), i as u32);
-            assert_eq!(grade_class(i as u32), format!("mirai-grade-{}", i + 1));
+            assert!(css.contains(&rule), "missing {rule}");
         }
-        // An unsearched candidate is not a grade: its badge borrows the list's ink instead
-        // of any fill, so it cannot read as a searched move's stop or as a slab of grey.
+    }
+
+    /// An unsearched candidate is not a grade: its badge borrows the list's ink instead of any
+    /// fill, so it cannot read as a searched move's colour or as a slab of grey.
+    #[test]
+    fn an_unknown_badge_has_no_fill() {
+        let css = grade_css();
+        let class = grade_class(UNKNOWN_LEVEL);
         let unknown = css
             .lines()
-            .find(|rule| rule.starts_with(".mirai-grade-unknown "))
+            .find(|rule| rule.starts_with(&format!(".{class} ")))
             .expect("a rule for the unknown badge");
         assert!(!unknown.contains('#'), "{unknown}");
-        assert_eq!(grade_class(UNKNOWN_STOP), "mirai-grade-unknown");
-        assert_eq!(grade_stop(1.4), 1);
-        assert_eq!(grade_stop(1.6), 2);
-        assert_eq!(grade_stop(-3.0), 0);
-        assert_eq!(grade_stop(99.0), (GRADE_RAMP.len() - 1) as u32);
-        assert_eq!(grade_class(4_000), "mirai-grade-6");
     }
 }

@@ -36,8 +36,9 @@
 }
 
 /* The candidate list's rank badge, and the blunder list's loss badge. Colour is not here:
-   `palette::grade_css` generates one rule per stop of the table the board colours its blobs
-   and the graph its blunder ticks with, so a badge shares its stop's hex with both. */
+   `palette::grade_css` generates one rule per level of the table the board colours its blobs
+   and the graph its blunder ticks with, so a rank badge is its blob's colour and a loss badge
+   its tick's. */
 .mirai-rank {
   font-size: 0.78em;
   font-weight: bold;

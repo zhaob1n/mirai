@@ -54,8 +54,8 @@ mod candidate_imp {
         /// KataGo's own rank for this move, 1-based — the number in the badge.
         #[property(get, set)]
         pub rank: Cell<u32>,
-        /// Which [`crate::palette`] stop this move's loss falls on — the badge's colour, and
-        /// the colour of its blob on the board. [`crate::palette::UNKNOWN_STOP`] when the
+        /// Which [`crate::palette`] level this move's loss is drawn at — the badge's colour,
+        /// and the colour of its blob on the board. [`crate::palette::UNKNOWN_LEVEL`] when the
         /// search behind it is not enough for the loss to mean anything.
         #[property(get, set)]
         pub grade: Cell<u32>,
@@ -108,7 +108,7 @@ impl CandidateObject {
 struct Row {
     /// Position in KataGo's own ordering, 1-based — the badge's number.
     rank: u32,
-    /// The nearest [`crate::palette`] stop to this move's loss — the badge's colour.
+    /// The [`crate::palette`] level this move's loss is drawn at — the badge's colour.
     grade: u32,
     point: Point,
     pv_first: Point,
@@ -168,7 +168,7 @@ impl Row {
 }
 
 /// Grades every row by how much it loses against the first one — KataGo's pick — which is the
-/// same reading the board gives that move's blob ([`crate::palette::colour_stop`]). The pick
+/// same reading the board gives that move's blob ([`crate::palette::colour_level`]). The pick
 /// itself is never unknown grey.
 fn grade_rows(rows: &mut [Row]) {
     let Some(pick) = rows.first() else { return };
@@ -182,7 +182,7 @@ fn grade_rows(rows: &mut [Row]) {
             true => crate::palette::grade(row.loss),
             false => crate::palette::grade_means(winrate - row.winrate, score - row.score),
         };
-        row.grade = crate::palette::colour_stop(g, i, row.visits);
+        row.grade = crate::palette::colour_level(g, i, row.visits);
     }
 }
 
@@ -766,7 +766,7 @@ fn update_blunder_row(row: &adw::ActionRow, drop: &gtk::Label, b: Blunder, size:
     let mut classes = vec!["mirai-rank", "mirai-drop"];
     let grade = severity_of_drop(b.drop)
         .ramp_stop()
-        .map(crate::palette::grade_class);
+        .map(|stop| crate::palette::grade_class(crate::palette::stop_level(stop)));
     if let Some(grade) = &grade {
         classes.push(grade);
     }

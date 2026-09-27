@@ -558,9 +558,11 @@ and undo stay in sync (`overlay_row` in `crates/mirai/src/prefs.rs`).
 Candidate objects are updated in place with `gtk::Expression` bindings: replacing the
 model on each report drops hover and triggers relayout. Hiding Loss/Prior resets a sort on
 either column to rank. The badge number is KataGo `order`, but its colour is the separate
-grade ([`CANDIDATE_COLOUR.md`](CANDIDATE_COLOUR.md)).
+grade ([`CANDIDATE_COLOUR.md`](CANDIDATE_COLOUR.md)), cut to the same level
+(`palette::colour_level`, eight per segment) its blob is drawn at, so the two are one colour.
 Blunder rows likewise update in place. The title stays in the list's ink; the loss is a
-`mirai-rank` badge in the grade class of its `Severity::ramp_stop`, the graph tick's hex.
+`mirai-rank` badge in the grade class of its `Severity::ramp_stop` (`palette::stop_level`), the
+graph tick's hex.
 
 The graph is the sole Black-perspective root readout; candidate rows and the analysis
 status line use side-to-move values (INV-2). Duplicating root figures in the panel would
