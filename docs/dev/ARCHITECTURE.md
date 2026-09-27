@@ -583,10 +583,11 @@ The graph `Paned` does not shrink either child. An unset divider would size the 
 from its minimum request, so `WinrateGraph` pins its remembered `ui.graph_height` until
 first allocation, fixes the divider there, then releases its minimum to 80 px so users
 can drag it both ways. `Ui::drop` persists the last allocated height. `fit_default_size`
-makes a new window 85% of the shortest monitor's height, at most 960 px, and exactly as wide
-as the square board that leaves plus the sidebar, so no bare background shows beside it. Play/scoring hides the graph,
-navigation and sidebar; finishing restores their prior state. `sync_graph` combines the
-user's `ui.show_graph` preference with whether play is active.
+makes a new window 85% of the shortest monitor's height, at most 1080 px, and exactly as wide
+as the square board that leaves plus the sidebar, so no bare background shows beside it;
+the editing tools start revealed, so their row is part of the measured chrome. Play/scoring
+hides the graph, navigation and sidebar; finishing restores their prior state. `sync_graph`
+combines the user's `ui.show_graph` preference with whether play is active.
 
 Keep the sidebar header's default `show-title` (otherwise its switcher disappears).
 Sidebar widths are 300 sp normally and 386 sp with Loss/Prior. Candidate cell width

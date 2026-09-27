@@ -2046,17 +2046,17 @@ fn set_candidate_sidebar_width(split: &adw::OverlaySplitView, detailed: bool) {
 const SIDEBAR_BREAKPOINT_SP: f64 = 926.0;
 
 /// The tallest default window: the board is as large as this makes it, and no larger.
-const DEFAULT_HEIGHT_CAP: i32 = 960;
+const DEFAULT_HEIGHT_CAP: i32 = 1080;
 
 /// Sizes a new window so the board fills its area exactly.
 ///
 /// The board is square, so any other aspect ratio leaves bare background beside or under
 /// it. The window takes most of the shortest monitor's height, up to [`DEFAULT_HEIGHT_CAP`];
-/// the board gets what is left after the header, the navigation bar and the graph; the width
-/// is that board plus the sidebar. The chrome is measured rather than assumed, so text
-/// scaling and a remembered graph height stay square. Below the sidebar breakpoint the
-/// sidebar is an overlay and the window is only as wide as the board. A tiling compositor
-/// ignores all of this.
+/// the board gets what is left after the header, the editing tools, the navigation bar and
+/// the graph; the width is that board plus the sidebar. The chrome is measured rather than
+/// assumed, so text scaling and a remembered graph height stay square. Below the sidebar
+/// breakpoint the sidebar is an overlay and the window is only as wide as the board. A tiling
+/// compositor ignores all of this.
 fn fit_default_size(window: &MiraiWindow, graph: &WinrateGraph) {
     let natural = |widget: &gtk::Widget| widget.measure(gtk::Orientation::Vertical, -1).1;
     let Some(display) = gdk::Display::default() else {
