@@ -189,8 +189,8 @@ confidence.
 The list stays in KataGo's `order`. Colour is a **loss** signal, not a rank
 signal, and the two are allowed to disagree.
 
-The tail is **unknown**: below 10 visits the blob and the badge are grey
-(`UNKNOWN_RGB`, class `mirai-grade-unknown`). The engine's pick is exempt —
+The tail is **unknown**: below 10 visits the blob is grey (`UNKNOWN_RGB`) and the badge
+(class `mirai-grade-unknown`) a faint neutral chip rather than a grey fill. The engine's pick is exempt —
 `palette::is_known` takes the rank, so no caller can paint the reference grey.
 
 Among searched moves the loss is **pick `utility` − candidate `utility`**,

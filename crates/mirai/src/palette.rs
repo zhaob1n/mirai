@@ -219,21 +219,25 @@ pub fn is_light(r: f32, g: f32, b: f32) -> bool {
 /// for one move can never drift apart.
 ///
 /// The numeral's colour is picked here too, by the same luminance rule the board uses for the
-/// text on a blob.
+/// text on a blob. An unsearched candidate is not a grade, so its badge is not a fill: a faint
+/// chip of the list's own ink, which neither theme turns into a slab of grey.
 pub fn grade_css() -> String {
     let mut css = String::with_capacity((GRADE_RAMP.len() + 1) * 96);
     for (i, rgb) in GRADE_RAMP.iter().enumerate() {
-        push_grade_rule(&mut css, &format!("{}", i + 1), *rgb);
+        push_grade_rule(&mut css, i + 1, *rgb);
     }
-    push_grade_rule(&mut css, "unknown", UNKNOWN_RGB);
+    css.push_str(
+        ".mirai-grade-unknown { background-color: color-mix(in srgb, currentColor 10%, transparent); \
+         color: color-mix(in srgb, currentColor 60%, transparent); }\n",
+    );
     css
 }
 
-fn push_grade_rule(css: &mut String, name: &str, [r, g, b]: [u8; 3]) {
+fn push_grade_rule(css: &mut String, stop: usize, [r, g, b]: [u8; 3]) {
     let light = is_light(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
     let ink = if light { "#1c1c1c" } else { "#ffffff" };
     css.push_str(&format!(
-        ".mirai-grade-{name} {{ background-color: #{r:02x}{g:02x}{b:02x}; color: {ink}; }}\n"
+        ".mirai-grade-{stop} {{ background-color: #{r:02x}{g:02x}{b:02x}; color: {ink}; }}\n"
     ));
 }
 
@@ -347,9 +351,13 @@ mod tests {
             assert_eq!(grade_stop(i as f32), i as u32);
             assert_eq!(grade_class(i as u32), format!("mirai-grade-{}", i + 1));
         }
-        let [r, g, b] = UNKNOWN_RGB;
-        let unknown = format!(".mirai-grade-unknown {{ background-color: #{r:02x}{g:02x}{b:02x};");
-        assert!(css.contains(&unknown), "missing {unknown}");
+        // An unsearched candidate is not a grade: its badge borrows the list's ink instead
+        // of any fill, so it cannot read as a searched move's stop or as a slab of grey.
+        let unknown = css
+            .lines()
+            .find(|rule| rule.starts_with(".mirai-grade-unknown "))
+            .expect("a rule for the unknown badge");
+        assert!(!unknown.contains('#'), "{unknown}");
         assert_eq!(grade_class(UNKNOWN_STOP), "mirai-grade-unknown");
         assert_eq!(grade_stop(1.4), 1);
         assert_eq!(grade_stop(1.6), 2);

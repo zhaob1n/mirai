@@ -244,7 +244,7 @@ mod imp {
         pub pv_hooks: RefCell<Vec<PvHook>>,
         /// Keep row widgets alive across batch results so pointer hover and activation
         /// survive updates to the graph or to another blunder.
-        pub blunder_rows: RefCell<Vec<(Blunder, adw::ActionRow)>>,
+        pub blunder_rows: RefCell<Vec<(Blunder, adw::ActionRow, gtk::Label)>>,
         /// The selection index last reported to the PV hooks.
         pub last_pv: Cell<u32>,
     }
@@ -441,7 +441,7 @@ impl AnalysisPanel {
                     .blunder_rows
                     .borrow()
                     .get(row.index().max(0) as usize)
-                    .map(|(blunder, _)| blunder.node);
+                    .map(|(blunder, ..)| blunder.node);
                 if let Some(node) = node
                     && let Some(id) = panel.state().resolve_node(node)
                 {
@@ -718,9 +718,9 @@ impl AnalysisPanel {
         let old_len = shown.len();
         let new_len = rows.len();
         for (index, blunder) in rows.into_iter().enumerate() {
-            if let Some((previous, row)) = shown.get_mut(index) {
+            if let Some((previous, row, drop)) = shown.get_mut(index) {
                 if *previous != blunder {
-                    update_blunder_row(row, blunder, size);
+                    update_blunder_row(row, drop, blunder, size);
                     *previous = blunder;
                 }
             } else {
@@ -728,12 +728,14 @@ impl AnalysisPanel {
                     .activatable(true)
                     .title_lines(1)
                     .build();
-                update_blunder_row(&row, blunder, size);
+                let drop = gtk::Label::builder().valign(gtk::Align::Center).build();
+                row.add_suffix(&drop);
+                update_blunder_row(&row, &drop, blunder, size);
                 inner.blunder_list.append(&row);
-                shown.push((blunder, row));
+                shown.push((blunder, row, drop));
             }
         }
-        for (_, row) in shown.drain(new_len..) {
+        for (_, row, _) in shown.drain(new_len..) {
             inner.blunder_list.remove(&row);
         }
         if old_len != new_len {
@@ -750,33 +752,36 @@ impl AnalysisPanel {
     }
 }
 
-fn update_blunder_row(row: &adw::ActionRow, b: Blunder, size: Size) {
-    let detail = match b.best {
-        Some(best) => format!(
-            "−{}% · played {} · best {}",
-            pct1(b.drop),
-            size.to_gtp(b.played),
-            size.to_gtp(best)
-        ),
-        None => format!("−{}% · played {}", pct1(b.drop), size.to_gtp(b.played)),
+/// The title is the move in the list's ink; the loss is a badge in the colour the graph's
+/// strip ticks that move with, the same pill the candidate list ranks in.
+fn update_blunder_row(row: &adw::ActionRow, drop: &gtk::Label, b: Blunder, size: Size) {
+    let played = size.to_gtp(b.played);
+    let moves = match b.best {
+        Some(best) => format!("{played} → {}", size.to_gtp(best)),
+        None => played.to_string(),
     };
-    row.set_title(&format!("{} {} · {detail}", stone(b.player), b.move_number));
-    for class in [
-        "mirai-blunder-minor",
-        "mirai-blunder-medium",
-        "mirai-blunder-major",
-    ] {
-        row.remove_css_class(class);
+    let loss = format!("−{}%", pct1(b.drop));
+    row.set_title(&format!("{}  {}  {moves}", stone(b.player), b.move_number));
+    drop.set_label(&loss);
+    let mut classes = vec!["mirai-rank", "mirai-drop"];
+    let grade = severity_of_drop(b.drop)
+        .ramp_stop()
+        .map(crate::palette::grade_class);
+    if let Some(grade) = &grade {
+        classes.push(grade);
     }
-    if let Some(class) = severity_class(severity_of_drop(b.drop)) {
-        row.add_css_class(class);
-    }
-    // The emoji stone is a picture; the accessible label must name the player.
+    drop.set_css_classes(&classes);
+    // The emoji stone is a picture and the arrow a glyph; the accessible label says both.
+    let best = b
+        .best
+        .map(|best| format!(" · best {}", size.to_gtp(best)))
+        .unwrap_or_default();
     row.upcast_ref::<gtk::Widget>()
         .update_property(&[gtk::accessible::Property::Label(&format!(
-            "Move {} · {} · {detail}",
+            "Move {} · {} · {loss} · played {}{best}",
             b.move_number,
-            b.player.name()
+            b.player.name(),
+            size.to_gtp(b.played),
         ))]);
 }
 
@@ -792,21 +797,11 @@ struct Headline {
 /// The mover of a blunder, as the stone they played.
 ///
 /// These two are `Emoji_Presentation=Yes`, so they keep their own black and white under
-/// the row's severity foreground colour.
+/// any foreground colour, dim-label included.
 fn stone(color: Color) -> &'static str {
     match color {
         Color::Black => "⚫",
         Color::White => "⚪",
-    }
-}
-
-fn severity_class(severity: crate::widgets::winrate::Severity) -> Option<&'static str> {
-    use crate::widgets::winrate::Severity;
-    match severity {
-        Severity::None => None,
-        Severity::Minor => Some("mirai-blunder-minor"),
-        Severity::Medium => Some("mirai-blunder-medium"),
-        Severity::Major => Some("mirai-blunder-major"),
     }
 }
 

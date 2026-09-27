@@ -558,8 +558,8 @@ Candidate objects are updated in place with `gtk::Expression` bindings: replacin
 model on each report drops hover and triggers relayout. Hiding Loss/Prior resets a sort on
 either column to rank. The badge number is KataGo `order`, but its colour is the separate
 grade ([`CANDIDATE_COLOUR.md`](CANDIDATE_COLOUR.md)).
-Blunder rows likewise update in place. `mirai-blunder-*` tints only `label.title`:
-tinting the row also colours separator borders through `currentColor`.
+Blunder rows likewise update in place. The title stays in the list's ink; the loss is a
+`mirai-rank` badge in the grade class of its `Severity::ramp_stop`, the graph tick's hex.
 
 The graph is the sole Black-perspective root readout; candidate rows and the analysis
 status line use side-to-move values (INV-2). Duplicating root figures in the panel would
