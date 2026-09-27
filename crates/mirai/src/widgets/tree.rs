@@ -19,6 +19,7 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::HashMap;
 
 use gtk::gdk;
+use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
@@ -172,6 +173,9 @@ mod imp {
         pub(super) layout: RefCell<TreeLayout>,
         /// Structure revision the cached layout was built from; `None` means "never built".
         pub structure: Cell<Option<u64>>,
+        /// The node context menu. Its items name a raw `NodeId`, so the window closes it
+        /// on every structural change before that id can go stale.
+        pub popover: RefCell<Option<gtk::PopoverMenu>>,
     }
 
     #[glib::object_subclass]
@@ -181,11 +185,26 @@ mod imp {
         type ParentType = gtk::Widget;
     }
 
-    impl ObjectImpl for MoveTreeView {}
+    impl ObjectImpl for MoveTreeView {
+        fn dispose(&self) {
+            if let Some(popover) = self.popover.borrow_mut().take() {
+                popover.unparent();
+            }
+        }
+    }
 
     impl WidgetImpl for MoveTreeView {
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
             self.obj().draw(snapshot);
+        }
+
+        /// A popover parented to a custom widget is positioned by that widget's allocation.
+        fn size_allocate(&self, _width: i32, _height: i32, _baseline: i32) {
+            if let Some(popover) = self.popover.borrow().as_ref()
+                && popover.is_visible()
+            {
+                popover.present();
+            }
         }
     }
 }
@@ -218,6 +237,24 @@ impl MoveTreeView {
             });
         }
         this.add_controller(click);
+
+        let menu = gtk::GestureClick::new();
+        menu.set_button(gdk::BUTTON_SECONDARY);
+        {
+            let weak = this.downgrade();
+            menu.connect_pressed(move |_, _, x, y| {
+                if let Some(this) = weak.upgrade() {
+                    this.show_menu_at(x, y);
+                }
+            });
+        }
+        this.add_controller(menu);
+
+        let popover = gtk::PopoverMenu::from_model(None::<&gio::MenuModel>);
+        popover.set_parent(&this);
+        popover.set_has_arrow(false);
+        popover.set_halign(gtk::Align::Start);
+        *this.imp().popover.borrow_mut() = Some(popover);
 
         this
     }
@@ -300,16 +337,76 @@ impl MoveTreeView {
         }
     }
 
-    fn click_at(&self, x: f32, y: f32) {
+    fn node_at(&self, x: f32, y: f32) -> Option<NodeId> {
         self.ensure_layout();
         let layout = self.imp().layout.borrow();
-        let hit = layout.nodes.iter().find(|n| {
-            let (cx, cy) = cell_xy(n.depth, n.lane);
-            (cx - x).abs() <= CELL_W * 0.5 && (cy - y).abs() <= CELL_H * 0.5
-        });
-        let Some(&hit) = hit else { return };
-        drop(layout);
-        self.state().set_cursor(hit.id);
+        layout
+            .nodes
+            .iter()
+            .find(|n| {
+                let (cx, cy) = cell_xy(n.depth, n.lane);
+                (cx - x).abs() <= CELL_W * 0.5 && (cy - y).abs() <= CELL_H * 0.5
+            })
+            .map(|n| n.id)
+    }
+
+    fn click_at(&self, x: f32, y: f32) {
+        if let Some(id) = self.node_at(x, y) {
+            self.state().set_cursor(id);
+        }
+    }
+
+    /// The harness's pointer: a press at the centre of grid cell `(depth, lane)`.
+    #[cfg(debug_assertions)]
+    pub(crate) fn press_cell(&self, button: u32, depth: u32, lane: u32) {
+        let (x, y) = cell_xy(depth, lane);
+        match button {
+            gdk::BUTTON_SECONDARY => self.show_menu_at(x as f64, y as f64),
+            _ => self.click_at(x, y),
+        }
+    }
+
+    /// Opens the branch menu for the node under the pointer. Only what applies is offered:
+    /// a node already on the main line cannot be promoted, and the root cannot be deleted.
+    fn show_menu_at(&self, x: f64, y: f64) {
+        let Some(id) = self.node_at(x as f32, y as f32) else {
+            return;
+        };
+        let menu = gio::Menu::new();
+        {
+            let tree = self.state().tree();
+            if !tree.main_line().contains(&id) {
+                let item = gio::MenuItem::new(Some("Set as Main Line"), None);
+                item.set_action_and_target_value(
+                    Some("win.promote-line-at"),
+                    Some(&id.0.to_variant()),
+                );
+                menu.append_item(&item);
+            }
+            if tree.parent(id).is_some() {
+                let item = gio::MenuItem::new(Some("Delete Branch"), None);
+                item.set_action_and_target_value(
+                    Some("win.delete-branch-at"),
+                    Some(&id.0.to_variant()),
+                );
+                menu.append_item(&item);
+            }
+        }
+        if menu.n_items() == 0 {
+            return;
+        }
+        let Some(popover) = self.imp().popover.borrow().clone() else {
+            return;
+        };
+        popover.set_menu_model(Some(&menu));
+        popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+        popover.popup();
+    }
+
+    pub(crate) fn close_menu(&self) {
+        if let Some(popover) = self.imp().popover.borrow().as_ref() {
+            popover.popdown();
+        }
     }
 
     /// Nudges the enclosing `ScrolledWindow` so the current node stays visible.

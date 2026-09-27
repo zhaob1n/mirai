@@ -9,7 +9,7 @@
 
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
-use gtk::{gdk, gio, glib, graphene, gsk, pango};
+use gtk::{gdk, glib, graphene, gsk, pango};
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -19,7 +19,7 @@ use mirai_core::{
 };
 use mirai_proto::types::dq_policy;
 
-use crate::app::{AppState, EditorTool, NodeRef};
+use crate::app::{AppState, EditorTool};
 use crate::widgets::paint::{fill_disc, hline, over, rgba8, stroke_disc, stroke_rect, vline};
 
 /// Wood beyond the outermost grid line, in cells.
@@ -213,7 +213,6 @@ fn is_dark() -> bool {
 pub(crate) struct BoardClick {
     pub point: Point,
     pub button: u32,
-    pub modifiers: gdk::ModifierType,
 }
 
 /// `Rc`, not `Box`: the hook re-enters this widget — the play controller redraws the
@@ -344,12 +343,6 @@ mod imp {
         /// the engine's turn, scoring, a finished game.
         pub play_locked: Cell<bool>,
         pub static_layer: RefCell<Option<(StaticKey, gsk::RenderNode)>>,
-        pub popover: RefCell<Option<gtk::PopoverMenu>>,
-        pub menu_point: Cell<Option<Point>>,
-        pub menu_cursor: Cell<Option<NodeRef>>,
-        pub play_here: OnceCell<gio::SimpleAction>,
-        pub main_line: OnceCell<gio::SimpleAction>,
-        pub delete_branch: OnceCell<gio::SimpleAction>,
         pub(super) click_hook: RefCell<Option<ClickHook>>,
         pub dead: RefCell<Option<DeadSet>>,
         pub territory: RefCell<Option<Box<[Option<Color>]>>>,
@@ -383,12 +376,6 @@ mod imp {
         fn constructed(&self) {
             self.parent_constructed();
             self.obj().add_css_class("board-area");
-        }
-
-        fn dispose(&self) {
-            if let Some(popover) = self.popover.borrow_mut().take() {
-                popover.unparent();
-            }
         }
     }
 
@@ -1250,7 +1237,6 @@ impl BoardView {
             .state
             .set(state.clone())
             .expect("a fresh BoardView cannot already hold a state");
-        this.build_menu();
         this.install_controllers();
         this.observe(state);
         this.rebuild_projection(state);
@@ -1281,18 +1267,14 @@ impl BoardView {
     }
 
     /// Hit-tests `(x, y)` and delivers the click to the window hook. No default play path.
-    pub(crate) fn click_at(&self, button: u32, modifiers: gdk::ModifierType, x: f64, y: f64) {
+    pub(crate) fn click_at(&self, button: u32, x: f64, y: f64) {
         let Some(point) = self.point_at(x, y) else {
             return;
         };
         self.clear_preview();
         let hook = self.imp().click_hook.borrow().clone();
         if let Some(hook) = hook {
-            hook(BoardClick {
-                point,
-                button,
-                modifiers,
-            });
+            hook(BoardClick { point, button });
         }
     }
 
@@ -1309,52 +1291,6 @@ impl BoardView {
         let (x, y) = size.xy(p);
         let (cx, cy) = layout.xy(x, y);
         Some((cx as f64, cy as f64))
-    }
-
-    /// Toolbar callers supply their bounds in board coordinates; board clicks use `point`.
-    pub(crate) fn show_menu(
-        &self,
-        point: Option<Point>,
-        toolbar_anchor: Option<gdk::Rectangle>,
-        editable: bool,
-    ) {
-        let imp = self.imp();
-        imp.menu_point.set(point);
-        imp.menu_cursor.set(Some(self.state().cursor_ref()));
-        if let Some(play) = imp.play_here.get() {
-            play.set_enabled(editable && point.is_some());
-        }
-        if let Some(main_line) = imp.main_line.get() {
-            main_line.set_enabled(editable);
-        }
-        if let Some(delete) = imp.delete_branch.get() {
-            delete.set_enabled(editable);
-        }
-        let Some(popover) = imp.popover.borrow().clone() else {
-            return;
-        };
-        popover.set_halign(if toolbar_anchor.is_some() {
-            gtk::Align::End
-        } else {
-            gtk::Align::Start
-        });
-        let Some(rect) = toolbar_anchor.or_else(|| {
-            point
-                .and_then(|p| self.point_center(p))
-                .map(|(x, y)| gdk::Rectangle::new(x.round() as i32, y.round() as i32, 1, 1))
-        }) else {
-            return;
-        };
-        popover.set_pointing_to(Some(&rect));
-        popover.popup();
-    }
-
-    pub(crate) fn close_menu(&self) {
-        self.imp().menu_point.set(None);
-        self.imp().menu_cursor.set(None);
-        if let Some(popover) = self.imp().popover.borrow().as_ref() {
-            popover.popdown();
-        }
     }
 
     pub(crate) fn clear_preview(&self) {
@@ -1638,12 +1574,7 @@ impl BoardView {
                 #[weak(rename_to = view)]
                 self,
                 move |gesture, _, x, y| {
-                    view.click_at(
-                        gesture.current_button(),
-                        gesture.current_event_state(),
-                        x,
-                        y,
-                    );
+                    view.click_at(gesture.current_button(), x, y);
                 }
             ));
             self.add_controller(gesture);
@@ -1678,106 +1609,6 @@ impl BoardView {
             move |_| view.update_hover(None)
         ));
         self.add_controller(motion);
-    }
-
-    fn build_menu(&self) {
-        let group = gio::SimpleActionGroup::new();
-
-        let play = gio::SimpleAction::new("play-here", None);
-        play.connect_activate(glib::clone!(
-            #[weak(rename_to = view)]
-            self,
-            move |_, _| {
-                let Some(p) = view.imp().menu_point.get() else {
-                    return;
-                };
-                if view.resolved_menu_cursor().is_none() {
-                    return;
-                }
-                view.activate_win_u32("win.play-at", u32::from(p.0));
-            }
-        ));
-        group.add_action(&play);
-        let _ = self.imp().play_here.set(play);
-
-        let main_line = gio::SimpleAction::new("main-line", None);
-        main_line.connect_activate(glib::clone!(
-            #[weak(rename_to = view)]
-            self,
-            move |_, _| {
-                let Some(id) = view.menu_node_target() else {
-                    return;
-                };
-                view.activate_win_u32("win.promote-line-at", id.0);
-            }
-        ));
-        group.add_action(&main_line);
-        let _ = self.imp().main_line.set(main_line);
-
-        let delete = gio::SimpleAction::new("delete-branch", None);
-        delete.connect_activate(glib::clone!(
-            #[weak(rename_to = view)]
-            self,
-            move |_, _| {
-                let Some(id) = view.menu_node_target() else {
-                    return;
-                };
-                view.activate_win_u32("win.delete-branch-at", id.0);
-            }
-        ));
-        group.add_action(&delete);
-        let _ = self.imp().delete_branch.set(delete);
-
-        let copy = gio::SimpleAction::new("copy-sgf", None);
-        copy.connect_activate(glib::clone!(
-            #[weak(rename_to = view)]
-            self,
-            move |_, _| {
-                let _ = view.activate_action("win.copy-sgf", None);
-            }
-        ));
-        group.add_action(&copy);
-
-        self.insert_action_group("board", Some(&group));
-
-        let menu = gio::Menu::new();
-        menu.append(Some("Play Here"), Some("board.play-here"));
-        menu.append(Some("Set as Main Line"), Some("board.main-line"));
-        menu.append(Some("Delete Branch"), Some("board.delete-branch"));
-        menu.append(Some("Copy SGF"), Some("board.copy-sgf"));
-        let to_play = gio::Menu::new();
-        to_play.append(Some("Black to Play"), Some("win.to-play::black"));
-        to_play.append(Some("White to Play"), Some("win.to-play::white"));
-        menu.append_section(None, &to_play);
-
-        let popover = gtk::PopoverMenu::from_model(Some(&menu));
-        popover.set_parent(self);
-        popover.set_has_arrow(false);
-        *self.imp().popover.borrow_mut() = Some(popover);
-    }
-
-    fn activate_win_u32(&self, name: &str, value: u32) {
-        let _ = self.activate_action(name, Some(&value.to_variant()));
-    }
-
-    fn resolved_menu_cursor(&self) -> Option<NodeId> {
-        self.state().resolve_node(self.imp().menu_cursor.get()?)
-    }
-
-    /// The child of the saved menu cursor whose move sits on the menu point, if any.
-    fn node_for_menu_point(&self) -> Option<NodeId> {
-        let p = self.imp().menu_point.get()?;
-        let cursor = self.resolved_menu_cursor()?;
-        let tree = self.state().tree();
-        tree.children(cursor)
-            .iter()
-            .copied()
-            .find(|&c| tree.node(c).mv.is_some_and(|(_, mv)| mv == p))
-    }
-
-    fn menu_node_target(&self) -> Option<NodeId> {
-        let cursor = self.resolved_menu_cursor()?;
-        Some(self.node_for_menu_point().unwrap_or(cursor))
     }
 
     pub(crate) fn update_hover(&self, pointer: Option<(f64, f64)>) {

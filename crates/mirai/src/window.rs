@@ -548,7 +548,7 @@ fn handle_change(ui: &Ui, change: Change) {
             ui.board.queue_draw();
         }
         Change::Tree => {
-            ui.board.close_menu();
+            ui.move_tree.close_menu();
             update_scale(ui);
             update_analysis_page(ui);
             update_title(ui);
@@ -564,7 +564,6 @@ fn handle_change(ui: &Ui, change: Change) {
             ui.board.refresh_cursor();
         }
         Change::Cursor { project } => {
-            ui.board.close_menu();
             load_comment(ui);
             update_scale(ui);
             update_analysis_page(ui);
@@ -715,21 +714,6 @@ fn win_simple(ui: &Ui, name: &str) -> Option<gio::SimpleAction> {
         .and_then(|action| action.downcast::<gio::SimpleAction>().ok())
 }
 
-fn color_name(color: Color) -> &'static str {
-    match color {
-        Color::Black => "black",
-        Color::White => "white",
-    }
-}
-
-fn parse_color(name: &str) -> Option<Color> {
-    match name {
-        "black" => Some(Color::Black),
-        "white" => Some(Color::White),
-        _ => None,
-    }
-}
-
 fn connect_editor_tools(window: &MiraiWindow, ui: &Ui) {
     for group in [window.stone_tools(), window.mark_tools()] {
         let weak = ui.weak_window();
@@ -755,10 +739,6 @@ fn update_editor_actions(ui: &Ui) {
     }
     if let Some(action) = win_simple(ui, "redo") {
         action.set_enabled(!active && ui.state.can_redo());
-    }
-    if let Some(action) = win_simple(ui, "to-play") {
-        action.set_enabled(!active);
-        action.set_state(&color_name(ui.state.to_play()).to_variant());
     }
     if let Some(window) = ui.window() {
         let (icon, label, tooltip) = match ui.state.to_play() {
@@ -796,8 +776,10 @@ fn update_editor_actions(ui: &Ui) {
     if let Some(action) = win_simple(ui, "delete-branch-at") {
         action.set_enabled(!active);
     }
-    if let Some(action) = win_simple(ui, "delete-branch") {
-        action.set_enabled(!active);
+    for name in ["delete-branch", "promote-line", "switch-to-play"] {
+        if let Some(action) = win_simple(ui, name) {
+            action.set_enabled(!active);
+        }
     }
 }
 
@@ -853,14 +835,8 @@ fn on_board_click(ui: &Ui, click: BoardClick) {
     if p.is_pass() {
         return;
     }
-    let shift = click.modifiers.contains(gdk::ModifierType::SHIFT_MASK);
     let primary = click.button == gdk::BUTTON_PRIMARY;
     let secondary = click.button == gdk::BUTTON_SECONDARY;
-
-    if secondary && shift {
-        ui.board.show_menu(Some(p), None, !ui.play.is_active());
-        return;
-    }
 
     if ui.play.is_active() {
         if primary {
@@ -1992,6 +1968,8 @@ fn show_shortcuts(ui: &Ui) {
                 ("Undo Last Edit", "win.undo"),
                 ("Redo", "win.redo"),
                 ("Delete Branch", "win.delete-branch"),
+                ("Set as Main Line", "win.promote-line"),
+                ("Switch Side to Play", "win.switch-to-play"),
             ][..],
         ),
         (
@@ -2433,28 +2411,23 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
     add("undo", Box::new(do_undo));
     add("redo", Box::new(do_redo));
     add("delete-branch", Box::new(delete_branch));
-    add("resign", Box::new(|ui| ui.play.resign()));
-    add("retry-ai", Box::new(|ui| ui.play.retry()));
     add(
-        "board-menu",
+        "promote-line",
+        Box::new(|ui| promote_line_id(ui, ui.state.cursor())),
+    );
+    add(
+        "switch-to-play",
         Box::new(|ui| {
-            let Some(window) = ui.window() else {
+            if ui.play.is_active() {
                 return;
-            };
-            let Some(bounds) = window.board_menu_button().compute_bounds(&ui.board) else {
-                return;
-            };
-            // Popover pointing rectangles use the parent BoardView's coordinates.
-            let anchor = gdk::Rectangle::new(
-                bounds.x().round() as i32,
-                bounds.y().round() as i32,
-                bounds.width().ceil() as i32,
-                bounds.height().ceil() as i32,
-            );
-            ui.board.show_menu(None, Some(anchor), !ui.play.is_active());
+            }
+            let color = ui.state.to_play().other();
+            ui.state
+                .with_edit_session(|session| session.set_to_play(color));
         }),
     );
-
+    add("resign", Box::new(|ui| ui.play.resign()));
+    add("retry-ai", Box::new(|ui| ui.play.retry()));
     add("open", Box::new(do_open));
     add("download-fox", Box::new(do_download_fox));
     add("clear-board", Box::new(do_clear_board));
@@ -2607,20 +2580,6 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
         group.add_action(&action);
     };
     add_choice(
-        "to-play",
-        color_name(ui.state.to_play()),
-        Box::new(|ui, value| {
-            if ui.play.is_active() {
-                return;
-            }
-            let Some(color) = parse_color(value) else {
-                return;
-            };
-            ui.state
-                .with_edit_session(|session| session.set_to_play(color));
-        }),
-    );
-    add_choice(
         "edit-tool",
         ui.state.editor_tool().as_str(),
         Box::new(|ui, value| {
@@ -2651,6 +2610,8 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
             ("win.undo", &["<Control>z"]),
             ("win.redo", &["<Control><Shift>z"]),
             ("win.delete-branch", &["Delete"]),
+            ("win.promote-line", &["<Control>Up"]),
+            ("win.switch-to-play", &["t"]),
             ("win.open", &["<Control>o"]),
             ("win.download-fox", &["<Control><Shift>o"]),
             ("win.clear-board", &["<Control><Shift>n"]),
