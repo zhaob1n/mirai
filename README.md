@@ -21,7 +21,7 @@ with a blunder strip; the sidebar reads the side to move.
 
 **Review and editing.** Open, paste and save SGF, including multi-game collections, keeping
 properties mirai does not draw. Navigate the current line and its variations. Editing tools
-stay collapsed until you open them. Whole-game analysis fills a blunder list that jumps to
+sit above the board. Whole-game analysis fills a blunder list that jumps to
 the move.
 
 **Playing.** Play KataGo by visits, time per move, or a human-like profile when the model has

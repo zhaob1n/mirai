@@ -571,7 +571,7 @@ Static layout is [`crates/mirai/src/window.blp`](../../crates/mirai/src/window.b
 map of regions and mouse behaviour is [GUIDE §3](../user/GUIDE.md#3-the-interface).
 
 Board navigation and the play bar sit beneath the board, not across the window; the
-sidebar reaches the bottom. `editor_revealer` starts collapsed. `set_editor_visible` is
+sidebar reaches the bottom. `editor_revealer` starts revealed. `set_editor_visible` is
 its only writer: a non-Play tool reveals it, returning to Play does not undo a user's
 manual expansion, and active play closes it and disables its toggle.
 

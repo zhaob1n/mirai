@@ -236,9 +236,10 @@ the mover, move number, win rate lost, played move and engine choice if stored. 
 jump there; collapse the list without losing its contents. An analysed record shows its
 blunders even without a running engine, though starting a new sweep requires one.
 
-**Editing tools.** Reveal the toolbar via **Editing Tools** on the navigation bar or the
-View menu. It contains undo/redo, **Switch Side to Play**, Play, setup and marks. Closing
-it returns to Play without adding an undo step. During a game it stays closed and disabled.
+**Editing tools.** The toolbar above the board starts open; hide or show it with **Editing
+Tools** on the navigation bar or the View menu. It contains undo/redo, **Switch Side to
+Play**, Play, setup and marks. Closing it returns to Play without adding an undo step. During
+a game it stays closed and disabled.
 
 **Variations and the move tree.** Playing before the end creates a variation, leaving the
 original continuation intact. In Moves, the main line runs downwards with variations to
