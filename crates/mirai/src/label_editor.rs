@@ -9,6 +9,7 @@ use gtk::{CompositeTemplate, glib};
 use mirai_core::Point;
 
 use crate::app::NodeRef;
+use crate::i18n;
 use crate::window_shell::MiraiWindow;
 
 mod imp {
@@ -122,8 +123,9 @@ fn apply_label(
         window.with_ui(|ui| {
             let cursor = ui.state.cursor();
             if ui.play.is_active() || ui.state.resolve_node(node) != Some(cursor) {
-                ui.state
-                    .toast("The position changed; open the label editor again");
+                ui.state.toast(i18n::gettext(
+                    "The position changed; open the label editor again",
+                ));
             } else {
                 ui.state
                     .with_edit_session(|session| session.set_label(point, text.as_str()));

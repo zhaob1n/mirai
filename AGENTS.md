@@ -56,6 +56,7 @@ Do not modify this section without explicit approval.
 | Candidate colour, or why the list is not monotonic | [`docs/dev/CANDIDATE_COLOUR.md`](docs/dev/CANDIDATE_COLOUR.md) — KataGo's `order` is play-selection value, not the win-rate column; what that does to the ramp |
 | Fox HTTP, or the Fox SGF dialect | [`docs/dev/FOX_KIFU_API_SPEC.md`](docs/dev/FOX_KIFU_API_SPEC.md) |
 | Arch packaging, desktop entry, metainfo | [`docs/dev/PACKAGING.md`](docs/dev/PACKAGING.md) — what to regenerate, and why there is no Flatpak |
+| Add a user-visible string, or translate | [`docs/dev/TRANSLATING.md`](docs/dev/TRANSLATING.md) — gettext conventions, the `po/` workflow, why the GTK-free crates stay English |
 | Touch anything the HarmonyOS client depends on | [`../mirai-hmos/docs/dev/UPSTREAM.md`](../mirai-hmos/docs/dev/UPSTREAM.md) — optional adjacent checkout, not a path in this repository. Present only if `mirai-hmos` is checked out beside this one; that client's ledger of what it reuses from here |
 | Why is it built this way? What already went wrong? | [`docs/archive/RETROSPECTIVE.md`](docs/archive/RETROSPECTIVE.md) — decisions, obstacles, defects found |
 | What was originally specified, before any code | [`docs/archive/PLAN.md`](docs/archive/PLAN.md) — historical; the code, not the plan, is authoritative |

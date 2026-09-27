@@ -7,7 +7,7 @@ normatively in [`PROTOCOL.md`](PROTOCOL.md); how to prove a change works is
 [`../user/GUIDE.md`](../user/GUIDE.md). Candidate colour versus KataGo's `order` is
 [`CANDIDATE_COLOUR.md`](CANDIDATE_COLOUR.md). Fox HTTP and its SGF dialect are
 [`FOX_KIFU_API_SPEC.md`](FOX_KIFU_API_SPEC.md). Arch packaging is
-[`PACKAGING.md`](PACKAGING.md).
+[`PACKAGING.md`](PACKAGING.md). Translation is [`TRANSLATING.md`](TRANSLATING.md).
 
 §3 maps tasks to files; paths there are from the repository root. Signatures and field lists
 live in code. Invariants are defined in [`../../AGENTS.md`](../../AGENTS.md) §2; wire rules
@@ -207,9 +207,11 @@ boundaries are [§1](#1-the-system). User settings and shortcuts are in
 | process lifetime, the runtime, or shutdown | `crates/mirai/src/main.rs`, `crates/mirai/src/application_shell.rs` | `MiraiApplication` |
 | the stone click or capture sound | `crates/mirai/src/sound.rs` | `stone_sound`, `StoneSounds::cursor_moved` |
 | whole-game analysis from the window | `crates/mirai/src/batch.rs` | `BatchAnalysis` |
+| mark a string for translation, or word a value the GTK-free crates keep in English | `crates/mirai/src/i18n.rs`, `po/`, `tools/i18n/update-po.sh` | `gettext_f`, `rules_label`, `result_phrase`; [TRANSLATING](TRANSLATING.md) |
 
 Other resources: `crates/mirai/resources/style.css`, `mirai.gresource.xml` and
-`crates/mirai/build.rs`. README images are release assets, not tracked files:
+`crates/mirai/build.rs`, which also compiles `po/`. README images are release assets, not
+tracked files:
 `tools/docs/upload-readme-assets.sh`. Rendering decisions are in
 [`RENDERING.md`](RENDERING.md).
 

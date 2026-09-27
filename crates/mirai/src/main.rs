@@ -12,6 +12,7 @@ mod fox;
 mod fox_picker;
 #[cfg(debug_assertions)]
 mod harness;
+mod i18n;
 mod label_editor;
 mod new_game;
 mod palette;
@@ -35,6 +36,7 @@ const APP_ID: &str = "io.github.zhaob1n.Mirai";
 const RESOURCE_PREFIX: &str = "/io/github/zhaob1n/Mirai";
 
 fn main() -> glib::ExitCode {
+    i18n::init();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

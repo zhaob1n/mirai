@@ -24,6 +24,7 @@ use mirai_engine::{Report, SubEvent, Want};
 use crate::app::{AppState, Change, EditorTool, NodeRef};
 use crate::batch::BatchAnalysis;
 use crate::config::Config;
+use crate::i18n::{gettext, gettext_f, ngettext_f, pgettext};
 use crate::panels::AnalysisPanel;
 use crate::play::{PlayController, PlayState};
 use crate::sound::StoneSounds;
@@ -290,7 +291,7 @@ pub fn present(
     sidebar_stack.add_titled_with_icon(
         &analysis_stack,
         Some("analysis"),
-        "Analysis",
+        &gettext("Analysis"),
         "view-list-symbolic",
     );
     let tree_scroller = move_tree.in_scroller();
@@ -299,7 +300,7 @@ pub fn present(
     sidebar_stack.add_titled_with_icon(
         &tree_scroller,
         Some("moves"),
-        "Moves",
+        &gettext("Moves"),
         "view-grid-symbolic",
     );
     let comment_scroll = gtk::ScrolledWindow::builder().child(&comment).build();
@@ -307,7 +308,8 @@ pub fn present(
     sidebar_stack.add_titled_with_icon(
         &comment_scroll,
         Some("comment"),
-        "Comment",
+        // Translators: the sidebar tab for the note on this position, not the verb.
+        &pgettext("noun", "Comment"),
         "text-editor-symbolic",
     );
 
@@ -315,10 +317,10 @@ pub fn present(
     window.live_toggle().connect_active_notify(|button| {
         if button.is_active() {
             button.set_icon_name("media-playback-stop-symbolic");
-            button.set_tooltip_text(Some("Stop Live Analysis (Space)"));
+            button.set_tooltip_text(Some(&gettext("Stop Live Analysis (Space)")));
         } else {
             button.set_icon_name("media-playback-start-symbolic");
-            button.set_tooltip_text(Some("Start Live Analysis (Space)"));
+            button.set_tooltip_text(Some(&gettext("Start Live Analysis (Space)")));
         }
     });
 
@@ -328,18 +330,20 @@ pub fn present(
         .bind_property("engine-label", &engine_content, "label")
         .sync_create()
         .build();
-    engine_menu.set_tooltip_text(Some(&format!("Analysis Engine — {}", state.engine_label())));
+    let engine_label = state.engine_label();
+    engine_menu.set_tooltip_text(Some(&engine_tooltip(&engine_label)));
 
     let split = window.split();
     set_candidate_sidebar_width(&split, false);
     // One button for both directions: the check state is the only affordance the icon set
     // offers, so the tooltip carries the verb. `win.toggle-sidebar` drives `active`.
     window.sidebar_toggle().connect_active_notify(|button| {
-        button.set_tooltip_text(Some(if button.is_active() {
-            "Hide Sidebar (F9)"
+        let tip = if button.is_active() {
+            gettext("Hide Sidebar (F9)")
         } else {
-            "Show Sidebar (F9)"
-        }));
+            gettext("Show Sidebar (F9)")
+        };
+        button.set_tooltip_text(Some(&tip));
     });
     let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
         adw::BreakpointConditionLengthType::MaxWidth,
@@ -518,8 +522,9 @@ fn connect_state(ui: &Ui) {
     }
     state.connect_engine_label_notify(move |state| {
         with_window_ui(&weak, |ui| {
+            let label = state.engine_label();
             ui.engine_menu
-                .set_tooltip_text(Some(&format!("Analysis Engine — {}", state.engine_label())));
+                .set_tooltip_text(Some(&engine_tooltip(&label)));
         });
     });
 }
@@ -683,19 +688,23 @@ fn update_editor_actions(ui: &Ui) {
         let (icon, label, tooltip) = match ui.state.to_play() {
             Color::Black => (
                 "mirai-play-black",
-                "Play — Black to Play",
-                "Play — Black to Play; Left-click to Play, Right-click to Take Back and Delete the Current Branch",
+                gettext("Play — Black to Play"),
+                gettext(
+                    "Play — Black to Play; Left-click to Play, Right-click to Take Back and Delete the Current Branch",
+                ),
             ),
             Color::White => (
                 "mirai-play-white",
-                "Play — White to Play",
-                "Play — White to Play; Left-click to Play, Right-click to Take Back and Delete the Current Branch",
+                gettext("Play — White to Play"),
+                gettext(
+                    "Play — White to Play; Left-click to Play, Right-click to Take Back and Delete the Current Branch",
+                ),
             ),
         };
         let button = window.play_tool();
         window.play_tool_icon().set_icon_name(Some(icon));
-        button.set_tooltip(tooltip);
-        button.set_label(Some(label));
+        button.set_tooltip(&tooltip);
+        button.set_label(Some(&label));
         let name = ui.state.editor_tool().as_str();
         for group in [window.stone_tools(), window.mark_tools()] {
             group.set_sensitive(!active);
@@ -909,6 +918,11 @@ fn line_extent(tree: &GameTree, cursor: NodeId) -> (usize, usize) {
     (last, index)
 }
 
+fn engine_tooltip(label: &str) -> String {
+    // Translators: {engine} is the analysis engine's name or status.
+    gettext_f("Analysis Engine — {engine}", &[("engine", label)])
+}
+
 fn update_scale(ui: &Ui) {
     let cursor = ui.state.cursor();
     let (upper, index) = ui.state.with_tree_cached(|t| line_extent(t, cursor));
@@ -916,19 +930,40 @@ fn update_scale(ui: &Ui) {
     ui.move_scale.set_range(0.0, upper.max(1) as f64);
     ui.move_scale.set_value(index as f64);
     ui.scale_guard.set(false);
-    ui.move_scale
-        .set_tooltip_text(Some(&format!("Move {index} of {upper}")));
+    let index_s = index.to_string();
+    let upper_s = upper.to_string();
+    ui.move_scale.set_tooltip_text(Some(&gettext_f(
+        "Move {index} of {upper}",
+        &[("index", &index_s), ("upper", &upper_s)],
+    )));
     let color = ui.state.to_play();
-    ui.move_position
-        .set_label(&format!("{index} / {upper} · {}", color.katago()));
-    let tip = format!(
-        "Move {index} of {upper} · {} to play",
-        if color == Color::Black {
-            "Black"
-        } else {
-            "White"
+    let position = match color {
+        Color::Black => {
+            // Translators: {index} and {upper} are move numbers. B is Black, the side to play.
+            gettext_f(
+                "{index} / {upper} · B",
+                &[("index", &index_s), ("upper", &upper_s)],
+            )
         }
-    );
+        Color::White => {
+            // Translators: {index} and {upper} are move numbers. W is White, the side to play.
+            gettext_f(
+                "{index} / {upper} · W",
+                &[("index", &index_s), ("upper", &upper_s)],
+            )
+        }
+    };
+    ui.move_position.set_label(&position);
+    let tip = match color {
+        Color::Black => gettext_f(
+            "Move {index} of {upper} · Black to play",
+            &[("index", &index_s), ("upper", &upper_s)],
+        ),
+        Color::White => gettext_f(
+            "Move {index} of {upper} · White to play",
+            &[("index", &index_s), ("upper", &upper_s)],
+        ),
+    };
     ui.move_position.set_tooltip_text(Some(&tip));
     ui.move_position
         .update_property(&[gtk::accessible::Property::Label(&tip)]);
@@ -940,8 +975,12 @@ fn update_clocks(ui: &Ui) {
         ui.play_bar.set_visible(ui.play_controls.is_visible());
         return;
     };
-    ui.clock_black.set_label(&format!("● {black}"));
-    ui.clock_white.set_label(&format!("○ {white}"));
+    // Translators: {time} is a clock reading. The bullet marks Black.
+    ui.clock_black
+        .set_label(&gettext_f("● {time}", &[("time", &black)]));
+    // Translators: {time} is a clock reading. The circle marks White.
+    ui.clock_white
+        .set_label(&gettext_f("○ {time}", &[("time", &white)]));
     ui.clock_box.set_visible(true);
     ui.play_bar.set_visible(true);
 
@@ -977,6 +1016,15 @@ fn update_play_controls(ui: &Ui) {
     sync_play_layout(ui);
 }
 
+fn versus(black: &str, white: &str) -> String {
+    match (black.is_empty(), white.is_empty()) {
+        (false, false) => gettext_f("{black} vs {white}", &[("black", black), ("white", white)]),
+        (true, false) => gettext_f("? vs {white}", &[("white", white)]),
+        (false, true) => gettext_f("{black} vs ?", &[("black", black)]),
+        (true, true) => gettext("? vs ?"),
+    }
+}
+
 /// The name for a record with no backing file: who played it, else the event it came from.
 fn record_label(info: &mirai_core::GameInfo) -> Option<String> {
     let black = info.players[0].name.trim();
@@ -985,11 +1033,7 @@ fn record_label(info: &mirai_core::GameInfo) -> Option<String> {
         let event = info.event.trim();
         return (!event.is_empty()).then(|| event.to_string());
     }
-    Some(format!(
-        "{} vs {}",
-        if black.is_empty() { "?" } else { black },
-        if white.is_empty() { "?" } else { white }
-    ))
+    Some(versus(black, white))
 }
 
 fn update_title(ui: &Ui) {
@@ -1000,15 +1044,17 @@ fn update_title(ui: &Ui) {
         .as_ref()
         .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
         .or_else(|| record_label(&ui.state.tree().info))
-        .unwrap_or_else(|| "Untitled".to_string());
+        .unwrap_or_else(|| gettext("Untitled"));
     let shown = if ui.state.modified() {
-        format!("{name} •")
+        // Translators: {name} is the record name. The bullet marks unsaved changes.
+        gettext_f("{name} •", &[("name", &name)])
     } else {
         name
     };
     ui.title.set_title(&shown);
     if let Some(window) = ui.window() {
-        window.set_title(Some(&format!("{shown} — mirai")));
+        // Translators: {name} is the record name. mirai is the application name; do not translate it.
+        window.set_title(Some(&gettext_f("{name} — mirai", &[("name", &shown)])));
     }
 }
 
@@ -1111,7 +1157,7 @@ fn load_comment(ui: &Ui) {
 
 fn sgf_filters() -> (gio::ListStore, gtk::FileFilter) {
     let filter = gtk::FileFilter::new();
-    filter.set_name(Some("SGF game records"));
+    filter.set_name(Some(&gettext("SGF game records")));
     filter.add_pattern("*.sgf");
     filter.add_suffix("sgf");
     let store = gio::ListStore::new::<gtk::FileFilter>();
@@ -1189,8 +1235,19 @@ fn load_sgf(ui: &Ui, path: &Path, origin: Origin) {
     let runtime = ui.state.runtime();
     let weak = ui.weak_window();
     let join = runtime.spawn_blocking(move || -> Result<LoadedSgf, String> {
-        let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let trees = sgf::parse(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        let file = path.display().to_string();
+        let bytes = std::fs::read(&path).map_err(|e| {
+            gettext_f(
+                "Could not open {file}: {error}",
+                &[("file", &file), ("error", &e.to_string())],
+            )
+        })?;
+        let trees = sgf::parse(&bytes).map_err(|e| {
+            gettext_f(
+                "Could not open {file}: {error}",
+                &[("file", &file), ("error", &e.to_string())],
+            )
+        })?;
         Ok(LoadedSgf { path, trees })
     });
     let handle = glib::spawn_future_local(async move {
@@ -1201,8 +1258,9 @@ fn load_sgf(ui: &Ui, path: &Path, origin: Origin) {
             }
             ui.tasks.load.0.borrow_mut().take();
             if ui.state.document_token() != document {
-                ui.state
-                    .toast("The record changed while that file was opening, so it was not loaded");
+                ui.state.toast(gettext(
+                    "The record changed while that file was opening, so it was not loaded",
+                ));
                 return;
             }
             match result {
@@ -1230,7 +1288,7 @@ fn finish_load(ui: &Ui, loaded: LoadedSgf, origin: Origin) {
     // an unsaved game; left alone, it is offered again on the next start.
     let recovered = (origin == Origin::Recovered).then(|| path.clone());
     match trees.len() {
-        0 => ui.state.toast("That file holds no game records"),
+        0 => ui.state.toast(gettext("That file holds no game records")),
         1 => {
             let tree = trees.into_iter().next().expect("length checked");
             let moves = tree.main_line().len().saturating_sub(1);
@@ -1239,11 +1297,20 @@ fn finish_load(ui: &Ui, loaded: LoadedSgf, origin: Origin) {
                 let _ = std::fs::remove_file(autosave);
             }
             let label = file_label(&path);
+            let moves_s = moves.to_string();
             ui.state.toast(match origin {
-                Origin::File => format!("Opened {label} ({moves} moves)"),
-                Origin::Recovered => {
-                    format!("Restored {moves} moves — use Save As to keep them")
-                }
+                Origin::File => ngettext_f(
+                    "Opened {file} ({moves} move)",
+                    "Opened {file} ({moves} moves)",
+                    moves as u64,
+                    &[("file", &label), ("moves", &moves_s)],
+                ),
+                Origin::Recovered => ngettext_f(
+                    "Restored {moves} move — use Save As to keep it",
+                    "Restored {moves} moves — use Save As to keep them",
+                    moves as u64,
+                    &[("moves", &moves_s)],
+                ),
             });
         }
         _ => choose_game(ui, trees, remembered, recovered, file_label(&path)),
@@ -1256,20 +1323,26 @@ fn file_label(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
+fn player_label(p: &mirai_core::PlayerInfo) -> String {
+    match (p.name.as_str(), p.rank.as_str()) {
+        ("", "") => String::new(),
+        (name, "") => name.to_string(),
+        ("", rank) => rank.to_string(),
+        (name, rank) => gettext_f("{name} ({rank})", &[("name", name), ("rank", rank)]),
+    }
+}
+
 fn game_row(tree: &GameTree) -> adw::ActionRow {
     let info = &tree.info;
-    let who = |p: &mirai_core::PlayerInfo| -> String {
-        match (p.name.as_str(), p.rank.as_str()) {
-            ("", "") => "?".to_string(),
-            (name, "") => name.to_string(),
-            ("", rank) => rank.to_string(),
-            (name, rank) => format!("{name} ({rank})"),
-        }
-    };
     let moves = tree.main_line().len().saturating_sub(1);
     let mut bits = vec![
         format!("{}×{}", info.size.w, info.size.h),
-        format!("{moves} moves"),
+        ngettext_f(
+            "{moves} move",
+            "{moves} moves",
+            moves as u64,
+            &[("moves", &moves.to_string())],
+        ),
     ];
     if !info.result.is_empty() {
         bits.push(info.result.clone());
@@ -1278,10 +1351,9 @@ fn game_row(tree: &GameTree) -> adw::ActionRow {
         bits.push(info.date.clone());
     }
     adw::ActionRow::builder()
-        .title(format!(
-            "{} vs {}",
-            who(&info.players[0]),
-            who(&info.players[1])
+        .title(versus(
+            &player_label(&info.players[0]),
+            &player_label(&info.players[1]),
         ))
         .subtitle(bits.join(" · "))
         .build()
@@ -1313,12 +1385,18 @@ fn choose_game(
         .build();
 
     let count = trees.len();
-    let dialog = adw::AlertDialog::new(
-        Some("Games in file"),
-        Some(&format!("{label} holds {count} game records.")),
+    let heading = gettext("Games in file");
+    let body = ngettext_f(
+        "{file} holds {count} game record.",
+        "{file} holds {count} game records.",
+        count as u64,
+        &[("file", &label), ("count", &count.to_string())],
     );
+    let dialog = adw::AlertDialog::new(Some(&heading), Some(&body));
     dialog.set_extra_child(Some(&scroll));
-    dialog.add_responses(&[("cancel", "Cancel"), ("open", "Open")]);
+    let cancel = gettext("Cancel");
+    let open = pgettext("verb", "Open");
+    dialog.add_responses(&[("cancel", &cancel), ("open", &open)]);
     dialog.set_response_appearance("open", adw::ResponseAppearance::Suggested);
     dialog.set_default_response(Some("open"));
     dialog.set_close_response("cancel");
@@ -1347,7 +1425,7 @@ fn choose_game(
 
 fn do_open(ui: &Ui) {
     let dialog = gtk::FileDialog::new();
-    dialog.set_title("Open SGF");
+    dialog.set_title(&gettext("Open SGF"));
     let (filters, default) = sgf_filters();
     dialog.set_filters(Some(&filters));
     dialog.set_default_filter(Some(&default));
@@ -1358,13 +1436,16 @@ fn do_open(ui: &Ui) {
             Ok(file) => match file.path() {
                 Some(path) => with_window_ui(&weak, |ui| load_sgf(ui, &path, Origin::File)),
                 None => with_window_ui(&weak, |ui| {
-                    ui.state.toast("That location is not a local file");
+                    ui.state.toast(gettext("That location is not a local file"));
                 }),
             },
             Err(e) => {
                 if !e.matches(gtk::DialogError::Dismissed) {
                     with_window_ui(&weak, |ui| {
-                        ui.state.toast(format!("Could not open: {e}"));
+                        ui.state.toast(gettext_f(
+                            "Could not open: {error}",
+                            &[("error", &e.to_string())],
+                        ));
                     });
                 }
             }
@@ -1382,10 +1463,16 @@ fn do_download_fox(ui: &Ui) {
         move |download| {
             with_window_ui(&weak, |ui| {
                 let moves = download.tree.main_line().len().saturating_sub(1);
+                let game = download.label.clone();
                 adopt(ui, download.tree, None, true);
                 update_title(ui);
-                ui.state
-                    .toast(format!("Downloaded {} ({moves} moves)", download.label));
+                let moves_s = moves.to_string();
+                ui.state.toast(ngettext_f(
+                    "Downloaded {game} ({moves} move)",
+                    "Downloaded {game} ({moves} moves)",
+                    moves as u64,
+                    &[("game", &game), ("moves", &moves_s)],
+                ));
             });
         },
     );
@@ -1412,9 +1499,16 @@ fn write_to(ui: &Ui, path: &Path) {
             *ui.file.borrow_mut() = Some(path.to_path_buf());
             ui.state.saved_to(path.display().to_string());
             update_title(ui);
-            ui.state.toast(format!("Saved {}", file_label(path)));
+            ui.state
+                .toast(gettext_f("Saved {file}", &[("file", &file_label(path))]));
         }
-        Err(e) => ui.state.toast(format!("{}: {e}", path.display())),
+        Err(e) => ui.state.toast(gettext_f(
+            "Could not save {file}: {error}",
+            &[
+                ("file", &path.display().to_string()),
+                ("error", &e.to_string()),
+            ],
+        )),
     }
 }
 
@@ -1430,7 +1524,7 @@ fn do_save(ui: &Ui) {
 fn do_save_as(ui: &Ui) {
     flush_comment(ui);
     let dialog = gtk::FileDialog::new();
-    dialog.set_title("Save SGF");
+    dialog.set_title(&gettext("Save SGF"));
     let (filters, default) = sgf_filters();
     dialog.set_filters(Some(&filters));
     dialog.set_default_filter(Some(&default));
@@ -1448,13 +1542,16 @@ fn do_save_as(ui: &Ui) {
             Ok(file) => match file.path() {
                 Some(path) => with_window_ui(&weak, |ui| write_to(ui, &path)),
                 None => with_window_ui(&weak, |ui| {
-                    ui.state.toast("That location is not a local file");
+                    ui.state.toast(gettext("That location is not a local file"));
                 }),
             },
             Err(e) => {
                 if !e.matches(gtk::DialogError::Dismissed) {
                     with_window_ui(&weak, |ui| {
-                        ui.state.toast(format!("Could not save: {e}"));
+                        ui.state.toast(gettext_f(
+                            "Could not save: {error}",
+                            &[("error", &e.to_string())],
+                        ));
                     });
                 }
             }
@@ -1756,14 +1853,15 @@ impl Drop for ClearInFlight<'_> {
 }
 
 fn offer_restore(ui: &Ui, autosave: PathBuf) {
-    let dialog = adw::AlertDialog::new(
-        Some("Restore the Last Game?"),
-        Some(
-            "mirai did not shut down cleanly. An autosaved copy of the game record you were \
-             looking at is available.",
-        ),
+    let heading = gettext("Restore the Last Game?");
+    // Translators: mirai is the application name; do not translate it.
+    let body = gettext(
+        "mirai did not shut down cleanly. An autosaved copy of the game record you were looking at is available.",
     );
-    dialog.add_responses(&[("discard", "Discard"), ("restore", "Restore")]);
+    let dialog = adw::AlertDialog::new(Some(&heading), Some(&body));
+    let discard = gettext("Discard");
+    let restore = gettext("Restore");
+    dialog.add_responses(&[("discard", &discard), ("restore", &restore)]);
     dialog.set_response_appearance("restore", adw::ResponseAppearance::Suggested);
     dialog.set_default_response(Some("restore"));
     dialog.set_close_response("discard");
@@ -1782,7 +1880,8 @@ fn offer_restore(ui: &Ui, autosave: PathBuf) {
 
 fn do_score(ui: &Ui) {
     let Some(engine) = ui.state.engine() else {
-        ui.state.toast("No engine to estimate the score with");
+        ui.state
+            .toast(gettext("No engine to estimate the score with"));
         return;
     };
     ui.tasks.score.abort();
@@ -1795,7 +1894,7 @@ fn do_score(ui: &Ui) {
     req.priority = 8;
     let mut sub = engine.subscribe(req);
 
-    ui.state.set_status("Estimating the score…".to_string());
+    ui.state.set_status(gettext("Estimating the score…"));
     let weak = ui.weak_window();
     let handle = glib::spawn_future_local(async move {
         let mut last: Option<Arc<Report>> = None;
@@ -1827,7 +1926,7 @@ fn do_score(ui: &Ui) {
             }
             match last {
                 Some(report) => show_estimate(ui, &report),
-                None => ui.state.toast("The engine returned no estimate"),
+                None => ui.state.toast(gettext("The engine returned no estimate")),
             }
         });
     });
@@ -1844,21 +1943,34 @@ fn show_estimate(ui: &Ui, report: &Report) {
     };
     let result = mirai_core::score(board, &rules, komi, handicap, &dead);
     let lead = report.root.score_lead_for(mirai_core::Color::Black);
-    let body = format!(
-        "{}{}\n\nBlack {:.1} — White {:.1}\nKataGo lead after {} visits: {}",
-        result.result_string(),
-        if result.approximate {
-            " (estimated)"
-        } else {
-            ""
-        },
-        result.black,
-        result.white,
-        util::si_visits(report.root.visits),
-        util::signed1(lead),
+    let sgf = result.result_string();
+    let headline = if result.approximate {
+        // Translators: {result} is an SGF result such as B+3.5, filled in as written.
+        gettext_f("{result} (estimated)", &[("result", &sgf)])
+    } else {
+        sgf
+    };
+    let black = format!("{:.1}", result.black);
+    let white = format!("{:.1}", result.white);
+    let scores = gettext_f(
+        "Black {black} — White {white}",
+        &[("black", &black), ("white", &white)],
     );
-    let dialog = adw::AlertDialog::new(Some("Score estimate"), Some(&body));
-    dialog.add_responses(&[("close", "Close")]);
+    let visits_label = util::si_visits(report.root.visits);
+    let lead_text = util::signed1(lead);
+    // Translators: {visits} is a visit count, sometimes abbreviated (1.2k). {lead} is a
+    // signed score, such as +3.4.
+    let lead_line = ngettext_f(
+        "KataGo lead after {visits} visit: {lead}",
+        "KataGo lead after {visits} visits: {lead}",
+        report.root.visits as u64,
+        &[("visits", &visits_label), ("lead", &lead_text)],
+    );
+    let body = format!("{headline}\n\n{scores}\n{lead_line}");
+    let title = gettext("Score estimate");
+    let close = gettext("Close");
+    let dialog = adw::AlertDialog::new(Some(&title), Some(&body));
+    dialog.add_responses(&[("close", &close)]);
     dialog.set_default_response(Some("close"));
     dialog.set_close_response("close");
     dialog.present(ui.window().as_ref());
@@ -1866,67 +1978,67 @@ fn show_estimate(ui: &Ui, report: &Report) {
 
 // -- dialogs ----------------------------------------------------------------------------
 
+fn shortcut_section(title: &str, items: &[(&str, &str)]) -> adw::ShortcutsSection {
+    let section = adw::ShortcutsSection::new(Some(title));
+    for &(label, action) in items {
+        section.add(adw::ShortcutsItem::new(label, accel_for(action)));
+    }
+    section
+}
+
 fn show_shortcuts(ui: &Ui) {
     let dialog = adw::ShortcutsDialog::new();
-    for (title, items) in [
-        (
-            "Navigation",
-            &[
-                ("First Move", "win.first"),
-                ("Last Move", "win.last"),
-                ("Previous Move", "win.prev"),
-                ("Next Move", "win.next"),
-                ("Back Ten Moves", "win.prev10"),
-                ("Forward Ten Moves", "win.next10"),
-                ("Previous Variation", "win.branch-prev"),
-                ("Next Variation", "win.branch-next"),
-            ][..],
-        ),
-        (
-            "Analysis",
-            &[
-                ("Live Analysis", "win.toggle-analysis"),
-                ("Analyse Whole Game", "win.analyse-game"),
-                ("Estimate Score", "win.score"),
-                ("Ownership Overlay", "win.toggle-ownership"),
-                ("Policy Overlay", "win.toggle-policy"),
-                ("Coordinates", "win.toggle-coords"),
-                ("Move Numbers", "win.toggle-move-numbers"),
-                ("Sidebar", "win.toggle-sidebar"),
-                ("Win-Rate Graph", "win.toggle-graph"),
-            ][..],
-        ),
-        (
-            "Game",
-            &[
-                ("New Game", "win.new-game"),
-                ("Pass", "win.pass"),
-                ("Undo Last Edit", "win.undo"),
-                ("Redo", "win.redo"),
-                ("Delete Branch", "win.delete-branch"),
-                ("Set as Main Line", "win.promote-line"),
-                ("Switch Side to Play", "win.switch-to-play"),
-            ][..],
-        ),
-        (
-            "File",
-            &[
-                ("Open", "win.open"),
-                ("Download from Fox", "win.download-fox"),
-                ("Clear Board", "win.clear-board"),
-                ("Save", "win.save"),
-                ("Save As", "win.save-as"),
-                ("Copy SGF", "win.copy-sgf"),
-                ("Paste SGF", "win.paste-sgf"),
-            ][..],
-        ),
-    ] {
-        let section = adw::ShortcutsSection::new(Some(title));
-        for (label, action) in items {
-            section.add(adw::ShortcutsItem::new(label, accel_for(action)));
-        }
-        dialog.add(section);
-    }
+    dialog.add(shortcut_section(
+        &gettext("Navigation"),
+        &[
+            (&gettext("First Move"), "win.first"),
+            (&gettext("Last Move"), "win.last"),
+            (&gettext("Previous Move"), "win.prev"),
+            (&gettext("Next Move"), "win.next"),
+            (&gettext("Back Ten Moves"), "win.prev10"),
+            (&gettext("Forward Ten Moves"), "win.next10"),
+            (&gettext("Previous Variation"), "win.branch-prev"),
+            (&gettext("Next Variation"), "win.branch-next"),
+        ],
+    ));
+    dialog.add(shortcut_section(
+        &gettext("Analysis"),
+        &[
+            (&gettext("Live Analysis"), "win.toggle-analysis"),
+            (&gettext("Analyse Whole Game"), "win.analyse-game"),
+            (&gettext("Estimate Score"), "win.score"),
+            (&gettext("Ownership Overlay"), "win.toggle-ownership"),
+            (&gettext("Policy Overlay"), "win.toggle-policy"),
+            (&gettext("Coordinates"), "win.toggle-coords"),
+            (&gettext("Move Numbers"), "win.toggle-move-numbers"),
+            (&gettext("Sidebar"), "win.toggle-sidebar"),
+            (&gettext("Win-Rate Graph"), "win.toggle-graph"),
+        ],
+    ));
+    dialog.add(shortcut_section(
+        &gettext("Game"),
+        &[
+            (&gettext("New Game"), "win.new-game"),
+            (&pgettext("verb", "Pass"), "win.pass"),
+            (&gettext("Undo Last Edit"), "win.undo"),
+            (&gettext("Redo"), "win.redo"),
+            (&gettext("Delete Branch"), "win.delete-branch"),
+            (&gettext("Set as Main Line"), "win.promote-line"),
+            (&gettext("Switch Side to Play"), "win.switch-to-play"),
+        ],
+    ));
+    dialog.add(shortcut_section(
+        &pgettext("noun", "File"),
+        &[
+            (&pgettext("verb", "Open"), "win.open"),
+            (&gettext("Download from Fox"), "win.download-fox"),
+            (&gettext("Clear Board"), "win.clear-board"),
+            (&gettext("Save"), "win.save"),
+            (&gettext("Save As"), "win.save-as"),
+            (&gettext("Copy SGF"), "win.copy-sgf"),
+            (&gettext("Paste SGF"), "win.paste-sgf"),
+        ],
+    ));
     dialog.present(ui.window().as_ref());
 }
 
@@ -1936,7 +2048,9 @@ fn show_about(ui: &Ui) {
         .application_icon("io.github.zhaob1n.Mirai")
         .version(env!("CARGO_PKG_VERSION"))
         .developer_name("Huang Zhaobin")
-        .comments("A KataGo analysis and playing board for GNOME.")
+        // Translators: put your names here, one per line, in place of "translator-credits".
+        .translator_credits(gettext("translator-credits"))
+        .comments(gettext("A KataGo analysis and playing board for GNOME."))
         .build();
     about.present(ui.window().as_ref());
 }
@@ -1955,7 +2069,7 @@ fn delete_branch_id(ui: &Ui, id: NodeId) {
         return;
     }
     if ui.state.tree().parent(id).is_none() {
-        ui.state.toast("The root node cannot be deleted");
+        ui.state.toast(gettext("The root node cannot be deleted"));
         return;
     }
     flush_comment(ui);
@@ -2369,9 +2483,9 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
             match gdk::Display::default() {
                 Some(display) => {
                     display.clipboard().set_text(&text);
-                    ui.state.toast("Game record copied");
+                    ui.state.toast(gettext("Game record copied"));
                 }
-                None => ui.state.toast("No display to copy through"),
+                None => ui.state.toast(gettext("No display to copy through")),
             }
         }),
     );
@@ -2388,13 +2502,16 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
                     Ok(Some(t)) => t,
                     Ok(None) => {
                         with_window_ui(&weak, |ui| {
-                            ui.state.toast("The clipboard holds no text");
+                            ui.state.toast(gettext("The clipboard holds no text"));
                         });
                         return;
                     }
                     Err(e) => {
                         with_window_ui(&weak, |ui| {
-                            ui.state.toast(format!("Clipboard: {e}"));
+                            ui.state.toast(gettext_f(
+                                "Clipboard: {error}",
+                                &[("error", &e.to_string())],
+                            ));
                         });
                         return;
                     }
@@ -2406,10 +2523,20 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
                         let moves = tree.main_line().len().saturating_sub(1);
                         // Nothing on disk holds this record: it is unsaved from the start.
                         adopt(ui, tree, None, true);
-                        ui.state.toast(format!("Pasted a game of {moves} moves"));
+                        ui.state.toast(ngettext_f(
+                            "Pasted a game of {moves} move",
+                            "Pasted a game of {moves} moves",
+                            moves as u64,
+                            &[("moves", &moves.to_string())],
+                        ));
                     }
-                    Ok(_) => ui.state.toast("The clipboard holds no game record"),
-                    Err(e) => ui.state.toast(format!("Clipboard: {e}")),
+                    Ok(_) => ui
+                        .state
+                        .toast(gettext("The clipboard holds no game record")),
+                    Err(e) => ui.state.toast(gettext_f(
+                        "Clipboard: {error}",
+                        &[("error", &e.to_string())],
+                    )),
                 });
             });
         }),

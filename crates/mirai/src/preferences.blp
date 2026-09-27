@@ -54,6 +54,7 @@ template $MiraiPreferencesDialog: Adw.PreferencesDialog {
 
       Adw.SpinRow analysis_suggestions_row {
         title: _("Suggestions Shown");
+        /* Translators: “All” is the word the suggestions row shows instead of 0, meaning every candidate. */
         subtitle: _("Candidate moves kept on the board and in the panel — “All” keeps every move the engine searched");
       }
     }
@@ -90,7 +91,7 @@ template $MiraiPreferencesDialog: Adw.PreferencesDialog {
   }
 
   Adw.PreferencesPage {
-    title: _("Play");
+    title: C_("noun", "Play");
     icon-name: "media-playback-start-symbolic";
 
     Adw.PreferencesGroup {

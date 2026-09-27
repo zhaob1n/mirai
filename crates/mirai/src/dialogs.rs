@@ -5,6 +5,7 @@
 use adw::prelude::*;
 
 use crate::app::AppState;
+use crate::i18n;
 
 /// Score result dialog. Close keeps counting; Review Game stops play; Analyse Game
 /// stops then starts whole-game analysis (wired by the caller).
@@ -19,17 +20,30 @@ pub fn show_score_with(
         let tree = state.tree();
         (tree.info.rules, tree.info.komi, tree.info.size)
     };
-    let body = format!(
-        "{summary}\n\n{}×{} · {} · komi {komi}",
-        size.w,
-        size.h,
-        rules.label()
+    let rules = i18n::rules_label(rules);
+    let width = size.w.to_string();
+    let height = size.h.to_string();
+    let komi = komi.to_string();
+    // Translators: {width} and {height} are the board size; {rules} is the rule set; {komi} is White's compensation.
+    let meta = i18n::gettext_f(
+        "{width}×{height} · {rules} · komi {komi}",
+        &[
+            ("width", width.as_str()),
+            ("height", height.as_str()),
+            ("rules", rules.as_str()),
+            ("komi", komi.as_str()),
+        ],
     );
-    let dialog = adw::AlertDialog::new(Some("Result"), Some(&body));
+    let body = format!("{summary}\n\n{meta}");
+    let title = i18n::gettext("Result");
+    let dialog = adw::AlertDialog::new(Some(&title), Some(&body));
+    let close = i18n::gettext("Close");
+    let review = i18n::gettext("Review Game");
+    let analyse = i18n::gettext("Analyse Game");
     dialog.add_responses(&[
-        ("close", "Close"),
-        ("review", "Review Game"),
-        ("analyse", "Analyse Game"),
+        ("close", close.as_str()),
+        ("review", review.as_str()),
+        ("analyse", analyse.as_str()),
     ]);
     dialog.set_response_appearance("analyse", adw::ResponseAppearance::Suggested);
     dialog.set_default_response(Some("close"));
@@ -60,14 +74,13 @@ pub fn confirm_fingerprint(
         .map(|(host, _)| host)
         .unwrap_or_else(|_| url.to_string());
     let pretty = mirai_proto::sha256::format_fingerprint(fingerprint);
-    let dialog = adw::AlertDialog::new(
-        Some("Trust This Server?"),
-        Some(&format!(
-            "{host} presented this certificate. Compare it with the fingerprint \
-             mirai-server printed at startup. The token is sent only after you \
-             trust it, and a later change is refused."
-        )),
+    let title = i18n::gettext("Trust This Server?");
+    // Translators: {host} is a server address. mirai-server is the program name.
+    let body = i18n::gettext_f(
+        "{host} presented this certificate. Compare it with the fingerprint mirai-server printed at startup. The token is sent only after you trust it, and a later change is refused.",
+        &[("host", host.as_str())],
     );
+    let dialog = adw::AlertDialog::new(Some(&title), Some(&body));
     // Colon groups are one token, so word wrap would not break them. WordChar
     // keeps the whole pin visible inside the dialog instead of ellipsizing it.
     let pin = gtk::Label::builder()
@@ -81,7 +94,9 @@ pub fn confirm_fingerprint(
         .css_classes(["monospace"])
         .build();
     dialog.set_extra_child(Some(&pin));
-    dialog.add_responses(&[("cancel", "Cancel"), ("trust", "Trust")]);
+    let cancel = i18n::gettext("Cancel");
+    let trust = i18n::pgettext("verb", "Trust");
+    dialog.add_responses(&[("cancel", cancel.as_str()), ("trust", trust.as_str())]);
     dialog.set_response_appearance("trust", adw::ResponseAppearance::Suggested);
     dialog.set_default_response(Some("cancel"));
     dialog.set_close_response("cancel");

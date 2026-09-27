@@ -23,6 +23,7 @@ use crate::config::{
     MAX_SECONDS_PER_MOVE, MAX_VISITS_PER_MOVE, MIN_SECONDS_PER_MOVE, PlaySettings, ProfileKind,
     StrengthSetting, UiSettings,
 };
+use crate::i18n::{self, gettext, gettext_f, ngettext_f, pgettext};
 use crate::preferences_shell::{PreferencesDialog, PreferencesWidgets};
 use crate::profile_editor::ProfileEditorPage;
 use mirai_engine::{
@@ -90,11 +91,13 @@ pub fn present(parent: &impl IsA<gtk::Widget>, state: &AppState) {
 pub fn no_engine_status_page() -> adw::StatusPage {
     let page = adw::StatusPage::builder()
         .icon_name("application-x-executable-symbolic")
-        .title("No Engine Configured")
-        .description("Add a local KataGo or a remote mirai-server in Preferences.")
+        .title(gettext("No Engine Configured"))
+        .description(gettext(
+            "Add a local KataGo or a remote mirai-server in Preferences.",
+        ))
         .build();
     let button = gtk::Button::builder()
-        .label("Preferences")
+        .label(gettext("Preferences"))
         .action_name("win.preferences")
         .halign(gtk::Align::Center)
         .css_classes(["pill", "suggested-action"])
@@ -124,13 +127,16 @@ pub fn engine_menu_model(state: &AppState) -> gio::Menu {
         }
         if cfg.engine_profiles.is_empty() {
             // No action, so GTK renders it insensitive — a hint, not a choice.
-            profiles.append_item(&gio::MenuItem::new(Some("No engine profiles"), None));
+            profiles.append_item(&gio::MenuItem::new(
+                Some(&gettext("No engine profiles")),
+                None,
+            ));
         }
     }
     menu.append_section(None, &profiles);
 
     let tail = gio::Menu::new();
-    tail.append(Some("Preferences…"), Some("win.preferences"));
+    tail.append(Some(&gettext("Preferences…")), Some("win.preferences"));
     menu.append_section(None, &tail);
 
     menu
@@ -187,8 +193,10 @@ fn refresh_profiles(
 
     if profiles.is_empty() {
         let empty = adw::ActionRow::builder()
-            .title("No Engine Profiles Yet")
-            .subtitle("Add a local KataGo installation or a remote mirai-server.")
+            .title(gettext("No Engine Profiles Yet"))
+            .subtitle(gettext(
+                "Add a local KataGo installation or a remote mirai-server.",
+            ))
             .build();
         empty.set_activatable(false);
         group.add(&empty);
@@ -210,7 +218,7 @@ fn refresh_profiles(
 
         let radio = gtk::CheckButton::builder()
             .valign(gtk::Align::Center)
-            .tooltip_text("Use this engine")
+            .tooltip_text(gettext("Use this engine"))
             .build();
         match &leader {
             Some(first) => radio.set_group(Some(first)),
@@ -235,7 +243,7 @@ fn refresh_profiles(
 
         let edit = gtk::Button::from_icon_name("document-edit-symbolic");
         edit.set_valign(gtk::Align::Center);
-        edit.set_tooltip_text(Some("Edit this profile"));
+        edit.set_tooltip_text(Some(&gettext("Edit this profile")));
         edit.add_css_class("flat");
         let edit_state = state.clone();
         let edit_profile = profile.clone();
@@ -259,7 +267,7 @@ fn refresh_profiles(
 
         let delete = gtk::Button::from_icon_name("user-trash-symbolic");
         delete.set_valign(gtk::Align::Center);
-        delete.set_tooltip_text(Some("Delete this profile"));
+        delete.set_tooltip_text(Some(&gettext("Delete this profile")));
         delete.add_css_class("flat");
         let delete_state = state.clone();
         let delete_name = name.clone();
@@ -284,13 +292,15 @@ fn confirm_delete(
     state: &AppState,
     name: String,
 ) {
-    let alert = adw::AlertDialog::new(
-        Some("Delete This Profile?"),
-        Some(&format!(
-            "“{name}” will be removed from the configuration. Nothing on disk is deleted."
-        )),
+    let heading = gettext("Delete This Profile?");
+    let body = gettext_f(
+        "“{name}” will be removed from the configuration. Nothing on disk is deleted.",
+        &[("name", &name)],
     );
-    alert.add_responses(&[("cancel", "Cancel"), ("delete", "Delete")]);
+    let alert = adw::AlertDialog::new(Some(&heading), Some(&body));
+    let cancel = gettext("Cancel");
+    let delete_label = gettext("Delete");
+    alert.add_responses(&[("cancel", &cancel), ("delete", &delete_label)]);
     alert.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
     alert.set_default_response(Some("cancel"));
     alert.set_close_response("cancel");
@@ -323,7 +333,7 @@ fn confirm_delete(
                 } else {
                     state.changed(Change::Engine);
                 }
-                state.toast(format!("Deleted “{name}”"));
+                state.toast(gettext_f("Deleted “{name}”", &[("name", &name)]));
                 refresh_profiles(&group, &dialog, &state);
             }
         ),
@@ -377,6 +387,7 @@ fn open_editor(
 /// has not finished; [`show_discovered`] fills it.
 fn file_row(
     title: &str,
+    chooser_title: &str,
     initial: PathBuf,
     candidates: Vec<PathBuf>,
     dialog: &adw::PreferencesDialog,
@@ -399,12 +410,12 @@ fn file_row(
 
     let button = gtk::Button::from_icon_name("document-open-symbolic");
     button.set_valign(gtk::Align::Center);
-    button.set_tooltip_text(Some("Choose a file"));
+    button.set_tooltip_text(Some(&gettext("Choose a file")));
     button.add_css_class("flat");
     row.add_suffix(&button);
     row.set_activatable_widget(Some(&button));
 
-    let prompt = format!("Select the {}", title.to_lowercase());
+    let prompt = chooser_title.to_string();
     let cell_for_click = cell.clone();
     button.connect_clicked(clone!(
         #[weak]
@@ -444,10 +455,18 @@ fn file_row(
 
 fn path_subtitle(path: &Path) -> String {
     if path.as_os_str().is_empty() {
-        "Not chosen".to_string()
+        gettext("Not chosen")
     } else {
         path.display().to_string()
     }
+}
+
+fn missing_path(path: &Path) -> String {
+    // Translators: {path} is a filesystem path the user chose.
+    gettext_f(
+        "{path} does not exist.",
+        &[("path", &path.display().to_string())],
+    )
 }
 
 /// Puts discovered paths into `slot`. When `suggest` is set and the row is still empty,
@@ -531,14 +550,21 @@ fn discovered_button(
             .max_content_height(320)
             .build(),
     ));
+    let n = candidates.len() as u64;
+    let count = n.to_string();
+    // Translators: {n} is how many files were found on disk; there is always more than one
+    // when the plural is used.
+    let tip = ngettext_f(
+        "Choose the discovered file",
+        "Choose one of {n} discovered files",
+        n,
+        &[("n", &count)],
+    );
     let button = gtk::MenuButton::builder()
         .icon_name("view-list-symbolic")
         .popover(&popover)
         .valign(gtk::Align::Center)
-        .tooltip_text(format!(
-            "Choose one of {} discovered files",
-            candidates.len()
-        ))
+        .tooltip_text(tip)
         .build();
     button.add_css_class("flat");
     Some(button)
@@ -609,19 +635,25 @@ fn spin_value_u8(row: &adw::SpinRow) -> Option<u8> {
 /// 0 and [`EngineTuning::MIN_CACHE_POWER`], so the figure is always whole MiB.
 fn cache_subtitle(power: u8) -> String {
     if power == 0 {
-        return format!(
-            "0 uses mirai's default ({})",
-            EngineTuning::default().nn_cache_size_power_of_two
-        );
+        let power = EngineTuning::default()
+            .nn_cache_size_power_of_two
+            .to_string();
+        // Translators: {power} is the cache-size exponent used when the row is left at 0.
+        return gettext_f("0 uses mirai's default ({power})", &[("power", &power)]);
     }
     let bytes = EngineTuning {
         nn_cache_size_power_of_two: power,
         ..EngineTuning::default()
     }
     .cache_bytes();
-    format!(
-        "2^{power} evaluations, roughly {} MiB once warm",
-        bytes / (1024 * 1024)
+    let power_s = power.to_string();
+    let size = (bytes / (1024 * 1024)).to_string();
+    // Translators: {power} is an exponent; {size} is a number of mebibytes.
+    ngettext_f(
+        "2^{power} evaluation, roughly {size} MiB once warm",
+        "2^{power} evaluations, roughly {size} MiB once warm",
+        1u64 << power,
+        &[("power", &power_s), ("size", &size)],
     )
 }
 
@@ -656,9 +688,15 @@ fn stored_cache_power(power: u8) -> Option<u8> {
 
 /// Both halves of a thread setting, in the words the two rows above the tuning group use.
 fn candidate_summary(analysis: u16, search: u16) -> String {
-    format!(
-        "{analysis} position{} in parallel, {search} threads each",
-        if analysis == 1 { "" } else { "s" }
+    let positions = analysis.to_string();
+    let threads = search.to_string();
+    // Translators: {positions} is how many positions are searched at once; {threads} is the
+    // thread count on each of them and stays in both forms.
+    ngettext_f(
+        "{positions} position in parallel, {threads} threads each",
+        "{positions} positions in parallel, {threads} threads each",
+        u64::from(analysis),
+        &[("positions", &positions), ("threads", &threads)],
     )
 }
 
@@ -672,11 +710,31 @@ fn measured_subtitle(result: &CalibrationResult) -> String {
         .filter(|s| s.at == tuning.analysis_threads && s.st == tuning.search_threads)
         .map(|s| s.visits_per_second())
         .fold(0.0_f64, f64::max);
-    let best = candidate_summary(tuning.analysis_threads, tuning.search_threads);
+    let positions = tuning.analysis_threads.to_string();
+    let threads = tuning.search_threads.to_string();
+    let n = u64::from(tuning.analysis_threads);
     if speed > 0.0 {
-        format!("Fastest here: {best} — about {speed:.0} visits/s. Press Save Profile to apply.")
+        let speed = format!("{speed:.0}");
+        // Translators: {positions} and {threads} are the winning thread setting; {speed} is
+        // visits per second, already rounded.
+        ngettext_f(
+            "Fastest here: {positions} position in parallel, {threads} threads each — about {speed} visits/s. Press Save Profile to apply.",
+            "Fastest here: {positions} positions in parallel, {threads} threads each — about {speed} visits/s. Press Save Profile to apply.",
+            n,
+            &[
+                ("positions", &positions),
+                ("threads", &threads),
+                ("speed", &speed),
+            ],
+        )
     } else {
-        format!("Fastest here: {best}. Press Save Profile to apply.")
+        // Translators: {positions} and {threads} are the winning thread setting.
+        ngettext_f(
+            "Fastest here: {positions} position in parallel, {threads} threads each. Press Save Profile to apply.",
+            "Fastest here: {positions} positions in parallel, {threads} threads each. Press Save Profile to apply.",
+            n,
+            &[("positions", &positions), ("threads", &threads)],
+        )
     }
 }
 
@@ -685,10 +743,12 @@ fn measured_subtitle(result: &CalibrationResult) -> String {
 fn tuning_progress() -> (adw::AlertDialog, gtk::ProgressBar, gtk::Label) {
     let bar = gtk::ProgressBar::builder()
         .show_text(true)
-        .text("Starting…")
+        .text(gettext("Starting…"))
         .build();
     let caption = gtk::Label::builder()
-        .label("Waiting for the current engine to let go of the GPU…")
+        .label(gettext(
+            "Waiting for the current engine to let go of the GPU…",
+        ))
         .wrap(true)
         .build();
     caption.add_css_class("dim-label");
@@ -697,15 +757,14 @@ fn tuning_progress() -> (adw::AlertDialog, gtk::ProgressBar, gtk::Label) {
     body.append(&bar);
     body.append(&caption);
 
-    let dialog = adw::AlertDialog::new(
-        Some("Tuning KataGo"),
-        Some(
-            "Every setting is timed in its own KataGo, so this takes a few minutes. \
-             Your engine stays stopped until the run ends.",
-        ),
+    let heading = gettext("Tuning KataGo");
+    let explanation = gettext(
+        "Every setting is timed in its own KataGo, so this takes a few minutes. \
+         Your engine stays stopped until the run ends.",
     );
+    let dialog = adw::AlertDialog::new(Some(&heading), Some(&explanation));
     dialog.set_extra_child(Some(&body));
-    dialog.add_response("cancel", "Stop Tuning");
+    dialog.add_response("cancel", &gettext("Stop Tuning"));
     dialog.set_close_response("cancel");
     dialog.set_default_response(Some("cancel"));
     (dialog, bar, caption)
@@ -776,25 +835,37 @@ fn local_editor(
     // selected until the user explicitly switches to Custom file.
     let suggested_config = config.clone().unwrap_or_default();
 
-    let editor = editor_shell(if editing.is_some() {
-        "Edit Local Engine"
+    let title = if editing.is_some() {
+        gettext("Edit Local Engine")
     } else {
-        "Add Local Engine"
-    });
+        gettext("Add Local Engine")
+    };
+    let editor = editor_shell(&title);
 
     let identity = adw::PreferencesGroup::new();
-    let name_row = adw::EntryRow::builder().title("Name").build();
+    let name_row = adw::EntryRow::builder().title(gettext("Name")).build();
     name_row.set_text(editing.as_deref().unwrap_or(""));
     identity.add(&name_row);
     editor.content.add(&identity);
 
     let paths = adw::PreferencesGroup::builder()
-        .title("KataGo")
-        .description("Both must exist before the profile can be saved.")
+        .title(gettext("KataGo"))
+        .description(gettext("Both must exist before the profile can be saved."))
         .build();
-    let (katago_row, katago_path, _) = file_row("KataGo binary", katago, Vec::new(), dialog);
-    let (model_row, model_path, model_slot) =
-        file_row("Neural network model", model, Vec::new(), dialog);
+    let (katago_row, katago_path, _) = file_row(
+        &gettext("KataGo binary"),
+        &gettext("Select the katago binary"),
+        katago,
+        Vec::new(),
+        dialog,
+    );
+    let (model_row, model_path, model_slot) = file_row(
+        &gettext("Neural network model"),
+        &gettext("Select the neural network model"),
+        model,
+        Vec::new(),
+        dialog,
+    );
     paths.add(&katago_row);
     paths.add(&model_row);
     editor.content.add(&paths);
@@ -803,15 +874,18 @@ fn local_editor(
     // it needs three keys the user has no reason to care about. A custom file stays
     // available for anyone who does.
     let source = adw::PreferencesGroup::builder()
-        .title("Configuration")
+        .title(gettext("Configuration"))
         .build();
+    let managed = gettext("Managed by mirai");
+    let custom_file = gettext("Custom file");
     let mode = adw::ComboRow::builder()
-        .title("Analysis config")
-        .model(&gtk::StringList::new(&["Managed by mirai", "Custom file"]))
+        .title(gettext("Analysis config"))
+        .model(&gtk::StringList::new(&[&managed, &custom_file]))
         .selected(u32::from(custom))
         .build();
     let (config_row, config_path, config_slot) = file_row(
-        "Custom analysis config",
+        &gettext("Custom analysis config"),
+        &gettext("Select the custom analysis config"),
         suggested_config,
         Vec::new(),
         dialog,
@@ -820,15 +894,19 @@ fn local_editor(
     source.add(&config_row);
     editor.content.add(&source);
 
-    let threads = adw::PreferencesGroup::builder().title("Search").build();
+    // Translators: noun, the search-thread settings, not the verb.
+    let search_title = pgettext("noun", "Search");
+    let threads = adw::PreferencesGroup::builder()
+        .title(&search_title)
+        .build();
     let analysis_row = tuned_row(
-        "Positions in parallel",
+        &gettext("Positions in parallel"),
         "",
         u32::from(analysis_threads.unwrap_or(0)),
         f64::from(EngineTuning::MAX_ANALYSIS_THREADS),
     );
     let search_row = tuned_row(
-        "Threads per position",
+        &gettext("Threads per position"),
         "",
         u32::from(search_threads.unwrap_or(0)),
         f64::from(EngineTuning::MAX_SEARCH_THREADS),
@@ -840,20 +918,23 @@ fn local_editor(
     // A custom file has to carry these two itself — KataGo will not start without
     // `nnMaxBatchSize` — so there is nothing for mirai to override.
     let memory = adw::PreferencesGroup::builder()
-        .title("Batching and Memory")
+        .title(gettext("Batching and Memory"))
         .build();
+    let batch_default = defaults.nn_max_batch_size.to_string();
+    // Translators: nnMaxBatchSize is a KataGo setting name; leave it untranslated. {size} is that default.
+    let batch_subtitle = gettext_f(
+        "nnMaxBatchSize — 0 uses mirai's default ({size}). Wants to be at least positions × threads.",
+        &[("size", &batch_default)],
+    );
     let batch_row = tuned_row(
-        "GPU batch size",
-        &format!(
-            "nnMaxBatchSize — 0 uses mirai's default ({}). Wants to be at least positions × threads.",
-            defaults.nn_max_batch_size
-        ),
+        &gettext("GPU batch size"),
+        &batch_subtitle,
         u32::from(batch.unwrap_or(0)),
         f64::from(EngineTuning::MAX_BATCH_SIZE),
     );
     let cache_shown = snap_cache_power(0, cache.unwrap_or(0));
     let cache_row = tuned_row(
-        "Neural-net cache",
+        &gettext("Neural-net cache"),
         &cache_subtitle(cache_shown),
         u32::from(cache_shown),
         f64::from(EngineTuning::MAX_CACHE_POWER),
@@ -881,22 +962,22 @@ fn local_editor(
     // driver version. The run needs the machine to itself, hence the engine shutdown and
     // the refusal to start with a second window open.
     let auto = adw::PreferencesGroup::builder()
-        .title("Automatic Tuning")
-        .description(
+        .title(gettext("Automatic Tuning"))
+        .description(gettext(
             "Times KataGo on this machine at a series of thread settings and fills in the \
              values above. It starts KataGo once per setting, so allow a few minutes.",
-        )
+        ))
         .build();
     let tune_row = adw::ActionRow::builder()
-        .title("Measure This Machine")
-        .subtitle(
+        .title(gettext("Measure This Machine"))
+        .subtitle(gettext(
             "Uses the binary and model chosen above, and stops the running engine while \
              it works.",
-        )
+        ))
         .build();
     tune_row.set_use_markup(false);
     tune_row.set_subtitle_lines(3);
-    let tune = gtk::Button::with_label("Tune…");
+    let tune = gtk::Button::with_label(&gettext("Tune…"));
     tune.set_valign(gtk::Align::Center);
     tune_row.add_suffix(&tune);
     tune_row.set_activatable_widget(Some(&tune));
@@ -921,29 +1002,45 @@ fn local_editor(
         move |button| {
             let katago = tune_katago.borrow().clone();
             let model = tune_model.borrow().clone();
-            for (label, path) in [("KataGo binary", &katago), ("neural network model", &model)] {
-                if path.as_os_str().is_empty() {
-                    complain(&tune_banner, format!("Choose the {label} before tuning."));
-                    return;
-                }
-                if !path.exists() {
-                    complain(&tune_banner, format!("{} does not exist.", path.display()));
-                    return;
-                }
+            if katago.as_os_str().is_empty() {
+                complain(
+                    &tune_banner,
+                    gettext("Choose the KataGo binary before tuning."),
+                );
+                return;
+            }
+            if !katago.exists() {
+                complain(&tune_banner, missing_path(&katago));
+                return;
+            }
+            if model.as_os_str().is_empty() {
+                complain(
+                    &tune_banner,
+                    gettext("Choose the neural network model before tuning."),
+                );
+                return;
+            }
+            if !model.exists() {
+                complain(&tune_banner, missing_path(&model));
+                return;
             }
             if other_windows_open(&dialog) {
                 complain(
                     &tune_banner,
-                    "Close the other mirai windows before tuning: they keep the current \
-                     KataGo on the GPU, which would skew every measurement.",
+                    gettext(
+                        "Close the other mirai windows before tuning: they keep the current \
+                         KataGo on the GPU, which would skew every measurement.",
+                    ),
                 );
                 return;
             }
             if tune_state.busy() {
                 complain(
                     &tune_banner,
-                    "Wait for engine startup, or finish or cancel the running whole-game \
-                     analysis before tuning.",
+                    gettext(
+                        "Wait for engine startup, or finish or cancel the running whole-game \
+                         analysis before tuning.",
+                    ),
                 );
                 return;
             }
@@ -1011,7 +1108,7 @@ fn local_editor(
                     if window.is::<adw::ApplicationWindow>() {
                         complain(
                             &watch_banner,
-                            "Tuning stopped because another mirai window opened.",
+                            gettext("Tuning stopped because another mirai window opened."),
                         );
                         watch_progress.close();
                     }
@@ -1046,10 +1143,11 @@ fn local_editor(
             glib::spawn_future_local(async move {
                 while let Some(step) = progress_rx.recv().await {
                     bar.set_fraction(f64::from(step.completed) / f64::from(step.total.max(1)));
-                    bar.set_text(Some(&format!(
-                        "Step {} of {}",
-                        step.completed + 1,
-                        step.total
+                    let step_n = (step.completed + 1).to_string();
+                    let total = step.total.to_string();
+                    bar.set_text(Some(&gettext_f(
+                        "Step {step} of {total}",
+                        &[("step", &step_n), ("total", &total)],
                     )));
                     caption.set_label(&candidate_summary(
                         step.analysis_threads,
@@ -1079,9 +1177,18 @@ fn local_editor(
                         batch_row.set_value(f64::from(result.tuning.nn_max_batch_size));
                         tune_row.set_subtitle(&measured_subtitle(&result));
                     }
-                    Ok(Err(e)) => complain(&banner, format!("Tuning failed: {e}")),
+                    Ok(Err(e)) => complain(
+                        &banner,
+                        // Translators: {error} is the engine's own message.
+                        gettext_f(
+                            "Tuning failed: {error}",
+                            &[("error", &crate::i18n::engine_error(&e))],
+                        ),
+                    ),
                     // The result channel only goes away with the task behind it.
-                    Err(_) => complain(&banner, "The tuning run stopped without a result."),
+                    Err(_) => {
+                        complain(&banner, gettext("The tuning run stopped without a result."))
+                    }
                 }
                 run.finish();
             });
@@ -1103,19 +1210,26 @@ fn local_editor(
             auto.set_visible(!custom);
             let (analysis, search) = if custom {
                 (
-                    "numAnalysisThreads — 0 keeps the value from your analysis config".to_string(),
-                    "numSearchThreadsPerAnalysisThread — 0 keeps the value from your analysis config"
-                        .to_string(),
+                    // Translators: numAnalysisThreads is a KataGo setting name; leave it untranslated.
+                    gettext("numAnalysisThreads — 0 keeps the value from your analysis config"),
+                    // Translators: numSearchThreadsPerAnalysisThread is a KataGo setting name; leave it untranslated.
+                    gettext(
+                        "numSearchThreadsPerAnalysisThread — 0 keeps the value from your analysis config",
+                    ),
                 )
             } else {
+                let analysis_n = defaults.analysis_threads.to_string();
+                let search_n = defaults.search_threads.to_string();
                 (
-                    format!(
-                        "numAnalysisThreads — 0 uses mirai's default ({})",
-                        defaults.analysis_threads
+                    // Translators: numAnalysisThreads is a KataGo setting name; leave it untranslated. {threads} is mirai's default.
+                    gettext_f(
+                        "numAnalysisThreads — 0 uses mirai's default ({threads})",
+                        &[("threads", &analysis_n)],
                     ),
-                    format!(
-                        "numSearchThreadsPerAnalysisThread — 0 uses mirai's default ({})",
-                        defaults.search_threads
+                    // Translators: numSearchThreadsPerAnalysisThread is a KataGo setting name; leave it untranslated. {threads} is mirai's default.
+                    gettext_f(
+                        "numSearchThreadsPerAnalysisThread — 0 uses mirai's default ({threads})",
+                        &[("threads", &search_n)],
                     ),
                 )
             };
@@ -1176,18 +1290,29 @@ fn local_editor(
                 complain(&banner, message);
                 return;
             }
-            let required = [
-                ("KataGo binary", Some(&katago)),
-                ("neural network model", Some(&model)),
-                ("analysis config", config.as_ref()),
-            ];
-            for (label, path) in required.into_iter().filter_map(|(l, p)| p.map(|p| (l, p))) {
+            if katago.as_os_str().is_empty() {
+                complain(&banner, gettext("Choose the KataGo binary."));
+                return;
+            }
+            if !katago.exists() {
+                complain(&banner, missing_path(&katago));
+                return;
+            }
+            if model.as_os_str().is_empty() {
+                complain(&banner, gettext("Choose the neural network model."));
+                return;
+            }
+            if !model.exists() {
+                complain(&banner, missing_path(&model));
+                return;
+            }
+            if let Some(path) = config.as_ref() {
                 if path.as_os_str().is_empty() {
-                    complain(&banner, format!("Choose the {label}."));
+                    complain(&banner, gettext("Choose the analysis config."));
                     return;
                 }
                 if !path.exists() {
-                    complain(&banner, format!("{} does not exist.", path.display()));
+                    complain(&banner, missing_path(path));
                     return;
                 }
             }
@@ -1236,29 +1361,34 @@ fn remote_editor(
     let pin: Rc<RefCell<Option<(String, String)>>> =
         Rc::new(RefCell::new(cert.map(|c| (url.clone(), c))));
 
-    let editor = editor_shell(if editing.is_some() {
-        "Edit Remote Engine"
+    let title = if editing.is_some() {
+        gettext("Edit Remote Engine")
     } else {
-        "Add Remote Engine"
-    });
+        gettext("Add Remote Engine")
+    };
+    let editor = editor_shell(&title);
 
     let identity = adw::PreferencesGroup::new();
-    let name_row = adw::EntryRow::builder().title("Name").build();
+    let name_row = adw::EntryRow::builder().title(gettext("Name")).build();
     name_row.set_text(editing.as_deref().unwrap_or(""));
     identity.add(&name_row);
     editor.content.add(&identity);
 
     let server = adw::PreferencesGroup::builder()
-        .title("Server")
-        .description("For example mirai://192.168.1.10:9678")
+        .title(gettext("Server"))
+        .description(gettext("For example mirai://192.168.1.10:9678"))
         .build();
-    let url_row = adw::EntryRow::builder().title("Server URL").build();
+    let url_row = adw::EntryRow::builder()
+        .title(gettext("Server URL"))
+        .build();
     url_row.set_text(&url);
-    url_row.set_tooltip_text(Some("mirai://host:9678"));
-    let token_row = adw::PasswordEntryRow::builder().title("Token").build();
+    url_row.set_tooltip_text(Some(&gettext("mirai://host:9678")));
+    let token_row = adw::PasswordEntryRow::builder()
+        .title(gettext("Token"))
+        .build();
     token_row.set_text(&token);
     let engine_row = adw::EntryRow::builder()
-        .title("Engine name (optional)")
+        .title(gettext("Engine name (optional)"))
         .build();
     engine_row.set_text(&engine);
     server.add(&url_row);
@@ -1267,20 +1397,20 @@ fn remote_editor(
     editor.content.add(&server);
 
     let trust = adw::PreferencesGroup::builder()
-        .title("Certificate")
-        .description(
+        .title(gettext("Certificate"))
+        .description(gettext(
             "mirai checks the certificate before sending the token. \
              Test the connection and compare the fingerprint with the one \
              mirai-server printed at startup.",
-        )
+        ))
         .build();
     let trust_row = adw::ActionRow::builder()
-        .title("Pinned fingerprint")
+        .title(gettext("Pinned fingerprint"))
         .subtitle(fingerprint_subtitle(&pin.borrow()))
         .build();
     trust_row.set_use_markup(false);
     trust_row.set_subtitle_lines(3);
-    let test = gtk::Button::with_label("Test Connection");
+    let test = gtk::Button::with_label(&gettext("Test Connection"));
     test.set_valign(gtk::Align::Center);
     trust_row.add_suffix(&test);
     trust.add(&trust_row);
@@ -1314,7 +1444,7 @@ fn remote_editor(
         move |button| {
             let url = test_url.text().trim().to_string();
             if url.is_empty() {
-                complain(&test_banner, "Enter the server URL first.");
+                complain(&test_banner, gettext("Enter the server URL first."));
                 return;
             }
             let token = test_token.text().to_string();
@@ -1325,7 +1455,7 @@ fn remote_editor(
 
             test_banner.set_revealed(false);
             button.set_sensitive(false);
-            button.set_label("Checking…");
+            button.set_label(&gettext("Checking…"));
 
             let connect_url = url.clone();
             let probe = crate::app::AbortOnDrop::new(test_state.runtime().spawn(async move {
@@ -1342,7 +1472,7 @@ fn remote_editor(
             let handle = glib::spawn_future_local(async move {
                 let outcome = probe.await;
                 button.set_sensitive(true);
-                button.set_label("Test Connection");
+                button.set_label(&gettext("Test Connection"));
                 match outcome {
                     Ok(Ok(fingerprint)) => {
                         let pinned = (url.clone(), fingerprint.clone());
@@ -1378,19 +1508,31 @@ fn remote_editor(
                                         Ok(Ok(())) => {}
                                         Ok(Err(e)) => complain(
                                             &banner,
-                                            format!(
-                                                "Certificate trusted, but the connection failed: {e}"
+                                            // Translators: {error} is the engine's own message.
+                                            gettext_f(
+                                                "Certificate trusted, but the connection failed: {error}",
+                                                &[("error", &crate::i18n::engine_error(&e))],
                                             ),
                                         ),
-                                        Err(_) => complain(&banner, "The connection attempt was cancelled."),
+                                        Err(_) => complain(
+                                            &banner,
+                                            gettext("The connection attempt was cancelled."),
+                                        ),
                                     }
                                 }));
                             },
                             || {},
                         );
                     }
-                    Ok(Err(e)) => complain(&banner, format!("Could not check the certificate: {e}")),
-                    Err(_) => complain(&banner, "The certificate check was cancelled."),
+                    Ok(Err(e)) => complain(
+                        &banner,
+                        // Translators: {error} is the engine's own message.
+                        gettext_f(
+                            "Could not check the certificate: {error}",
+                            &[("error", &crate::i18n::engine_error(&e))],
+                        ),
+                    ),
+                    Err(_) => complain(&banner, gettext("The certificate check was cancelled.")),
                 }
             });
             testing.replace(handle);
@@ -1414,11 +1556,11 @@ fn remote_editor(
                 return;
             }
             if url.is_empty() {
-                complain(&banner, "Enter the server URL.");
+                complain(&banner, gettext("Enter the server URL."));
                 return;
             }
             if !url.starts_with("mirai://") {
-                complain(&banner, "The URL must start with mirai://.");
+                complain(&banner, gettext("The URL must start with mirai://."));
                 return;
             }
 
@@ -1455,13 +1597,13 @@ fn remote_editor(
 fn fingerprint_subtitle(pin: &Option<(String, String)>) -> String {
     match pin {
         Some((_, fingerprint)) => mirai_proto::sha256::format_fingerprint(fingerprint),
-        None => "Not pinned yet".to_string(),
+        None => gettext("Not pinned yet"),
     }
 }
 
 fn check_name(state: &AppState, name: &str, editing: Option<&str>) -> Result<(), String> {
     if name.is_empty() {
-        return Err("The profile needs a name.".to_string());
+        return Err(gettext("The profile needs a name."));
     }
     let taken = state
         .config()
@@ -1469,7 +1611,10 @@ fn check_name(state: &AppState, name: &str, editing: Option<&str>) -> Result<(),
         .iter()
         .any(|p| p.name == name && Some(p.name.as_str()) != editing);
     if taken {
-        return Err(format!("There is already a profile called “{name}”."));
+        return Err(gettext_f(
+            "There is already a profile called “{name}”.",
+            &[("name", name)],
+        ));
     }
     Ok(())
 }
@@ -1598,15 +1743,16 @@ fn connect_analysis(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, st
     let suggestions = &widgets.analysis_suggestions_row;
     suggestions.connect_output(|row| {
         if row.value() < 0.5 {
-            row.set_text("All");
+            // Translators: the suggestions row, meaning every candidate rather than a number.
+            row.set_text(&pgettext("limit", "All"));
             return true;
         }
         false
     });
     suggestions.connect_input(|row| {
-        row.text()
-            .trim()
-            .eq_ignore_ascii_case("all")
+        let text = row.text();
+        let text = text.trim();
+        (text.eq_ignore_ascii_case("all") || text.eq_ignore_ascii_case(&pgettext("limit", "All")))
             .then_some(Ok(0.0))
     });
 
@@ -1762,7 +1908,7 @@ fn reset_analysis(dialog: &PreferencesDialog, state: &AppState, syncing: &Rc<Cel
 
     let undo_state = state.clone();
     let undo_syncing = syncing.clone();
-    let toast = undo_toast("Analysis settings restored");
+    let toast = undo_toast(&gettext("Analysis settings restored"));
     toast.connect_button_clicked(clone!(
         #[weak]
         dialog,
@@ -1774,20 +1920,21 @@ fn reset_analysis(dialog: &PreferencesDialog, state: &AppState, syncing: &Rc<Cel
 fn undo_toast(title: &str) -> adw::Toast {
     adw::Toast::builder()
         .title(title)
-        .button_label("Undo")
+        .button_label(gettext("Undo"))
         .build()
 }
 
 // -- Play -------------------------------------------------------------------------------
 
-const STRENGTH_KINDS: [&str; 3] = ["Visits", "Time per move", "Human-like"];
-
 fn connect_play(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state: &AppState) {
     let syncing = Rc::new(Cell::new(false));
 
+    let visits = pgettext("strength", "Visits");
+    let time = gettext("Time per move");
+    let human = gettext("Human-like");
     widgets
         .play_strength_kind_row
-        .set_model(Some(&gtk::StringList::new(&STRENGTH_KINDS)));
+        .set_model(Some(&gtk::StringList::new(&[&visits, &time, &human])));
     configure_spin(&widgets.play_visits_row, 1.0, MAX_VISITS_PER_MOVE, 100.0, 0);
     configure_spin(
         &widgets.play_seconds_row,
@@ -1799,10 +1946,15 @@ fn connect_play(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state:
     configure_spin(&widgets.play_temperature_row, 0.0, 2.0, 0.05, 2);
     configure_spin(&widgets.play_threshold_row, 0.0, 0.5, 0.01, 2);
     configure_spin(&widgets.play_streak_row, 1.0, 10.0, 1.0, 0);
-    let labels: Vec<&str> = RuleSet::ALL.iter().map(|rules| rules.label()).collect();
+    let labels: Vec<String> = RuleSet::ALL
+        .iter()
+        .copied()
+        .map(i18n::rules_label)
+        .collect();
+    let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
     widgets
         .play_rules_row
-        .set_model(Some(&gtk::StringList::new(&labels)));
+        .set_model(Some(&gtk::StringList::new(&label_refs)));
 
     load_play(widgets, state, &syncing);
 
@@ -1979,7 +2131,7 @@ fn reset_play(dialog: &PreferencesDialog, state: &AppState, syncing: &Rc<Cell<bo
 
     let undo_state = state.clone();
     let undo_syncing = syncing.clone();
-    let toast = undo_toast("Play settings restored");
+    let toast = undo_toast(&gettext("Play settings restored"));
     toast.connect_button_clicked(clone!(
         #[weak]
         dialog,
@@ -1995,9 +2147,12 @@ fn connect_general(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, sta
     bind_switch(&widgets.show_move_numbers_row, state, "show-move-numbers");
 
     let overlay_syncing = Rc::new(Cell::new(false));
+    let none = pgettext("overlay", "None");
+    let ownership = pgettext("overlay", "Ownership");
+    let policy = pgettext("overlay", "Policy");
     widgets
         .overlay_row
-        .set_model(Some(&gtk::StringList::new(&OVERLAY_CHOICES)));
+        .set_model(Some(&gtk::StringList::new(&[&none, &ownership, &policy])));
     overlay_syncing.set(true);
     widgets.overlay_row.set_selected(overlay_index(
         state.ownership_overlay(),
@@ -2046,7 +2201,7 @@ fn connect_general(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, sta
     scale.set_range(0.0, 100.0);
     scale.set_increments(5.0, 10.0);
     scale.set_format_value_func(|_, value| match value.round() as u8 {
-        0 => "Muted".to_owned(),
+        0 => gettext("Muted"),
         volume => format!("{volume}%"),
     });
     scale.set_value(f64::from(state.config().ui.stone_volume));
@@ -2062,8 +2217,6 @@ fn connect_general(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, sta
         move |_| reset_ui(&dialog, &reset_state)
     ));
 }
-
-const OVERLAY_CHOICES: [&str; 3] = ["None", "Ownership", "Policy"];
 
 fn overlay_index(ownership: bool, policy: bool) -> u32 {
     if ownership {
@@ -2133,7 +2286,7 @@ fn reset_ui(dialog: &PreferencesDialog, state: &AppState) {
     apply_ui(dialog, state, UiSettings::default());
 
     let undo_state = state.clone();
-    let toast = undo_toast("General settings restored");
+    let toast = undo_toast(&gettext("General settings restored"));
     toast.connect_button_clicked(clone!(
         #[weak]
         dialog,

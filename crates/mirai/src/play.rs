@@ -18,10 +18,12 @@ use std::time::{Duration, Instant};
 
 use gtk::glib;
 use gtk::prelude::ObjectExt;
-use mirai_core::Point;
+use mirai_client::play::{Count, GameEnd, PlayError};
+use mirai_core::{Color, IllegalMove, Point};
 use mirai_engine::{Engine, Report, SubEvent};
 
 use crate::app::AppState;
+use crate::i18n;
 use crate::widgets::BoardView;
 use crate::window_shell::MiraiWindow;
 
@@ -66,7 +68,10 @@ impl PlayController {
         PlayController {
             state: state.clone(),
             window: window.downgrade(),
-            play: RefCell::new(mirai_client::Play::new()),
+            play: RefCell::new(mirai_client::Play::with_human_name(
+                // Translators: the human player's name written into the game record.
+                i18n::gettext("You"),
+            )),
             thinking: RefCell::new(None),
             ticker: Cell::new(None),
             board: RefCell::new(None),
@@ -207,17 +212,22 @@ impl PlayController {
             // Owned by the search stream and the count; leave whatever they wrote.
             PlayState::AiThinking => return,
             PlayState::AiStalled(reason) => reason.clone(),
-            PlayState::Scoring => match self.play.borrow().result() {
-                Some(result) => format!(
-                    "{} — click a group to mark it dead",
-                    mirai_client::play::result_phrase(result)
-                ),
-                None => return,
-            },
-            PlayState::Over(_) => match self.play.borrow().result() {
-                Some(result) => mirai_client::play::result_phrase(result),
-                None => return,
-            },
+            PlayState::Scoring => {
+                let Some(phrase) = self.play.borrow().result().map(i18n::result_phrase) else {
+                    return;
+                };
+                // Translators: {result} is a sentence such as "Black wins by 7.5".
+                i18n::gettext_f(
+                    "{result} — click a group to mark it dead",
+                    &[("result", phrase.as_str())],
+                )
+            }
+            PlayState::Over(_) => {
+                let Some(phrase) = self.play.borrow().result().map(i18n::result_phrase) else {
+                    return;
+                };
+                phrase
+            }
         };
         self.state.set_status(status);
     }
@@ -237,7 +247,10 @@ impl PlayController {
             .with_session_mut(|game| self.play.borrow_mut().human_play(game, p));
         match played {
             Ok(()) => self.sync(),
-            Err(e) => self.state.toast(e),
+            // The state check above already refused a move out of turn.
+            Err(PlayError::NotYourTurn) => {}
+            Err(PlayError::Illegal(IllegalMove::Occupied)) => {}
+            Err(PlayError::Illegal(error)) => self.state.toast(i18n::illegal_move(error)),
         }
     }
 
@@ -270,7 +283,9 @@ impl PlayController {
 
     fn ai_turn(&self) {
         let Some(engine) = self.state.engine() else {
-            self.fail_ai("No engine is running — start one in Preferences");
+            self.fail_ai(i18n::gettext(
+                "No engine is running — start one in Preferences",
+            ));
             return;
         };
         if self.play.borrow().ai().is_none() {
@@ -291,11 +306,18 @@ impl PlayController {
                 match event {
                     SubEvent::Pending => {}
                     SubEvent::Report(r) => {
+                        let visits = r.root.visits;
+                        let shown = crate::util::si_visits(visits);
                         if with_play(&weak, |play| {
-                            play.state.set_status(format!(
-                                "Thinking… {} visits",
-                                crate::util::si_visits(r.root.visits)
-                            ));
+                            play.state.set_status(
+                                // Translators: {visits} is a visit count, possibly abbreviated (1.2k).
+                                i18n::ngettext_f(
+                                    "Thinking… {visits} visit",
+                                    "Thinking… {visits} visits",
+                                    visits as u64,
+                                    &[("visits", shown.as_str())],
+                                ),
+                            );
                         })
                         .is_none()
                         {
@@ -307,7 +329,7 @@ impl PlayController {
                         break;
                     }
                     SubEvent::Failed(e) => {
-                        let reason = e.to_string();
+                        let reason = i18n::engine_error(&e);
                         with_play(&weak, |play| {
                             // May clear the engine. Do that before stalling, so the
                             // engine-changed hook does not immediately retry a dead engine.
@@ -320,7 +342,7 @@ impl PlayController {
             }
             with_play(&weak, |play| match done {
                 Some(report) => play.apply_ai_move(&report),
-                None => play.fail_ai("The engine ended the search without a move"),
+                None => play.fail_ai(i18n::gettext("The engine ended the search without a move")),
             });
         });
         if let Some(old) = self.thinking.borrow_mut().replace(handle) {
@@ -447,7 +469,7 @@ impl PlayController {
             self.finish_count(None);
             return;
         };
-        self.state.set_status("Counting…".to_string());
+        self.state.set_status(i18n::gettext("Counting…"));
         let req = self
             .state
             .with_session_mut(|game| self.play.borrow_mut().scoring_request(game));
@@ -483,7 +505,7 @@ impl PlayController {
         });
         self.sync();
 
-        let summary = self.play.borrow().summary();
+        let summary = score_summary(&self.play.borrow());
         let board = self.board.borrow().clone();
         if let Some(board) = board {
             let weak = self.window.clone();
@@ -533,9 +555,9 @@ impl PlayController {
         let hook = self.analyse_hook.borrow();
         match hook.as_ref() {
             Some(f) => f(),
-            None => self
-                .state
-                .toast("Whole-game analysis is not available from here"),
+            None => self.state.toast(i18n::gettext(
+                "Whole-game analysis is not available from here",
+            )),
         }
     }
 }
@@ -549,4 +571,70 @@ impl Drop for PlayController {
             source.remove();
         }
     }
+}
+
+fn end_sentence(end: GameEnd) -> String {
+    match end {
+        GameEnd::BothPassed => i18n::gettext("Both players passed."),
+        GameEnd::Resigned(Color::Black) => i18n::gettext("Black resigned."),
+        GameEnd::Resigned(Color::White) => i18n::gettext("White resigned."),
+        GameEnd::LostOnTime(Color::Black) => i18n::gettext("Black lost on time."),
+        GameEnd::LostOnTime(Color::White) => i18n::gettext("White lost on time."),
+    }
+}
+
+fn count_line(end: Option<GameEnd>, count: &Count) -> String {
+    let black = format!("{:.1}", count.black);
+    let white = format!("{:.1}", count.white);
+    let forced = matches!(end, Some(GameEnd::Resigned(_) | GameEnd::LostOnTime(_)));
+    if forced {
+        let result = i18n::result_phrase(&count.result);
+        if count.approximate {
+            // Translators: {result} is a sentence such as "Black wins by 7.5"; {black} and {white} are point totals.
+            i18n::gettext_f(
+                "Count on the board: {result} ({black} — {white}, estimated)",
+                &[
+                    ("result", result.as_str()),
+                    ("black", black.as_str()),
+                    ("white", white.as_str()),
+                ],
+            )
+        } else {
+            // Translators: {result} is a sentence such as "Black wins by 7.5"; {black} and {white} are point totals.
+            i18n::gettext_f(
+                "Count on the board: {result} ({black} — {white})",
+                &[
+                    ("result", result.as_str()),
+                    ("black", black.as_str()),
+                    ("white", white.as_str()),
+                ],
+            )
+        }
+    } else if count.approximate {
+        i18n::gettext_f(
+            "Black {black} — White {white} (estimated)",
+            &[("black", black.as_str()), ("white", white.as_str())],
+        )
+    } else {
+        i18n::gettext_f(
+            "Black {black} — White {white}",
+            &[("black", black.as_str()), ("white", white.as_str())],
+        )
+    }
+}
+
+/// Reason, result and board count, as the score dialog shows them. Empty before a count.
+fn score_summary(play: &mirai_client::Play) -> String {
+    let Some(count) = play.count() else {
+        return String::new();
+    };
+    let mut parts = Vec::with_capacity(3);
+    if let Some(end) = play.end() {
+        parts.push(end_sentence(end));
+    }
+    if let Some(result) = play.result() {
+        parts.push(i18n::result_phrase(result));
+    }
+    parts.push(count_line(play.end(), count));
+    parts.join("\n\n")
 }

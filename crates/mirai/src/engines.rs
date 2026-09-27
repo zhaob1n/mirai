@@ -176,7 +176,7 @@ impl EnginePool {
         }
 
         rx.await
-            .unwrap_or_else(|_| Err("engine startup was cancelled".to_string()))
+            .unwrap_or_else(|_| Err(crate::i18n::gettext("engine startup was cancelled")))
     }
 
     /// Installs a finished start and wakes every waiter registered for it.
@@ -251,8 +251,8 @@ async fn start(
     });
     match rx.await {
         Ok(Ok(built)) => Ok(built),
-        Ok(Err(e)) => Err(e.to_string()),
-        Err(_) => Err("engine startup was cancelled".to_string()),
+        Ok(Err(e)) => Err(crate::i18n::engine_error(&e)),
+        Err(_) => Err(crate::i18n::gettext("engine startup was cancelled")),
     }
 }
 
@@ -281,9 +281,13 @@ async fn build(profile: EngineProfile, log_dir: PathBuf) -> Result<Built, Engine
             let config = match config {
                 Some(path) => path.clone(),
                 None => profile.kind.tuning().write_to(&log_dir).map_err(|e| {
-                    EngineError::Startup(format!(
-                        "could not write the analysis config into {}: {e}",
-                        log_dir.display()
+                    // Translators: {dir} is a directory path; {error} is the operating-system's own message.
+                    EngineError::Startup(crate::i18n::gettext_f(
+                        "could not write the analysis config into {dir}: {error}",
+                        &[
+                            ("dir", &log_dir.display().to_string()),
+                            ("error", &e.to_string()),
+                        ],
                     ))
                 })?,
             };
@@ -309,9 +313,9 @@ async fn build(profile: EngineProfile, log_dir: PathBuf) -> Result<Built, Engine
             cert_sha256,
         } => {
             let Some(pin) = cert_sha256 else {
-                return Err(EngineError::Protocol(
-                    "refusing to send the token before the certificate is pinned".into(),
-                ));
+                return Err(EngineError::Protocol(crate::i18n::gettext(
+                    "refusing to send the token before the certificate is pinned",
+                )));
             };
             let remote = mirai_engine::RemoteEngine::connect(&url, &token, engine, pin).await?;
             let link = Some(remote.subscribe_status());

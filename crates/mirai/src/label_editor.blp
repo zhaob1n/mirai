@@ -5,7 +5,8 @@ using Gtk 4.0;
 using Adw 1;
 
 template $MiraiLabelEditorDialog : Adw.Dialog {
-  title: _("Edit Label");
+  /* Translators: a text mark on an intersection. */
+  title: C_("mark", "Edit Label");
   content-width: 360;
 
   child: Adw.ToolbarView {
@@ -21,7 +22,8 @@ template $MiraiLabelEditorDialog : Adw.Dialog {
 
       [end]
       Gtk.Button apply_button {
-        label: _("Apply Label");
+        /* Translators: a text mark on an intersection. */
+        label: C_("mark", "Apply Label");
         styles ["suggested-action"]
       }
     }
@@ -35,12 +37,14 @@ template $MiraiLabelEditorDialog : Adw.Dialog {
       margin-bottom: 16;
 
       Gtk.Entry entry {
-        placeholder-text: _("Label text");
+        /* Translators: a text mark on an intersection. */
+        placeholder-text: C_("mark", "Label text");
         hexpand: true;
         enable-undo: true;
       }
 
       Gtk.Label {
+        /* Translators: a text mark on an intersection. */
         label: _("Leave empty to remove the label");
         wrap: true;
         xalign: 0;

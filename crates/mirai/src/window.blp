@@ -4,7 +4,7 @@ using Gtk 4.0;
 using Adw 1;
 
 template $MiraiWindow: Adw.ApplicationWindow {
-  title: _("mirai");
+  title: "mirai";
   default-width: 1280;
   default-height: 860;
 
@@ -180,7 +180,7 @@ template $MiraiWindow: Adw.ApplicationWindow {
 
                     Adw.Toggle play_tool {
                       name: "play";
-                      label: _("Play");
+                      label: C_("verb", "Play");
 
                       child: Gtk.Image play_tool_icon {
                         icon-name: "mirai-play-black";
@@ -230,62 +230,62 @@ template $MiraiWindow: Adw.ApplicationWindow {
 
                     Adw.Toggle {
                       name: "triangle";
-                      label: _("Triangle");
+                      label: C_("mark", "Triangle");
 
                       child: Gtk.Image {
                         icon-name: "mirai-mark-triangle-symbolic";
                         accessible-role: presentation;
                       };
 
-                      tooltip: _("Triangle");
+                      tooltip: C_("mark", "Triangle");
                     }
 
                     Adw.Toggle {
                       name: "square";
-                      label: _("Square");
+                      label: C_("mark", "Square");
 
                       child: Gtk.Image {
                         icon-name: "mirai-mark-square-symbolic";
                         accessible-role: presentation;
                       };
 
-                      tooltip: _("Square");
+                      tooltip: C_("mark", "Square");
                     }
 
                     Adw.Toggle {
                       name: "circle";
-                      label: _("Circle");
+                      label: C_("mark", "Circle");
 
                       child: Gtk.Image {
                         icon-name: "mirai-mark-circle-symbolic";
                         accessible-role: presentation;
                       };
 
-                      tooltip: _("Circle");
+                      tooltip: C_("mark", "Circle");
                     }
 
                     Adw.Toggle {
                       name: "cross";
-                      label: _("Cross");
+                      label: C_("mark", "Cross");
 
                       child: Gtk.Image {
                         icon-name: "mirai-mark-cross-symbolic";
                         accessible-role: presentation;
                       };
 
-                      tooltip: _("Cross");
+                      tooltip: C_("mark", "Cross");
                     }
 
                     Adw.Toggle {
                       name: "label";
-                      label: _("Label");
+                      label: C_("mark", "Label");
 
                       child: Gtk.Image {
                         icon-name: "mirai-mark-label-symbolic";
                         accessible-role: presentation;
                       };
 
-                      tooltip: _("Label");
+                      tooltip: C_("mark", "Label");
                     }
 
                     Adw.Toggle {
@@ -451,7 +451,7 @@ template $MiraiWindow: Adw.ApplicationWindow {
                 spacing: 4;
 
                 Gtk.Label clock_black {
-                  label: _("–:––");
+                  label: "–:––";
 
                   styles [
                     "mirai-clock",
@@ -459,7 +459,7 @@ template $MiraiWindow: Adw.ApplicationWindow {
                 }
 
                 Gtk.Label clock_white {
-                  label: _("–:––");
+                  label: "–:––";
 
                   styles [
                     "mirai-clock",
@@ -479,7 +479,7 @@ template $MiraiWindow: Adw.ApplicationWindow {
                 }
 
                 Gtk.Button pass_button {
-                  label: _("Pass");
+                  label: C_("verb", "Pass");
                   action-name: "win.pass";
                   tooltip-text: _("Pass This Turn (P)");
                 }
@@ -529,7 +529,7 @@ template $MiraiWindow: Adw.ApplicationWindow {
 
 menu open_menu {
   section {
-    item ("_Open File…", "win.open")
+    item (_("_Open File…"), "win.open")
     // View-scoped shortcuts are not application accelerators, so the menu is told the hint.
     item {
       label: _("_Paste SGF");
@@ -541,9 +541,9 @@ menu open_menu {
 
 menu primary_menu {
   section {
-    item ("_Clear Board", "win.clear-board")
-    item ("_Save", "win.save")
-    item ("Save _As…", "win.save-as")
+    item (_("_Clear Board"), "win.clear-board")
+    item (_("_Save"), "win.save")
+    item (_("Save _As…"), "win.save-as")
     item {
       label: _("_Copy SGF");
       action: "win.copy-sgf";
@@ -557,21 +557,21 @@ menu primary_menu {
       action: "win.analyse-game";
       accel: "<Control>a";
     }
-    item ("_Estimate Score", "win.score")
+    item (_("_Estimate Score"), "win.score")
   }
 
   submenu {
     label: _("_View");
 
     section {
-      item ("_Sidebar", "win.toggle-sidebar")
+      item (_("_Sidebar"), "win.toggle-sidebar")
       item {
         label: _("_Win-Rate Graph");
         action: "win.toggle-graph";
         accel: "g";
       }
-      item ("_Editing Tools", "win.toggle-editor")
-      item ("_Loss and Prior Columns", "win.toggle-candidate-details")
+      item (_("_Editing Tools"), "win.toggle-editor")
+      item (_("_Loss and Prior Columns"), "win.toggle-candidate-details")
     }
 
     section {
@@ -604,8 +604,9 @@ menu primary_menu {
   }
 
   section {
-    item ("_Preferences", "win.preferences")
-    item ("_Keyboard Shortcuts", "win.shortcuts")
-    item ("_About mirai", "win.about")
+    item (_("_Preferences"), "win.preferences")
+    item (_("_Keyboard Shortcuts"), "win.shortcuts")
+    /* Translators: mirai is the application name; do not translate it. */
+    item (_("_About mirai"), "win.about")
   }
 }

@@ -15,9 +15,9 @@ use crate::config::{
     DEFAULT_SECONDS_PER_MOVE, DEFAULT_VISITS_PER_MOVE, MAX_SECONDS_PER_MOVE, MAX_VISITS_PER_MOVE,
     MIN_SECONDS_PER_MOVE, PlaySettings, StrengthSetting,
 };
+use crate::i18n;
 use crate::play::{GameSetup, Strength};
 
-const HUMAN_LIKE: &str = "Human-like";
 const SIZE_CHOICES: [u8; 3] = [9, 13, 19];
 
 mod imp {
@@ -107,17 +107,16 @@ impl NewGameDialog {
     fn configure(&self, play: &PlaySettings, has_human_model: bool) {
         let imp = self.imp();
 
-        set_items(&imp.size_row, &["9 × 9", "13 × 13", "19 × 19", "Custom"]);
+        let custom = i18n::pgettext("size", "Custom");
+        set_items(
+            &imp.size_row,
+            &["9 × 9", "13 × 13", "19 × 19", custom.as_str()],
+        );
         imp.size_row.set_selected(2);
         configure_spin(&imp.custom_size_row, 2.0, 19.0, 1.0, 0, 19.0);
 
-        set_items(
-            &imp.handicap_row,
-            &[
-                "None", "2 stones", "3 stones", "4 stones", "5 stones", "6 stones", "7 stones",
-                "8 stones", "9 stones",
-            ],
-        );
+        let handicap = handicap_labels();
+        set_owned(&imp.handicap_row, &handicap);
 
         configure_spin(
             &imp.komi_row,
@@ -128,8 +127,12 @@ impl NewGameDialog {
             play.rules.default_komi() as f64,
         );
 
-        let labels: Vec<&str> = RuleSet::ALL.iter().map(|rules| rules.label()).collect();
-        set_items(&imp.rules_row, &labels);
+        let labels: Vec<String> = RuleSet::ALL
+            .iter()
+            .copied()
+            .map(i18n::rules_label)
+            .collect();
+        set_owned(&imp.rules_row, &labels);
         imp.rules_row.set_selected(
             RuleSet::ALL
                 .iter()
@@ -138,22 +141,24 @@ impl NewGameDialog {
         );
         self.refresh_handicap();
 
-        set_items(&imp.colour_row, &["Black", "White", "Both (no engine)"]);
-        set_items(
-            &imp.time_row,
-            &["None", "Absolute", "Byo-yomi", "Fischer increment"],
-        );
+        let colours = colour_labels();
+        set_owned(&imp.colour_row, &colours);
+        let times = time_labels();
+        set_owned(&imp.time_row, &times);
         configure_spin(&imp.main_time_row, 0.0, 600.0, 1.0, 0, 20.0);
         configure_spin(&imp.periods_row, 1.0, 25.0, 1.0, 0, 5.0);
         configure_spin(&imp.period_seconds_row, 1.0, 600.0, 5.0, 0, 30.0);
         configure_spin(&imp.increment_row, 0.0, 600.0, 1.0, 0, 10.0);
 
-        imp.strength_group.set_description(Some(if has_human_model {
-            "The human-like model imitates a rank instead of searching"
+        let strength_description = if has_human_model {
+            i18n::gettext("The human-like model imitates a rank instead of searching")
         } else {
-            "This engine has no human-like model loaded"
-        }));
-        set_items(&imp.strength_row, &["Visits", "Time per move", HUMAN_LIKE]);
+            i18n::gettext("This engine has no human-like model loaded")
+        };
+        imp.strength_group
+            .set_description(Some(&strength_description));
+        let strengths = strength_labels();
+        set_owned(&imp.strength_row, &strengths);
         grey_out_human(&imp.strength_row, has_human_model);
         configure_spin(
             &imp.visits_row,
@@ -304,11 +309,12 @@ impl NewGameDialog {
         let imp = self.imp();
         let both = imp.colour_row.selected() == 2;
         imp.strength_group.set_visible(!both);
-        imp.players_group.set_description(Some(if both {
-            "Play both sides on this device"
+        let description = if both {
+            i18n::gettext("Play both sides on this device")
         } else {
-            "The engine takes the other colour"
-        }));
+            i18n::gettext("The engine takes the other colour")
+        };
+        imp.players_group.set_description(Some(&description));
     }
 
     fn setup(&self) -> GameSetup {
@@ -422,6 +428,56 @@ fn set_items(row: &adw::ComboRow, items: &[&str]) {
     row.set_model(Some(&gtk::StringList::new(items)));
 }
 
+fn set_owned(row: &adw::ComboRow, items: &[String]) {
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    set_items(row, &refs);
+}
+
+fn handicap_labels() -> Vec<String> {
+    let mut items = Vec::with_capacity(9);
+    // Translators: no handicap stones.
+    items.push(i18n::pgettext("handicap", "None"));
+    for stones in 2u64..=9 {
+        let n = stones.to_string();
+        items.push(i18n::ngettext_f(
+            "{n} stone",
+            "{n} stones",
+            stones,
+            &[("n", n.as_str())],
+        ));
+    }
+    items
+}
+
+fn colour_labels() -> Vec<String> {
+    vec![
+        i18n::color_name(Color::Black),
+        i18n::color_name(Color::White),
+        i18n::gettext("Both (no engine)"),
+    ]
+}
+
+fn time_labels() -> Vec<String> {
+    vec![
+        // Translators: no time limit.
+        i18n::pgettext("time-control", "None"),
+        // Translators: one clock and no overtime.
+        i18n::pgettext("time-control", "Absolute"),
+        // Translators: Japanese overtime, a fixed number of periods.
+        i18n::gettext("Byo-yomi"),
+        // Translators: seconds added after every move.
+        i18n::gettext("Fischer increment"),
+    ]
+}
+
+fn strength_labels() -> Vec<String> {
+    vec![
+        i18n::pgettext("strength", "Visits"),
+        i18n::gettext("Time per move"),
+        i18n::gettext("Human-like"),
+    ]
+}
+
 fn configure_spin(row: &adw::SpinRow, min: f64, max: f64, step: f64, digits: u32, value: f64) {
     row.configure(
         Some(&gtk::Adjustment::new(
@@ -481,7 +537,7 @@ fn grey_out_human(row: &adw::ComboRow, enabled: bool) {
                 .map(|item| item.string().to_string())
                 .unwrap_or_default();
             label.set_label(&text);
-            let usable = text != HUMAN_LIKE;
+            let usable = text != i18n::gettext("Human-like");
             label.set_sensitive(usable);
             if list {
                 item.set_selectable(usable);

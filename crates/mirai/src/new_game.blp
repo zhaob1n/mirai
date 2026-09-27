@@ -49,6 +49,7 @@ template $MiraiNewGameDialog : Adw.Dialog {
         }
 
         Adw.SpinRow komi_row {
+          /* Translators: compensation points given to White. */
           title: _("Komi");
         }
 
@@ -62,6 +63,7 @@ template $MiraiNewGameDialog : Adw.Dialog {
         description: _("The engine takes the other colour");
 
         Adw.ComboRow colour_row {
+          /* Translators: which colour the human plays. */
           title: _("You Play");
         }
       }
@@ -70,7 +72,7 @@ template $MiraiNewGameDialog : Adw.Dialog {
         title: _("Time Control");
 
         Adw.ComboRow time_row {
-          title: _("Type");
+          title: C_("time-control", "Type");
         }
 
         Adw.SpinRow main_time_row {
@@ -78,6 +80,7 @@ template $MiraiNewGameDialog : Adw.Dialog {
         }
 
         Adw.SpinRow periods_row {
+          /* Translators: Japanese overtime, a fixed number of periods. */
           title: _("Byo-yomi Periods");
         }
 
@@ -94,7 +97,7 @@ template $MiraiNewGameDialog : Adw.Dialog {
         title: _("Engine Strength");
 
         Adw.ComboRow strength_row {
-          title: _("Mode");
+          title: C_("strength", "Mode");
         }
 
         Adw.SpinRow visits_row {
@@ -106,6 +109,7 @@ template $MiraiNewGameDialog : Adw.Dialog {
         }
 
         Adw.EntryRow profile_row {
+          /* Translators: a KataGo human-SL profile name, such as rank_5k. */
           title: _("Human Model Profile");
         }
       }
