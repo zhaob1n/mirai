@@ -65,30 +65,6 @@ pub enum RemoteStatus {
     Failed(String),
 }
 
-/// Trust-on-first-use certificate pins, `mirai://host:port` → lowercase hex SHA-256.
-///
-/// The GUI owns one of these, seeded from the config file, and writes back whatever a first
-/// connection observed after the user has confirmed the fingerprint.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct TofuStore {
-    pins: HashMap<String, String>,
-}
-
-impl TofuStore {
-    pub fn new() -> TofuStore {
-        TofuStore::default()
-    }
-
-    /// The pinned fingerprint for `url`, if this store has seen it before.
-    pub fn get(&self, url: &str) -> Option<&str> {
-        self.pins.get(url).map(String::as_str)
-    }
-
-    pub fn insert(&mut self, url: impl Into<String>, fingerprint: impl Into<String>) {
-        self.pins.insert(url.into(), fingerprint.into());
-    }
-}
-
 /// A `mirai-server` reached over MRP, behaving exactly like a local engine.
 pub struct RemoteEngine {
     peer: Arc<Peer>,
@@ -864,21 +840,6 @@ async fn idle(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn tofu_store_round_trips_pins() {
-        let mut store = TofuStore::new();
-        assert_eq!(store.get("mirai://box:9678"), None);
-
-        store.insert("mirai://box:9678", "a".repeat(64));
-        assert_eq!(store.get("mirai://box:9678"), Some("a".repeat(64).as_str()));
-        // Distinct servers must not share a pin.
-        assert_eq!(store.get("mirai://other:9678"), None);
-
-        // A re-pin (the user accepted a new certificate) replaces the old value.
-        store.insert("mirai://box:9678", "b".repeat(64));
-        assert_eq!(store.get("mirai://box:9678"), Some("b".repeat(64).as_str()));
-    }
 
     #[test]
     fn backoff_is_capped_at_eight_seconds() {

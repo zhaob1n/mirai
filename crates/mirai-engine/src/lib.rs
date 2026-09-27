@@ -34,7 +34,7 @@ pub use mirai_proto::types::{
     AnalyzeReq, AvoidSpec, EngineDesc, MoveInfo, Report, RootInfo, Want, dq_own,
 };
 #[cfg(feature = "remote")]
-pub use remote::{RemoteEngine, TofuStore};
+pub use remote::RemoteEngine;
 #[cfg(feature = "local")]
 pub use tuning::EngineTuning;
 

@@ -9,12 +9,12 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 
-use mirai_core::{Color, Size};
-use mirai_proto::types::{AnalyzeReq, EngineDesc, Report};
+use mirai_core::Size;
+use mirai_proto::types::{AnalyzeReq, EngineDesc};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter, Lines};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
@@ -84,21 +84,24 @@ pub struct LocalEngine {
 struct Inner {
     desc: EngineDesc,
     to_engine: mpsc::UnboundedSender<String>,
-    subs: Mutex<HashMap<u64, Entry>>,
+    /// Query map and the death flag. They share one mutex: `subscribe` checks
+    /// `dead` before inserting, and [`Inner::kill`] sets it before draining, so
+    /// a death cannot land between the check and the insert.
+    subs: Mutex<Subs>,
     next_id: AtomicU64,
-    dead: AtomicBool,
     /// Dropped together with the engine; tells the supervisor to stop waiting.
     _shutdown: oneshot::Sender<()>,
+}
+
+struct Subs {
+    map: HashMap<u64, Entry>,
+    dead: bool,
 }
 
 struct Entry {
     tx: watch::Sender<SubEvent>,
     size: Size,
     max_candidates: Option<u8>,
-    turn: u16,
-    to_play: Color,
-    /// A `terminate` has been sent; the entry stays until KataGo's final response lands.
-    terminating: bool,
 }
 
 impl LocalEngine {
@@ -196,9 +199,11 @@ impl LocalEngine {
         let inner = Arc::new(Inner {
             desc,
             to_engine,
-            subs: Mutex::new(HashMap::new()),
+            subs: Mutex::new(Subs {
+                map: HashMap::new(),
+                dead: false,
+            }),
             next_id: AtomicU64::new(0),
-            dead: AtomicBool::new(false),
             _shutdown: shutdown_tx,
         });
 
@@ -232,29 +237,29 @@ impl LocalEngine {
 impl Engine for LocalEngine {
     fn subscribe(&self, req: AnalyzeReq) -> Subscription {
         let inner = &self.inner;
-        if inner.dead.load(Ordering::Acquire) {
-            return Subscription::failed(EngineError::EngineExited(
-                "katago is no longer running".into(),
-            ));
-        }
-
-        let id = inner.next_id.fetch_add(1, Ordering::Relaxed);
-        let (tx, rx) = watch::channel(SubEvent::Pending);
-        inner.subs().insert(
-            id,
-            Entry {
-                tx,
-                size: req.size,
-                max_candidates: req.max_candidates,
-                turn: req.turn(),
-                to_play: req.to_play(),
-                terminating: false,
-            },
-        );
+        let (id, rx) = {
+            let mut subs = inner.subs();
+            if subs.dead {
+                return Subscription::failed(EngineError::EngineExited(
+                    "katago is no longer running".into(),
+                ));
+            }
+            let id = inner.next_id.fetch_add(1, Ordering::Relaxed);
+            let (tx, rx) = watch::channel(SubEvent::Pending);
+            subs.map.insert(
+                id,
+                Entry {
+                    tx,
+                    size: req.size,
+                    max_candidates: req.max_candidates,
+                },
+            );
+            (id, rx)
+        };
 
         let line = build_query(&id.to_string(), &req).to_string();
         if inner.to_engine.send(line).is_err() {
-            inner.subs().remove(&id);
+            inner.subs().map.remove(&id);
             return Subscription::failed(EngineError::EngineExited(
                 "katago stdin is closed".into(),
             ));
@@ -281,17 +286,21 @@ impl Inner {
     /// The subscription table. Every critical section is one lookup or edit, plus at most one
     /// non-blocking `watch` send, and none spans an `.await`. Each edit leaves the map whole,
     /// so a panic elsewhere while it was held is no reason to stop routing: take it anyway.
-    fn subs(&self) -> MutexGuard<'_, HashMap<u64, Entry>> {
+    fn subs(&self) -> MutexGuard<'_, Subs> {
         self.subs.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Asks KataGo to stop a query. The entry stays until its final response arrives, so
-    /// the tail of a terminated search is still routed (and discarded) correctly.
+    /// Asks KataGo to stop a query and forgets it. The subscriber is gone, so a later
+    /// line is an unknown id: traced, not decoded. KataGo still writes a final line
+    /// for a terminated query, including `noResults` when the search never started.
     fn cancel(&self, id: u64) {
-        match self.subs().get_mut(&id) {
-            Some(entry) if !entry.terminating => entry.terminating = true,
-            _ => return,
+        if self.subs().map.remove(&id).is_none() {
+            return;
         }
+        self.terminate(id);
+    }
+
+    fn terminate(&self, id: u64) {
         let key = id.to_string();
         let line = terminate_query(&format!("t{key}"), &key).to_string();
         let _ = self.to_engine.send(line);
@@ -306,12 +315,7 @@ impl Inner {
             }
         };
         match RawResponse::classify(value) {
-            Ok(RawResponse::Analysis {
-                id,
-                terminal,
-                no_results,
-                body,
-            }) => self.deliver(&id, terminal, no_results, &body),
+            Ok(RawResponse::Analysis { id, terminal, body }) => self.deliver(&id, terminal, &body),
             Ok(RawResponse::Action { id, action, .. }) => {
                 tracing::trace!(id, action, "action acknowledged");
             }
@@ -323,7 +327,7 @@ impl Inner {
                 let entry = id
                     .parse::<u64>()
                     .ok()
-                    .and_then(|key| self.subs().remove(&key));
+                    .and_then(|key| self.subs().map.remove(&key));
                 if let Some(entry) = entry {
                     entry
                         .tx
@@ -332,62 +336,83 @@ impl Inner {
             }
             Ok(RawResponse::EngineFault { msg }) => {
                 tracing::error!(msg, "katago reported a fatal error");
-                self.dead.store(true, Ordering::Release);
-                self.fail_all(EngineError::Query(msg));
+                self.kill(EngineError::Query(msg));
             }
             Err(e) => tracing::debug!(%e, line, "ignoring unrecognised katago response"),
         }
     }
 
-    fn deliver(&self, id: &str, terminal: bool, no_results: bool, body: &Value) {
+    fn deliver(&self, id: &str, terminal: bool, body: &Value) {
         let Ok(key) = id.parse::<u64>() else {
             tracing::trace!(id, "response for a non-analysis id");
             return;
         };
-        let Some((size, cap, turn, to_play)) = self
-            .subs()
-            .get(&key)
-            .map(|e| (e.size, e.max_candidates, e.turn, e.to_play))
-        else {
-            // The tail of a query we terminated and already finished with.
-            tracing::trace!(id, "response for an unknown query id");
-            return;
+        let (size, cap) = {
+            let subs = self.subs();
+            let Some(entry) = subs.map.get(&key) else {
+                // Tail of a query we already finished or cancelled. KataGo still writes a
+                // final line, including `noResults` when the search never started; trace,
+                // don't warn — a cancelled search can emit several.
+                tracing::trace!(id, "response for an unknown query id");
+                return;
+            };
+            if entry.tx.is_closed() {
+                // The subscriber is dropping. `cancel` removes the entry and sends
+                // terminate; decoding this line would only burn CPU.
+                return;
+            }
+            (entry.size, entry.max_candidates)
         };
 
-        let event = if no_results {
-            SubEvent::Done(Arc::new(Report::empty(turn, to_play)))
-        } else {
-            match decode_report(size, cap, body) {
-                Ok(report) => {
-                    let report = Arc::new(report);
-                    if terminal {
-                        SubEvent::Done(report)
-                    } else {
-                        SubEvent::Report(report)
-                    }
+        let event = match decode_report(size, cap, body) {
+            Ok(report) => {
+                let report = Arc::new(report);
+                if terminal {
+                    SubEvent::Done(report)
+                } else {
+                    SubEvent::Report(report)
                 }
-                Err(e) => {
-                    tracing::error!(id, %e, "could not decode a katago response");
-                    SubEvent::Failed(EngineError::Protocol(e))
+            }
+            Err(e) => {
+                tracing::error!(id, %e, "could not decode a katago response");
+                // The failure removes the entry, so Drop's cancel cannot send this.
+                // Stop KataGo now, as on a consumer cancel (INV-3).
+                let entry = self.subs().map.remove(&key);
+                if let Some(entry) = entry {
+                    entry
+                        .tx
+                        .send_replace(SubEvent::Failed(EngineError::Protocol(e)));
+                    self.terminate(key);
                 }
+                return;
             }
         };
 
         if event.is_terminal() {
-            let entry = self.subs().remove(&key);
+            let entry = self.subs().map.remove(&key);
             if let Some(entry) = entry {
                 entry.tx.send_replace(event);
             }
-        } else if let Some(entry) = self.subs().get(&key) {
+        } else if let Some(entry) = self.subs().map.get(&key) {
             entry.tx.send_replace(event);
         }
     }
 
-    fn fail_all(&self, err: EngineError) {
-        let entries = std::mem::take(&mut *self.subs());
+    /// Marks the engine dead and fails every live subscription.
+    ///
+    /// `dead` is set under the map lock, before the drain, so it excludes `subscribe`'s
+    /// check-and-insert. Returns whether any analysis was still live.
+    fn kill(&self, err: EngineError) -> bool {
+        let entries = {
+            let mut subs = self.subs();
+            subs.dead = true;
+            std::mem::take(&mut subs.map)
+        };
+        let live = !entries.is_empty();
         for entry in entries.into_values() {
             entry.tx.send_replace(SubEvent::Failed(err.clone()));
         }
+        live
     }
 }
 
@@ -469,11 +494,10 @@ async fn supervise(
         Err(e) => format!("could not wait for katago: {e}"),
     };
     if let Some(inner) = engine.upgrade() {
-        inner.dead.store(true, Ordering::Release);
-        if !inner.subs().is_empty() {
+        let err = EngineError::EngineExited(with_tail(reason.clone(), &tail));
+        if inner.kill(err) {
             tracing::error!(reason, "katago exited with live analyses");
         }
-        inner.fail_all(EngineError::EngineExited(with_tail(reason, &tail)));
     }
     let _ = shutdown_complete.send(());
 }
@@ -680,5 +704,88 @@ mod tests {
         );
         assert_eq!(config_u16(&path, "nnCacheSizePowerOfTwo"), None);
         std::fs::remove_file(&path).unwrap();
+    }
+
+    fn req() -> AnalyzeReq {
+        AnalyzeReq::new(Size::square(19), mirai_core::RuleSet::Chinese, 7.5)
+    }
+
+    /// No process: `lines` is what subscribe and cancel would write to KataGo.
+    fn detached() -> (LocalEngine, mpsc::UnboundedReceiver<String>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (shutdown_tx, _shutdown_rx) = oneshot::channel();
+        let (_complete_tx, shutdown_complete) = oneshot::channel();
+        let engine = LocalEngine {
+            inner: Arc::new(Inner {
+                desc: EngineDesc::placeholder("test"),
+                to_engine: tx,
+                subs: Mutex::new(Subs {
+                    map: HashMap::new(),
+                    dead: false,
+                }),
+                next_id: AtomicU64::new(0),
+                _shutdown: shutdown_tx,
+            }),
+            shutdown_complete,
+        };
+        (engine, rx)
+    }
+
+    #[test]
+    fn a_decode_failure_terminates_the_search() {
+        let (engine, mut lines) = detached();
+        let sub = engine.subscribe(req());
+        let query = lines.try_recv().expect("query");
+        assert!(query.contains("\"id\":\"0\""), "{query}");
+
+        // Analysis-shaped, but missing rootInfo, so decode_report fails.
+        engine
+            .inner
+            .handle(r#"{"id":"0","isDuringSearch":true,"moveInfos":[]}"#);
+
+        match sub.current() {
+            SubEvent::Failed(EngineError::Protocol(msg)) => {
+                assert!(msg.contains("rootInfo"), "{msg}");
+            }
+            other => panic!("expected a protocol failure, got {other:?}"),
+        }
+        let term = lines
+            .try_recv()
+            .expect("decode failure must terminate the search");
+        let v: serde_json::Value = serde_json::from_str(&term).unwrap();
+        assert_eq!(v["action"], "terminate");
+        assert_eq!(v["terminateId"], "0");
+        assert!(engine.inner.subs().map.is_empty());
+
+        drop(sub);
+        assert!(
+            lines.try_recv().is_err(),
+            "drop must not terminate a second time"
+        );
+    }
+
+    #[test]
+    fn dropping_a_subscription_forgets_it_before_the_tail_arrives() {
+        let (engine, mut lines) = detached();
+        let sub = engine.subscribe(req());
+        let _query = lines.try_recv().expect("query");
+        drop(sub);
+
+        let term = lines.try_recv().expect("drop must terminate");
+        let v: serde_json::Value = serde_json::from_str(&term).unwrap();
+        assert_eq!(v["action"], "terminate");
+        assert_eq!(v["terminateId"], "0");
+        assert!(
+            engine.inner.subs().map.is_empty(),
+            "a cancelled query must not keep its entry until KataGo answers"
+        );
+
+        // Would fail decode if the entry were still there. It must not revive the
+        // entry or send another terminate.
+        engine
+            .inner
+            .handle(r#"{"id":"0","isDuringSearch":false,"moveInfos":[{"order":0}]}"#);
+        assert!(engine.inner.subs().map.is_empty());
+        assert!(lines.try_recv().is_err());
     }
 }

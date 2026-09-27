@@ -22,10 +22,10 @@ pub enum RawResponse {
     /// An analysis result for one turn of one query.
     Analysis {
         id: String,
-        /// `!isDuringSearch` — the query is finished and will send nothing more.
+        /// `!isDuringSearch`, or `noResults` — the query is finished and will send nothing
+        /// more. mirai forgets a query before terminating it, so a `noResults` line only
+        /// ever reaches an id it no longer routes.
         terminal: bool,
-        /// The query was terminated before any search happened; there is no data.
-        no_results: bool,
         body: Value,
     },
     /// The echo of a special action query (`query_version`, `query_models`, `terminate`).
@@ -80,7 +80,6 @@ impl RawResponse {
         Ok(RawResponse::Analysis {
             id,
             terminal: !during || no_results,
-            no_results,
             body,
         })
     }
@@ -427,7 +426,6 @@ mod tests {
             during,
             RawResponse::Analysis {
                 terminal: false,
-                no_results: false,
                 ..
             }
         ));
@@ -438,11 +436,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             final_report,
-            RawResponse::Analysis {
-                terminal: true,
-                no_results: false,
-                ..
-            }
+            RawResponse::Analysis { terminal: true, .. }
         ));
 
         // A response with no isDuringSearch field at all is a final one.
@@ -458,11 +452,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             terminated,
-            RawResponse::Analysis {
-                terminal: true,
-                no_results: true,
-                ..
-            }
+            RawResponse::Analysis { terminal: true, .. }
         ));
 
         assert_eq!(
