@@ -152,6 +152,23 @@ template $MiraiWindow: Adw.ApplicationWindow {
                     }
                   }
 
+                  // Beside Play, whose icon already shows the side to move; pressing the
+                  // Play toggle itself only ever selects the tool.
+                  Gtk.Button {
+                    icon-name: "mirai-swap-symbolic";
+                    valign: center;
+                    action-name: "win.switch-to-play";
+                    tooltip-text: _("Switch Side to Play (T)");
+
+                    styles [
+                      "flat",
+                    ]
+
+                    accessibility {
+                      label: _("Switch Side to Play");
+                    }
+                  }
+
                   Adw.ToggleGroup stone_tools {
                     valign: center;
 

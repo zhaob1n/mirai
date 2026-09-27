@@ -16,5 +16,6 @@
     <file preprocess="xml-stripblanks">icons/hicolor/scalable/actions/mirai-mark-cross-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/hicolor/scalable/actions/mirai-mark-label-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/hicolor/scalable/actions/mirai-eraser-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/hicolor/scalable/actions/mirai-swap-symbolic.svg</file>
   </gresource>
 </gresources>

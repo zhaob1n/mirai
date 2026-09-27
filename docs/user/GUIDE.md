@@ -238,8 +238,8 @@ jump there; collapse the list without losing its contents. An analysed record sh
 blunders even without a running engine, though starting a new sweep requires one.
 
 **Editing tools.** Reveal the toolbar via **Editing Tools** on the navigation bar or the
-View menu. It contains undo/redo, Play, setup and marks. Closing it returns to Play
-without adding an undo step. During a game it stays closed and disabled.
+View menu. It contains undo/redo, **Switch Side to Play**, Play, setup and marks. Closing
+it returns to Play without adding an undo step. During a game it stays closed and disabled.
 
 **Variations and the move tree.** Playing before the end creates a variation, leaving the
 original continuation intact. In Moves, the main line runs downwards with variations to
@@ -256,9 +256,10 @@ current node has a ring. Click a node to navigate; right-click one for *Set as M
 The start of the game cannot be deleted. Setup on a node that already has a move or a
 continuation adds a new variation; further setup clicks stay on that new leaf.
 
-**Stone tools.** Choose black or white setup to place, remove or replace stones without
-changing the turn. Right-click uses the opposite colour. To change the side to move, use
-**Board Menu** → **Black to Play** / **White to Play**.
+**Stone tools.** The Play tool's icon shows the side to move. **Switch Side to Play** (the
+⇄ button beside it, or <kbd>t</kbd>) hands the move to the other side; the record stores
+that as `PL`. Choose black or white setup to place, remove or replace stones without
+changing the turn. Right-click uses the opposite colour.
 
 **Comments and marks.** Edit a move's comment in **Comment**. It saves when you navigate
 away, leave the field or save the record; the typing session is one undo. A second click of
@@ -558,7 +559,7 @@ logs and the generated analysis config live under `$XDG_DATA_HOME/mirai/`.
 | <kbd>Page Up/Down</kbd> | ten moves | <kbd>o</kbd> | ownership overlay | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> | redo | <kbd>Ctrl</kbd>+<kbd>C</kbd> | copy record |
 | <kbd>↑</kbd> <kbd>↓</kbd> | variations | <kbd>y</kbd> | policy overlay | <kbd>Delete</kbd> | delete branch | <kbd>Ctrl</kbd>+<kbd>V</kbd> | paste record |
 | | | <kbd>c</kbd> | coordinates | <kbd>Ctrl</kbd>+<kbd>↑</kbd> | set as main line | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> | download from Fox |
-| | | <kbd>n</kbd> | move numbers | | | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> | clear board |
+| | | <kbd>n</kbd> | move numbers | <kbd>t</kbd> | switch side to play | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> | clear board |
 | | | <kbd>F9</kbd> | show/hide sidebar | | | | |
 | | | <kbd>g</kbd> | show/hide win-rate graph | | | | |
 
