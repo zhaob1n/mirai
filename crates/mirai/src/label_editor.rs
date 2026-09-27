@@ -3,7 +3,7 @@
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use gtk::{CompositeTemplate, gdk, glib};
+use gtk::{CompositeTemplate, glib};
 
 use mirai_core::Point;
 
@@ -79,7 +79,6 @@ pub(crate) fn present(window: &MiraiWindow, point: Point) {
     let dialog = LabelEditorDialog::new();
     let entry = dialog.imp().entry.get();
     entry.set_text(&prefill);
-    intercept_entry_history(&entry);
 
     dialog.imp().cancel_button.connect_clicked(glib::clone!(
         #[weak]
@@ -131,44 +130,4 @@ fn apply_label(
         });
     }
     dialog.close();
-}
-
-fn intercept_entry_history(entry: &gtk::Entry) {
-    let keys = gtk::EventControllerKey::new();
-    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
-    keys.connect_key_pressed(glib::clone!(
-        #[weak]
-        entry,
-        #[upgrade_or]
-        glib::Propagation::Proceed,
-        move |_, keyval, _, modifiers| intercept_undo_keys(&entry, keyval, modifiers)
-    ));
-    entry.add_controller(keys);
-}
-
-fn intercept_undo_keys(
-    entry: &gtk::Entry,
-    keyval: gdk::Key,
-    modifiers: gdk::ModifierType,
-) -> glib::Propagation {
-    if !modifiers.contains(gdk::ModifierType::CONTROL_MASK) {
-        return glib::Propagation::Proceed;
-    }
-    let shift = modifiers.contains(gdk::ModifierType::SHIFT_MASK);
-    let z = keyval == gdk::Key::z || keyval == gdk::Key::Z;
-    let y = keyval == gdk::Key::y || keyval == gdk::Key::Y;
-    let action = if !shift && z {
-        "text.undo"
-    } else if (shift && z) || (!shift && y) {
-        "text.redo"
-    } else {
-        return glib::Propagation::Proceed;
-    };
-    if let Some(text) = entry
-        .delegate()
-        .and_then(|d| d.downcast::<gtk::Text>().ok())
-    {
-        let _ = text.activate_action(action, None);
-    }
-    glib::Propagation::Stop
 }

@@ -225,7 +225,6 @@ impl MoveTreeView {
         this.add_css_class("mirai-movetree");
         this.set_halign(gtk::Align::Start);
         this.set_valign(gtk::Align::Start);
-
         let click = gtk::GestureClick::new();
         click.set_button(gdk::BUTTON_PRIMARY);
         {
@@ -351,6 +350,7 @@ impl MoveTreeView {
     }
 
     fn click_at(&self, x: f32, y: f32) {
+        crate::widgets::release_focus(self);
         if let Some(id) = self.node_at(x, y) {
             self.state().set_cursor(id);
         }

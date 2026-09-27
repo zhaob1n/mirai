@@ -564,9 +564,17 @@ logs and the generated analysis config live under `$XDG_DATA_HOME/mirai/`.
 
 <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes back both players' last moves during a game; in review it
 undoes the last edit — a placed stone, a mark, a comment commit — not each keystroke.
-<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redoes it (disabled during a game). While a
-comment or label field has focus, those keys undo typing in that field instead. The same
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redoes it (disabled during a game). The same
 table is in the application under Main Menu → *Keyboard Shortcuts*.
+
+**Typing wins.** While a comment, label or search field has focus, the keys it types and
+edits with go to it: letters, Space, arrows, <kbd>Delete</kbd>, and
+<kbd>Ctrl</kbd>+<kbd>A</kbd>/<kbd>C</kbd>/<kbd>V</kbd>/<kbd>Z</kbd> — so <kbd>p</kbd> in a
+comment is a letter, not a pass, and <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes typing. Click the
+board, the graph or the move tree to hand those keys back. <kbd>Ctrl</kbd>+<kbd>S</kbd>,
+<kbd>Ctrl</kbd>+<kbd>O</kbd>, <kbd>Ctrl</kbd>+<kbd>N</kbd>, <kbd>Ctrl</kbd>+<kbd>E</kbd> and
+<kbd>F9</kbd> work everywhere. With a button focused, <kbd>Space</kbd> presses that button,
+as everywhere in GNOME.
 
 No dedicated accelerator: switching engine profile, *Preferences*, *Keyboard Shortcuts*,
 *About mirai* and *Editing Tools*. These remain reachable with standard

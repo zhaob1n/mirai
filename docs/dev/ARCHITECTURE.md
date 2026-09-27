@@ -590,9 +590,20 @@ Sidebar widths are 300 sp normally and 386 sp with Loss/Prior. Candidate cell wi
 requests stay fixed so changing figures do not remeasure the list on every report.
 
 Every user-triggerable operation is a `win.*` action registered in `install_actions`, so the
-menu, the buttons, the accelerators, the shortcuts window and the debug harness all drive the
-same code. Add an action there, with its accelerator in the same table; never wire a button's
-`clicked` directly to logic.
+menu, the buttons, the shortcuts, the shortcuts window and the debug harness all drive the
+same code. Add an action there and its key to `SHORTCUTS` in `window.rs`; never wire a
+button's `clicked` directly to logic.
+
+A shortcut's `KeyScope` decides who sees the key first. GTK runs application accelerators
+globally in the window's capture phase, ahead of the focused widget, so `Global` is only for
+combinations no text field uses (Ctrl+S, Ctrl+O, F9). Everything else is `View`: a local
+`GtkShortcutController` on the window in the bubble phase, which a comment, label or search
+field pre-empts by using the key. Ctrl+Z and Ctrl+Shift+Z are swallowed while a text field
+has focus even when its own history is empty, so undo never falls through to the record. A
+menu item whose shortcut is `View` names it with an `accel` attribute in `window.blp`, since
+no accelerator exists for the menu to find. Pressing the board, graph or move tree clears the
+window's focus (`widgets::release_focus`), handing the keys back after typing; they are not
+Tab stops, having no keys of their own.
 
 ### Window ownership rule (INV-8)
 

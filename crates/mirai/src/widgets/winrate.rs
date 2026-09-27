@@ -312,13 +312,13 @@ impl WinrateGraph {
         this.set_tooltip_text(Some(
             "Black win rate (solid) and Black score lead (dashed) over the main line",
         ));
-
         let click = gtk::GestureClick::new();
         click.set_button(gdk::BUTTON_PRIMARY);
         {
             let weak = this.downgrade();
             click.connect_pressed(move |_, _, x, _| {
                 if let Some(this) = weak.upgrade() {
+                    crate::widgets::release_focus(&this);
                     this.imp().pressed.set(true);
                     this.jump_to(x as f32);
                 }

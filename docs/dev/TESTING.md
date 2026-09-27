@@ -282,6 +282,7 @@ Traps:
 | `fill:<placeholder>=<text>` | Fill the first visible `gtk::SearchEntry` or `gtk::Entry` whose placeholder matches | 120 ms |
 | `board:<primary\|secondary\|hover>:<GTP>` | Click the mapped board through its production handler, or with `hover` move the pointer there through the motion handler (ghost stone, candidate preview). Invalid, pass and off-board coordinates fail without editing | 120 ms |
 | `tree:<primary\|secondary>:<depth>:<lane>` | Press the move-tree cell at that grid position (root is `0:0`, the main line is lane 0) through its production handler: `primary` navigates, `secondary` opens the node menu. `no mapped move tree` unless `stack:Moves` is showing | 120 ms |
+| `focus:<widget id>` | Give keyboard focus to the widget with that Blueprint id or `GtkWidget:name` (`focus:comment`, `focus:editor_toggle`). `NOT FOCUSABLE` when missing or refused. Pair with `tools/ui/type-keys.sh` to see where a real key goes | — |
 | `shot:<path.png>` | Render the active window to PNG | see below |
 | `shot:<path.png>=<widget id>` | Same render, cropped to one widget. Ids are Blueprint's (`blunder_expander`, `nav`, …) | see below |
 | `divider:<px>` | Move the board/graph divider so the graph is that tall, through the `set_position` a drag ends in; the paned clamps it at the graph's minimum (80 once laid out). `NOT LAID OUT` while the graph is hidden or unallocated | 250 ms |
@@ -637,6 +638,7 @@ Symptom, cause or guard, and location. Rendering mechanics live in
 | The frame bug appears only on an idle machine | Check `/proc/loadavg` and frames per fold; a `shot:` cannot measure this | [`RENDERING.md` §6](RENDERING.md#6-candidate-labels) |
 | Frames drop during search; GPU is at 99% | Keep list objects stable and mutate in place, not a model splice per report | [`RENDERING.md` §7](RENDERING.md#7-a-report-cost-a-layout-and-it-was-never-the-gpu) |
 | Whole-game analysis sits at 0/N and then completes in one jump | A loop that awaits a permit per position dispatches the *whole* plan before it joins anything, so the first result arrives only once all but `concurrency` searches are done. Refill the `JoinSet` inside the join loop. `running.len() < concurrency` is the whole cap | `mirai_client::batch::sweep` |
+| Typing in a comment passes, deletes a branch or toggles analysis; Ctrl+Z in a field undoes the record | The key was made an application accelerator. Those run in the window's capture phase, before the focused field. Only combinations no text field uses may be `KeyScope::Global`; check with `focus:comment` and `tools/ui/type-keys.sh` | `window::SHORTCUTS`, `view_shortcuts` |
 | `harness: action … -> MISSING` | No such action on the active window, or a typo. `app.*` goes to the application | `harness::activate`, `window::install_actions` |
 | `harness: screenshot failed: nothing was drawn` | The window never mapped, or a modal grabbed before `present()` | Lengthen the preceding `wait:` |
 | The harness does nothing at all | Release build (`#[cfg(debug_assertions)]`), `MIRAI_HARNESS` unset, or every step malformed | `harness::install` |

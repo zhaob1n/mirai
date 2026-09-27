@@ -527,7 +527,12 @@ template $MiraiWindow: Adw.ApplicationWindow {
 menu open_menu {
   section {
     item ("_Open File…", "win.open")
-    item ("_Paste SGF", "win.paste-sgf")
+    // View-scoped shortcuts are not application accelerators, so the menu is told the hint.
+    item {
+      label: _("_Paste SGF");
+      action: "win.paste-sgf";
+      accel: "<Control>v";
+    }
   }
 }
 
@@ -536,11 +541,19 @@ menu primary_menu {
     item ("_Clear Board", "win.clear-board")
     item ("_Save", "win.save")
     item ("Save _As…", "win.save-as")
-    item ("_Copy SGF", "win.copy-sgf")
+    item {
+      label: _("_Copy SGF");
+      action: "win.copy-sgf";
+      accel: "<Control>c";
+    }
   }
 
   section {
-    item ("Analyse _Game", "win.analyse-game")
+    item {
+      label: _("Analyse _Game");
+      action: "win.analyse-game";
+      accel: "<Control>a";
+    }
     item ("_Estimate Score", "win.score")
   }
 
@@ -549,19 +562,41 @@ menu primary_menu {
 
     section {
       item ("_Sidebar", "win.toggle-sidebar")
-      item ("_Win-Rate Graph", "win.toggle-graph")
+      item {
+        label: _("_Win-Rate Graph");
+        action: "win.toggle-graph";
+        accel: "g";
+      }
       item ("_Editing Tools", "win.toggle-editor")
       item ("_Loss and Prior Columns", "win.toggle-candidate-details")
     }
 
     section {
-      item ("_Coordinates", "win.toggle-coords")
-      item ("_Move Numbers", "win.toggle-move-numbers")
+      item {
+        label: _("_Coordinates");
+        action: "win.toggle-coords";
+        accel: "c";
+      }
+
+      item {
+        label: _("_Move Numbers");
+        action: "win.toggle-move-numbers";
+        accel: "n";
+      }
     }
 
     section {
-      item ("_Ownership Overlay", "win.toggle-ownership")
-      item ("_Policy Overlay", "win.toggle-policy")
+      item {
+        label: _("_Ownership Overlay");
+        action: "win.toggle-ownership";
+        accel: "o";
+      }
+
+      item {
+        label: _("_Policy Overlay");
+        action: "win.toggle-policy";
+        accel: "y";
+      }
     }
   }
 

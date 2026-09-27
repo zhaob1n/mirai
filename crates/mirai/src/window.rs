@@ -256,6 +256,7 @@ pub fn present(
     let move_tree = MoveTreeView::new(&state);
     let analysis = AnalysisPanel::new(&state);
     let comment = gtk::TextView::builder()
+        .name("comment")
         .wrap_mode(gtk::WrapMode::WordChar)
         .left_margin(8)
         .right_margin(8)
@@ -639,73 +640,6 @@ fn connect_comment(ui: &Ui) {
     let weak = ui.weak_window();
     focus.connect_leave(move |_| with_window_ui(&weak, flush_comment));
     ui.comment.add_controller(focus);
-
-    let keys = gtk::EventControllerKey::new();
-    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let weak = ui.weak_window();
-    keys.connect_key_pressed(move |_, key, _, modifiers| {
-        let Some(redo) = comment_buffer_op(key, modifiers) else {
-            return glib::Propagation::Proceed;
-        };
-        with_window_ui(&weak, |ui| apply_comment_buffer_op(ui, redo));
-        glib::Propagation::Stop
-    });
-    ui.comment.add_controller(keys);
-
-    // Application accels capture at the window; stop them while the comment
-    // view has focus even if the buffer can no longer undo.
-    if let Some(window) = ui.window() {
-        let keys = gtk::EventControllerKey::new();
-        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
-        let weak = ui.weak_window();
-        keys.connect_key_pressed(move |_, key, _, modifiers| {
-            let Some(redo) = comment_buffer_op(key, modifiers) else {
-                return glib::Propagation::Proceed;
-            };
-            let Some(window) = weak.upgrade() else {
-                return glib::Propagation::Proceed;
-            };
-            let handled = window
-                .with_ui(|ui| {
-                    if !ui.comment.has_focus() {
-                        return false;
-                    }
-                    apply_comment_buffer_op(ui, redo);
-                    true
-                })
-                .unwrap_or(false);
-            if handled {
-                glib::Propagation::Stop
-            } else {
-                glib::Propagation::Proceed
-            }
-        });
-        window.add_controller(keys);
-    }
-}
-
-/// `Some(true)` is redo, `Some(false)` is undo.
-fn comment_buffer_op(key: gdk::Key, modifiers: gdk::ModifierType) -> Option<bool> {
-    if !modifiers.contains(gdk::ModifierType::CONTROL_MASK) {
-        return None;
-    }
-    let shift = modifiers.contains(gdk::ModifierType::SHIFT_MASK);
-    if key == gdk::Key::z || key == gdk::Key::Z {
-        Some(shift)
-    } else if key == gdk::Key::y || key == gdk::Key::Y {
-        Some(true)
-    } else {
-        None
-    }
-}
-
-fn apply_comment_buffer_op(ui: &Ui, redo: bool) {
-    let buffer = ui.comment.buffer();
-    if redo {
-        buffer.redo();
-    } else {
-        buffer.undo();
-    }
 }
 
 fn win_simple(ui: &Ui, name: &str) -> Option<gio::SimpleAction> {
@@ -1987,7 +1921,7 @@ fn show_shortcuts(ui: &Ui) {
     ] {
         let section = adw::ShortcutsSection::new(Some(title));
         for (label, action) in items {
-            section.add(adw::ShortcutsItem::from_action(label, action));
+            section.add(adw::ShortcutsItem::new(label, accel_for(action)));
         }
         dialog.add(section);
     }
@@ -2596,43 +2530,129 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
     window.insert_action_group("win", Some(&group));
 
     if let Some(app) = window.application() {
-        for (action, accels) in [
-            ("win.first", &["Home"][..]),
-            ("win.last", &["End"]),
-            ("win.prev", &["Left"]),
-            ("win.next", &["Right"]),
-            ("win.prev10", &["Page_Up"]),
-            ("win.next10", &["Page_Down"]),
-            ("win.branch-prev", &["Up"]),
-            ("win.branch-next", &["Down"]),
-            ("win.toggle-analysis", &["space"]),
-            ("win.pass", &["p"]),
-            ("win.undo", &["<Control>z"]),
-            ("win.redo", &["<Control><Shift>z"]),
-            ("win.delete-branch", &["Delete"]),
-            ("win.promote-line", &["<Control>Up"]),
-            ("win.switch-to-play", &["t"]),
-            ("win.open", &["<Control>o"]),
-            ("win.download-fox", &["<Control><Shift>o"]),
-            ("win.clear-board", &["<Control><Shift>n"]),
-            ("win.save", &["<Control>s"]),
-            ("win.save-as", &["<Control><Shift>s"]),
-            ("win.copy-sgf", &["<Control>c"]),
-            ("win.paste-sgf", &["<Control>v"]),
-            ("win.toggle-ownership", &["o"]),
-            ("win.toggle-policy", &["y"]),
-            ("win.toggle-coords", &["c"]),
-            ("win.toggle-move-numbers", &["n"]),
-            ("win.toggle-sidebar", &["F9"]),
-            ("win.toggle-graph", &["g"]),
-            ("win.analyse-game", &["<Control>a"]),
-            ("win.new-game", &["<Control>n"]),
-            ("win.score", &["<Control>e"]),
-        ] {
-            app.set_accels_for_action(action, accels);
+        for shortcut in SHORTCUTS.iter().filter(|s| s.scope == KeyScope::Global) {
+            app.set_accels_for_action(shortcut.action, &[shortcut.accel]);
         }
     }
+    window.add_controller(view_shortcuts());
     update_editor_actions(ui);
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KeyScope {
+    /// A GTK application accelerator: the window claims the key in its capture phase,
+    /// before the focused widget sees it. Only for combinations no text field uses.
+    Global,
+    /// A local shortcut the window handles in its bubble phase, after the focused widget
+    /// had its chance: a comment, label or search field keeps its letters, Space, arrows,
+    /// Delete and Ctrl+A/C/V/Z, and the key reaches mirai only when nothing used it.
+    View,
+}
+
+struct Shortcut {
+    action: &'static str,
+    accel: &'static str,
+    scope: KeyScope,
+}
+
+const fn view(action: &'static str, accel: &'static str) -> Shortcut {
+    Shortcut {
+        action,
+        accel,
+        scope: KeyScope::View,
+    }
+}
+
+const fn global(action: &'static str, accel: &'static str) -> Shortcut {
+    Shortcut {
+        action,
+        accel,
+        scope: KeyScope::Global,
+    }
+}
+
+/// Every keyboard shortcut, and the one place the shortcuts dialog reads them from.
+///
+/// GTK handles application accelerators globally in the capture phase and key bindings
+/// locally, so an accelerator on a key a text field types or edits with — Space, `p`,
+/// Delete, Ctrl+Z — acted on the record while the user was writing a comment.
+const SHORTCUTS: &[Shortcut] = &[
+    view("win.first", "Home"),
+    view("win.last", "End"),
+    view("win.prev", "Left"),
+    view("win.next", "Right"),
+    view("win.prev10", "Page_Up"),
+    view("win.next10", "Page_Down"),
+    view("win.branch-prev", "Up"),
+    view("win.branch-next", "Down"),
+    view("win.toggle-analysis", "space"),
+    view("win.pass", "p"),
+    view("win.undo", "<Control>z"),
+    view("win.redo", "<Control><Shift>z"),
+    view("win.delete-branch", "Delete"),
+    view("win.promote-line", "<Control>Up"),
+    view("win.switch-to-play", "t"),
+    global("win.open", "<Control>o"),
+    global("win.download-fox", "<Control><Shift>o"),
+    global("win.clear-board", "<Control><Shift>n"),
+    global("win.save", "<Control>s"),
+    global("win.save-as", "<Control><Shift>s"),
+    view("win.copy-sgf", "<Control>c"),
+    view("win.paste-sgf", "<Control>v"),
+    view("win.toggle-ownership", "o"),
+    view("win.toggle-policy", "y"),
+    view("win.toggle-coords", "c"),
+    view("win.toggle-move-numbers", "n"),
+    global("win.toggle-sidebar", "F9"),
+    view("win.toggle-graph", "g"),
+    view("win.analyse-game", "<Control>a"),
+    global("win.new-game", "<Control>n"),
+    global("win.score", "<Control>e"),
+];
+
+/// The window's [`KeyScope::View`] shortcuts. Added after the window's own key bindings,
+/// so it runs first among them: an arrow nobody else used navigates the record rather
+/// than moving focus between buttons.
+fn view_shortcuts() -> gtk::ShortcutController {
+    let controller = gtk::ShortcutController::new();
+    controller.set_propagation_phase(gtk::PropagationPhase::Bubble);
+    controller.set_scope(gtk::ShortcutScope::Local);
+    // A field with nothing left to undo, or a read-only one, disables its own `text.undo`, so
+    // Ctrl+Z bubbles on; tried first, this swallows it rather than undo a move.
+    for accel in [accel_for("win.undo"), accel_for("win.redo")] {
+        controller.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string(accel),
+            Some(gtk::CallbackAction::new(|window, _| {
+                let typing = window
+                    .root()
+                    .and_then(|root| root.focus())
+                    .is_some_and(|focus| is_text_field(&focus));
+                if typing {
+                    glib::Propagation::Stop
+                } else {
+                    glib::Propagation::Proceed
+                }
+            })),
+        ));
+    }
+    for shortcut in SHORTCUTS.iter().filter(|s| s.scope == KeyScope::View) {
+        controller.add_shortcut(gtk::Shortcut::new(
+            gtk::ShortcutTrigger::parse_string(shortcut.accel),
+            Some(gtk::NamedAction::new(shortcut.action)),
+        ));
+    }
+    controller
+}
+
+fn is_text_field(widget: &gtk::Widget) -> bool {
+    widget.is::<gtk::Editable>() || widget.is::<gtk::TextView>()
+}
+
+fn accel_for(action: &str) -> &'static str {
+    SHORTCUTS
+        .iter()
+        .find(|s| s.action == action)
+        .map_or("", |s| s.accel)
 }
 
 #[cfg(test)]

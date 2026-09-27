@@ -34,6 +34,8 @@ enum Step {
     Board(String, String),
     /// Press a move-tree cell, `primary` or `secondary`, given as `depth:lane`.
     Tree(String, String),
+    /// Give keyboard focus to the widget with this Blueprint id or `GtkWidget:name`.
+    Focus(String),
     /// Activate a matching button or enabled menu item in the active window.
     Press(String),
     /// Open a PreferencesDialog page by title.
@@ -87,6 +89,7 @@ fn parse(script: &str) -> Vec<Step> {
                         None
                     }
                 },
+                "focus" => Some(Step::Focus(rest.to_string())),
                 "shot" => Some(match rest.rsplit_once('=') {
                     Some((path, region)) => Step::Shot(path.to_string(), Some(region.to_string())),
                     None => Step::Shot(rest.to_string(), None),
@@ -221,6 +224,16 @@ pub fn install(app: &adw::Application) {
                         }
                     }
                     glib::timeout_future(Duration::from_millis(120)).await;
+                }
+                Step::Focus(name) => {
+                    let done = app
+                        .active_window()
+                        .and_then(|window| find_named(window.upcast_ref(), &name))
+                        .is_some_and(|widget| widget.grab_focus());
+                    eprintln!(
+                        "harness: focus {name:?} -> {}",
+                        if done { "ok" } else { "NOT FOCUSABLE" }
+                    );
                 }
                 Step::Press(label) => {
                     let done = press(&app, &label);

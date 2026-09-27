@@ -1268,6 +1268,7 @@ impl BoardView {
 
     /// Hit-tests `(x, y)` and delivers the click to the window hook. No default play path.
     pub(crate) fn click_at(&self, button: u32, x: f64, y: f64) {
+        crate::widgets::release_focus(self);
         let Some(point) = self.point_at(x, y) else {
             return;
         };
