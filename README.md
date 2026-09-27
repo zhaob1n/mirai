@@ -52,6 +52,13 @@ On Arch: `pacman -S gtk4 libadwaita blueprint-compiler`. On Debian/Ubuntu, insta
 cargo build --release --workspace
 ```
 
+An Arch PKGBUILD in [`packaging/aur/`](packaging/aur/) builds the GitHub head into
+`mirai-git` and `mirai-server-git`; it is not published yet.
+
+```
+cd packaging/aur && makepkg -si
+```
+
 ---
 
 ## Getting started
