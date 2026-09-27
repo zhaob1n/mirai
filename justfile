@@ -4,7 +4,7 @@
 # Build and install without a distribution package:
 #
 #     just build
-#     sudo just install            # both; or `install mirai` / `install server`
+#     sudo just install            # both; or `install mirai` / `install mirai-server`
 #     sudo just uninstall          # likewise
 #
 # `cargo install` can place only binaries, not the desktop entry, metainfo and icons, so
@@ -24,7 +24,7 @@ build:
     cargo build --locked --release -p mirai -p mirai-server
 
 # Install under PREFIX (default /usr/local), staged under DESTDIR.
-[arg("part", pattern="mirai|server|all", help="`mirai` (the GUI), `server`, or omitted for both")]
+[arg("part", pattern="mirai|mirai-server|all", help="`mirai` (the GUI), `mirai-server`, or omitted for both")]
 [script]
 install part="all": && refresh
     need() {
@@ -33,7 +33,7 @@ install part="all": && refresh
             exit 1
         }
     }
-    if [ "{{ part }}" != server ]; then
+    if [ "{{ part }}" != mirai-server ]; then
         need mirai
         set -x
         install -Dm755 "{{ target }}/release/mirai" -t "{{ root }}/bin/"
@@ -52,11 +52,11 @@ install part="all": && refresh
     fi
 
 # Remove what `install` put under PREFIX.
-[arg("part", pattern="mirai|server|all", help="`mirai` (the GUI), `server`, or omitted for both")]
+[arg("part", pattern="mirai|mirai-server|all", help="`mirai` (the GUI), `mirai-server`, or omitted for both")]
 [script]
 uninstall part="all": && refresh
     set -x
-    if [ "{{ part }}" != server ]; then
+    if [ "{{ part }}" != mirai-server ]; then
         rm -f "{{ root }}/bin/mirai"
         rm -f "{{ root }}/share/applications/{{ appid }}.desktop"
         rm -f "{{ root }}/share/metainfo/{{ appid }}.metainfo.xml"

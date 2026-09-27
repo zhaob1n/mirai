@@ -56,7 +56,7 @@ distribution release older than GNOME 50 ships a GTK and libadwaita too old to b
 
 ```
 just build
-sudo just install        # both; or `just install mirai` / `just install server`
+sudo just install        # both; or `just install mirai` / `just install mirai-server`
 sudo just uninstall      # likewise
 ```
 

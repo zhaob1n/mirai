@@ -61,5 +61,5 @@ package_mirai-server-git() {
   conflicts=('mirai-server')
 
   cd "$_repo"
-  DESTDIR="$pkgdir" PREFIX=/usr just install server
+  DESTDIR="$pkgdir" PREFIX=/usr just install mirai-server
 }
