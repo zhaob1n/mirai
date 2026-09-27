@@ -8,6 +8,7 @@
 
 use std::sync::LazyLock;
 
+use arrayvec::ArrayVec;
 use smallvec::SmallVec;
 
 use crate::SplitMix64;
@@ -84,8 +85,7 @@ impl Bits {
 }
 
 /// Minimal stack interface so the flood fill can run on the board's reusable scratch
-/// buffer (`&mut self` paths) or on an inline `SmallVec` (`&self` paths) without ever
-/// allocating.
+/// buffer (`&mut self` paths) or on an inline array (`&self` paths) without allocating.
 trait Stack {
     fn clear(&mut self);
     fn push(&mut self, v: u16);
@@ -107,18 +107,24 @@ impl Stack for Vec<u16> {
     }
 }
 
-impl Stack for SmallVec<[u16; 64]> {
+/// `&self` fills cannot borrow [`Board`]'s scratch `Vec`. A chain is at most
+/// [`MAX_POINTS`] stones and each stone is pushed once, so this never spills.
+/// `SmallVec` only has an inline buffer up to 64, which a large group overflowed
+/// on the hover path that asks every frame.
+type FillStack = ArrayVec<u16, MAX_POINTS>;
+
+impl Stack for FillStack {
     #[inline]
     fn clear(&mut self) {
-        SmallVec::clear(self)
+        ArrayVec::clear(self)
     }
     #[inline]
     fn push(&mut self, v: u16) {
-        SmallVec::push(self, v)
+        ArrayVec::push(self, v)
     }
     #[inline]
     fn pop(&mut self) -> Option<u16> {
-        SmallVec::pop(self)
+        ArrayVec::pop(self)
     }
 }
 
@@ -208,7 +214,7 @@ impl Board {
         if !self.size.contains(p) {
             return members;
         }
-        let mut stack: SmallVec<[u16; 64]> = SmallVec::new();
+        let mut stack = FillStack::new();
         walk(&self.stones, self.size, p, &mut stack, &mut members);
         members
     }
@@ -218,9 +224,8 @@ impl Board {
         if !self.size.contains(p) {
             return 0;
         }
-        let mut stack: SmallVec<[u16; 64]> = SmallVec::new();
-        let mut members = SmallVec::new();
-        walk(&self.stones, self.size, p, &mut stack, &mut members)
+        let mut stack = FillStack::new();
+        count_liberties(&self.stones, self.size, p, &mut stack, u32::MAX)
     }
 
     /// Non-mutating legality test, equivalent to `play` succeeding. Does not consider
@@ -235,32 +240,29 @@ impl Board {
         if rules.ko == Ko::Simple && self.ko_ban == Some(p) {
             return false;
         }
-        let mut stack: SmallVec<[u16; 64]> = SmallVec::new();
-        let mut members = SmallVec::new();
-        let mut has_empty_neighbor = false;
+        // Hover asks this every frame. Two liberties decide it: the point being
+        // played is already one liberty of each adjacent chain, and neither check
+        // needs the stones themselves.
+        let mut stack = FillStack::new();
         let mut friendly_neighbor = false;
-        let mut friendly_escape = false;
         for nb in self.size.neighbors(p) {
             match self.stones[nb.index()] {
-                None => has_empty_neighbor = true,
+                // A liberty of its own. Ko was already rejected, and a capture
+                // cannot make a stone with a liberty illegal.
+                None => return true,
                 Some(c) if c == color => {
                     friendly_neighbor = true;
-                    // One of this chain's liberties is `p` itself; a second one means the
-                    // played stone lives.
-                    if walk(&self.stones, self.size, nb, &mut stack, &mut members) >= 2 {
-                        friendly_escape = true;
+                    if count_liberties(&self.stones, self.size, nb, &mut stack, 2) >= 2 {
+                        return true;
                     }
                 }
                 Some(_) => {
-                    // An enemy chain whose only liberty is `p` is captured by the move.
-                    if walk(&self.stones, self.size, nb, &mut stack, &mut members) == 1 {
+                    // An enemy chain whose only liberty is `p` is captured.
+                    if count_liberties(&self.stones, self.size, nb, &mut stack, 2) == 1 {
                         return true;
                     }
                 }
             }
-        }
-        if has_empty_neighbor || friendly_escape {
-            return true;
         }
         // Suicide: legal only when the rules allow multi-stone suicide and the resulting
         // chain is bigger than one stone.
@@ -357,33 +359,45 @@ impl Board {
     }
 }
 
-/// Explicit-stack flood fill over the chain at `start`. Fills `members` with the chain's
-/// stones and returns its liberty count. Both buffers are cleared first.
-fn walk<S: Stack>(
+/// Explicit-stack flood fill over the chain at `start`.
+///
+/// Returns the liberty count, stopping once `limit` distinct liberties have been
+/// seen (`min(actual, limit)`). `members`, when `Some`, receives every stone; capture
+/// and [`Board::chain`] need the whole list and pass `u32::MAX`. Both buffers are
+/// cleared first.
+fn fill<S: Stack>(
     stones: &[Option<Color>],
     size: Size,
     start: Point,
     stack: &mut S,
-    members: &mut SmallVec<[Point; 32]>,
+    mut members: Option<&mut SmallVec<[Point; 32]>>,
+    limit: u32,
 ) -> u32 {
-    members.clear();
+    if let Some(members) = members.as_mut() {
+        members.clear();
+    }
     stack.clear();
     let Some(color) = stones[start.index()] else {
         return 0;
     };
     let mut seen = Bits::EMPTY;
     let mut libs = Bits::EMPTY;
-    let mut n_libs = 0;
+    let mut n_libs = 0u32;
     seen.insert(start.index());
     stack.push(start.0);
     while let Some(cur) = stack.pop() {
         let cur = Point(cur);
-        members.push(cur);
+        if let Some(members) = members.as_mut() {
+            members.push(cur);
+        }
         for nb in size.neighbors(cur) {
             match stones[nb.index()] {
                 None => {
                     if libs.insert(nb.index()) {
                         n_libs += 1;
+                        if n_libs >= limit {
+                            return n_libs;
+                        }
                     }
                 }
                 Some(c) if c == color => {
@@ -396,6 +410,30 @@ fn walk<S: Stack>(
         }
     }
     n_libs
+}
+
+/// Liberty count of the chain at `start`, stopping at `limit`. Allocates nothing
+/// beyond `stack`.
+#[inline]
+fn count_liberties<S: Stack>(
+    stones: &[Option<Color>],
+    size: Size,
+    start: Point,
+    stack: &mut S,
+    limit: u32,
+) -> u32 {
+    fill(stones, size, start, stack, None, limit)
+}
+
+/// Fills `members` with the chain at `start` and returns its liberty count.
+fn walk<S: Stack>(
+    stones: &[Option<Color>],
+    size: Size,
+    start: Point,
+    stack: &mut S,
+    members: &mut SmallVec<[Point; 32]>,
+) -> u32 {
+    fill(stones, size, start, stack, Some(members), u32::MAX)
 }
 
 #[cfg(test)]

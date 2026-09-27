@@ -73,7 +73,7 @@ pub fn parse_str(text: &str) -> Result<Vec<GameTree>, SgfError> {
         let mut arena = Vec::new();
         p.tree(&mut arena, None, 0)?;
         if !arena.is_empty() {
-            games.push(build(&arena)?);
+            games.push(build(arena)?);
         }
     }
     if games.is_empty() {
@@ -351,18 +351,29 @@ impl Parser<'_> {
     }
 
     /// Reads one `[...]` value, undoing SGF escaping. Soft line breaks disappear.
+    ///
+    /// Unescaped bytes are copied a run at a time. The bytes that reach
+    /// [`String::from_utf8`] are the same as a byte-by-byte copy, including a
+    /// truncated or ill-formed escape, so the lossy fallback is unchanged.
     fn value(&mut self) -> String {
         self.i += 1;
         let mut out: Vec<u8> = Vec::new();
+        let mut run = self.i;
         while self.i < self.b.len() {
             match self.b[self.i] {
                 b']' => {
+                    out.extend_from_slice(&self.b[run..self.i]);
                     self.i += 1;
+                    run = self.i;
                     break;
                 }
                 b'\\' => {
+                    out.extend_from_slice(&self.b[run..self.i]);
                     self.i += 1;
-                    let Some(c) = self.peek() else { break };
+                    let Some(c) = self.peek() else {
+                        run = self.i;
+                        break;
+                    };
                     if c == b'\n' || c == b'\r' {
                         self.i += 1;
                         // `\r\n` and `\n\r` are one soft break, not two.
@@ -372,18 +383,19 @@ impl Parser<'_> {
                         {
                             self.i += 1;
                         }
-                        continue;
+                    } else {
+                        let n = utf8_len(c);
+                        let end = (self.i + n).min(self.b.len());
+                        out.extend_from_slice(&self.b[self.i..end]);
+                        self.i = end;
                     }
-                    let n = utf8_len(c);
-                    let end = (self.i + n).min(self.b.len());
-                    out.extend_from_slice(&self.b[self.i..end]);
-                    self.i = end;
+                    run = self.i;
                 }
-                c => {
-                    out.push(c);
-                    self.i += 1;
-                }
+                _ => self.i += 1,
             }
+        }
+        if run < self.i {
+            out.extend_from_slice(&self.b[run..self.i]);
         }
         String::from_utf8(out)
             .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
@@ -481,42 +493,101 @@ fn is_root_info_prop(name: &str) -> bool {
     )
 }
 
-fn build(arena: &[RawNode]) -> Result<GameTree, SgfError> {
-    let root_props = &arena[0].props;
-    let find = |name: &str| -> Option<&str> {
-        root_props
-            .iter()
-            .find(|(k, _)| k == name)
-            .and_then(|(_, v)| v.first())
-            .map(String::as_str)
-    };
+fn first_value<'a>(props: &'a [(String, Vec<String>)], name: &str) -> Option<&'a str> {
+    props
+        .iter()
+        .find(|(k, _)| k == name)
+        .and_then(|(_, v)| v.first())
+        .map(String::as_str)
+}
 
-    let size = match find("SZ") {
+/// Removes `name`'s first occurrence, preserving the order of what remains.
+fn take_value(props: &mut Vec<(String, Vec<String>)>, name: &str) -> Option<String> {
+    let i = props.iter().position(|(k, _)| k == name)?;
+    let (_, values) = props.remove(i);
+    values.into_iter().next()
+}
+
+/// Classified before the name is moved into the tree. Root info properties are
+/// handled separately and never reach this.
+enum Prop {
+    Move(Color),
+    AddBlack,
+    AddWhite,
+    AddEmpty,
+    Comment,
+    ToPlay,
+    MoveNumber,
+    Label,
+    Triangle,
+    Square,
+    Circle,
+    Cross,
+    Other,
+}
+
+fn prop_kind(name: &str) -> Prop {
+    match name {
+        "B" => Prop::Move(Color::Black),
+        "W" => Prop::Move(Color::White),
+        "AB" => Prop::AddBlack,
+        "AW" => Prop::AddWhite,
+        "AE" => Prop::AddEmpty,
+        "C" => Prop::Comment,
+        "PL" => Prop::ToPlay,
+        "MN" => Prop::MoveNumber,
+        "LB" => Prop::Label,
+        "TR" => Prop::Triangle,
+        "SQ" => Prop::Square,
+        "CR" => Prop::Circle,
+        "MA" => Prop::Cross,
+        _ => Prop::Other,
+    }
+}
+
+fn build(mut arena: Vec<RawNode>) -> Result<GameTree, SgfError> {
+    let size = match first_value(&arena[0].props, "SZ") {
         Some(v) => parse_size(v)?,
         None => Size::square(19),
     };
-    let ruleset = find("RU").and_then(RuleSet::from_katago_name);
+    let ruleset = first_value(&arena[0].props, "RU").and_then(RuleSet::from_katago_name);
     let mut info = GameInfo::new(size, ruleset.unwrap_or_default());
-    if let Some(k) = find("KM").and_then(parse_komi) {
+    if let Some(k) = first_value(&arena[0].props, "KM").and_then(parse_komi) {
         info.komi = k;
     }
-    if let Some(h) = find("HA").and_then(|v| v.trim().parse::<u8>().ok()) {
+    if let Some(h) = first_value(&arena[0].props, "HA").and_then(|v| v.trim().parse::<u8>().ok()) {
         info.handicap = h;
     }
-    let set = |field: &mut String, prop: &str| {
-        if let Some(v) = find(prop) {
-            *field = v.to_owned();
-        }
-    };
-    set(&mut info.result, "RE");
-    set(&mut info.date, "DT");
-    set(&mut info.event, "EV");
-    set(&mut info.time_limit, "TM");
-    set(&mut info.overtime, "OT");
-    set(&mut info.players[0].name, "PB");
-    set(&mut info.players[1].name, "PW");
-    set(&mut info.players[0].rank, "BR");
-    set(&mut info.players[1].rank, "WR");
+    // The arena is dropped at the end of this function. Move the strings the tree
+    // keeps; `remove` preserves the order of the properties that stay unknown.
+    if let Some(v) = take_value(&mut arena[0].props, "RE") {
+        info.result = v;
+    }
+    if let Some(v) = take_value(&mut arena[0].props, "DT") {
+        info.date = v;
+    }
+    if let Some(v) = take_value(&mut arena[0].props, "EV") {
+        info.event = v;
+    }
+    if let Some(v) = take_value(&mut arena[0].props, "TM") {
+        info.time_limit = v;
+    }
+    if let Some(v) = take_value(&mut arena[0].props, "OT") {
+        info.overtime = v;
+    }
+    if let Some(v) = take_value(&mut arena[0].props, "PB") {
+        info.players[0].name = v;
+    }
+    if let Some(v) = take_value(&mut arena[0].props, "PW") {
+        info.players[1].name = v;
+    }
+    if let Some(v) = take_value(&mut arena[0].props, "BR") {
+        info.players[0].rank = v;
+    }
+    if let Some(v) = take_value(&mut arena[0].props, "WR") {
+        info.players[1].rank = v;
+    }
+    let mrai = take_value(&mut arena[0].props, "MRAI");
 
     let mut tree = GameTree::new(info);
     // Pre-order in the file is pre-order in the arena, and `add_child` appends, so the
@@ -526,54 +597,70 @@ fn build(arena: &[RawNode]) -> Result<GameTree, SgfError> {
         let id = tree.add_child(parent);
         debug_assert_eq!(id, NodeId(i as u32));
     }
-    for (i, raw) in arena.iter().enumerate() {
+    for (i, raw) in arena.iter_mut().enumerate() {
         let id = NodeId(i as u32);
         let is_root = i == 0;
         let mut setup = Setup::default();
+        let props = std::mem::take(&mut raw.props);
         let node = tree.node_mut(id);
-        for (name, values) in &raw.props {
-            let first = values.first().map(String::as_str).unwrap_or("");
-            match name.as_str() {
-                "B" | "W" => {
-                    let color = if name == "B" {
-                        Color::Black
-                    } else {
-                        Color::White
+        for (name, values) in props {
+            if is_root && is_root_info_prop(&name) {
+                continue;
+            }
+            match prop_kind(&name) {
+                Prop::Move(color) => {
+                    let value = values.into_iter().next().unwrap_or_default();
+                    let p = match size.from_sgf(value.as_bytes()) {
+                        Some(p) => p,
+                        None => {
+                            return Err(SgfError::BadPoint {
+                                prop: match color {
+                                    Color::Black => "B",
+                                    Color::White => "W",
+                                },
+                                value,
+                            });
+                        }
                     };
-                    let p = size
-                        .from_sgf(first.as_bytes())
-                        .ok_or_else(|| SgfError::BadPoint {
-                            prop: if color == Color::Black { "B" } else { "W" },
-                            value: first.to_owned(),
-                        })?;
                     node.mv = Some((color, p));
                 }
-                "AB" => points(size, values, &mut setup.add_black),
-                "AW" => points(size, values, &mut setup.add_white),
-                "AE" => points(size, values, &mut setup.add_empty),
-                "C" => node.comment = first.to_owned(),
-                "PL" => node.to_play_override = parse_color(first),
-                "MN" => node.move_number_override = first.trim().parse().ok(),
-                "LB" => {
-                    for v in values {
-                        let Some((coord, text)) = v.split_once(':') else {
-                            continue;
-                        };
-                        if let Some(p) = size.from_sgf(coord.as_bytes())
-                            && !p.is_pass()
-                        {
-                            node.marks.labels.push((p, text.to_owned()));
-                        }
+                Prop::AddBlack => points(size, &values, &mut setup.add_black),
+                Prop::AddWhite => points(size, &values, &mut setup.add_white),
+                Prop::AddEmpty => points(size, &values, &mut setup.add_empty),
+                Prop::Comment => {
+                    if let Some(v) = values.into_iter().next() {
+                        node.comment = v;
                     }
                 }
-                "TR" => points(size, values, &mut node.marks.triangle),
-                "SQ" => points(size, values, &mut node.marks.square),
-                "CR" => points(size, values, &mut node.marks.circle),
-                "MA" => points(size, values, &mut node.marks.cross),
-                _ if is_root && is_root_info_prop(name) => {}
-                _ => node.unknown_props.push((
-                    name.as_str().into(),
-                    values.iter().map(|v| v.as_str().into()).collect(),
+                Prop::ToPlay => {
+                    if let Some(v) = values.first() {
+                        node.to_play_override = parse_color(v);
+                    }
+                }
+                Prop::MoveNumber => {
+                    if let Some(v) = values.first() {
+                        node.move_number_override = v.trim().parse().ok();
+                    }
+                }
+                Prop::Label => {
+                    for mut v in values {
+                        let Some(colon) = v.find(':') else { continue };
+                        let Some(p) = size.from_sgf(&v.as_bytes()[..colon]) else {
+                            continue;
+                        };
+                        if p.is_pass() {
+                            continue;
+                        }
+                        node.marks.labels.push((p, v.split_off(colon + 1)));
+                    }
+                }
+                Prop::Triangle => points(size, &values, &mut node.marks.triangle),
+                Prop::Square => points(size, &values, &mut node.marks.square),
+                Prop::Circle => points(size, &values, &mut node.marks.circle),
+                Prop::Cross => points(size, &values, &mut node.marks.cross),
+                Prop::Other => node.unknown_props.push((
+                    name.into_boxed_str(),
+                    values.into_iter().map(String::into_boxed_str).collect(),
                 )),
             }
         }
@@ -581,10 +668,7 @@ fn build(arena: &[RawNode]) -> Result<GameTree, SgfError> {
     }
 
     // Analysis is best-effort: a foreign or future blob just means "no analysis".
-    if let Some(blob) = root_props
-        .iter()
-        .find(|(k, _)| k == "MRAI")
-        .and_then(|(_, v)| v.first())
+    if let Some(blob) = mrai.as_deref()
         && let Some(entries) = decode_analysis(blob)
     {
         for (idx, mut a) in entries {
