@@ -2039,6 +2039,17 @@ fn connect_appearance(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, 
         sgf_state.save_config();
     });
 
+    let scale = &widgets.stone_volume_scale;
+    scale.set_format_value_func(|_, value| match value.round() as u8 {
+        0 => "Muted".to_owned(),
+        volume => format!("{volume}%"),
+    });
+    scale.set_value(f64::from(state.config().ui.stone_volume));
+    let sound_state = state.clone();
+    scale.connect_value_changed(move |scale| {
+        set_stone_volume(&sound_state, scale.value().round() as u8);
+    });
+
     let reset_state = state.clone();
     widgets
         .appearance_reset_button
@@ -2087,7 +2098,7 @@ fn sync_overlay_row(dialog: &PreferencesDialog, state: &AppState, syncing: &Cell
 }
 
 /// Display switches bind to `AppState` properties; the overlay combo maps onto
-/// the same two booleans. Only the SGF switch owns its own key.
+/// the same two booleans. The SGF and sound switches own their own keys.
 fn apply_ui(dialog: &PreferencesDialog, state: &AppState, ui: UiSettings) {
     state.set_show_coordinates(ui.show_coordinates);
     state.set_show_move_numbers(ui.show_move_numbers);
@@ -2099,7 +2110,23 @@ fn apply_ui(dialog: &PreferencesDialog, state: &AppState, ui: UiSettings) {
         .widgets()
         .save_analysis_row
         .set_active(ui.save_analysis_in_sgf);
+    // Written directly: a hand-edited value above 100 sits at the scale's top already, so
+    // moving the scale to 100 would not fire and would leave it in the file.
+    set_stone_volume(state, ui.stone_volume);
+    dialog
+        .widgets()
+        .stone_volume_scale
+        .set_value(f64::from(ui.stone_volume));
     state.save_config();
+}
+
+fn set_stone_volume(state: &AppState, volume: u8) {
+    if state.config().ui.stone_volume == volume {
+        return;
+    }
+    state.config_mut().ui.stone_volume = volume;
+    state.save_config();
+    state.changed(crate::app::Change::StoneVolume);
 }
 
 fn reset_ui(dialog: &PreferencesDialog, state: &AppState) {

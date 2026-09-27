@@ -205,6 +205,7 @@ boundaries are [§1](#1-the-system). User settings and shortcuts are in
 | a score, fingerprint, new-game, or label dialog | `crates/mirai/src/dialogs.rs`, `crates/mirai/src/new_game.rs`, `crates/mirai/src/label_editor.rs` | `show_score_with`, `confirm_fingerprint`, `present` |
 | drive the real GUI, or count frames | `crates/mirai/src/harness.rs`, `crates/mirai/src/render_probe.rs` | [TESTING §5](TESTING.md#5-testing-the-gui) |
 | process lifetime, the runtime, or shutdown | `crates/mirai/src/main.rs`, `crates/mirai/src/application_shell.rs` | `MiraiApplication` |
+| the stone click or capture sound | `crates/mirai/src/sound.rs` | `stone_sound`, `StoneSounds::cursor_moved` |
 | whole-game analysis from the window | `crates/mirai/src/batch.rs` | `BatchAnalysis` |
 
 Other resources: `crates/mirai/resources/style.css`, `mirai.gresource.xml`,
@@ -535,6 +536,7 @@ refresh. This avoids several independently ordered signal callbacks observing ha
 | `Cursor { project }` | navigation or play | load comment/clocks; refresh board and graph cursor only if `Tree` did not already project them |
 | `Report` | live report or cursor clearing it | refresh board textures and analysis rows, not graph or navigation |
 | `Samples` | stored analysis changed | refresh graph samples, retaining unchanged GSK base |
+| `StoneVolume` | Stone Sounds slider | mute at once; otherwise rebuild the clips 250 ms after the slider rests |
 | `Engine` | engine or profile change | refresh engine menu, panel and subtitle; retry play if ready |
 | `Reconnected` | remote link restored | retry stalled play turn |
 | `Toast(String)` | toast request | show one toast |

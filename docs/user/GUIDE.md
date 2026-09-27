@@ -507,6 +507,7 @@ defaults. A running clock bounds the engine's thinking time.
 | **Coordinates** | on | letters and numbers around the board |
 | **Move Numbers** | off | number every stone; the last move's number is red, so the dot is not needed |
 | **Overlay** | None | one selector: **None**, **Ownership** or **Policy**. Not two switches. <kbd>o</kbd> and <kbd>y</kbd> select the same choice and turn each other off |
+| **Stone Sounds** | 100% | volume of the click whenever a stone is placed — by you, the AI, or stepping forward one move — and of the stones dropping into the lid when the move captures, more of them for a bigger capture. Drag to the left end, **Muted**, to turn them off. Jumps, passes and going back are silent |
 | **Save Analysis in SGF** | off | writes stored win rates and candidates into the SGF, so the curves survive a save and reload. Larger files; other programs ignore the extra data |
 
 ### The settings file

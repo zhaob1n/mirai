@@ -161,6 +161,35 @@ template $MiraiPreferencesDialog: Adw.PreferencesDialog {
     }
 
     Adw.PreferencesGroup {
+      title: _("Sound");
+
+      Adw.ActionRow stone_volume_row {
+        title: _("Stone Sounds");
+        subtitle: _("A click for each move, and falling stones for a capture");
+
+        [suffix]
+        Scale stone_volume_scale {
+          width-request: 180;
+          valign: center;
+          draw-value: true;
+          value-pos: left;
+          digits: 0;
+
+          adjustment: Adjustment {
+            lower: 0;
+            upper: 100;
+            step-increment: 5;
+            page-increment: 10;
+          };
+
+          accessibility {
+            labelled-by: stone_volume_row;
+          }
+        }
+      }
+    }
+
+    Adw.PreferencesGroup {
       title: _("Files");
 
       Adw.SwitchRow save_analysis_row {

@@ -379,6 +379,23 @@ rm -rf "$scratch"
 sets the window size: `0 0` keeps the size mirai asked for (needs a window rule that floats
 the harness id), a nonzero size floats the window and forces that size.
 
+`tools/ui/record-sound.sh "<script>" [args…]` is the same isolated run with mirai's audio
+routed to a private null sink: it prints one line per sound onset, so a missing or extra
+stone sound shows up as a line, without playing anything aloud. It proves timing, not level:
+the null sink did not show a replayed stream losing its first 10–25 ms, which the real device
+did (see `sound.rs`). Compare loudness on `$(pactl get-default-sink).monitor` instead.
+
+Tuning the clips themselves needs no GUI. Edit the constants in `sound.rs`, then:
+
+```sh
+cargo test -p mirai render_clips -- --ignored   # writes /tmp/mirai-sounds/clip0..7.wav
+tools/ui/sound-levels.py                         # peaks, drop loudness, brightness
+pw-play /tmp/mirai-sounds/clip0.wav              # placement; clip2 = 1-stone capture
+```
+
+Keep every peak under 1.0 and the first drop 1.5–4 dB under the placement; if a timbre
+change moves the drops' loudness, bring it back with `CLINK`.
+
 Do not use `dbus-run-session` for a second instance: it can leave the login
 session's accessibility bus socket without a listener. Debug harness runs
 already set `NON_UNIQUE`.

@@ -55,6 +55,8 @@ mod imp {
         #[template_child]
         pub save_analysis_row: TemplateChild<adw::SwitchRow>,
         #[template_child]
+        pub stone_volume_scale: TemplateChild<gtk::Scale>,
+        #[template_child]
         pub appearance_reset_button: TemplateChild<adw::ButtonRow>,
     }
 
@@ -117,6 +119,7 @@ impl PreferencesDialog {
             show_move_numbers_row: imp.show_move_numbers_row.get(),
             overlay_row: imp.overlay_row.get(),
             save_analysis_row: imp.save_analysis_row.get(),
+            stone_volume_scale: imp.stone_volume_scale.get(),
             appearance_reset_button: imp.appearance_reset_button.get(),
         }
     }
@@ -151,5 +154,6 @@ pub struct PreferencesWidgets {
     pub show_move_numbers_row: adw::SwitchRow,
     pub overlay_row: adw::ComboRow,
     pub save_analysis_row: adw::SwitchRow,
+    pub stone_volume_scale: gtk::Scale,
     pub appearance_reset_button: adw::ButtonRow,
 }

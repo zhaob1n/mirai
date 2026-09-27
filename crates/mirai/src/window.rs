@@ -26,6 +26,7 @@ use crate::batch::BatchAnalysis;
 use crate::config::Config;
 use crate::panels::AnalysisPanel;
 use crate::play::{PlayController, PlayState};
+use crate::sound::StoneSounds;
 use crate::util;
 use crate::widgets::board::BoardClick;
 use crate::widgets::{BoardView, MoveTreeView, WinrateGraph};
@@ -140,6 +141,7 @@ pub struct Ui {
     /// window: libadwaita refuses to present one dialog in two windows at once.
     fox_picker: RefCell<Option<crate::fox_picker::FoxPickerDialog>>,
     comment_node: Cell<Option<NodeRef>>,
+    sounds: StoneSounds,
     scale_guard: Cell<bool>,
     pending_auto_analyse: Cell<bool>,
     /// `Some(sidebar was shown)` while a game hides the review surfaces; see
@@ -400,6 +402,7 @@ pub fn present(
         analysis_stack,
         fox_picker: RefCell::new(None),
         comment_node: Cell::new(None),
+        sounds: StoneSounds::new(&state),
         scale_guard: Cell::new(false),
         pending_auto_analyse: Cell::new(false),
         play_layout: Cell::new(None),
@@ -420,6 +423,16 @@ pub fn present(
         let weak = window.downgrade();
         state.set_change_hook(move |change| {
             with_window_ui(&weak, |ui| handle_change(ui, change));
+        });
+    }
+    {
+        // Transient: holds only the weak window, and ends when the clips are rendered.
+        let weak = window.downgrade();
+        let render = state.runtime().spawn_blocking(crate::sound::render_clips);
+        glib::spawn_future_local(async move {
+            if render.await.is_ok() {
+                with_window_ui(&weak, |ui| ui.sounds.prepare(&ui.state));
+            }
         });
     }
 
@@ -549,6 +562,7 @@ fn handle_change(ui: &Ui, change: Change) {
             ui.board.queue_draw();
         }
         Change::Tree => {
+            ui.sounds.tree_changed(&ui.state);
             ui.move_tree.close_menu();
             update_scale(ui);
             update_analysis_page(ui);
@@ -565,6 +579,7 @@ fn handle_change(ui: &Ui, change: Change) {
             ui.board.refresh_cursor();
         }
         Change::Cursor { project } => {
+            ui.sounds.cursor_moved(&ui.state);
             load_comment(ui);
             update_scale(ui);
             update_analysis_page(ui);
@@ -591,6 +606,7 @@ fn handle_change(ui: &Ui, change: Change) {
             update_analysis_page(ui);
         }
         Change::Samples => ui.winrate.refresh(),
+        Change::StoneVolume => ui.sounds.volume_changed(&ui.state),
         Change::Engine => {
             refresh_engine_menu(ui);
             update_analysis_page(ui);

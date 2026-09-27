@@ -92,6 +92,9 @@ pub enum Change {
     Report,
     /// Stored analysis the graph reads may have changed.
     Samples,
+    /// The stone-sound volume setting changed. The window re-renders its clips at the new
+    /// level once the slider rests, so the next move does not pay for it.
+    StoneVolume,
     Engine,
     /// The active remote engine's link came back after dropping. Nothing is replayed
     /// across a reconnect, so live analysis has already been asked for again; the window

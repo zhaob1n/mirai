@@ -21,6 +21,7 @@ mod preferences_shell;
 mod prefs;
 mod profile_editor;
 mod render_probe;
+mod sound;
 mod util;
 mod widgets;
 mod window;

@@ -411,6 +411,8 @@ pub struct UiSettings {
     pub graph_height: u16,
     /// Main Menu → View → Win-Rate Graph.
     pub show_graph: bool,
+    /// Stone sounds, 0–100; 0 mutes them. Values above 100 play as 100.
+    pub stone_volume: u8,
 }
 
 impl Default for UiSettings {
@@ -423,6 +425,7 @@ impl Default for UiSettings {
             save_analysis_in_sgf: false,
             graph_height: 150,
             show_graph: true,
+            stone_volume: 100,
         }
     }
 }

@@ -45,6 +45,9 @@ refused.
 - GTK 4.22+, libadwaita 1.9+, and Blueprint Compiler 0.22+ with their development packages.
 - [`just`](https://github.com/casey/just), to install.
 - A KataGo binary and network model (JSON analysis mode, not GTP). mirai does not download KataGo.
+- For stone sounds, GStreamer's good plugins (`gst-plugins-good` on Arch,
+  `gstreamer1.0-plugins-good` on Debian/Ubuntu), which GTK plays audio through. Without them
+  mirai runs silently.
 
 On Arch: `pacman -S gtk4 libadwaita blueprint-compiler just`. On Debian/Ubuntu, install
 `libgtk-4-dev`, `libadwaita-1-dev`, `blueprint-compiler` and `just`; on Fedora,
