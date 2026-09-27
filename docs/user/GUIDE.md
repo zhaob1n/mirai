@@ -68,7 +68,7 @@ not its binary, network or config files.
 ## 3. The interface
 
 The header opens records from Fox, files or the clipboard, starts games and switches engine
-profiles. The board navigation holds the editing-tools toggle and **Board Menu**. The sidebar
+profiles. The board navigation holds the editing-tools toggle. The sidebar
 has **Analysis**, **Moves** and **Comment** pages. A game hides review navigation, graph and
 sidebar until it ends; the sidebar returns as you left it.
 
@@ -97,7 +97,6 @@ for shortcuts.
 | Left-click / right-click (black or white setup tool) | use the selected colour / the opposite colour: place on an empty point, replace an opposite stone, or remove a matching stone. No captures or move numbers; marks are preserved |
 | Left-click with a mark tool | apply that tool; right-click does nothing |
 | Left-click during scoring | toggle that group alive/dead |
-| Shift+right-click, or **Board Menu** | *Play Here*, *Set as Main Line*, *Delete Branch*, *Copy SGF*, *Black to Play*, *White to Play*. During a game, record-changing items are disabled. **Board Menu** stays on the navigation bar when the editor is collapsed |
 | Scroll wheel | browse back / forward one move without deleting anything |
 | Hover a candidate blob | preview its variation. Non-Play tools clear this preview |
 | Hover an intersection (Play or setup tool) | show a translucent stone where a left-click would place one: the side to play on a legal point, or the setup colour on an empty point. During a game it appears only on your turn |
@@ -249,8 +248,8 @@ current node has a ring. Click a node to navigate; right-click one for *Set as M
 
 | Operation | How |
 |---|---|
-| Promote a variation to the main line | Right-click its node in Moves → *Set as Main Line*; <kbd>Ctrl</kbd>+<kbd>↑</kbd> for the current node; or Shift+right-click / **Board Menu** → *Set as Main Line* |
-| Delete this move and everything after it | Right-click in Play, <kbd>Delete</kbd>, right-click its node in Moves → *Delete Branch*, or **Board Menu** → *Delete Branch* |
+| Promote a variation to the main line | Right-click its node in Moves → *Set as Main Line*, or <kbd>Ctrl</kbd>+<kbd>↑</kbd> for the current node |
+| Delete this move and everything after it | Right-click in Play, <kbd>Delete</kbd>, or right-click its node in Moves → *Delete Branch* |
 | Undo / redo the last edit | <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> |
 
 The start of the game cannot be deleted. Setup on a node that already has a move or a
@@ -570,7 +569,7 @@ comment or label field has focus, those keys undo typing in that field instead. 
 table is in the application under Main Menu → *Keyboard Shortcuts*.
 
 No dedicated accelerator: switching engine profile, *Preferences*, *Keyboard Shortcuts*,
-*About mirai*, *Editing Tools* and **Board Menu**. These remain reachable with standard
+*About mirai* and *Editing Tools*. These remain reachable with standard
 keyboard focus.
 
 ---

@@ -233,7 +233,7 @@ the window's `WidgetPaintable` and GSK renderer, including custom widgets'
 matches mapped, sensitive controls by label/title, nested label or tooltip;
 use `press:Edit this profile` for an icon button. Menu buttons open their
 popover; wait for it to map before choosing an item:
-`board:menu:D4,wait:1000,press:Set as Main Line`. Action rows and expanders
+`stack:Moves,tree:secondary:2:1,wait:400,press:Set as Main Line`. Action rows and expanders
 activate by title or label (`press:Blunders`).
 
 `page:` needs an open Preferences dialog (`action:win.preferences`); switch to
@@ -244,9 +244,9 @@ have no steppers for `press:`. `stack:Moves` selects the sidebar page;
 show Loss and Prior with `win.toggle-candidate-details` before sorting them.
 Hiding the sorted column resets sorting to `#`.
 
-`board:` enters the production hit-test handler, not physical Wayland input.
-In review, secondary-click deletes a branch in Play, toggles the opposite
-colour in Setup, and does nothing with mark tools; `board:menu:` never edits.
+`board:` and `tree:` enter the production hit-test handlers, not physical Wayland
+input. In review, board secondary-click deletes a branch in Play, toggles the
+opposite colour in Setup, and does nothing with mark tools.
 
 Traps:
 
@@ -280,7 +280,7 @@ Traps:
 | `stack:<view stack page title>` | Show that `adw::ViewStack` page — `stack:Moves` for the branch graph | 250 ms |
 | `sort:<column title>` | Sort the first `GtkColumnView` by that column, and flip direction if it is already primary | 250 ms |
 | `fill:<placeholder>=<text>` | Fill the first visible `gtk::SearchEntry` or `gtk::Entry` whose placeholder matches | 120 ms |
-| `board:<primary\|secondary\|menu\|hover>:<GTP>` | Click the mapped board through its production handler, or with `hover` move the pointer there through the motion handler (ghost stone, candidate preview). `menu` is Shift+secondary. Invalid, pass and off-board coordinates fail without editing | 120 ms |
+| `board:<primary\|secondary\|hover>:<GTP>` | Click the mapped board through its production handler, or with `hover` move the pointer there through the motion handler (ghost stone, candidate preview). Invalid, pass and off-board coordinates fail without editing | 120 ms |
 | `tree:<primary\|secondary>:<depth>:<lane>` | Press the move-tree cell at that grid position (root is `0:0`, the main line is lane 0) through its production handler: `primary` navigates, `secondary` opens the node menu. `no mapped move tree` unless `stack:Moves` is showing | 120 ms |
 | `shot:<path.png>` | Render the active window to PNG | see below |
 | `shot:<path.png>=<widget id>` | Same render, cropped to one widget. Ids are Blueprint's (`blunder_expander`, `nav`, …) | see below |

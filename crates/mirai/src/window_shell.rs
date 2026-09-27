@@ -59,8 +59,6 @@ mod imp {
         #[template_child]
         pub mark_tools: TemplateChild<adw::ToggleGroup>,
         #[template_child]
-        pub board_menu_button: TemplateChild<gtk::Button>,
-        #[template_child]
         pub content: TemplateChild<gtk::Paned>,
         #[template_child]
         pub sidebar_stack: TemplateChild<adw::ViewStack>,
@@ -208,10 +206,6 @@ impl MiraiWindow {
 
     pub(crate) fn mark_tools(&self) -> adw::ToggleGroup {
         self.imp().mark_tools.get()
-    }
-
-    pub(crate) fn board_menu_button(&self) -> gtk::Button {
-        self.imp().board_menu_button.get()
     }
 
     pub fn content_paned(&self) -> gtk::Paned {

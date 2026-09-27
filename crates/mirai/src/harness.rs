@@ -734,12 +734,11 @@ fn board_click(app: &adw::Application, button: &str, coordinate: &str) -> Result
         None
     }
 
-    let (button, modifiers) = match button {
-        "primary" => (gdk::BUTTON_PRIMARY, gdk::ModifierType::empty()),
-        "secondary" => (gdk::BUTTON_SECONDARY, gdk::ModifierType::empty()),
-        "menu" => (gdk::BUTTON_SECONDARY, gdk::ModifierType::SHIFT_MASK),
+    let button = match button {
+        "primary" => gdk::BUTTON_PRIMARY,
+        "secondary" => gdk::BUTTON_SECONDARY,
         // No button: the pointer's motion handler, as if it had moved onto the point.
-        "hover" => (0, gdk::ModifierType::empty()),
+        "hover" => 0,
         _ => return Err("unknown button".into()),
     };
     let window = app.active_window().ok_or("no active window")?;
@@ -755,7 +754,7 @@ fn board_click(app: &adw::Application, button: &str, coordinate: &str) -> Result
     if button == 0 {
         board.update_hover(Some((x, y)));
     } else {
-        board.click_at(button, modifiers, x, y);
+        board.click_at(button, x, y);
     }
     Ok(())
 }
