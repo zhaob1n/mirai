@@ -751,7 +751,8 @@ mod tests {
     /// directories without duplicating a path.
     #[test]
     fn network_discovery_merges_every_bin_gz_and_ignores_everything_else() {
-        let base = std::env::temp_dir().join("mirai-discovery-test");
+        let base =
+            std::env::temp_dir().join(format!("mirai-discovery-test-{}", std::process::id()));
         let first = base.join("first");
         let second = base.join("second");
         let _ = std::fs::remove_dir_all(&base);
@@ -1294,7 +1295,10 @@ save_analysis_in_sgf = false
 
     #[test]
     fn missing_file_is_an_empty_config_not_an_error() {
-        let path = std::env::temp_dir().join("mirai-no-such-config-9f3a.toml");
+        let path = std::env::temp_dir().join(format!(
+            "mirai-no-such-config-9f3a-{}.toml",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&path);
         let cfg = Config::load(&path).expect("a missing config is not an error");
         // Discovery walks directories and used to run here, on whatever thread called
@@ -1305,7 +1309,8 @@ save_analysis_in_sgf = false
 
     #[test]
     fn malformed_config_is_an_error() {
-        let path = std::env::temp_dir().join("mirai-bad-config-9f3a.toml");
+        let path =
+            std::env::temp_dir().join(format!("mirai-bad-config-9f3a-{}.toml", std::process::id()));
         std::fs::write(&path, "active_engine = [unclosed").unwrap();
         assert!(matches!(Config::load(&path), Err(ConfigError::Parse(..))));
         let _ = std::fs::remove_file(&path);

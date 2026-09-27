@@ -694,7 +694,7 @@ mod tests {
 
     #[test]
     fn analysis_threads_are_read_out_of_the_config_file() {
-        let dir = std::env::temp_dir().join("mirai-local-cfg-test");
+        let dir = std::env::temp_dir().join(format!("mirai-local-cfg-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("analysis.cfg");
         std::fs::write(

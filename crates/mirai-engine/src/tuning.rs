@@ -229,7 +229,8 @@ mod tests {
     /// a shared path would let one profile's config reach the other's KataGo.
     #[test]
     fn a_tuning_owns_its_own_file_and_rewrites_it_only_when_it_changes() {
-        let dir = std::env::temp_dir().join("mirai-tuning-write-test");
+        let dir =
+            std::env::temp_dir().join(format!("mirai-tuning-write-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let t = EngineTuning::default();
 

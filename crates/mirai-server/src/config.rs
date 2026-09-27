@@ -294,7 +294,10 @@ mod tests {
     /// lands in that file rather than being passed twice.
     #[test]
     fn an_engine_without_a_config_file_gets_a_generated_one() {
-        let dir = std::env::temp_dir().join("mirai-server-generated-cfg-test");
+        let dir = std::env::temp_dir().join(format!(
+            "mirai-server-generated-cfg-test-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         let text = format!(
             "[[engine]]\nname = \"gen\"\nkatago = \"/usr/bin/katago\"\n\
