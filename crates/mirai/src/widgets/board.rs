@@ -1040,6 +1040,23 @@ fn record_next(tree: &GameTree, cursor: NodeId, position: &Position) -> Option<P
     drawable.then_some(p)
 }
 
+/// The move that last changed the board at `cursor`.
+///
+/// Nodes that leave the stones alone — a `PL` side-to-move switch, or the empty node
+/// switching back leaves behind — are looked through, so toggling the side to move does not
+/// erase the marker. A setup node rewrites the board and ends the search: no move is "last"
+/// after it.
+fn last_move(tree: &GameTree, cursor: NodeId) -> Option<(Color, Point)> {
+    let mut id = cursor;
+    loop {
+        let node = tree.node(id);
+        if node.mv.is_some() || !node.setup.is_empty() {
+            return node.mv;
+        }
+        id = tree.parent(id)?;
+    }
+}
+
 /// One slot per intersection; out-of-board marks are ignored. Built outside snapshot.
 fn mark_mask(size: Size, marks: &Marks) -> Box<[bool]> {
     let mut marked = vec![false; size.points()];
@@ -1553,10 +1570,8 @@ impl BoardView {
             let tree = state.tree();
             let size = tree.info.size;
             let rules = tree.info.rules.rules();
-            let node = tree.node(cursor);
-            let marks = node.marks.clone();
-            let last = node
-                .mv
+            let marks = tree.node(cursor).marks.clone();
+            let last = last_move(&tree, cursor)
                 .filter(|&(color, p)| !p.is_pass() && position.board.at(p) == Some(color));
             let next = record_next(&tree, cursor, &position);
             let move_numbers = state.show_move_numbers().then(|| tree.move_numbers(cursor));
@@ -1908,6 +1923,27 @@ mod tests {
         tree.node_mut(bogus).mv = Some((Color::Black, d4));
         let after_pass = tree.position(passed).clone();
         assert_eq!(record_next(&tree, passed, &after_pass), None);
+    }
+
+    #[test]
+    fn the_last_move_survives_a_side_to_move_switch_but_not_setup() {
+        let size = Size::square(9);
+        let mut tree = GameTree::new(GameInfo::new(size, RuleSet::default()));
+        let root = tree.root();
+        assert_eq!(last_move(&tree, root), None);
+
+        let d4 = size.point(3, 5);
+        let played = tree.play(root, Color::Black, d4).expect("legal");
+        let pl = tree.add_child(played);
+        tree.node_mut(pl).to_play_override = Some(Color::Black);
+        assert_eq!(last_move(&tree, pl), Some((Color::Black, d4)));
+        // Switching back to the natural side leaves an empty node behind.
+        tree.node_mut(pl).to_play_override = None;
+        assert_eq!(last_move(&tree, pl), Some((Color::Black, d4)));
+
+        let setup = tree.add_child(pl);
+        tree.node_mut(setup).setup.add_white.push(size.point(5, 5));
+        assert_eq!(last_move(&tree, setup), None);
     }
 
     fn layout() -> Layout {
