@@ -2042,6 +2042,10 @@ fn connect_general(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, sta
     });
 
     let scale = &widgets.stone_volume_scale;
+    // Range and steps are set here rather than as a Blueprint `Adjustment`: its
+    // `adjustment_prop_order` lint accepts only lower, upper and value, never the steps.
+    scale.set_range(0.0, 100.0);
+    scale.set_increments(5.0, 10.0);
     scale.set_format_value_func(|_, value| match value.round() as u8 {
         0 => "Muted".to_owned(),
         volume => format!("{volume}%"),
