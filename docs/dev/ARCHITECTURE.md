@@ -208,8 +208,9 @@ boundaries are [§1](#1-the-system). User settings and shortcuts are in
 | the stone click or capture sound | `crates/mirai/src/sound.rs` | `stone_sound`, `StoneSounds::cursor_moved` |
 | whole-game analysis from the window | `crates/mirai/src/batch.rs` | `BatchAnalysis` |
 
-Other resources: `crates/mirai/resources/style.css`, `mirai.gresource.xml`,
-`crates/mirai/build.rs` and `docs/user/preview.png`. Rendering decisions are in
+Other resources: `crates/mirai/resources/style.css`, `mirai.gresource.xml` and
+`crates/mirai/build.rs`. README images are release assets, not tracked files:
+`tools/docs/upload-readme-assets.sh`. Rendering decisions are in
 [`RENDERING.md`](RENDERING.md).
 
 ---
