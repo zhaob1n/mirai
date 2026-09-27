@@ -1,2 +1,3 @@
-# One language per line; tools/i18n/update-po.sh merges each and build.rs compiles each.
+# One language per line; tools/i18n/update-po.sh merges each, build.rs and `just install`
+# compile each.
 zh_CN

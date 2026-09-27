@@ -30,7 +30,8 @@ reported separately. For Rust, run `cargo fmt --all --check`; for Blueprint, run
 `blueprint-compiler lint crates/mirai/src/{window,preferences,new_game,fox_picker,label_editor,profile_editor}.blp crates/mirai/src/panels/analysis.blp`.
 Avoid `cargo clippy --fix`: it rewrites files you have not reviewed.
 `harness.rs` and `probe.rs` have prose examples, not doc-tests. Every build runs
-`msgfmt --check` over `po/` (`crates/mirai/build.rs`).
+`msgfmt --check` over `po/` (`crates/mirai/build.rs`); for the data templates,
+`desktop-file-validate` and `appstreamcli validate` on what `just install` merged.
 
 ## 2. What is covered where
 

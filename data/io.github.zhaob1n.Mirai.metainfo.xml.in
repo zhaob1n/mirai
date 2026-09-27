@@ -4,10 +4,10 @@
   <id>io.github.zhaob1n.Mirai</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
-  <name>mirai</name>
+  <name translate="no">mirai</name>
   <summary>Analyse, review and play Go with KataGo</summary>
   <developer id="io.github.zhaob1n">
-    <name>Huang Zhaobin</name>
+    <name translate="no">Huang Zhaobin</name>
   </developer>
   <description>
     <p>

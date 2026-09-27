@@ -210,8 +210,8 @@ boundaries are [§1](#1-the-system). User settings and shortcuts are in
 | mark a string for translation, or word a value the GTK-free crates keep in English | `crates/mirai/src/i18n.rs`, `po/`, `tools/i18n/update-po.sh` | `gettext_f`, `rules_label`, `result_phrase`; [TRANSLATING](TRANSLATING.md) |
 
 Other resources: `crates/mirai/resources/style.css`, `mirai.gresource.xml` and
-`crates/mirai/build.rs`, which also compiles `po/`. README images are release assets, not
-tracked files:
+`crates/mirai/build.rs`, which also compiles `po/`. The desktop entry and metainfo are
+templates in `data/`. README images are release assets, not tracked files:
 `tools/docs/upload-readme-assets.sh`. Rendering decisions are in
 [`RENDERING.md`](RENDERING.md).
 

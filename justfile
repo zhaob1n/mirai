@@ -35,10 +35,20 @@ install part="all": && refresh
     }
     if [ "{{ part }}" != mirai-server ]; then
         need mirai
+        # The desktop entry, metainfo and catalogues are merged from po/ into a scratch
+        # directory, so installing still writes nothing into the tree.
+        gen=$(mktemp -d)
+        trap 'rm -rf "$gen"' EXIT
         set -x
+        msgfmt --desktop --template "data/{{ appid }}.desktop.in" -d po -o "$gen/{{ appid }}.desktop"
+        msgfmt --xml --template "data/{{ appid }}.metainfo.xml.in" -d po -o "$gen/{{ appid }}.metainfo.xml"
         install -Dm755 "{{ target }}/release/mirai" -t "{{ root }}/bin/"
-        install -Dm644 "data/{{ appid }}.desktop" -t "{{ root }}/share/applications/"
-        install -Dm644 "data/{{ appid }}.metainfo.xml" -t "{{ root }}/share/metainfo/"
+        install -Dm644 "$gen/{{ appid }}.desktop" -t "{{ root }}/share/applications/"
+        install -Dm644 "$gen/{{ appid }}.metainfo.xml" -t "{{ root }}/share/metainfo/"
+        for lang in $(sed 's/#.*//' po/LINGUAS); do
+            msgfmt -o "$gen/$lang.mo" "po/$lang.po"
+            install -Dm644 "$gen/$lang.mo" "{{ root }}/share/locale/$lang/LC_MESSAGES/mirai.mo"
+        done
         install -Dm644 "{{ icons }}/scalable/apps/{{ appid }}.svg" -t "{{ root }}/share/icons/hicolor/scalable/apps/"
         install -Dm644 "{{ icons }}/symbolic/apps/{{ appid }}-symbolic.svg" -t "{{ root }}/share/icons/hicolor/symbolic/apps/"
         install -Dm644 README.md docs/user/GUIDE.md -t "{{ root }}/share/doc/mirai/"
@@ -60,6 +70,9 @@ uninstall part="all": && refresh
         rm -f "{{ root }}/bin/mirai"
         rm -f "{{ root }}/share/applications/{{ appid }}.desktop"
         rm -f "{{ root }}/share/metainfo/{{ appid }}.metainfo.xml"
+        for lang in $(sed 's/#.*//' po/LINGUAS); do
+            rm -f "{{ root }}/share/locale/$lang/LC_MESSAGES/mirai.mo"
+        done
         rm -f "{{ root }}/share/icons/hicolor/scalable/apps/{{ appid }}.svg"
         rm -f "{{ root }}/share/icons/hicolor/symbolic/apps/{{ appid }}-symbolic.svg"
         rm -f "{{ root }}/share/doc/mirai/README.md" "{{ root }}/share/doc/mirai/GUIDE.md"
