@@ -44,9 +44,9 @@ Networks are found in `$XDG_DATA_HOME/{katago,mirai}/models`, `~/.katago/models`
 priority within each directory. The first seeds `local-default`; the others are available
 from the model chooser in Preferences.
 
-If no KataGo or network is found, the Analysis page offers **Preferences** rather than
-opening it automatically. The board and navigation still work, and stored analysis
-remains visible without a live engine.
+If no KataGo or network is found, the Analysis page shows **No Engine Configured** with a
+**Preferences** button; Preferences does not open by itself. The board and navigation still
+work, and stored analysis remains visible without a live engine.
 
 ### Adding a local engine
 

@@ -79,7 +79,7 @@ QUIC transport parameters (`transport.rs` — `transport_config`), shared by bot
 | `max_idle_timeout` | 30 s | **Advisory value, normative kind.** QUIC takes the minimum of the two advertised values; an implementation MUST tolerate any peer value. |
 | `max_concurrent_uni_streams` | 256 | **Normative floor.** A client MUST advertise at least its intended concurrent subscription count and SHOULD leave spare capacity. |
 | `stream_receive_window` | 16 KiB | **Recommended for clients.** A server writing to a subscription stream blocks once it is one window ahead of what the client has read, and only then can it replace a queued report with a newer one. quinn's 1.25 MB default lets hundreds of stale reports queue on a slow link, all delivered late and in order. |
-| bidirectional streams | 1 per connection | A server MUST permit the control stream ([§3](#3-stream-topology)). |
+| bidirectional streams | 1 per connection | A server MUST permit the control stream; a client MUST NOT open a second ([§3](#3-stream-topology)). |
 
 Other flow-control windows, migration and datagrams are implementation choices outside MRP.
 
@@ -614,9 +614,10 @@ Cancellation must *discard* in-flight reports, so it is propagated on both strea
 | Actor | Required actions, in order |
 |---|---|
 | **Client** | 1. If the subscription stream has arrived, `STOP_SENDING` on it with application code 1 to discard buffered reports. 2. Send `ClientMsg::Cancel { sub }` on the control stream. 3. Retire the id and ignore later reports for it. |
-| **Server** | On `Cancel`, stop the search and **reset** any open subscription stream with application code 1 (`CODE_CANCELLED`). Do not wait for the client to read: flow control may block writes. Ignore unknown ids silently. |
+| **Server** | On `Cancel` or `STOP_SENDING`, stop the search and **reset** any open subscription stream with application code 1 (`CODE_CANCELLED`). Resetting is REQUIRED: finishing the stream would deliver the stale reports the client just refused. Stopping MUST NOT wait for the client to read, since flow control may block writes. Unknown ids MUST be ignored silently. |
 
-Both actions matter: `STOP_SENDING` discards buffered reports immediately; `Cancel`
+A client MAY send only one of the two and a server MUST cope, but both are RECOMMENDED:
+`STOP_SENDING` discards buffered reports immediately; `Cancel`
 stops the search even if there is no stream yet or the stream is blocked on flow
 control. Connection loss cancels everything implicitly.
 
