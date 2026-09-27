@@ -35,22 +35,9 @@
   font-weight: 600;
 }
 
-/* Tint the title label, not the row: GTK derives separator color from the row foreground. */
-.mirai-blunder-major label.title {
-  color: @error_color;
-}
-
-.mirai-blunder-medium label.title {
-  color: @warning_color;
-}
-
-.mirai-blunder-minor label.title {
-  color: @accent_color;
-}
-
-/* The candidate list's rank badge. Its colour is not here: `palette::grade_css` generates one
-   rule per stop of the same table the board colours its blobs with, so the badge for a move and
-   its blob cannot disagree. */
+/* The candidate list's rank badge, and the blunder list's loss badge. Colour is not here:
+   `palette::grade_css` generates one rule per stop of the table the board colours its blobs
+   and the graph its blunder ticks with, so a badge shares its stop's hex with both. */
 .mirai-rank {
   font-size: 0.78em;
   font-weight: bold;
@@ -58,6 +45,10 @@
   padding: 2px 0;
   margin: 3px 2px;
   min-width: 20px;
+}
+
+.mirai-drop {
+  padding: 2px 8px;
 }
 
 /* Keep candidate columns compact without shrinking their text. */

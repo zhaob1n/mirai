@@ -43,11 +43,19 @@ impl Severity {
     /// shows orange on the board is an orange tick here once it is played, and the ramp is
     /// the only place those hexes live.
     pub(crate) fn color(self) -> Option<gdk::RGBA> {
+        let alpha = if self == Severity::Major { 0.9 } else { 0.85 };
+        self.ramp_stop()
+            .map(|stop| rgba8(palette::GRADE_RAMP[stop as usize], alpha))
+    }
+
+    /// The [`palette::GRADE_RAMP`] stop this severity paints with, so the blunder list's
+    /// badge and the tick share one hex.
+    pub(crate) fn ramp_stop(self) -> Option<u32> {
         match self {
             Severity::None => None,
-            Severity::Minor => Some(rgba8(palette::GRADE_RAMP[3], 0.85)),
-            Severity::Medium => Some(rgba8(palette::GRADE_RAMP[4], 0.85)),
-            Severity::Major => Some(rgba8(palette::GRADE_RAMP[5], 0.9)),
+            Severity::Minor => Some(3),
+            Severity::Medium => Some(4),
+            Severity::Major => Some(5),
         }
     }
 }
