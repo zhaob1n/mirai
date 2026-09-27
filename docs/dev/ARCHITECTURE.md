@@ -307,7 +307,7 @@ MRAI[ base64( zstd( MRAI_VERSION ++ postcard(Vec<(u32, NodeAnalysis)>) ) ) ]
 `collect_analysis` walks in the order `write_sequence` emits and `build` creates nodes in
 document pre-order, so the recorded index is the `NodeId` assigned on reload. Decoding
 ignores foreign, truncated or future-versioned blobs and vanished indices, and drops
-off-board candidate/PV points. Writing is opt-in via `UiSettings::save_analysis_in_sgf`
+off-board candidate/PV points. Writing is opt-in via `AnalysisSettings::save_in_sgf`
 (off by default). `sgf::root_property` must find `CA` in raw collection-root bytes before
 decoding text: the first game's root wins, or a later root if it has no `CA`; comments and
 variations do not count. `MAX_DEPTH` caps nesting in hostile files.
@@ -551,7 +551,7 @@ released before `changed` enters window code.
 
 Keep native Adwaita surfaces and theme colours rather than custom literals. The sidebar
 comes from `Adw.OverlaySplitView`, the board surround from `.board-area`/
-`@window_bg_color`, and the graph leaves its background transparent. The Appearance
+`@window_bg_color`, and the graph leaves its background transparent. The General page's
 `Adw.ComboRow` must project the mutually exclusive overlay booleans so preferences, menu
 and undo stay in sync (`overlay_row` in `crates/mirai/src/prefs.rs`).
 

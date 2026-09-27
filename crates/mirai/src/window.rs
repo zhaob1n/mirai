@@ -1134,7 +1134,7 @@ fn sgf_filters() -> (gio::ListStore, gtk::FileFilter) {
 }
 
 fn sgf_text(ui: &Ui) -> String {
-    let include = ui.state.config().ui.save_analysis_in_sgf;
+    let include = ui.state.config().analysis.save_in_sgf;
     let tree = ui.state.tree();
     sgf::write(&tree, include)
 }
@@ -1727,7 +1727,7 @@ fn write_autosave(ui: &Ui) {
     }
     // The blocking task cannot borrow the tree. Clone what it needs while this thread
     // still holds the session; serialise, compress and write off the GTK thread.
-    let include = ui.state.config().ui.save_analysis_in_sgf;
+    let include = ui.state.config().analysis.save_in_sgf;
     let tree = ui.state.tree().clone();
     let gate = Arc::clone(&autosave.gate);
     let join = ui.state.runtime().spawn_blocking(move || {

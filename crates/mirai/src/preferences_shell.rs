@@ -57,7 +57,7 @@ mod imp {
         #[template_child]
         pub stone_volume_scale: TemplateChild<gtk::Scale>,
         #[template_child]
-        pub appearance_reset_button: TemplateChild<adw::ButtonRow>,
+        pub general_reset_button: TemplateChild<adw::ButtonRow>,
     }
 
     #[glib::object_subclass]
@@ -120,7 +120,7 @@ impl PreferencesDialog {
             overlay_row: imp.overlay_row.get(),
             save_analysis_row: imp.save_analysis_row.get(),
             stone_volume_scale: imp.stone_volume_scale.get(),
-            appearance_reset_button: imp.appearance_reset_button.get(),
+            general_reset_button: imp.general_reset_button.get(),
         }
     }
 }
@@ -155,5 +155,5 @@ pub struct PreferencesWidgets {
     pub overlay_row: adw::ComboRow,
     pub save_analysis_row: adw::SwitchRow,
     pub stone_volume_scale: gtk::Scale,
-    pub appearance_reset_button: adw::ButtonRow,
+    pub general_reset_button: adw::ButtonRow,
 }

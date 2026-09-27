@@ -80,7 +80,7 @@ pub fn present(parent: &impl IsA<gtk::Widget>, state: &AppState) {
     connect_engines(&dialog, &widgets, state);
     connect_analysis(&dialog, &widgets, state);
     connect_play(&dialog, &widgets, state);
-    connect_appearance(&dialog, &widgets, state);
+    connect_general(&dialog, &widgets, state);
 
     dialog.present(Some(parent));
 }
@@ -1694,6 +1694,16 @@ fn connect_analysis(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, st
             auto_state.save_config();
         });
 
+    let sgf_state = state.clone();
+    let sgf_syncing = syncing.clone();
+    widgets.save_analysis_row.connect_active_notify(move |row| {
+        if sgf_syncing.get() {
+            return;
+        }
+        sgf_state.config_mut().analysis.save_in_sgf = row.is_active();
+        sgf_state.save_config();
+    });
+
     let reset_state = state.clone();
     let reset_syncing = syncing.clone();
     widgets
@@ -1727,6 +1737,7 @@ fn load_analysis(widgets: &PreferencesWidgets, state: &AppState, syncing: &Cell<
     widgets
         .analysis_auto_open_row
         .set_active(settings.auto_analyse_on_open);
+    widgets.save_analysis_row.set_active(settings.save_in_sgf);
     syncing.set(false);
 }
 
@@ -1978,9 +1989,9 @@ fn reset_play(dialog: &PreferencesDialog, state: &AppState, syncing: &Rc<Cell<bo
     dialog.add_toast(toast);
 }
 
-// -- Appearance -------------------------------------------------------------------------
+// -- General ----------------------------------------------------------------------------
 
-fn connect_appearance(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state: &AppState) {
+fn connect_general(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state: &AppState) {
     bind_switch(&widgets.show_coordinates_row, state, "show-coordinates");
     bind_switch(&widgets.show_move_numbers_row, state, "show-move-numbers");
 
@@ -2030,15 +2041,6 @@ fn connect_appearance(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, 
         }
     });
 
-    widgets
-        .save_analysis_row
-        .set_active(state.config().ui.save_analysis_in_sgf);
-    let sgf_state = state.clone();
-    widgets.save_analysis_row.connect_active_notify(move |row| {
-        sgf_state.config_mut().ui.save_analysis_in_sgf = row.is_active();
-        sgf_state.save_config();
-    });
-
     let scale = &widgets.stone_volume_scale;
     scale.set_format_value_func(|_, value| match value.round() as u8 {
         0 => "Muted".to_owned(),
@@ -2051,13 +2053,11 @@ fn connect_appearance(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, 
     });
 
     let reset_state = state.clone();
-    widgets
-        .appearance_reset_button
-        .connect_activated(glib::clone!(
-            #[weak]
-            dialog,
-            move |_| reset_ui(&dialog, &reset_state)
-        ));
+    widgets.general_reset_button.connect_activated(glib::clone!(
+        #[weak]
+        dialog,
+        move |_| reset_ui(&dialog, &reset_state)
+    ));
 }
 
 const OVERLAY_CHOICES: [&str; 3] = ["None", "Ownership", "Policy"];
@@ -2098,7 +2098,7 @@ fn sync_overlay_row(dialog: &PreferencesDialog, state: &AppState, syncing: &Cell
 }
 
 /// Display switches bind to `AppState` properties; the overlay combo maps onto
-/// the same two booleans. The SGF and sound switches own their own keys.
+/// the same two booleans. The sound slider owns its own key.
 fn apply_ui(dialog: &PreferencesDialog, state: &AppState, ui: UiSettings) {
     state.set_show_coordinates(ui.show_coordinates);
     state.set_show_move_numbers(ui.show_move_numbers);
@@ -2106,10 +2106,6 @@ fn apply_ui(dialog: &PreferencesDialog, state: &AppState, ui: UiSettings) {
         state,
         overlay_index(ui.ownership_overlay, ui.policy_overlay),
     );
-    dialog
-        .widgets()
-        .save_analysis_row
-        .set_active(ui.save_analysis_in_sgf);
     // Written directly: a hand-edited value above 100 sits at the scale's top already, so
     // moving the scale to 100 would not fire and would leave it in the file.
     set_stone_volume(state, ui.stone_volume);
@@ -2134,7 +2130,7 @@ fn reset_ui(dialog: &PreferencesDialog, state: &AppState) {
     apply_ui(dialog, state, UiSettings::default());
 
     let undo_state = state.clone();
-    let toast = undo_toast("Appearance settings restored");
+    let toast = undo_toast("General settings restored");
     toast.connect_button_clicked(glib::clone!(
         #[weak]
         dialog,

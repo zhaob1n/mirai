@@ -167,7 +167,7 @@ record.
 ### Overlays
 
 Both read from the same analysis, so they need a report (live, or one cached on this move).
-Preferences → Appearance → Board → **Overlay** is one choice: **None**, **Ownership** or
+Preferences → General → Board → **Overlay** is one choice: **None**, **Ownership** or
 **Policy**. <kbd>o</kbd>, <kbd>y</kbd> and the View menu select that same choice; turning one
 on turns the other off.
 
@@ -453,6 +453,7 @@ to persist and activate them. The neural-net cache is not changed.
 | **Suggestions Shown** | 10 | All / 1 – 50 | you want every searched move, or a cleaner board — this caps blobs and list rows together |
 | **Visits per Move** | 100 | 100 – 100 000 | reviewing: 100 is quick, 5 000 is thorough |
 | **Analyse on Open** | off | on / off | turn on to start a whole-game sweep whenever a record is opened, pasted or downloaded |
+| **Save Analysis in SGF** | off | on / off | turn on to write stored win rates and candidates into saved and autosaved SGF, so the curves survive a save and reload. Larger files; other programs ignore the extra data |
 
 Changing **Maximum Visits**, **Report Interval**, or a larger **Suggestions Shown**
 restarts a search that is already running, after a brief pause so dragging or
@@ -473,7 +474,7 @@ does not delete engine profiles.
 | **Temperature** | 0.00 | 0 – 2 | 0 always plays the best move; 0.2–0.4 varies the opening |
 | **Resign Threshold** | 0.05 | 0 – 0.5 | 0 makes the engine play every game out |
 | **Resign Streak** | 3 | 1 – 10 | it gives up too readily |
-| **Default Ruleset** | Chinese | nine rulesets | used for new games |
+| **Default Ruleset** | Chinese | nine rulesets | preselected in **New Game**; starting a game saves its ruleset here |
 
 #### New Game board and clock
 
@@ -501,7 +502,7 @@ defaults. A running clock bounds the engine's thinking time.
 | Japanese | 6.5 | New Zealand | 7.0 |
 | Korean | 6.5 | | |
 
-### Appearance
+### General
 
 | Setting | Default | Effect |
 |---|---|---|
@@ -509,7 +510,6 @@ defaults. A running clock bounds the engine's thinking time.
 | **Move Numbers** | off | number every stone; the last move's number is red, so the dot is not needed |
 | **Overlay** | None | one selector: **None**, **Ownership** or **Policy**. Not two switches. <kbd>o</kbd> and <kbd>y</kbd> select the same choice and turn each other off |
 | **Stone Sounds** | 100% | volume of the click whenever a stone is placed — by you, the AI, or stepping forward one move — and of the stones dropping into the lid when the move captures, more of them for a bigger capture. Drag to the left end, **Muted**, to turn them off. Jumps, passes and going back are silent |
-| **Save Analysis in SGF** | off | writes stored win rates and candidates into the SGF, so the curves survive a save and reload. Larger files; other programs ignore the extra data |
 
 ### The settings file
 
@@ -654,7 +654,7 @@ windows were open, new windows offer their autosaves, most recent first.
 | Symptom | Cause / fix |
 |---|---|
 | Only one game opened from a multi-game file | reopen and choose another in the [game list](#5-reviewing-a-game) |
-| Curves are empty | run a whole-game analysis, then enable [Save Analysis in SGF](#appearance) to preserve them |
+| Curves are empty | run a whole-game analysis, then enable [Save Analysis in SGF](#analysis) to preserve them |
 | Some annotations are not drawn | unsupported properties are preserved, even if mirai does not display them |
 | Result or komi looks odd | the file's own values are used as written |
 | Will not open at all | not SGF, or damaged; the toast names the problem |

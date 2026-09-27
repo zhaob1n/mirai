@@ -73,6 +73,15 @@ template $MiraiPreferencesDialog: Adw.PreferencesDialog {
     }
 
     Adw.PreferencesGroup {
+      title: _("Files");
+
+      Adw.SwitchRow save_analysis_row {
+        title: _("Save Analysis in SGF");
+        subtitle: _("Write winrates and candidate moves alongside the moves");
+      }
+    }
+
+    Adw.PreferencesGroup {
       title: _("Analysis Defaults");
       Adw.ButtonRow analysis_reset_button {
         title: _("Restore Defaults");
@@ -122,10 +131,14 @@ template $MiraiPreferencesDialog: Adw.PreferencesDialog {
         title: _("Resign Streak");
         subtitle: _("Consecutive hopeless moves before resigning");
       }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("New Games");
 
       Adw.ComboRow play_rules_row {
         title: _("Default Ruleset");
-        subtitle: _("Used for new games");
+        subtitle: _("Preselected in New Game, which remembers the last ruleset started");
       }
     }
 
@@ -138,8 +151,8 @@ template $MiraiPreferencesDialog: Adw.PreferencesDialog {
   }
 
   Adw.PreferencesPage {
-    title: _("Appearance");
-    icon-name: "preferences-desktop-appearance-symbolic";
+    title: _("General");
+    icon-name: "preferences-system-symbolic";
 
     Adw.PreferencesGroup {
       title: _("Board");
@@ -190,17 +203,8 @@ template $MiraiPreferencesDialog: Adw.PreferencesDialog {
     }
 
     Adw.PreferencesGroup {
-      title: _("Files");
-
-      Adw.SwitchRow save_analysis_row {
-        title: _("Save Analysis in SGF");
-        subtitle: _("Write winrates and candidate moves alongside the moves");
-      }
-    }
-
-    Adw.PreferencesGroup {
-      title: _("Appearance Defaults");
-      Adw.ButtonRow appearance_reset_button {
+      title: _("General Defaults");
+      Adw.ButtonRow general_reset_button {
         title: _("Restore Defaults");
       }
     }
