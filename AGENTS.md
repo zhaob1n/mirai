@@ -220,12 +220,12 @@ Full detail, including how to drive the GUI headlessly and verify against a real
 
 ### Toolchain
 
-Rust stable, selected by `rust-toolchain.toml`; the minimum is `rust-version` in the root
-`Cargo.toml`, currently 1.92 (edition 2024). No nightly feature is used, and none should be
-added. Raise `rust-version` whenever a dependency update needs a newer compiler — that is its
-only reason to move — and check the new floor with `cargo +<version> check --workspace
---all-targets`. Let-chains (`if let Some(x) = a && cond`) are used throughout and are
-expected. GTK 4.22+, libadwaita 1.9+ and Blueprint Compiler 0.22+ are required to build `mirai`.
+Rust stable, selected by `rust-toolchain.toml`. There is no minimum supported version and no
+`rust-version`: mirai tracks the latest stable compiler and the latest release of every
+dependency, so update both freely and never hold one back for an older toolchain. No nightly
+feature is used, and none should be added. Let-chains (`if let Some(x) = a && cond`) are used
+throughout and are expected. GTK 4.22+, libadwaita 1.9+ and Blueprint Compiler 0.22+ are
+required to build `mirai`.
 
 ### Testing expectations
 

@@ -1,7 +1,6 @@
 [package]
 name = "mirai-proto"
 edition.workspace = true
-rust-version.workspace = true
 version.workspace = true
 license.workspace = true
 

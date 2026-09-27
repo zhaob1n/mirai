@@ -41,7 +41,7 @@ refused.
 
 ## Requirements
 
-- Rust 1.92 or newer (edition 2024). `rust-toolchain.toml` selects the current stable.
+- The current stable Rust (edition 2024), which `rust-toolchain.toml` selects. No older compiler is supported.
 - GTK 4.22+, libadwaita 1.9+, and Blueprint Compiler 0.22+ with their development packages.
 - A KataGo binary and network model (JSON analysis mode, not GTP). mirai does not download KataGo.
 
