@@ -410,6 +410,7 @@ and <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes back the whole exchange rather than a doc
 | Byo-yomi | main time first; when it runs out you enter your first period and the clock resets to the period length. The bracketed number is how many periods remain, counting the one you are in. Completing a move inside a period resets it in full. Running a period out with none left loses on time |
 
 Starting a byo-yomi game with zero main time drops you straight into the first period.
+A Fischer game with zero main time starts with one increment on the clock.
 
 | | |
 |---|---|
