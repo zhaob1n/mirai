@@ -1284,7 +1284,9 @@ impl BoardView {
         }
     }
 
-    /// Centre of `p` in widget coordinates from the live layout, if both are valid.
+    /// Centre of `p` in widget coordinates from the live layout, if both are valid. The
+    /// harness's pointer, so debug builds only.
+    #[cfg(debug_assertions)]
     pub(crate) fn point_center(&self, p: Point) -> Option<(f64, f64)> {
         let layout = self.imp().layout.get();
         if layout.cell <= 0.0 || layout.width <= 0 || layout.height <= 0 {
