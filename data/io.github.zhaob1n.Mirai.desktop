@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=mirai
+GenericName=Go Analysis Board
+Comment=Analyse, review and play Go with KataGo
+Exec=mirai %F
+Icon=io.github.zhaob1n.Mirai
+Terminal=false
+Categories=Game;BoardGame;
+Keywords=Go;Baduk;Weiqi;KataGo;SGF;
+MimeType=application/x-go-sgf;
+StartupNotify=true
