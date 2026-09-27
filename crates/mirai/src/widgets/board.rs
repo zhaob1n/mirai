@@ -429,8 +429,9 @@ mod imp {
             let grid_w = (size.w as f32 - 1.0) * cell;
             let grid_h = (size.h as f32 - 1.0) * cell;
 
-            // Wood: a colour node inside a rounded clip, not a rounded-rect fill — see the
-            // note on `paint::fill_disc`.
+            // Wood: a colour node, inside a rounded clip only while coordinates frame it — see
+            // the note on `paint::fill_disc`. Without them the wood reaches the edges of the
+            // board's square, and a rounded corner would show the background in each corner.
             let rect = graphene::Rect::new(
                 l.origin_x - pad,
                 l.origin_y - pad,
@@ -438,9 +439,13 @@ mod imp {
                 grid_h + 2.0 * pad,
             );
             let wood = wood_color(dark);
-            s.push_rounded_clip(&gsk::RoundedRect::from_rect(rect, (cell * 0.2).min(8.0)));
-            s.append_color(&wood, &rect);
-            s.pop();
+            if coords {
+                s.push_rounded_clip(&gsk::RoundedRect::from_rect(rect, (cell * 0.2).min(8.0)));
+                s.append_color(&wood, &rect);
+                s.pop();
+            } else {
+                s.append_color(&wood, &rect);
+            }
 
             // Grid. Axis-aligned lines are rectangles; as one stroked path, GSK re-evaluated
             // all 38 segments across the whole board every time the board was resized.
