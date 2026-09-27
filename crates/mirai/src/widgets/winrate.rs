@@ -76,7 +76,7 @@ pub(crate) fn blunder_severity(mover: Color, before: f32, after: f32) -> Severit
 }
 
 /// One main-line sample: everything the graph needs about a node.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Sample {
     /// Black-perspective win rate, if this node has been analysed.
     winrate: Option<f32>,
@@ -108,6 +108,17 @@ fn collect_samples(tree: &GameTree, line: &[NodeId]) -> Vec<Sample> {
         prev_winrate = winrate;
     }
     samples
+}
+
+/// Score-lead axis half-range. Matches [`WinrateGraph::axis_metrics`]: at least five
+/// points, otherwise the ceiling of the largest absolute lead.
+fn axis_range(samples: &[Sample]) -> f32 {
+    samples
+        .iter()
+        .filter_map(|sample| sample.lead)
+        .fold(0.0f32, |max, lead| max.max(lead.abs()))
+        .ceil()
+        .max(5.0)
 }
 
 #[derive(Default)]
@@ -411,15 +422,7 @@ impl WinrateGraph {
         {
             return axis;
         }
-        let max_lead = self
-            .imp()
-            .projection
-            .borrow()
-            .samples
-            .iter()
-            .filter_map(|sample| sample.lead)
-            .fold(0.0f32, |max, lead| max.max(lead.abs()));
-        let range = max_lead.ceil().max(5.0);
+        let range = axis_range(&self.imp().projection.borrow().samples);
         let layout = self.create_pango_layout(Some("100"));
         let left = (layout.pixel_size().0 as f32 + 8.0).max(30.0);
         layout.set_text(&format!("+{}", range as i32));
@@ -437,11 +440,36 @@ impl WinrateGraph {
     }
 
     pub(crate) fn refresh(&self) {
-        let before = self.axis_metrics().minimum_width();
-        *self.imp().projection.borrow_mut() = self.samples(self.state());
-        self.imp().axis_metrics.set(None);
-        if self.axis_metrics().minimum_width() != before {
-            self.queue_resize();
+        let next = self.samples(self.state());
+        let (stale, cursor_moved) = {
+            let projection = self.imp().projection.borrow();
+            (
+                // The axis range is derived from the samples, so equal samples are an
+                // equal picture.
+                projection.samples != next.samples,
+                projection.cursor_index != next.cursor_index || projection.line != next.line,
+            )
+        };
+        if !stale {
+            // Navigation emits Report after Cursor. The curves did not change; the
+            // cursor marker is drawn on top of the cached node.
+            if cursor_moved {
+                let mut projection = self.imp().projection.borrow_mut();
+                projection.cursor_index = next.cursor_index;
+                projection.line = next.line;
+                drop(projection);
+                self.queue_draw();
+            }
+            return;
+        }
+        let before = self.axis_metrics();
+        let range_after = axis_range(&next.samples);
+        *self.imp().projection.borrow_mut() = next;
+        if range_after != before.range {
+            self.imp().axis_metrics.set(None);
+            if self.axis_metrics().minimum_width() != before.minimum_width() {
+                self.queue_resize();
+            }
         }
         self.imp().render_cache.borrow_mut().take();
         self.queue_draw();
@@ -851,6 +879,63 @@ mod tests {
         let samples = collect_samples(&tree, &tree.main_line());
         assert_eq!(samples[2].blunder, Severity::Major);
         assert_eq!(samples[3].blunder, Severity::Major);
+    }
+
+    /// The graph's base node is a picture of the stored samples, not the
+    /// current cursor, comment or visit count. A changed win rate or score axis
+    /// must invalidate it; a deeper report with identical plotted values must not.
+    #[test]
+    fn cached_curve_survives_nonvisual_tree_changes() {
+        use mirai_core::{GameInfo, NodeAnalysis, RuleSet, Size};
+
+        let size = Size::square(9);
+        let mut tree = GameTree::new(GameInfo::new(size, RuleSet::Chinese));
+        let root = tree.root();
+        let child = tree
+            .play(root, Color::Black, size.point(2, 2))
+            .expect("legal");
+        let analysis = NodeAnalysis {
+            visits: 100,
+            winrate: 0.6,
+            score_lead: 3.0,
+            score_stdev: 1.0,
+            candidates: vec![],
+            ownership: None,
+        };
+        tree.set_analysis(root, Some(analysis.clone()));
+        let samples = collect_samples(&tree, &tree.main_line());
+        tree.set_comment(child, "note");
+        assert_eq!(samples, collect_samples(&tree, &tree.main_line()));
+
+        tree.set_analysis(
+            root,
+            Some(NodeAnalysis {
+                visits: 200,
+                ..analysis.clone()
+            }),
+        );
+        assert_eq!(samples, collect_samples(&tree, &tree.main_line()));
+
+        tree.set_analysis(
+            root,
+            Some(NodeAnalysis {
+                winrate: 0.3,
+                ..analysis.clone()
+            }),
+        );
+        assert_ne!(samples, collect_samples(&tree, &tree.main_line()));
+
+        tree.set_analysis(
+            root,
+            Some(NodeAnalysis {
+                score_lead: 12.0,
+                ..analysis
+            }),
+        );
+        let shifted = collect_samples(&tree, &tree.main_line());
+        assert_eq!(axis_range(&samples), 5.0);
+        assert_eq!(axis_range(&shifted), 12.0);
+        assert_ne!(samples, shifted);
     }
 
     #[test]

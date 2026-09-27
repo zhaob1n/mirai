@@ -347,7 +347,8 @@ impl PlayController {
 
     /// A stalled turn resumes when a different engine becomes ready. Called from
     /// the window's `Change::Engine` arm, which also fires when a profile is saved
-    /// or deleted without the running engine changing.
+    /// or deleted without the running engine changing. The same remote engine coming
+    /// back after a dropped link is `Change::Reconnected`, which calls [`Self::retry`].
     pub(crate) fn retry_if_engine_ready(&self) {
         if !matches!(self.play_state(), PlayState::AiStalled(_)) {
             return;

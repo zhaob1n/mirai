@@ -232,7 +232,8 @@ Board, win-rate graph and move tree are `gtk::Widget` subclasses drawing in `sna
   buffer is uploaded as a `gdk::MemoryTexture` only while that overlay is on, and dropped
   when it is turned off — live analysis still requests ownership either way, because the
   score estimate and the stored analysis use it. The win-rate graph caches its base
-  render node and redraws only the cursor marker while navigating. Widgets consume pushed
+  render node; navigation redraws only the cursor marker, and a new report invalidates
+  the base only if stored samples or the score axis changed. Widgets consume pushed
   projections, so `snapshot()` does not walk `AppState` or rebuild tree-derived data.
 - **Costs.** No cairo conveniences: a circle is a colour node inside a rounded clip
   (`crates/mirai/src/widgets/paint.rs`), and text is a `pango::Layout` per label. Projection
@@ -646,9 +647,12 @@ retrying at maximum backoff in case the server is fixed and restarted.
 **No subscription replay.** On connection loss every live subscription fails with `Disconnected`
 and is forgotten, and requests made while the link is down fail immediately rather than queueing.
 That is INV-4 again: the GUI knows which node the user is looking at *now* and re-requests that
-one when the banner clears, whereas a queued stale query would only burn the server's search
-threads. Reconnects reuse the accepted fingerprint and the *resolved* engine name, so a server
-that gains engines later cannot silently switch the client to a different one.
+one once `RemoteStatus::Connected` returns, whereas a queued stale query would only burn the
+server's search threads. `EnginePool` keeps a remote engine's status receiver beside it, and
+each window's `AppState` follows the one for its own engine: on a return it restarts live
+analysis and emits `Change::Reconnected`, which retries a stalled play turn. Reconnects reuse
+the accepted fingerprint and the *resolved* engine name, so a server that gains engines later
+cannot silently switch the client to a different one.
 
 ### Local vs remote
 
@@ -659,7 +663,7 @@ that gains engines later cannot silently switch the client to a different one.
 | cancel | `terminate` action | `Cancel` message **and** `stop_sending` |
 | one query fails | KataGo per-query error | `SubMsg::Failed` / `ServerMsg::Error` with a sub id |
 | engine fails | process exit → fail all | connection loss → fail all, then reconnect |
-| recovery | none; the GUI clears the engine | automatic with backoff, never replayed |
+| recovery | none; the GUI clears the engine | automatic with backoff, never replayed; the GUI asks again on `Connected` |
 | `describe()` | from the startup handshake | from `Welcome`, narrowed to the picked engine |
 
 ---
@@ -702,10 +706,13 @@ refresh. This avoids several independently ordered signal callbacks observing ha
 | `BeforeEdit` | `with_edit_session`, `set_cursor`, `navigate`, `adopt_record` / `adopt_unsaved` | flush the comment so it is one history item before the next edit |
 | `Edit { positions_changed, structure_changed }` | `with_session_mut` when the record actually changed | cancel batch, and abort score if the position moved, before the Tree/Cursor refresh; update undo/redo sensitivity |
 | `Editor` | `set_editor_tool`; adopt forces Play and emits this too | if the tool is not Play, reveal `editor_revealer`; project toolbar state; clear the PV preview when leaving Play. Collapsing the revealer forces Play first. Returning to Play does not hide a toolbar the user opened |
-| `Tree` | `with_session_mut`; the batch coordinator when a sweep lands, cancels or fails | close the board menu; update the board-local position label; choose the analysis page; rebuild board, tree and graph projections; recompute blunders; refresh the analysis panel and editor actions |
-| `Cursor` | `set_cursor`, and `moved_cursor` after `play_move` or a cursor-changing edit | load the comment (does not flush); update the board-local position label and clocks; choose the analysis page; refresh cursor projections. Does not refresh the subtitle |
-| `Report` | `set_report`, and `moved_cursor` after the live report is cleared | refresh board textures, graph data and analysis rows; choose the analysis page. Does not move the slider or the position label |
+| `Tree` | `with_session_mut` only for structure or position changes; the batch coordinator when a sweep lands, cancels or fails | close the board menu; update the board-local position label; choose the analysis page; rebuild board, tree and graph projections; recompute blunders; refresh the analysis panel and editor actions |
+| `Marks` | board-edit session when metadata changes without moving the cursor | refresh the board projection for marks. Comment commits do not take this path; undo/redo of metadata does, without refreshing the graph or lists |
+| `Cursor { project }` | `set_cursor`, and `moved_cursor` after `play_move` or a cursor-changing edit | load the comment, update the board-local position label and clocks, choose the analysis page; refresh board and graph cursor projections only if `Tree` did not already do so (`project: true`). Does not refresh the subtitle |
+| `Report` | `set_report`, and `moved_cursor` after the live report is cleared | refresh board textures and analysis rows; choose the analysis page. Does not walk the graph, move the slider or the position label |
+| `Samples` | `set_report` only when deeper analysis was stored | refresh graph samples; keep its GSK base node if the plotted values and axis range did not change |
 | `Engine` | engine-state transitions and profile edits | rebuild the engine menu, choose the analysis page, refresh the panel, update the subtitle |
+| `Reconnected` | `AppState`'s link watch, when the active remote engine returns to `Connected` after a drop; live analysis has already been restarted | retry a stalled play turn, which `retry_if_engine_ready` declines because the engine did not change |
 | `Toast(String)` | `AppState::toast` | add one `adw::Toast` |
 | `Play` | `notify_play_changed` | refresh clocks and play controls. Active play forces the editor revealer closed and disables its toggle |
 | `BatchProgress` | `notify_batch_progress` | the banner count is already current. The graph and blunder list refresh at most once per 250 ms while results land. Completion, cancel and failure emit `Tree`, which is the final refresh |
@@ -835,7 +842,7 @@ windows in one process is a normal state, not an edge case. Each owns a complete
 
 | Shared | Rule |
 |---|---|
-| Engines | `EnginePool` in `MiraiApplication`, keyed on the whole `EngineProfile`. A window adopts a running engine synchronously through `running`, or joins an in-flight start through `acquire`; entries are `Weak`, so KataGo exits with the last window using it. The start is owned by the pool: dropping one waiter (a superseded `activate_profile`) does not leave the entry pending, and a start that finishes with no waiter left drops the engine so the next acquire starts again. Dropping the pool aborts an in-flight coordinator before the runtime stops, so quit during startup closes KataGo's stdin instead of killing the child. The application owns the pool and runtime and releases both from its `shutdown` vfunc, with GObject disposal as the backstop |
+| Engines | `EnginePool` in `MiraiApplication`, keyed on the whole `EngineProfile`. A window adopts a running engine synchronously through `running`, or joins an in-flight start through `acquire`; entries are `Weak`, so KataGo exits with the last window using it. A remote entry also keeps the engine's `RemoteStatus` receiver, which `Arc<dyn Engine>` cannot hand out, so every window using it can follow a reconnect. The start is owned by the pool: dropping one waiter (a superseded `activate_profile`) does not leave the entry pending, and a start that finishes with no waiter left drops the engine so the next acquire starts again. Dropping the pool aborts an in-flight coordinator before the runtime stops, so quit during startup closes KataGo's stdin instead of killing the child. The application owns the pool and runtime and releases both from its `shutdown` vfunc, with GObject disposal as the backstop |
 | `config.toml` | Each window holds the `Config` it loaded, so writing the whole thing back would revert another window's edits. `Config::save_merged` applies only this window's own diff onto the file as it stands. A missing file is an empty merge base; any other read or parse error is returned and the file is left untouched. `AppState::save_config` debounces (300 ms) and merges on the runtime's blocking pool, because the file and its directory are synced (50–100 ms on an ordinary disk); `flush_config` writes synchronously when a window closes and before a new window loads the file. `engine_profile` is merged by `name`: a profile this window did not touch keeps the file's copy, including one only the other window added. If both edited the same profile, the save being written wins for that name |
 | Autosave | One file per window, `autosave-<pid>-<start>-<n>.sgf`. A clean close deletes it, waiting out an in-flight write first; anything found at startup is therefore a crash leftover, and each new window is offered one, most recent first. The scan, the write and opening an SGF run on the runtime's blocking pool so they do not stall the GTK thread. This replaced the single `autosave.sgf` plus `clean-exit` flag, which could not say which window had exited |
 

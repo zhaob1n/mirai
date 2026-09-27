@@ -20,10 +20,11 @@ use gtk::subclass::prelude::*;
 
 use mirai_client::{GameSession, SpeedMeter};
 use mirai_core::{Color, GameTree, IllegalMove, NodeAnalysis, NodeId, Point, Position};
+use mirai_engine::remote::RemoteStatus;
 use mirai_engine::{AnalyzeReq, Engine, EngineDesc, EngineError, Report, SubEvent, Want};
 
 use crate::config::{Config, ConfigError, ProfileKind};
-use crate::engines::EnginePool;
+use crate::engines::{Built, EnginePool};
 
 /// How long settings may keep changing before they are written. A spin row saves on every
 /// step and a drag is dozens of steps; one write when it settles is enough.
@@ -76,10 +77,26 @@ pub enum Change {
         structure_changed: bool,
     },
     Editor,
+    /// Structure or position changed. Rebuilds the board, the graph and the blunder list.
     Tree,
-    Cursor,
+    /// Marks on the current node. The board redraws them; the graph and the lists do not.
+    Marks,
+    /// Cursor moved. `project` is false when [`Change::Tree`] in the same edit already
+    /// rebuilt the board and the graph for this cursor — doing it again is what made one
+    /// move rebuild the projection twice.
+    Cursor {
+        project: bool,
+    },
+    /// Live report, or its absence. Does not walk the graph: samples come from stored
+    /// [`mirai_core::NodeAnalysis`], not from this report.
     Report,
+    /// Stored analysis the graph reads may have changed.
+    Samples,
     Engine,
+    /// The active remote engine's link came back after dropping. Nothing is replayed
+    /// across a reconnect, so live analysis has already been asked for again; the window
+    /// retries a play turn the drop stalled.
+    Reconnected,
     Toast(String),
     Play,
     BatchProgress(u32, u32),
@@ -214,6 +231,9 @@ mod imp {
         /// The live-analysis pump. Aborting it drops the `Subscription`, which terminates
         /// the KataGo query — that is the whole cancellation mechanism.
         pub pump: RefCell<Option<glib::JoinHandle<()>>>,
+        /// Follows the active remote engine's link. Replacing the engine or closing the
+        /// window aborts it; it holds this state weakly.
+        pub link_watch: RefCell<Option<glib::JoinHandle<()>>>,
         /// Bumped on every `activate_profile` so a slow engine start can tell it has been
         /// superseded by a newer selection.
         pub activation: Cell<u64>,
@@ -259,6 +279,7 @@ mod imp {
                 runtime: OnceCell::new(),
                 report: RefCell::new(None),
                 pump: RefCell::new(None),
+                link_watch: RefCell::new(None),
                 activation: Cell::new(0),
                 activation_task: RefCell::new(None),
                 generation: Cell::new(0),
@@ -603,7 +624,22 @@ impl AppState {
     /// [`mirai_client::Play`] drives the record directly — turns, clocks, scoring and undo
     /// are its rules, not the window's — so this is the one door it goes through and a play
     /// action cannot forget to dispatch. The borrow is always released first (INV-10).
+    ///
+    /// A revision bump is not a new position. A comment or a result used to emit
+    /// [`Change::Tree`], which rebuilt the board projection, the graph, the candidate list
+    /// and the blunder list. Those follow structure and position.
     pub fn with_session_mut<R>(&self, f: impl FnOnce(&mut GameSession) -> R) -> R {
+        self.with_session_mut_inner(f, false)
+    }
+
+    /// Board edits (including undo/redo) can change marks without changing position.
+    /// The ordinary session path, used by comments and play ticks, does not copy marks
+    /// merely to find that out on every call.
+    fn with_session_mut_inner<R>(
+        &self,
+        f: impl FnOnce(&mut GameSession) -> R,
+        board_metadata: bool,
+    ) -> R {
         let (out, changed, positions_changed, structure_changed, cursor_changed) = {
             let mut session = self.imp().session.borrow_mut();
             let before = (
@@ -618,12 +654,16 @@ impl AppState {
             if replaced {
                 self.imp().editor_tool.set(EditorTool::Play);
             }
+            let positions_changed = replaced || before.3 != session.position_revision();
+            let structure_changed = replaced || before.4 != session.tree().structure_revision();
+            let cursor_changed = replaced || before.1 != session.cursor();
+            let changed = before.0 != session.revision();
             (
                 out,
-                before.0 != session.revision(),
-                replaced || before.3 != session.position_revision(),
-                replaced || before.4 != session.tree().structure_revision(),
-                replaced || before.1 != session.cursor(),
+                changed,
+                positions_changed,
+                structure_changed,
+                cursor_changed,
             )
         };
         if changed {
@@ -635,9 +675,20 @@ impl AppState {
                 positions_changed,
                 structure_changed,
             });
-            self.changed(Change::Tree);
-            if positions_changed || cursor_changed {
-                self.moved_cursor();
+            let dispatch = session_dispatch(
+                structure_changed,
+                positions_changed,
+                cursor_changed,
+                board_metadata,
+            );
+            if dispatch.tree {
+                self.changed(Change::Tree);
+            }
+            if dispatch.marks {
+                self.changed(Change::Marks);
+            }
+            if let Some(project) = dispatch.cursor_project {
+                self.moved_cursor(project);
             }
         }
         out
@@ -645,7 +696,7 @@ impl AppState {
 
     pub(crate) fn with_edit_session<R>(&self, f: impl FnOnce(&mut GameSession) -> R) -> R {
         self.changed(Change::BeforeEdit);
-        self.with_session_mut(f)
+        self.with_session_mut_inner(f, true)
     }
 
     pub(crate) fn set_comment_at(&self, node: NodeRef, text: &str) {
@@ -736,12 +787,16 @@ impl AppState {
         self.changed(Change::BeforeEdit);
         self.imp().session.borrow_mut().go_to(id);
         self.imp().report.replace(None);
-        self.moved_cursor();
+        self.moved_cursor(true);
     }
 
     /// Everything a cursor move has to tell the window, once the borrow is gone.
-    fn moved_cursor(&self) {
-        self.changed(Change::Cursor);
+    ///
+    /// `project` is false when the caller already emitted [`Change::Tree`] for this
+    /// cursor. The board projection and the graph samples are current; repeating them
+    /// is the second and third rebuild of one move.
+    fn moved_cursor(&self, project: bool) {
+        self.changed(Change::Cursor { project });
         self.changed(Change::Report);
         self.restart_analysis();
     }
@@ -778,7 +833,7 @@ impl AppState {
             }
             imp.report.replace(None);
         }
-        self.moved_cursor();
+        self.moved_cursor(true);
     }
 
     pub fn go_first(&self) {
@@ -830,10 +885,10 @@ impl AppState {
         self.changed(Change::Engine);
     }
 
-    pub fn set_engine(&self, engine: Option<Arc<dyn Engine>>) {
+    pub fn set_engine(&self, engine: Option<Built>) {
         let state = match &engine {
-            Some(engine) => {
-                let desc = engine.describe();
+            Some(built) => {
+                let desc = built.engine.describe();
                 let description = if desc.katago_version.is_empty() {
                     desc.name.clone()
                 } else {
@@ -846,9 +901,52 @@ impl AppState {
             }
             None => EngineState::None,
         };
-        *self.imp().engine.borrow_mut() = engine;
+        self.replace_engine(engine);
         self.set_engine_state(state);
         self.restart_analysis();
+    }
+
+    /// Every write to the engine slot comes through here, so the link being followed is
+    /// always the current engine's: a replaced remote engine coming back, still alive in
+    /// another window, must not restart this one's analysis.
+    fn replace_engine(&self, engine: Option<Built>) {
+        let imp = self.imp();
+        if let Some(task) = imp.link_watch.take() {
+            task.abort();
+        }
+        let Some(Built { engine, link }) = engine else {
+            imp.engine.replace(None);
+            return;
+        };
+        imp.engine.replace(Some(engine));
+        let Some(mut link) = link else {
+            return;
+        };
+        // Only a return is news. The link may already be down when a window adopts the
+        // engine, and the status it starts from asks for nothing. Sampled here, before
+        // `restart_analysis` subscribes, so a return between the two is still a change.
+        let mut up = *link.borrow_and_update() == RemoteStatus::Connected;
+        let weak = self.downgrade();
+        let task = glib::spawn_future_local(async move {
+            while link.changed().await.is_ok() {
+                let now = *link.borrow_and_update() == RemoteStatus::Connected;
+                if now
+                    && !up
+                    && let Some(state) = weak.upgrade()
+                {
+                    state.link_restored();
+                }
+                up = now;
+            }
+        });
+        imp.link_watch.replace(Some(task));
+    }
+
+    /// A dropped link failed every subscription on it, and remote subscriptions are never
+    /// replayed (PROTOCOL §8.6): the client asks again for what the user is looking at now.
+    fn link_restored(&self) {
+        self.restart_analysis();
+        self.changed(Change::Reconnected);
     }
 
     /// Starts (or connects to) the named profile and installs it as the active engine.
@@ -878,7 +976,7 @@ impl AppState {
             return;
         }
 
-        *self.imp().engine.borrow_mut() = None;
+        self.replace_engine(None);
         self.set_engine_state(EngineState::Starting {
             profile: profile.name.clone(),
         });
@@ -979,7 +1077,7 @@ impl AppState {
                 on_cancel_state.set_busy(false);
                 on_cancel_state
                     .set_status("Certificate was not trusted. The token was not sent.".to_string());
-                *on_cancel_state.imp().engine.borrow_mut() = None;
+                on_cancel_state.replace_engine(None);
                 on_cancel_state.set_engine_state(EngineState::Failed {
                     profile: on_cancel_name.clone(),
                     message: "certificate was not trusted".into(),
@@ -1042,7 +1140,7 @@ impl AppState {
     fn fail_activation(&self, profile: &str, message: String) {
         self.set_busy(false);
         self.toast(format!("{profile}: {message}"));
-        *self.imp().engine.borrow_mut() = None;
+        self.replace_engine(None);
         self.set_engine_state(EngineState::Failed {
             profile: profile.to_string(),
             message,
@@ -1176,7 +1274,7 @@ impl AppState {
         // is borrowed and the `Arc` moves into the cell last instead of being cloned into
         // it. The dispatcher below is the first thing that can observe either.
         let analysis = mirai_client::analysis_of(&report, max);
-        {
+        let stored = {
             let mut session = self.imp().session.borrow_mut();
             let existing = session
                 .tree()
@@ -1185,11 +1283,18 @@ impl AppState {
                 .as_ref()
                 .map(|a| a.visits);
             if crate::util::replaces_stored_analysis(existing, analysis.visits) {
-                session.set_analysis_at(cursor, self.imp().analysis_revision.get(), Some(analysis));
+                session.set_analysis_at(cursor, self.imp().analysis_revision.get(), Some(analysis))
+            } else {
+                false
             }
-        }
+        };
         self.imp().report.replace(Some(report));
+        // The board and the candidate list read the live report. The graph reads stored
+        // analysis, so a report that did not replace it must not walk the main line.
         self.changed(Change::Report);
+        if stored {
+            self.changed(Change::Samples);
+        }
     }
 
     /// Cancels every future owned by this window state.
@@ -1199,6 +1304,9 @@ impl AppState {
             task.abort();
         }
         if let Some(task) = imp.pump.borrow_mut().take() {
+            task.abort();
+        }
+        if let Some(task) = imp.link_watch.borrow_mut().take() {
             task.abort();
         }
         imp.generation.set(imp.generation.get().wrapping_add(1));
@@ -1271,6 +1379,31 @@ fn should_toast_illegal_move(error: IllegalMove) -> bool {
     !matches!(error, IllegalMove::Occupied)
 }
 
+/// What a revision bump has to tell the window besides [`Change::Edit`].
+///
+/// `tree` rebuilds the board, the graph and the blunder list. A move that also
+/// moves the cursor must not do that again: `cursor_project` is then `Some(false)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SessionDispatch {
+    tree: bool,
+    marks: bool,
+    cursor_project: Option<bool>,
+}
+
+fn session_dispatch(
+    structure_changed: bool,
+    positions_changed: bool,
+    cursor_changed: bool,
+    board_metadata: bool,
+) -> SessionDispatch {
+    let structural = structure_changed || positions_changed;
+    SessionDispatch {
+        tree: structural,
+        marks: !structural && !cursor_changed && board_metadata,
+        cursor_project: (positions_changed || cursor_changed).then_some(!structural),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1281,5 +1414,168 @@ mod tests {
         assert!(should_toast_illegal_move(IllegalMove::Suicide));
         assert!(should_toast_illegal_move(IllegalMove::Ko));
         assert!(should_toast_illegal_move(IllegalMove::OffBoard));
+    }
+
+    /// `Change` is the one window dispatcher. Comments and marks must not run its
+    /// expensive Tree arm; a new move must project once, while replaying a child
+    /// must use the navigation path rather than rebuild unchanged samples.
+    #[test]
+    fn a_revision_only_refreshes_the_projections_it_changed() {
+        use mirai_core::{MarkKind, Size};
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime");
+        let state = AppState::new(
+            Config::default(),
+            PathBuf::from("/tmp/mirai-refresh-test.toml"),
+            runtime.handle().clone(),
+            Rc::new(EnginePool::default()),
+        );
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let log = Rc::clone(&seen);
+        state.set_change_hook(move |change| log.borrow_mut().push(change));
+        let take = || std::mem::take(&mut *seen.borrow_mut());
+
+        state.set_comment_at(state.cursor_ref(), "a comment");
+        let changes = take();
+        assert!(changes.iter().any(|c| matches!(c, Change::Edit { .. })));
+        assert!(!changes.iter().any(|c| matches!(
+            c,
+            Change::Tree | Change::Marks | Change::Cursor { .. } | Change::Report
+        )));
+
+        let point = Size::square(19).point(3, 3);
+        state.with_edit_session(|game| game.toggle_mark(MarkKind::Triangle, point));
+        let changes = take();
+        assert!(changes.iter().any(|c| matches!(c, Change::Marks)));
+        assert!(!changes.iter().any(|c| matches!(c, Change::Tree)));
+
+        state.play_move(point).expect("legal move");
+        let changes = take();
+        assert_eq!(
+            changes.iter().filter(|c| matches!(c, Change::Tree)).count(),
+            1
+        );
+        assert!(
+            changes
+                .iter()
+                .any(|c| matches!(c, Change::Cursor { project: false }))
+        );
+        assert!(!changes.iter().any(|c| matches!(c, Change::Samples)));
+
+        state.go_prev();
+        let changes = take();
+        assert!(!changes.iter().any(|c| matches!(c, Change::Tree)));
+        assert!(
+            changes
+                .iter()
+                .any(|c| matches!(c, Change::Cursor { project: true }))
+        );
+
+        state.play_move(point).expect("existing move");
+        let changes = take();
+        assert!(!changes.iter().any(|c| matches!(c, Change::Tree)));
+        assert!(
+            changes
+                .iter()
+                .any(|c| matches!(c, Change::Cursor { project: true }))
+        );
+
+        // The panel consumes every live report, but the graph consumes only
+        // reports whose deeper analysis was actually stored on a node.
+        let mut report = Report::empty(1, Color::White);
+        report.root.visits = 100;
+        state.set_report(Arc::new(report.clone()));
+        let changes = take();
+        assert!(changes.iter().any(|c| matches!(c, Change::Report)));
+        assert!(changes.iter().any(|c| matches!(c, Change::Samples)));
+
+        report.root.visits = 50;
+        state.set_report(Arc::new(report));
+        let changes = take();
+        assert!(changes.iter().any(|c| matches!(c, Change::Report)));
+        assert!(!changes.iter().any(|c| matches!(c, Change::Samples)));
+    }
+
+    /// Counts what it was asked, and never answers.
+    struct Counting(Arc<std::sync::atomic::AtomicU32>);
+
+    impl Engine for Counting {
+        fn subscribe(&self, _req: AnalyzeReq) -> mirai_engine::Subscription {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let (tx, rx) = tokio::sync::watch::channel(SubEvent::Pending);
+            mirai_engine::Subscription::new(rx, mirai_engine::CancelGuard::new(move || drop(tx)))
+        }
+
+        fn describe(&self) -> EngineDesc {
+            EngineDesc::placeholder("counting")
+        }
+    }
+
+    /// A dropped remote link fails the live search and nothing replays it. When the link
+    /// returns, the window must ask again — and only for the engine it is still using.
+    #[test]
+    fn a_returning_link_asks_for_the_analysis_again() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::time::Duration;
+
+        glib::MainContext::new().block_on(async {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .expect("runtime");
+            let state = AppState::new(
+                Config::default(),
+                PathBuf::from("/tmp/mirai-reconnect-test.toml"),
+                runtime.handle().clone(),
+                Rc::new(EnginePool::default()),
+            );
+            let seen = Rc::new(RefCell::new(Vec::new()));
+            let log = Rc::clone(&seen);
+            state.set_change_hook(move |change| log.borrow_mut().push(change));
+            let reconnects = || {
+                std::mem::take(&mut *seen.borrow_mut())
+                    .iter()
+                    .filter(|c| matches!(c, Change::Reconnected))
+                    .count()
+            };
+            let settle = || glib::timeout_future(Duration::from_millis(10));
+
+            let asked = Arc::new(AtomicU32::new(0));
+            let (status, link) = tokio::sync::watch::channel(RemoteStatus::Connected);
+            state.set_live_analysis(true);
+            state.set_engine(Some(Built {
+                engine: Arc::new(Counting(Arc::clone(&asked))),
+                link: Some(link),
+            }));
+            settle().await;
+            assert_eq!(asked.load(Ordering::SeqCst), 1);
+            assert_eq!(reconnects(), 0, "the first status is not a return");
+
+            status.send_replace(RemoteStatus::Reconnecting { attempt: 1 });
+            settle().await;
+            assert_eq!(asked.load(Ordering::SeqCst), 1);
+            assert_eq!(reconnects(), 0);
+
+            status.send_replace(RemoteStatus::Connected);
+            settle().await;
+            assert_eq!(
+                asked.load(Ordering::SeqCst),
+                2,
+                "the live search was not asked again"
+            );
+            assert_eq!(reconnects(), 1, "a stalled play turn was not told");
+
+            // Replaced: that engine's link is none of this window's business any more.
+            state.set_engine(None);
+            status.send_replace(RemoteStatus::Reconnecting { attempt: 2 });
+            settle().await;
+            status.send_replace(RemoteStatus::Connected);
+            settle().await;
+            assert_eq!(asked.load(Ordering::SeqCst), 2);
+            assert_eq!(reconnects(), 0);
+
+            state.cancel_tasks();
+        });
     }
 }

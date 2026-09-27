@@ -559,15 +559,26 @@ fn handle_change(ui: &Ui, change: Change) {
             ui.analysis.refresh();
             update_editor_actions(ui);
         }
-        Change::Cursor => {
+        Change::Marks => {
+            // Marks live in the board projection. Nothing else on screen reads them.
+            ui.board.refresh_cursor();
+        }
+        Change::Cursor { project } => {
             ui.board.close_menu();
             load_comment(ui);
             update_scale(ui);
             update_analysis_page(ui);
             update_clocks(ui);
-            ui.board.refresh_cursor();
+            // A move already rebuilt both projections in `Tree`; only a pure
+            // navigation needs to rebuild the board and move the graph cursor. Either
+            // way the hovered or pinned candidate belonged to the old node.
+            if project {
+                ui.board.refresh_cursor();
+                ui.winrate.refresh_cursor();
+            } else {
+                ui.board.clear_preview();
+            }
             ui.move_tree.refresh();
-            ui.winrate.refresh_cursor();
             // The board has just dropped its pin; the row would name another position's
             // move once `refresh` rewrites it in place.
             ui.analysis.clear_selection();
@@ -576,10 +587,10 @@ fn handle_change(ui: &Ui, change: Change) {
         }
         Change::Report => {
             ui.board.refresh_report();
-            ui.winrate.refresh();
             ui.analysis.refresh();
             update_analysis_page(ui);
         }
+        Change::Samples => ui.winrate.refresh(),
         Change::Engine => {
             refresh_engine_menu(ui);
             update_analysis_page(ui);
@@ -587,6 +598,11 @@ fn handle_change(ui: &Ui, change: Change) {
             update_subtitle(ui);
             maybe_auto_analyse(ui);
             ui.play.retry_if_engine_ready();
+        }
+        Change::Reconnected => {
+            // The stalled turn's engine is the one that just came back, which
+            // `retry_if_engine_ready` rightly declines; a return is the signal to ask again.
+            ui.play.retry();
         }
         Change::Toast(text) => ui.toasts.add_toast(adw::Toast::new(&text)),
         Change::Play => {
@@ -2306,10 +2322,20 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
     });
 
     let split = window.split();
-    let sidebar = toggle("toggle-sidebar", split.shows_sidebar(), {
-        let split = split.clone();
-        Box::new(move |_: &Ui| split.set_show_sidebar(!split.shows_sidebar()))
-    });
+    let sidebar = toggle(
+        "toggle-sidebar",
+        split.shows_sidebar(),
+        Box::new(|ui| {
+            // The action must not own the split. The notify handler below owns this
+            // action, and a strong split in the closure is a cycle: the closed window's
+            // widget tree, and the AppState the sidebar widgets hold, never drop (INV-8).
+            let Some(window) = ui.window() else {
+                return;
+            };
+            let split = window.split();
+            split.set_show_sidebar(!split.shows_sidebar());
+        }),
+    );
     {
         let weak = weak.clone();
         split.connect_show_sidebar_notify(move |split| {
