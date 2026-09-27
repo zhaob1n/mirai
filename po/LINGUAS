@@ -1,1 +1,2 @@
 # One language per line; tools/i18n/update-po.sh merges each and build.rs compiles each.
+zh_CN

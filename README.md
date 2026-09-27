@@ -43,16 +43,18 @@ refused.
 
 - The current stable Rust (edition 2024), which `rust-toolchain.toml` selects. No older compiler is supported.
 - GTK 4.22+, libadwaita 1.9+, and Blueprint Compiler 0.22+ with their development packages.
+- GNU gettext, for the translations.
 - [`just`](https://github.com/casey/just), to install.
 - A KataGo binary and network model (JSON analysis mode, not GTP). mirai does not download KataGo.
 - For stone sounds, GStreamer's good plugins (`gst-plugins-good` on Arch,
   `gstreamer1.0-plugins-good` on Debian/Ubuntu), which GTK plays audio through. Without them
   mirai runs silently.
 
-On Arch: `pacman -S gtk4 libadwaita blueprint-compiler just`. On Debian/Ubuntu, install
-`libgtk-4-dev`, `libadwaita-1-dev`, `blueprint-compiler` and `just`; on Fedora,
-`gtk4-devel`, `libadwaita-devel`, `blueprint-compiler` and `just`. Check the versions: a
-distribution release older than GNOME 50 ships a GTK and libadwaita too old to build mirai.
+On Arch: `pacman -S gtk4 libadwaita blueprint-compiler gettext just`. On Debian/Ubuntu,
+install `libgtk-4-dev`, `libadwaita-1-dev`, `blueprint-compiler`, `gettext` and `just`; on
+Fedora, `gtk4-devel`, `libadwaita-devel`, `blueprint-compiler`, `gettext` and `just`. Check
+the versions: a distribution release older than GNOME 50 ships a GTK and libadwaita too old
+to build mirai.
 
 ```
 just build

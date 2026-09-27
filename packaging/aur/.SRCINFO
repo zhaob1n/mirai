@@ -8,6 +8,7 @@ pkgbase = mirai-git
 	license = GPL-3.0-or-later
 	makedepends = blueprint-compiler
 	makedepends = cargo
+	makedepends = gettext
 	makedepends = git
 	makedepends = gtk4
 	makedepends = just

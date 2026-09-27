@@ -68,3 +68,22 @@ compiled into `OUT_DIR`, which is why `cargo run` is translated too.
 Lookups go through GLib's `g_dgettext`, as GtkBuilder's do for the templates: in a language
 mirai has no catalogue for, GTK's own strings stay English too rather than mixing two
 languages in one window.
+
+## Simplified Chinese
+
+`po/zh_CN.po` follows the GNOME Chinese team's conventions: full-width punctuation in Chinese
+sentences, a half-width space between Chinese and Latin letters or digits, `(_X)` mnemonics.
+The Go terms are the ones Chinese players use, and the Chinese user guide quotes the same
+labels:
+
+| English | 中文 | English | 中文 |
+|---|---|---|---|
+| win rate | 胜率 | score lead | 目差 |
+| visits | 计算量 | candidate | 候选手 |
+| blunder | 问题手 | ownership / policy | 地盘 / 策略 |
+| live analysis | 实时分析 | whole-game analysis | 全盘分析 |
+| variation / main line | 变化 / 主线 | move tree | 棋谱树 |
+| game record | 棋谱 | engine profile | 引擎配置 |
+| pass / resign | 停一手 / 认输 | komi / handicap | 贴目 / 让子 |
+| byo-yomi / absolute | 读秒 / 包干计时 | estimate score | 形势判断 |
+| Fox | 野狐 | Black / White | 黑方 / 白方 |
