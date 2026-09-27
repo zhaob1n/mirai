@@ -65,6 +65,7 @@ template $MiraiWindow: Adw.ApplicationWindow {
         [start]
         Gtk.ToggleButton live_toggle {
           icon-name: "media-playback-start-symbolic";
+          action-name: "win.toggle-analysis";
           tooltip-text: _("Start Live Analysis (Space)");
 
           accessibility {
@@ -86,6 +87,7 @@ template $MiraiWindow: Adw.ApplicationWindow {
         [end]
         Gtk.ToggleButton sidebar_toggle {
           icon-name: "sidebar-show-right-symbolic";
+          action-name: "win.toggle-sidebar";
           tooltip-text: _("Hide Sidebar (F9)");
 
           accessibility {
@@ -426,7 +428,7 @@ template $MiraiWindow: Adw.ApplicationWindow {
               Gtk.ToggleButton editor_toggle {
                 icon-name: "document-edit-symbolic";
                 tooltip-text: _("Editing Tools");
-                active: true;
+                action-name: "win.toggle-editor";
 
                 accessibility {
                   label: _("Editing Tools");

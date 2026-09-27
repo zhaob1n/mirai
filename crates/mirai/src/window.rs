@@ -311,13 +311,8 @@ pub fn present(
         "text-editor-symbolic",
     );
 
-    let live_toggle = window.live_toggle();
-    state
-        .bind_property("live-analysis", &live_toggle, "active")
-        .bidirectional()
-        .sync_create()
-        .build();
-    live_toggle.connect_active_notify(|button| {
+    // `win.toggle-analysis` drives the button's `active`; this only follows it.
+    window.live_toggle().connect_active_notify(|button| {
         if button.is_active() {
             button.set_icon_name("media-playback-stop-symbolic");
             button.set_tooltip_text(Some("Stop Live Analysis (Space)"));
@@ -337,15 +332,9 @@ pub fn present(
 
     let split = window.split();
     set_candidate_sidebar_width(&split, false);
-    let sidebar_toggle = window.sidebar_toggle();
-    split
-        .bind_property("show-sidebar", &sidebar_toggle, "active")
-        .bidirectional()
-        .sync_create()
-        .build();
     // One button for both directions: the check state is the only affordance the icon set
-    // offers, so the tooltip carries the verb.
-    sidebar_toggle.connect_active_notify(|button| {
+    // offers, so the tooltip carries the verb. `win.toggle-sidebar` drives `active`.
+    window.sidebar_toggle().connect_active_notify(|button| {
         button.set_tooltip_text(Some(if button.is_active() {
             "Hide Sidebar (F9)"
         } else {
@@ -758,9 +747,6 @@ fn sync_play_editability(ui: &Ui) {
     }
     if let Some(action) = win_simple(ui, "toggle-editor") {
         action.set_enabled(!active);
-    }
-    if let Some(window) = ui.window() {
-        window.editor_toggle().set_sensitive(!active);
     }
     if active {
         if ui.comment.is_editable() {
@@ -2140,8 +2126,8 @@ fn sync_play_layout(ui: &Ui) {
     sync_graph(ui, &window);
     window.nav().set_visible(!playing);
     // The sidebar is forced shut for the whole game (see `install_actions`), and the graph
-    // hidden, so their toggles would be dead controls.
-    window.sidebar_toggle().set_sensitive(!playing);
+    // hidden, so their toggles would be dead controls. Disabling the actions also disables
+    // the header button that names one of them.
     for name in ["toggle-sidebar", "toggle-graph"] {
         if let Some(action) = win_simple(ui, name) {
             action.set_enabled(!playing);
@@ -2191,14 +2177,11 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
     add("branch-prev", Box::new(|ui| ui.state.go_sibling(-1)));
     add("branch-next", Box::new(|ui| ui.state.go_sibling(1)));
 
-    add(
-        "toggle-analysis",
-        Box::new(|ui| ui.state.set_live_analysis(!ui.state.live_analysis())),
-    );
-    // The view toggles are stateful so the View menu renders a check mark next to whatever
-    // is on. State follows the source of truth — `AppState`, or the split view — rather than
-    // a copy kept here, so a change made by an accelerator, the header button or the menu
-    // shows up in all three.
+    // The toggles are stateful so the View menu renders a check mark next to whatever is on,
+    // and a header or nav `ToggleButton` naming the action shows the same state without a
+    // binding of its own. State follows the source of truth — `AppState`, the split view or
+    // the revealer — rather than a copy kept here, so a change made by an accelerator, a
+    // button or the menu shows up in all of them.
     let toggle = |name: &str, initial: bool, flip: UiAction| {
         let action = gio::SimpleAction::new_stateful(name, None, &initial.to_variant());
         let weak = weak.clone();
@@ -2206,6 +2189,15 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
         group.add_action(&action);
         action
     };
+
+    let live = toggle(
+        "toggle-analysis",
+        ui.state.live_analysis(),
+        Box::new(|ui| ui.state.set_live_analysis(!ui.state.live_analysis())),
+    );
+    ui.state.connect_live_analysis_notify(move |state| {
+        live.set_state(&state.live_analysis().to_variant());
+    });
 
     let ownership = toggle(
         "toggle-ownership",
@@ -2303,23 +2295,8 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
             }
         }),
     );
-    let weak_editor = ui.weak_window();
-    window.editor_toggle().connect_toggled(move |button| {
-        with_window_ui(&weak_editor, |ui| {
-            if let Some(window) = ui.window()
-                && button.is_active() != window.editor_revealer().reveals_child()
-                && !ui.play.is_active()
-            {
-                set_editor_visible(ui, button.is_active());
-            }
-        });
-    });
-    let editor_toggle = window.editor_toggle();
     editor.connect_reveal_child_notify(move |revealer| {
         let visible = revealer.reveals_child();
-        if editor_toggle.is_active() != visible {
-            editor_toggle.set_active(visible);
-        }
         if editor_action.state().and_then(|state| state.get::<bool>()) != Some(visible) {
             editor_action.set_state(&visible.to_variant());
         }
