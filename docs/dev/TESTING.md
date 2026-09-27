@@ -24,8 +24,9 @@ cargo test -p mirai-proto --test wire_size -- --nocapture   # prints the measure
 ```
 
 For documentation edits, run `python tools/docs/check-links.py`. It checks local
-files and heading anchors; the optional adjacent `mirai-hmos` link is reported
-separately. For Rust, run `cargo fmt --all --check`; for Blueprint, run
+files and heading anchors, and refuses a source file cited with a line number: cite a symbol
+or a section, which survives the next edit. The optional adjacent `mirai-hmos` link is
+reported separately. For Rust, run `cargo fmt --all --check`; for Blueprint, run
 `blueprint-compiler lint crates/mirai/src/{window,preferences,new_game,fox_picker,label_editor,profile_editor}.blp crates/mirai/src/panels/analysis.blp`.
 Avoid `cargo clippy --fix`: it rewrites files you have not reviewed.
 `harness.rs` and `probe.rs` have prose examples, not doc-tests.

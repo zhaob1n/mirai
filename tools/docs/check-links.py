@@ -3,6 +3,9 @@
 # Copyright (C) 2026 Huang Zhaobin
 """Check local Markdown links and heading anchors, ignoring fenced examples.
 
+Outside docs/archive, also refuse a source line number (`window.rs:1453`, `#L12`): the
+next edit moves it and nothing notices. Cite a symbol or a section instead.
+
 Run from any directory: python tools/docs/check-links.py
 An adjacent mirai-hmos checkout is optional and reported, never required.
 """
@@ -19,12 +22,15 @@ LINK = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$")
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 URL = re.compile(r"^[a-z][a-z\d+.-]*:", re.I)
+SOURCE_LINE = re.compile(r"[\w/.-]+\.(?:rs|blp|toml|py|sh|css|ets|cpp|h)(?::\d+|#L\d+)")
+ARCHIVE = ROOT / "docs" / "archive"
 
 
 def scan(path):
     slugs = set()
     seen = Counter()
     links = []
+    line_refs = []
     fence = None
     for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         marker = FENCE.match(line)
@@ -48,20 +54,25 @@ def scan(path):
             suffix = seen[slug]
             slugs.add(slug if suffix == 0 else f"{slug}-{suffix}")
             seen[slug] += 1
+        if not path.is_relative_to(ARCHIVE):
+            for match in SOURCE_LINE.finditer(line):
+                line_refs.append((path, line_no, match.group(0)))
         for match in LINK.finditer(line):
             target = match.group(1).strip().split(' "', 1)[0].strip("<>")
             links.append((path, line_no, target))
-    return slugs, links
+    return slugs, links, line_refs
 
 
 def main():
     headings = {}
     links = []
-    for path in FILES:
-        headings[path], found = scan(path)
-        links.extend(found)
-
     errors = []
+    for path in FILES:
+        headings[path], found, line_refs = scan(path)
+        links.extend(found)
+        for source, line, ref in line_refs:
+            errors.append(f"{source.relative_to(ROOT)}:{line}: source line number: {ref}")
+
     adjacent = []
     for source, line, link in links:
         if URL.match(link) or link.startswith("//"):
@@ -75,7 +86,7 @@ def main():
             errors.append(f"{location}: missing file: {link}")
         elif fragment and target.suffix == ".md":
             if target not in headings:
-                headings[target], _ = scan(target)
+                headings[target], _, _ = scan(target)
             if fragment not in headings[target]:
                 errors.append(f"{location}: missing anchor: {link}")
 
