@@ -109,7 +109,7 @@ template $MiraiWindow: Adw.ApplicationWindow {
             }
 
             Gtk.Revealer editor_revealer {
-              reveal-child: false;
+              reveal-child: true;
               transition-type: slide_down;
 
               Adw.Bin editor_toolbar {
@@ -426,6 +426,7 @@ template $MiraiWindow: Adw.ApplicationWindow {
               Gtk.ToggleButton editor_toggle {
                 icon-name: "document-edit-symbolic";
                 tooltip-text: _("Editing Tools");
+                active: true;
 
                 accessibility {
                   label: _("Editing Tools");

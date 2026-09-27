@@ -409,7 +409,7 @@ MIRAI_HARNESS="wait:2000,action:win.next10,action:win.next10,action:win.toggle-a
 ```
 
 Expect `harness: 7 steps`, the actions `ok`, and `wrote /tmp/mirai-a.png`. The
-PNG is the board at move 20, editor toolbar **absent**, position label under the
+PNG is the board at move 20, editor toolbar **above it**, position label under the
 board, graph filled and labelled `Black …%`, sidebar on Analysis with five
 columns. Candidate colour is utility loss against the pick (cyan at the cool
 end, grey below ten visits) — not a visit heatmap;
@@ -639,7 +639,7 @@ Symptom, cause or guard, and location. Rendering mechanics live in
 | Sidebar says **No Engine Configured**, and that is treated as a failed open | No profile, no live report, and the current node has no cached analysis. The window is up. The StatusPage button is `win.preferences`; `present` does not open the dialog. A *missing* file may still seed a discovered engine once `Config::seeded` finishes on the blocking pool. An explicit `engine_profile = []` is the empty case | `update_analysis_page`, `prefs::no_engine_status_page`. Recipe (h) |
 | Cached numbers missing on an SGF that has them, or a fake live speed with no engine | The panel is shown when the *current* node has analysis, even with an empty profile list. Speed is attached only to a live report | `update_analysis_page`, `AnalysisPanel::refresh` |
 | Sidebar reads 9.9% while the graph reads `Black 90.1%` | Not a double conversion. The sidebar is the side to move (`winrate_for`). The graph is always Black | `AnalysisPanel::refresh`; `WinrateGraph` cursor text and tooltip |
-| Editing tools are missing | They start collapsed. `win.toggle-editor`, or the nav button. A non-Play tool expands them. Active play forces them shut and disables the toggle | `set_editor_visible`; `window.blp` `editor_revealer` |
+| Editing tools are missing | They start revealed, but a game closes them and they stay closed afterwards; so does `win.toggle-editor` or the nav button. A non-Play tool expands them. Active play forces them shut and disables the toggle | `set_editor_visible`; `window.blp` `editor_revealer` |
 | Loss and Prior columns are gone | Hidden until `win.toggle-candidate-details`. Hiding the column that is the current sort returns the sort to `#` first. The objects still hold the values | `AnalysisPanel::set_detailed_columns` |
 | Overlay shading in the wrong place | Someone remapped indices. INV-1: ownership and policy index identically to the board | `decode.rs`, then recipe (b) |
 | Win rates inverted for one side, on *both* the sidebar and the graph | INV-2 violated: a conversion applied somewhere other than display | `winrate_for` / `score_lead_for` are the sanctioned sites |
