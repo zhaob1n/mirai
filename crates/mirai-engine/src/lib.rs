@@ -135,8 +135,16 @@ impl Subscription {
     }
 
     /// The most recent event, without waiting.
+    ///
+    /// Does not mark the value seen. A caller that sends this and then waits on [`next`]
+    /// repeats an event published after the channel was created; use [`latest`] for that.
     pub fn current(&self) -> SubEvent {
         self.rx.borrow().clone()
+    }
+
+    /// The most recent event, marked seen so [`next`] waits for a newer one.
+    pub fn latest(&mut self) -> SubEvent {
+        self.rx.borrow_and_update().clone()
     }
 
     /// Waits for the next event. Returns `None` once the engine side is gone.
@@ -213,6 +221,30 @@ mod tests {
         assert!(matches!(
             sub.finish().await,
             Err(EngineError::Other(message)) if message == "dispatch failed"
+        ));
+    }
+
+    #[tokio::test]
+    async fn latest_does_not_let_next_repeat_the_same_event() {
+        let (tx, rx) = watch::channel(SubEvent::Pending);
+        tx.send_replace(SubEvent::Failed(EngineError::Other("already".into())));
+        let mut sub = Subscription::new(rx, CancelGuard::noop());
+
+        assert!(matches!(
+            sub.latest(),
+            SubEvent::Failed(EngineError::Other(message)) if message == "already"
+        ));
+        let repeated = tokio::time::timeout(Duration::from_millis(50), sub.next()).await;
+        assert!(
+            repeated.is_err(),
+            "latest() left the event unseen: {repeated:?}"
+        );
+
+        tx.send_replace(SubEvent::Failed(EngineError::Other("newer".into())));
+        let event = sub.next().await.expect("sender dropped");
+        assert!(matches!(
+            event,
+            SubEvent::Failed(EngineError::Other(message)) if message == "newer"
         ));
     }
 }

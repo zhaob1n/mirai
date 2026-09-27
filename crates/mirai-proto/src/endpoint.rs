@@ -36,20 +36,35 @@ pub fn parse_url(url: &str) -> Result<(String, u16), AddressError> {
     if rest.is_empty() {
         return Err(AddressError::new(url, "empty host"));
     }
-    // IPv6 literal in brackets.
-    if let Some(close) = rest.strip_prefix('[').and_then(|r| r.find(']')) {
-        let host = &rest[1..=close];
-        let port = match rest[close + 2..].strip_prefix(':') {
-            Some(p) => p.parse().map_err(|_| AddressError::new(url, "bad port"))?,
-            None => DEFAULT_PORT,
+    // IPv6 literal in brackets. The grammar allows only an optional `:port` after `]`.
+    if let Some(inner) = rest.strip_prefix('[')
+        && let Some((host, after)) = inner.split_once(']')
+    {
+        if host.is_empty() {
+            return Err(AddressError::new(url, "empty host"));
+        }
+        let port = if after.is_empty() {
+            DEFAULT_PORT
+        } else {
+            let Some(port) = after.strip_prefix(':') else {
+                return Err(AddressError::new(url, "trailing junk"));
+            };
+            port.parse()
+                .map_err(|_| AddressError::new(url, "bad port"))?
         };
         return Ok((host.to_string(), port));
     }
     match rest.rsplit_once(':') {
-        Some((h, p)) => Ok((
-            h.to_string(),
-            p.parse().map_err(|_| AddressError::new(url, "bad port"))?,
-        )),
+        Some((host, port)) => {
+            if host.is_empty() {
+                return Err(AddressError::new(url, "empty host"));
+            }
+            Ok((
+                host.to_string(),
+                port.parse()
+                    .map_err(|_| AddressError::new(url, "bad port"))?,
+            ))
+        }
         None => Ok((rest.to_string(), DEFAULT_PORT)),
     }
 }
@@ -88,6 +103,31 @@ mod tests {
         );
         assert!(parse_url("mirai://host:notaport").is_err());
         assert!(parse_url("mirai://").is_err());
+    }
+
+    #[test]
+    fn empty_hosts_and_junk_after_an_ipv6_literal_are_rejected() {
+        for url in [
+            "[]",
+            "mirai://[]",
+            "mirai://[]:9678",
+            "mirai://[]/",
+            "mirai://:9678",
+            ":9678",
+        ] {
+            let err = parse_url(url).expect_err(url);
+            assert_eq!(err.reason, "empty host", "{url}");
+        }
+        for url in ["[::1]1234", "mirai://[::1]1234", "mirai://[::1]1234/"] {
+            let err = parse_url(url).expect_err(url);
+            assert_eq!(err.reason, "trailing junk", "{url}");
+        }
+        // Those must not be confused with a well-formed literal.
+        assert_eq!(parse_url("[::1]:1234").unwrap(), ("::1".into(), 1234));
+        assert_eq!(
+            parse_url("mirai://[::1]").unwrap(),
+            ("::1".into(), DEFAULT_PORT)
+        );
     }
 
     #[test]

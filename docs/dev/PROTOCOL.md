@@ -62,11 +62,12 @@ host      = reg-name | IPv4address | "[" IPv6address "]"
 port      = 1*DIGIT                                       ; default 9678
 ```
 
-Parsing (`transport.rs` — `parse_url`), which a client MUST reproduce:
+Parsing (`endpoint.rs` — `parse_url`), which a client MUST reproduce:
 
 1. Trim whitespace; strip an optional `mirai://` prefix; strip trailing `/`.
-2. Empty host is an error.
-3. A leading `[` starts an IPv6 literal ending at the first `]`; an optional `:port` follows.
+2. Empty host is an error, including a missing host before `:` and an empty `[]`.
+3. A leading `[` starts an IPv6 literal ending at the first `]`. An optional `:port`
+   may follow; anything else after `]` is an error.
 4. Otherwise split host and port at the **last** `:`; a non-numeric port is an error.
 5. Absent port means 9678.
 
@@ -190,14 +191,15 @@ Every message on every stream is one frame:
 | `0x02` | subscription streams | the next chunk of the stream's zstd stream ([§4.1](#41-subscription-streams-one-zstd-stream)), which decompresses to the postcard encoding |
 
 Constants (`mirai-proto/src/frame.rs`): `MAX_FRAME` = 8 MiB = 8388608 · `COMPRESS_THRESHOLD` =
-4096 · `FLAG_ZSTD` = `0x01` · `FLAG_SUB_ZSTD` = `0x02` · control-stream zstd level 1 ·
-subscription window 2^16 (`SUB_WINDOW_LOG`) · `SUB_STREAM_LEVEL`, the reference sender's level.
+4096 · `FLAG_ZSTD` = `0x01` · `FLAG_SUB_ZSTD` = `0x02` · control-stream zstd level 1, window
+2^19 (`CONTROL_WINDOW_LOG`) · subscription window 2^16 (`SUB_WINDOW_LOG`) · `SUB_STREAM_LEVEL`,
+the reference sender's level.
 
 | # | Rule | Level |
 |---|---|---|
 | 1 | Never emit `len > MAX_FRAME`. | MUST NOT |
 | 2 | Read the 5-byte header first and reject `len > MAX_FRAME` **before** reading or allocating the body. | MUST |
-| 3 | **Decompression-bomb guard:** bound each frame's decompressed size and abort as soon as the plaintext would exceed `MAX_FRAME`. Never trust a content-size field inside the zstd frame. (`frame.rs` — `decode_payload` on the control stream, `SubStreamDecoder::inflate` on subscription streams.) A receiver MAY apply a smaller bound where it expects a small message (`read_msg_within`, [§9.3](#93-limits)). | MUST |
+| 3 | **Decompression-bomb guard:** bound each frame's decompressed size and abort as soon as the plaintext would exceed `MAX_FRAME`. Never trust a content-size field inside the zstd frame. (`frame.rs` — `decode_payload` on the control stream, `SubStreamDecoder::inflate` on subscription streams.) A receiver MAY apply a smaller bound where it expects a small message (`read_msg_within`, [§9.3](#93-limits)). The zstd window is allocated from the header before any plaintext byte, so that bound does not cover it: a control frame's window is at most 2^19 (`CONTROL_WINDOW_LOG`, what the reference encoder declares at level 1), and a receiver MUST refuse a larger one. | MUST |
 | 4 | Reject a `flags` value the stream does not allow. | MUST |
 | 5 | A payload decodes to exactly one message; reject trailing bytes after it. | MUST |
 | 6 | Control stream: compress iff the postcard payload is **strictly greater than** `COMPRESS_THRESHOLD`. Interop does not depend on it: receivers MUST accept either form at any size, so a minimal implementation MAY always send `flags = 0x00`. | SHOULD / MUST |
@@ -809,6 +811,7 @@ reason. Dropping the attempt is that close. It is not an authentication failure.
 |---|---|---|
 | Frame payload | ≤ `MAX_FRAME` (8 MiB) | sender MUST NOT exceed; receiver MUST reject before allocating |
 | Decompressed payload | ≤ `MAX_FRAME` | receiver MUST abort decompression past the limit |
+| Control-stream zstd window | ≤ 2^19 (`CONTROL_WINDOW_LOG`) | receiver MUST refuse a larger window. The reference encoder at level 1 declares this for a max-size frame. The window is allocated from the header, before the plaintext bound applies; 2^27, the library default, is about 128 MiB |
 | Concurrent subscriptions | per-token `max_subs`, default 4 | server MUST refuse further `Open` with `TooManySubs`. The reference server counts a cancelled subscription until its search has stopped; an `Open` at the limit waits up to 1 s (`CANCEL_GRACE`) for a cancelled one to stop before refusing, so `Cancel` then `Open` at the limit is served |
 | Server-opened uni streams | client's `max_concurrent_uni_streams` | QUIC flow control; client MUST advertise ≥ its intended subscription count |
 | `AnalyzeReq.priority` | clamped to `-8..=8` | server MUST clamp, not reject |
@@ -897,7 +900,8 @@ KataGo falls from two busy cores to 0 % CPU within 250 ms.
 5. Frame every message as `[len: u32 LE][flags: u8][payload]`.
 6. Reject `len > MAX_FRAME` before allocating or reading the body.
 7. Bound decompressed payloads to `MAX_FRAME` and abort decompression that would exceed it.
-   Refuse a subscription stream whose zstd window exceeds 2^16.
+   Refuse a control frame whose zstd window exceeds 2^19, and a subscription stream whose
+   zstd window exceeds 2^16.
 8. Encode payloads as postcard v1 in exactly the field order of §6 and §7.
 9. Encode `u16`/`u32`/`u64`, all lengths and all discriminants as unsigned LEB128 varints;
    `u8`/`i8` as one raw byte; `i16` as zigzag-then-varint; `bool` as one `0x00`/`0x01` byte.

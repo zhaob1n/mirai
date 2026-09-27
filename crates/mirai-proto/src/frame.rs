@@ -39,6 +39,14 @@ const FLAG_SUB_ZSTD: u8 = 0x02;
 const FLAG_KNOWN: u8 = FLAG_ZSTD;
 const ZSTD_LEVEL: i32 = 1;
 
+/// Largest zstd window a control frame may declare, as a power of two.
+///
+/// [`encode`] streams at [`ZSTD_LEVEL`] and does not pledge the source size, so zstd uses the
+/// large-input row of its level-1 table: 2^19. That is the window a max-size frame declares,
+/// not a larger one. The streaming decoder allocates the window from the header before it
+/// produces a plaintext byte, so the plaintext bound does not limit it. Left at the library
+/// default, 2^27, a few dozen bytes from an unauthenticated peer cost about 128 MiB.
+const CONTROL_WINDOW_LOG: u32 = 19;
 /// Compression level of a subscription stream. The sender's choice alone: a decoder
 /// accepts any level.
 ///
@@ -152,9 +160,12 @@ fn decode_payload<T: DeserializeOwned>(
     }
     let bytes: &[u8] = if flags & FLAG_ZSTD != 0 {
         // The decompression-bomb guard: inflating stops one byte past `limit`, whatever
-        // content size the zstd frame claims.
+        // content size the zstd frame claims. The window is capped as well: libzstd
+        // allocates it from the header, before a single plaintext byte, so the byte limit
+        // does not bound that allocation.
         buf.plain.clear();
         let mut z = zstd::stream::read::Decoder::with_buffer(payload)?;
+        z.window_log_max(CONTROL_WINDOW_LOG)?;
         io::Read::read_to_end(
             &mut io::Read::take(&mut z, limit as u64 + 1),
             &mut buf.plain,
@@ -479,6 +490,31 @@ mod tests {
         frame
     }
 
+    /// A control frame whose zstd window is set explicitly: what a sender outside the
+    /// rules could put on the wire.
+    fn foreign_control_frame(plain: &[u8], window_log: u32) -> Vec<u8> {
+        let mut z = zstd::stream::write::Encoder::new(Vec::new(), ZSTD_LEVEL).unwrap();
+        z.window_log(window_log).unwrap();
+        io::Write::write_all(&mut z, plain).unwrap();
+        let body = z.finish().unwrap();
+        let mut frame = (body.len() as u32).to_le_bytes().to_vec();
+        frame.push(FLAG_ZSTD);
+        frame.extend_from_slice(&body);
+        frame
+    }
+
+    /// The window exponent a multi-segment zstd frame declares in its header. The
+    /// single-segment form has no window descriptor, so it is refused as a fixture.
+    fn declared_window_log(zstd_frame: &[u8]) -> u32 {
+        let descriptor = zstd_frame[4];
+        assert_eq!(
+            descriptor & 0x20,
+            0,
+            "single-segment frame: no window descriptor"
+        );
+        10 + u32::from(zstd_frame[5] >> 3)
+    }
+
     /// The limit bounds the plaintext, not just the wire: a small compressed frame is
     /// refused once it inflates past the limit, and inflating stops there.
     #[tokio::test]
@@ -507,6 +543,40 @@ mod tests {
         let bomb = zstd_frame(&vec![0u8; MAX_FRAME + 1]);
         let r: Result<Vec<u8>, _> = read_msg(&mut &bomb[..], &mut buf).await;
         assert!(matches!(r, Err(FrameError::TooLarge(_))), "got {r:?}");
+    }
+
+    /// The window is allocated from the header, before any plaintext byte. A frame that
+    /// names 2^27 must be refused; a frame at the cap must still decode.
+    #[test]
+    fn a_control_frame_window_over_the_limit_is_refused() {
+        let payload = postcard::to_stdvec(&7u32).unwrap();
+        let bomb = foreign_control_frame(&payload, 27);
+        assert_eq!(
+            declared_window_log(&bomb[5..]),
+            27,
+            "the crafted frame did not keep the large window"
+        );
+        let r: Result<u32, _> = decode(&mut FrameBuf::new(), &bomb);
+        assert!(r.is_err(), "a 2^27 window was accepted: {r:?}");
+
+        let ok = foreign_control_frame(&payload, CONTROL_WINDOW_LOG);
+        assert_eq!(decode::<u32>(&mut FrameBuf::new(), &ok).unwrap(), 7);
+    }
+
+    /// What [`encode`] produces for a plaintext at the size ceiling must decode under the
+    /// cap: the constant is not a guess, this is the frame it has to accept.
+    #[test]
+    fn a_max_size_control_frame_stays_within_the_window_cap() {
+        // Postcard's length varint for this size is four bytes, so the message sits on
+        // the ceiling `decode` accepts.
+        let plain = vec![0u8; MAX_FRAME - 4];
+        assert_eq!(postcard::to_stdvec(&plain).unwrap().len(), MAX_FRAME);
+
+        let mut buf = FrameBuf::new();
+        let frame = encode(&mut buf, &plain).unwrap().to_vec();
+        assert_eq!(frame[4], FLAG_ZSTD, "a max-size frame was stored raw");
+        let back: Vec<u8> = decode(&mut FrameBuf::new(), &frame).unwrap();
+        assert_eq!(back, plain);
     }
 
     #[tokio::test]
