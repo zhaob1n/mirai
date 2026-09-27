@@ -1,0 +1,74 @@
+# Maintainer: Huang Zhaobin <zhaob1n@foxmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+pkgbase=mirai-git
+pkgname=('mirai-git' 'mirai-server-git')
+_repo=mirai
+_appid=io.github.zhaob1n.Mirai
+pkgver=r0
+pkgrel=1
+pkgdesc='Go analysis, review and play with KataGo'
+arch=('x86_64' 'aarch64')
+url='https://github.com/zhaob1n/mirai'
+license=('GPL-3.0-or-later')
+makedepends=('blueprint-compiler' 'cargo' 'git' 'gtk4' 'libadwaita')
+# makepkg's LTO turns the C that ring and zstd-sys build into GCC bitcode, which rust-lld,
+# rustc's default linker, cannot read: every C symbol is then undefined at link time.
+options=('!lto')
+source=("$_repo::git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$_repo"
+  printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd "$_repo"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc --print host-tuple)"
+}
+
+build() {
+  cd "$_repo"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release -p mirai -p mirai-server
+}
+
+check() {
+  cd "$_repo"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo test --frozen --release --workspace
+}
+
+package_mirai-git() {
+  pkgdesc='GTK4/libadwaita Go board for analysis, review and play with KataGo'
+  depends=('glib2' 'glibc' 'graphene' 'gtk4' 'hicolor-icon-theme' 'libadwaita' 'libgcc' 'pango')
+  optdepends=('katago: local analysis engine (katago-opencl, katago-cuda, ...)')
+  provides=('mirai')
+  conflicts=('mirai')
+
+  cd "$_repo"
+  install -Dm755 target/release/mirai -t "$pkgdir/usr/bin/"
+  install -Dm644 "data/$_appid.desktop" -t "$pkgdir/usr/share/applications/"
+  install -Dm644 "data/$_appid.metainfo.xml" -t "$pkgdir/usr/share/metainfo/"
+  install -Dm644 "crates/mirai/resources/icons/hicolor/scalable/apps/$_appid.svg" \
+    -t "$pkgdir/usr/share/icons/hicolor/scalable/apps/"
+  install -Dm644 "crates/mirai/resources/icons/hicolor/symbolic/apps/$_appid-symbolic.svg" \
+    -t "$pkgdir/usr/share/icons/hicolor/symbolic/apps/"
+  install -Dm644 README.md docs/user/GUIDE.md -t "$pkgdir/usr/share/doc/mirai/"
+}
+
+package_mirai-server-git() {
+  pkgdesc='Headless host sharing KataGo with mirai clients over the network'
+  depends=('glibc' 'libgcc')
+  optdepends=('katago: the engine it serves (katago-opencl, katago-cuda, ...)')
+  provides=('mirai-server')
+  conflicts=('mirai-server')
+
+  cd "$_repo"
+  install -Dm755 target/release/mirai-server -t "$pkgdir/usr/bin/"
+  install -Dm644 crates/mirai-server/server.example.toml -t "$pkgdir/usr/share/doc/mirai-server/"
+}
