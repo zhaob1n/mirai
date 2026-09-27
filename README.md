@@ -1,41 +1,54 @@
+<div align="center">
+
+<img src="crates/mirai/resources/icons/hicolor/scalable/apps/io.github.zhaob1n.Mirai.svg" width="96" alt="">
+
 # mirai
 
-A KataGo analysis and playing GUI for the Linux desktop, plus a purpose-built protocol for
-driving KataGo over a network.
+**Go analysis, review and play with KataGo, made for the GNOME desktop.**
 
-![mirai](https://github.com/zhaob1n/mirai/releases/download/readme-assets/preview.png)
+English | [简体中文](README.zh-CN.md)
 
-Point it at a local KataGo and it analyses positions, reviews SGF files and plays games
-against you. Point it at `mirai-server` on the machine with the GPU and it behaves
-identically from a laptop that has none.
+</div>
+
+![mirai reviewing a game with live KataGo analysis](https://github.com/zhaob1n/mirai/releases/download/readme-assets/preview.png)
+
+mirai puts KataGo's reading on a board that feels at home on Linux. Every candidate move
+tells you at a glance how much it loses and how far to trust that number; a win-rate graph
+marks each blunder of a game; a move tree keeps every variation you try. Play the engine at
+any strength, or pull a game from Fox and replay it with KataGo beside you.
+
+The engine does not have to be on the same computer. Run `mirai-server` on the machine with
+the GPU, and a laptop with none analyses just as well.
 
 ---
 
-## What it does
+## Highlights
 
-**Analysis.** Live pondering of the position under the cursor. Candidates show win rate, score
-lead and visits. Colour is how much the move loses against the engine's pick; visits say how
-much to trust that reading. Ownership and policy are one overlay at a time. Hover a candidate
-to preview its variation without changing the record. The win-rate graph is always Black's,
-with a blunder strip; the sidebar reads the side to move.
-
-**Review and editing.** Open, paste and save SGF, including multi-game collections, keeping
-properties mirai does not draw. Navigate the current line and its variations. Editing tools
-sit above the board. Whole-game analysis fills a blunder list that jumps to
-the move.
-
-**Playing.** Play KataGo by visits, time per move, or a human-like profile when the model has
-one, on boards from 2×2 to 19×19, with handicap and any of nine rulesets. Byo-yomi, Fischer
-or absolute time; clocks sit in the play bar under the board. Two passes open scoring from
-KataGo's ownership map, and clicking a group toggles it locally. You can also play both sides
-on this device, with no engine.
-
-**Fox.** Browse a Fox Go player's latest public games by exact nickname or UID, then download
-and open one for review.
-
-**Remote.** `mirai-server` shares one or more KataGo instances. Clients authenticate with a
-token and pin the server certificate on first use. A later certificate that does not match is
-refused.
+- **Readable analysis.** Each candidate shows win rate, score lead and visits. Its colour is
+  what it loses against the engine's pick, from cyan through green and yellow to red; how
+  solid it is says how much search stands behind it. Hover one to see its variation played
+  out on the board, without touching the record.
+- **Whole-game review.** One key sweeps the main line. The win-rate and score-lead curves
+  fill in, a strip under the graph marks every mistake from the side that made it, and a
+  Blunders list jumps straight to the move.
+- **Ownership and policy overlays** show who KataGo expects to own each point, and where the
+  raw network wanted to play before any search.
+- **A real SGF editor.** Variations, setup stones, marks, labels and comments, with undo and
+  redo. Multi-game collections open; properties mirai does not draw are kept, so other
+  programs' files survive a round trip.
+- **Play against KataGo** by visits, by time per move, or at a human-like rank with a human
+  SL network. Boards from 2×2 to 19×19, handicap, nine rulesets, absolute, byo-yomi or
+  Fischer clocks. After two passes KataGo marks the dead stones, and a click fixes any group
+  it misjudged. Or play both sides yourself, with no engine at all.
+- **Fox records.** Look up a Fox Go player by nickname or UID and open any of their latest
+  public games.
+- **A remote engine that stays private.** `mirai-server` shares one or more KataGo instances
+  with every client on your network over QUIC. Clients authenticate with a token and pin
+  the server's certificate the first time they connect.
+- **Native and quick.** GTK 4 and libadwaita, light and dark styles, a board drawn by GTK's
+  GPU renderer. Several windows share one KataGo, and autosave brings your record back after
+  a crash.
+- **In your language.** English and Simplified Chinese so far; translations are welcome.
 
 ---
 
@@ -62,8 +75,8 @@ sudo just install        # both; or `just install mirai` / `just install mirai-s
 sudo just uninstall      # likewise
 ```
 
-This installs `mirai`, `mirai-server`, the desktop entry, metainfo and icons under
-`/usr/local`; `just prefix=$HOME/.local install` needs no root. On Arch, the PKGBUILD in
+This installs `mirai`, `mirai-server`, the desktop entry, metainfo, icons and translations
+under `/usr/local`; `just prefix=$HOME/.local install` needs no root. On Arch, the PKGBUILD in
 [`packaging/aur/`](packaging/aur/) builds `mirai-git` and `mirai-server-git` instead (not
 published yet). `tools/packaging/makepkg-local.sh` builds it from this checkout's last
 commit rather than from GitHub; add `-d` when cargo comes from rustup, then
@@ -78,9 +91,13 @@ cargo run -p mirai
 cargo run -p mirai -- game.sgf
 ```
 
-If KataGo and a model are found, mirai starts automatically; otherwise add them in
-Preferences. Open a record and press <kbd>Space</kbd> for live analysis. See the
-[user guide](docs/user/GUIDE.md#2-first-run) for setup and first-run behaviour.
+If KataGo and a model are found, mirai starts analysing right away; otherwise add them in
+Preferences. Open a record and press <kbd>Space</kbd> for live analysis, <kbd>Ctrl</kbd>+<kbd>A</kbd>
+to analyse the whole game. The [user guide](docs/user/GUIDE.md#2-first-run) covers setup and
+first-run behaviour.
+
+mirai follows your desktop language. To try another, start it with `LANGUAGE`, for example
+`LANGUAGE=zh_CN mirai`.
 
 ---
 
@@ -98,10 +115,21 @@ the [remote-engine guide](docs/user/GUIDE.md#7-using-a-remote-engine).
 
 ---
 
+## Feedback
+
+mirai is young and moving quickly, and there are no releases yet: build it from this
+repository. Bugs, rough edges and ideas are all welcome as
+[issues](https://github.com/zhaob1n/mirai/issues). Tell us what you were doing, what you
+expected and what happened instead; for an engine problem, the newest file in
+`~/.local/share/mirai/katago-logs/` usually says why.
+
+---
+
 ## Documentation
 
 - Users: [docs/user/GUIDE.md](docs/user/GUIDE.md) — first run, the window, analysis, Fox,
   playing, remote engines, settings and keys.
+- Translators: [docs/dev/TRANSLATING.md](docs/dev/TRANSLATING.md).
 - Contributors and agents: [AGENTS.md](AGENTS.md).
 
 ---
