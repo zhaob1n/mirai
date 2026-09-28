@@ -101,18 +101,18 @@ under Cairo on Windows is unmeasured.
 
 **The Windows package ships its runtime.** `stage.sh` walks each executable's and module's
 imports (`objdump -p`) through the sysroot, strips what it copies, and adds what is
-loaded by name: gdk-pixbuf loaders, the GStreamer elements stone sounds need, the Adwaita
-icon theme (GTK's own resources lack ten of the icons mirai uses), compiled GSettings
-schemas, and `gdbus.exe`, which GLib starts as a private session bus so a second launch
-hands its files to the running instance. Fedora's GStreamer derives its plugin directory
-from its build-time sysroot path, not from where its DLL sits, so on Windows mirai sets
-`GST_PLUGIN_SYSTEM_PATH_1_0` itself, in `windows_package.rs`, the one module that sets up
-the package's environment; without it GstPlay aborts on the first stone sound. The plugin
-scanner is left out for the same reason, and GStreamer scans in-process. For each
-language in `po/LINGUAS` it compiles mirai's catalogue and copies GTK's, GLib's and
-libadwaita's (the image lifts Fedora's English-only `%_install_langs` to get them); on
-Windows `i18n.rs` binds through GNU libintl's `libintl_*` entry points and the
-wide-character `wbindtextdomain`, since the narrow one cannot name a profile directory
+loaded by name: gdk-pixbuf loaders, the GStreamer elements stone sounds need, GIO's GnuTLS
+module, the Adwaita icon theme (GTK's own resources lack ten of the icons mirai uses),
+compiled GSettings schemas, and `gdbus.exe`, which GLib starts as a private session bus so
+a second launch hands its files to the running instance. Fedora's GStreamer derives its
+plugin directory from its build-time sysroot path, not from where its DLL sits, so on
+Windows mirai sets `GST_PLUGIN_SYSTEM_PATH_1_0` itself, in `windows_package.rs`, the one
+module that sets up the package's environment; without it GstPlay aborts on the first
+stone sound. The plugin scanner is left out for the same reason, and GStreamer scans
+in-process. For each language in `po/LINGUAS` it compiles mirai's catalogue and copies
+GTK's, GLib's and libadwaita's (the image lifts Fedora's English-only `%_install_langs` to
+get them); on Windows `i18n.rs` binds through GNU libintl's `libintl_*` entry points and
+the wide-character `wbindtextdomain`, since the narrow one cannot name a profile directory
 outside the ANSI code page. A release executable is a GUI-subsystem program; a debug one
 keeps its console for logs and the harness.
 
@@ -129,20 +129,29 @@ its command line. Neither file is code-signed, so SmartScreen warns on first run
 **What Wine can and cannot prove.** Under Wine 11: the GUI and the harness; KataGo
 discovery on `PATH` and live analysis with a Windows KataGo (the Eigen build); a silent
 install, Start menu entry, registry entries and a clean silent uninstall; a second launch
-handing its file to the first process over `gdbus.exe`; autosaves in
-`%LOCALAPPDATA%`. Wine has no DirectComposition, so GTK renders with Cairo there as on
-Windows. Wine differs from Windows, without that being a defect of mirai, in that its DWM
-reports no composition time (GTK logs a `presentation_time != 0` critical per frame) and
-no blur; its DirectWrite cannot draw colour glyphs, so the analysis header's `⚫`/`⚪`
-stay blank and Cairo logs `Window Direct Write error`; its `HKEY_CLASSES_ROOT` does not
-include `HKCU\Software\Classes`, so the `.sgf` association only opens mirai once copied
-to `HKLM`; it passes the host's `DBUS_SESSION_BUS_ADDRESS` through (`windows-wine.sh`
-unsets it); it has no PowerShell, so the installer's process checks are untested; its
-font fallback lacks simplified-only Chinese glyphs such as 胜, 谱 and 释; and it rejects
-the `IP_RECVECN` socket option quinn sets, so neither `mirai-server.exe` nor a remote
-profile can bind a socket. The network path is therefore unverified on Windows.
+handing its file to the first process over `gdbus.exe`; a Fox search and download over
+HTTPS; autosaves in `%LOCALAPPDATA%`. Wine has no DirectComposition, so GTK renders with
+Cairo there as on Windows. Wine differs from Windows, without that being a defect of
+mirai, in that its DWM reports no composition time (GTK logs a `presentation_time != 0`
+critical per frame) and no blur; its DirectWrite cannot draw colour glyphs, so the
+analysis header's `⚫`/`⚪` stay blank and Cairo logs `Window Direct Write error`; its
+`HKEY_CLASSES_ROOT` does not include `HKCU\Software\Classes`, so the `.sgf` association
+only opens mirai once copied to `HKLM`; it passes the host's `DBUS_SESSION_BUS_ADDRESS`
+through (`windows-wine.sh` unsets it); it has no PowerShell, so the installer's process
+checks are untested; its font fallback lacks simplified-only Chinese glyphs such as 胜, 谱
+and 释; and it rejects the `IP_RECVECN` socket option quinn sets, so neither
+`mirai-server.exe` nor a remote profile can bind a socket. The remote-engine path is
+therefore unverified on Windows.
 
-**Fox Go does not work on Windows.** `fox.rs` fetches through `gio::File::for_uri`, and
-GIO serves `http(s)` URIs only through GVfs, which does not exist on Windows; the download
-dialog reports the error. Fixing it means a different HTTP client, which is a dependency
-decision.
+**Fox lookup talks to libsoup directly.** `fox.rs` used to fetch through
+`gio::File::for_uri`, but GIO serves `https://` only through GVfs's daemon — itself
+libsoup — which Windows lacks and a Linux desktop need not install (the Arch package never
+depended on it). Calling libsoup keeps the request on the GLib main context and the
+desktop's proxy settings; the price is libsoup's own dependencies, among them nghttp2,
+libpsl and sqlite3 for its cookie and HSTS databases, which no build option removes. The
+Windows package adds GIO's GnuTLS module in `lib\gio\modules`, found relative to GLib's
+DLL, and leaves out glib-networking's proxy modules, which read GNOME's settings or proxy
+variables, not Windows'; the Windows build connects directly. Fedora builds its MinGW
+GnuTLS with the default priority `@SYSTEM`, which resolves through a crypto-policies file
+Windows does not have, so mirai sets `G_TLS_GNUTLS_PRIORITY` itself there, in
+`windows_package.rs`. GnuTLS checks certificates against Windows' own store.

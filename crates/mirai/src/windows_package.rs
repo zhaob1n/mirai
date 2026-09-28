@@ -18,6 +18,11 @@ pub fn prepare() {
     if let Some(plugins) = package_dir(&["lib", "gstreamer-1.0"]) {
         set_default("GST_PLUGIN_SYSTEM_PATH_1_0", plugins);
     }
+    // Fedora builds GnuTLS with the default priority `@SYSTEM`, which names a
+    // crypto-policies file Windows does not have. glib-networking appends `%COMPAT` to that
+    // default, the result does not parse, and every TLS handshake — every Fox lookup —
+    // fails. This is what glib-networking would have asked of upstream GnuTLS's default.
+    set_default("G_TLS_GNUTLS_PRIORITY", "NORMAL:%COMPAT");
 }
 
 /// `parts` joined onto the package root, the parent of `bin\`, if that directory exists.

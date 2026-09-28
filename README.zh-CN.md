@@ -35,13 +35,13 @@ mirai 把 KataGo 的计算结果放到一块原生 Linux 棋盘上。每个候�
 ## 环境要求
 
 - 当前稳定版 Rust（2024 edition），由 `rust-toolchain.toml` 选定，不支持更旧的编译器。
-- GTK 4.22+、libadwaita 1.9+ 和 Blueprint Compiler 0.22+，以及它们的开发包。
+- GTK 4.22+、libadwaita 1.9+、libsoup 3 和 Blueprint Compiler 0.22+，以及它们的开发包。
 - GNU gettext，用于编译翻译。
 - [`just`](https://github.com/casey/just)，用于安装。
 - KataGo 程序和神经网络模型（JSON 分析模式，不是 GTP）。mirai 不会替你下载 KataGo。
 - 如需落子音效，还要安装 GStreamer 的 good 插件（Arch 上为 `gst-plugins-good`，Debian/Ubuntu 上为 `gstreamer1.0-plugins-good`），GTK 通过它播放声音。没有它 mirai 也能运行，只是没有声音。
 
-Arch：`pacman -S gtk4 libadwaita blueprint-compiler gettext just`。Debian/Ubuntu：安装 `libgtk-4-dev`、`libadwaita-1-dev`、`blueprint-compiler`、`gettext` 和 `just`；Fedora：安装 `gtk4-devel`、`libadwaita-devel`、`blueprint-compiler`、`gettext` 和 `just`。请注意版本：早于 GNOME 50 的发行版自带的 GTK 和 libadwaita 太旧，无法构建 mirai。
+Arch：`pacman -S gtk4 libadwaita libsoup3 blueprint-compiler gettext just`。Debian/Ubuntu：安装 `libgtk-4-dev`、`libadwaita-1-dev`、`libsoup-3.0-dev`、`blueprint-compiler`、`gettext` 和 `just`；Fedora：安装 `gtk4-devel`、`libadwaita-devel`、`libsoup3-devel`、`blueprint-compiler`、`gettext` 和 `just`。请注意版本：早于 GNOME 50 的发行版自带的 GTK 和 libadwaita 太旧，无法构建 mirai。
 
 ```
 just build

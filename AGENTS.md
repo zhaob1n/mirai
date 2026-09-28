@@ -230,8 +230,8 @@ Rust stable, selected by `rust-toolchain.toml`. There is no minimum supported ve
 `rust-version`: mirai tracks the latest stable compiler and the latest release of every
 dependency, so update both freely and never hold one back for an older toolchain. No nightly
 feature is used, and none should be added. Let-chains (`if let Some(x) = a && cond`) are used
-throughout and are expected. GTK 4.22+, libadwaita 1.9+ and Blueprint Compiler 0.22+ are
-required to build `mirai`.
+throughout and are expected. GTK 4.22+, libadwaita 1.9+, libsoup 3 and Blueprint Compiler
+0.22+ are required to build `mirai`.
 
 ### Testing expectations
 

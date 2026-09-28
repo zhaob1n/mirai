@@ -5,7 +5,7 @@
 # Builds mirai for x86_64-pc-windows-gnu and stages a self-contained tree:
 #
 #     bin/   mirai.exe, mirai-server.exe, every DLL they load, gdbus.exe
-#     lib/   gdk-pixbuf loaders, the GStreamer plugins stone sounds need
+#     lib/   gdk-pixbuf loaders, the GStreamer plugins stone sounds need, GIO's TLS module
 #     share/ Adwaita and hicolor icons, compiled GSettings schemas, translations
 #     doc/   licence, README, guide, example server configuration
 #
@@ -133,6 +133,12 @@ mkdir -p "$stage/$loaders/loaders"
 cp "$sysroot/$loaders"/loaders/*.dll "$stage/$loaders/loaders/"
 cp "$sysroot/$loaders/loaders.cache" "$stage/$loaders/"
 
+# libsoup reaches `https://` through GIO's TLS backend, a module GLib loads by name from
+# lib/gio/modules beside its own DLL. Only the GnuTLS one: glib-networking's proxy modules
+# read GNOME's settings or proxy environment variables, not Windows' proxy setting.
+mkdir -p "$stage/lib/gio/modules"
+cp "$sysroot/lib/gio/modules/libgiognutls.dll" "$stage/lib/gio/modules/"
+
 # Stone sounds play through GtkMediaFile, whose GStreamer backend builds a playbin3 fed by
 # a giostreamsrc; GstPlay aborts the process when playbin3 is missing. These are the
 # elements an in-memory WAV needs on its way to a Windows audio sink. mirai points
@@ -145,7 +151,8 @@ for plugin in "${plugins[@]}"; do
     cp "$sysroot/lib/gstreamer-1.0/libgst$plugin.dll" "$stage/lib/gstreamer-1.0/"
 done
 
-for image in "$stage"/bin/*.exe "$stage/$loaders"/loaders/*.dll "$stage"/lib/gstreamer-1.0/*.dll; do
+for image in "$stage"/bin/*.exe "$stage/$loaders"/loaders/*.dll "$stage"/lib/gio/modules/*.dll \
+    "$stage"/lib/gstreamer-1.0/*.dll; do
     bundle "$image"
 done
 

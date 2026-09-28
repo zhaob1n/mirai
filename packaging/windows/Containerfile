@@ -30,11 +30,12 @@ RUN echo '%_install_langs all' > /etc/rpm/macros.image-language-conf
 # `CompositeTemplate` derive and resolves `using Gtk 4.0` against them. gettext's msgfmt
 # compiles mirai's catalogues in build.rs and libadwaita's below. librsvg2-tools and
 # icoutils turn the SVG app icon into the executables' .ico; the NSIS compiler (packaged as
-# mingw32-nsis) builds the installer.
+# mingw32-nsis) builds the installer. libsoup is Fox lookup's HTTP client, and
+# glib-networking the TLS backend it reaches `https://` through.
 RUN dnf -y install --setopt=install_weak_deps=False \
         mingw64-gcc mingw64-gtk4 mingw64-appstream mingw64-fribidi \
         mingw64-adwaita-icon-theme mingw64-hicolor-icon-theme mingw64-librsvg2 \
-        mingw64-gstreamer1-plugins-good \
+        mingw64-gstreamer1-plugins-good mingw64-libsoup3 mingw64-glib-networking \
         gcc meson ninja-build sassc glib2-devel blueprint-compiler gtk4 libadwaita \
         gobject-introspection gettext rustup curl xz zip \
         librsvg2-tools icoutils mingw32-nsis \

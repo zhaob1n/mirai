@@ -21,6 +21,7 @@ mirai-proto.workspace = true
 gtk.workspace = true
 adw.workspace = true
 glib.workspace = true
+soup.workspace = true
 # `signal` for the termination watcher in `application_shell.rs`: SIGINT/SIGTERM/SIGHUP,
 # or Windows console control events.
 tokio = { workspace = true, features = ["signal"] }

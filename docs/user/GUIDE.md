@@ -37,8 +37,8 @@ The Windows build is either a zip — unpack it anywhere and run `bin\mirai.exe`
 installer that puts mirai in your Start menu and offers it for `.sgf` files, with no
 administrator rights needed. Use a Windows KataGo release (`katago.exe` with its DLLs). For
 the first-run discovery below, put KataGo's folder on `PATH` and networks in
-`%USERPROFILE%\.katago\models`; otherwise choose both in Preferences. Downloading from Fox
-Go does not work on Windows yet, and `mirai-server` on Windows is untested.
+`%USERPROFILE%\.katago\models`; otherwise choose both in Preferences. `mirai-server` on
+Windows is untested.
 
 ---
 
