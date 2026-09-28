@@ -6,14 +6,19 @@
 #
 # Fedora ships the whole GTK 4 stack cross-compiled for MinGW, but not libadwaita, which
 # is built here from its release tarball against that sysroot.
+#
+# Rawhide, because it is the only Fedora release whose MinGW GTK is 4.24: Fedora 45 stays
+# on 4.22, where GDK composites every window through DirectComposition and the GL and
+# Vulkan renderers draw a black band around it (gtk#7567, fixed in 4.24 by making DComp
+# opt-in). Pin the first stable release that ships MinGW GTK 4.24 once there is one.
 
-FROM registry.fedoraproject.org/fedora:45
+FROM registry.fedoraproject.org/fedora:rawhide
 
-# Optional mirror for the `updates` repository, e.g. a nearby Fedora mirror's mirrorlist
+# Optional mirror for the `rawhide` repository, e.g. a nearby Fedora mirror's mirrorlist
 # URL. Empty keeps Fedora's metalink.
-ARG FEDORA_UPDATES_MIRRORLIST=
-RUN if [ -n "$FEDORA_UPDATES_MIRRORLIST" ]; then \
-        dnf config-manager setopt "updates.mirrorlist=$FEDORA_UPDATES_MIRRORLIST" updates.metalink= ; \
+ARG FEDORA_MIRRORLIST=
+RUN if [ -n "$FEDORA_MIRRORLIST" ]; then \
+        dnf config-manager setopt "rawhide.mirrorlist=$FEDORA_MIRRORLIST" rawhide.metalink= ; \
     fi
 
 # The Fedora image installs only en_US translations; the package ships GTK's, GLib's and

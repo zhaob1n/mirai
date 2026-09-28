@@ -11,7 +11,7 @@ Commands are in the [README](../../README.md#requirements).
 |`packaging/aur/`|split PKGBUILD and its `.SRCINFO`: `mirai-git` (the GUI, desktop files, icons) and `mirai-server-git` (the headless host, which needs no GTK), from one build, installed with `just`|
 |`tools/packaging/makepkg-local.sh`|builds that PKGBUILD from this checkout's HEAD instead of GitHub, rewriting only `source=`; `--prepare DIR` writes the PKGBUILD without building|
 |`tools/packaging/arch-chroot-test.sh`|builds the PKGBUILD in a clean devtools chroot with its own package cache, installs into a fresh one, smoke-runs both binaries, runs namcap|
-|`packaging/windows/Containerfile`|the Windows build environment: Fedora 45 with its MinGW GTK 4 stack, libadwaita cross-built from its tarball, and rustup's `x86_64-pc-windows-gnu`|
+|`packaging/windows/Containerfile`|the Windows build environment: Fedora rawhide with its MinGW GTK 4 stack, libadwaita cross-built from its tarball, and rustup's `x86_64-pc-windows-gnu`|
 |`packaging/windows/stage.sh`|runs inside that image: builds both executables with icon and version resources, stages them with every DLL they load and the runtime data GTK and GStreamer look up, then writes a portable zip and an installer|
 |`packaging/windows/installer.nsi`|per-user NSIS installer: `%LOCALAPPDATA%\Programs\mirai`, Start menu entry, `.sgf` association, uninstaller|
 |`tools/packaging/windows-cross.sh`|runs that from the host with podman (or `CONTAINER_ENGINE=docker`); `package` (default), `debug`, `shell`, `run CMD`. Output in `target/windows/dist/`|
@@ -34,7 +34,9 @@ Commands are in the [README](../../README.md#requirements).
   followed automatically; a module loaded by name is not, and a missing GStreamer element
   aborts the process rather than degrading.
 - **libadwaita or Fedora moves** → `ADW_VERSION` and `ADW_SHA256`, or the `FROM` line, in
-  the Containerfile, then `tools/packaging/windows-cross.sh debug` and a Wine run.
+  the Containerfile, then `tools/packaging/windows-cross.sh debug` and a Wine run. Once a
+  stable Fedora ships MinGW GTK 4.24, pin it instead of rawhide and point the mirror
+  override at its `fedora` and `updates` repositories.
 
 ## Decisions
 
@@ -75,7 +77,7 @@ it outside through `flatpak-spawn --host`, which Flathub rejects as a sandbox es
 bundled OpenCL KataGo does run inside; measured on an RX 6800 XT (b10 network, 16 threads,
 400 visits) it managed 123 visits/s against 472 for the host's ROCm build.
 
-**Windows is cross-built from a Fedora container.** Fedora packages the whole GTK 4.22
+**Windows is cross-built from a Fedora container.** Fedora packages the whole GTK 4
 stack for MinGW, so one Linux machine with podman builds the Windows release, the same way
 locally and in CI; gvsbuild or MSYS2 would need a Windows machine. Fedora's `mingw64`
 runtime is msvcrt-based, as is Rust's `x86_64-pc-windows-gnu`, so the Rust and C sides
@@ -85,6 +87,17 @@ tarball against that sysroot. `blueprint-compiler` runs on the build machine ins
 typelibs, which is the only reason those are in the image. The cargo registry lives in the
 `mirai-windows-cargo` volume and the build in `target/windows/`, so an unchanged tree
 rebuilds in seconds.
+
+**Rawhide, for GTK 4.24, which renders with Cairo on Windows.** GTK 4.20 and 4.22 composite
+every Windows window through DirectComposition, and with the GL or Vulkan renderer that
+draws a black band around it on real hardware (gtk#7567); Cairo is unaffected. GTK 4.24
+makes DirectComposition opt-in (`GDK_DEBUG=dcomp`), and since GDK's GL and Vulkan contexts
+refuse to start without it, GTK renders with Cairo on Windows by default. Fedora 45's MinGW
+GTK stays at 4.22, and rawhide has 4.24, so the image follows rawhide. Rawhide moves
+daily; podman keeps the installed layer until the Containerfile changes, so a local image
+holds still, while a fresh image takes that day's rawhide. mirai picks no renderer:
+`GDK_DEBUG=dcomp` brings the GPU renderers back, band included. How much a frame costs
+under Cairo on Windows is unmeasured.
 
 **The Windows package ships its runtime.** `stage.sh` walks each executable's and module's
 imports (`objdump -p`) through the sysroot, strips what it copies, and adds what is
@@ -117,9 +130,11 @@ its command line. Neither file is code-signed, so SmartScreen warns on first run
 discovery on `PATH` and live analysis with a Windows KataGo (the Eigen build); a silent
 install, Start menu entry, registry entries and a clean silent uninstall; a second launch
 handing its file to the first process over `gdbus.exe`; autosaves in
-`%LOCALAPPDATA%`. Wine differs from Windows, without that being a defect of mirai, in
-that it lacks DirectComposition and DWM blur (GTK logs a critical and falls back); its
-fonts lack the `⚫`/`⚪` glyphs the analysis header uses; its `HKEY_CLASSES_ROOT` does not
+`%LOCALAPPDATA%`. Wine has no DirectComposition, so GTK renders with Cairo there as on
+Windows. Wine differs from Windows, without that being a defect of mirai, in that its DWM
+reports no composition time (GTK logs a `presentation_time != 0` critical per frame) and
+no blur; its DirectWrite cannot draw colour glyphs, so the analysis header's `⚫`/`⚪`
+stay blank and Cairo logs `Window Direct Write error`; its `HKEY_CLASSES_ROOT` does not
 include `HKCU\Software\Classes`, so the `.sgf` association only opens mirai once copied
 to `HKLM`; it passes the host's `DBUS_SESSION_BUS_ADDRESS` through (`windows-wine.sh`
 unsets it); it has no PowerShell, so the installer's process checks are untested; its

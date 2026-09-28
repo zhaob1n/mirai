@@ -46,8 +46,8 @@ the GPU, and a laptop with none analyses just as well.
   with every client on your network over QUIC. Clients authenticate with a token and pin
   the server's certificate the first time they connect.
 - **Native and quick.** GTK 4 and libadwaita, light and dark styles, a board drawn by GTK's
-  GPU renderer. Several windows share one KataGo, and autosave brings your record back after
-  a crash.
+  GPU renderer on Linux. Several windows share one KataGo, and autosave brings your record
+  back after a crash.
 - **In your language.** English and Simplified Chinese so far; translations are welcome.
 
 ---

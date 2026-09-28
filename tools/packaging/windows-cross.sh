@@ -15,7 +15,7 @@
 # target/windows/, so a rebuild recompiles only what changed.
 #
 # Optional mirrors, all unset by default:
-#   MIRAI_FEDORA_UPDATES_MIRRORLIST   mirrorlist URL for Fedora's `updates` repository
+#   MIRAI_FEDORA_MIRRORLIST           mirrorlist URL for Fedora's `rawhide` repository
 #   RUSTUP_DIST_SERVER, RUSTUP_UPDATE_ROOT   as for rustup
 #   MIRAI_CRATES_INDEX                a crates.io replacement, e.g. sparse+https://.../index/
 # CONTAINER_ENGINE=docker uses docker instead of podman.
@@ -28,7 +28,7 @@ image=localhost/mirai-windows-build
 mkdir -p "$repo/target/windows"
 log=$repo/target/windows/image.log
 "$engine" build -t "$image" -f "$repo/packaging/windows/Containerfile" \
-    --build-arg "FEDORA_UPDATES_MIRRORLIST=${MIRAI_FEDORA_UPDATES_MIRRORLIST:-}" \
+    --build-arg "FEDORA_MIRRORLIST=${MIRAI_FEDORA_MIRRORLIST:-}" \
     --build-arg "RUSTUP_DIST_SERVER=${RUSTUP_DIST_SERVER:-}" \
     --build-arg "RUSTUP_UPDATE_ROOT=${RUSTUP_UPDATE_ROOT:-}" \
     "$repo/packaging/windows" >"$log" 2>&1 ||

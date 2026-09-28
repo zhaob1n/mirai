@@ -733,3 +733,4 @@ These are ability boundaries, not a backlog. Do not file them as missing tests.
 | The harness does not deliver physical Wayland input | `action:`, `press:`, `page:`, `set:`, `board:` and the rest call production handlers. They do not synthesise a key, a double-click or a compositor event. Say so if that is what was checked |
 | No image golden | Inspect the PNG; a pixel oracle breaks with the next margin change |
 | The Windows network path is unverified | Wine refuses a socket option quinn sets, so `mirai-server.exe` and remote profiles cannot bind under Wine; they have only run on Linux |
+| The Windows window frame and frame cost need real Windows | Wine has no DirectComposition and `shot:` renders the widget tree, not the window, so a band like gtk#7567's cannot show under Wine; nor do Wine's frame timings stand for Windows' |
