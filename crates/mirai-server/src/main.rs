@@ -37,7 +37,8 @@ use session::{Host, NamedEngine, Token};
     about = "Headless KataGo host speaking the mirai remote-analysis protocol"
 )]
 struct Args {
-    /// Configuration file (default: $XDG_CONFIG_HOME/mirai/server.toml).
+    /// Configuration file (default: $XDG_CONFIG_HOME/mirai/server.toml;
+    /// %APPDATA%\zhaob1n\mirai\config\server.toml on Windows).
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
 
