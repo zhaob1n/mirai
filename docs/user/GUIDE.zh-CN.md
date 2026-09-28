@@ -20,6 +20,10 @@ mirai 驱动的是 KataGo 的 JSON **分析**引擎，绝不是 GTP——只讲 
 
 棋盘从 2×2 到 19×19，与原版 KataGo 构建一致。
 
+### 在 Windows 上
+
+Windows 版有两种：压缩包——解压到任意位置，运行 `bin\mirai.exe`；或安装程序——把 mirai 放进开始菜单，并让它可以打开 `.sgf` 文件，不需要管理员权限。请使用 Windows 版 KataGo（`katago.exe` 及其 DLL）。要让下面的首次运行自动发现它们，把 KataGo 所在文件夹加入 `PATH`，把权重放进 `%USERPROFILE%\.katago\models`；否则在首选项里选择二者。Windows 上暂时不能从野狐下载棋谱，Windows 上的 `mirai-server` 也未经测试。
+
 ---
 
 ## 2. 首次运行
@@ -403,6 +407,8 @@ token = "…"
 | `~/.config/mirai/server.toml` | `mirai-server` 的设置，在运行它的那台机器上 |
 
 （若设置了 `$XDG_CONFIG_HOME` 和 `$XDG_DATA_HOME`，则遵从它们。）
+
+在 Windows 上，设置（包括 `server.toml`）在 `%APPDATA%\zhaob1n\mirai\config\`，自动保存、野狐缓存和 KataGo 日志在 `%LOCALAPPDATA%\zhaob1n\mirai\data\`。Windows 没有 `0600` 权限：这些文件与你的用户配置文件夹一样私密。
 
 自动保存每 30 秒一次，且只在有值得保留的内容时进行——一手棋、一颗摆子、一个标记、明确的行棋方，或一条注释；空盘从不保存。关闭窗口会**删除**它的自动保存，因此下次启动时还在的文件，就是崩溃留下的，mirai 提议恢复的就是它。自动保存不是你的文件：恢复它并不会让一次普通的保存写到那里。KataGo 的日志会累积，可以随时删除，生成的分析配置也一样——内容将要变化时，mirai 会重新写一份。野狐搜索缓存可以删除；下次查询会再写一份。除此之外不写任何东西；你自己的 KataGo 安装、权重，以及你提供的任何分析配置，都不会被修改。
 

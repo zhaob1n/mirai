@@ -549,6 +549,24 @@ The self-play fixture has `MRAI` on its nodes. Expect the analysis panel, not
 the StatusPage; visits in the detail line and no `/s`; the graph still reads
 Black's `…%`. The sidebar percentage is the side to move.
 
+**(i) The Windows build, under Wine.** Stage the debug build, which carries the harness,
+and run it in the Wine prefix `target/windows/wine`
+([PACKAGING.md](PACKAGING.md#decisions) lists what Wine cannot show). Wine sees the host
+through drive `Z:`. With a Windows KataGo's folder in `WINEPATH` and a network in
+`target/windows/wine/drive_c/users/$USER/.katago/models`, first-run discovery seeds
+`local-default` as it would on Windows:
+
+```sh
+tools/packaging/windows-cross.sh debug
+WINEPATH='Z:\path\to\katago-windows' \
+  MIRAI_HARNESS='wait:4000,action:win.last,action:win.toggle-analysis,wait:45000,shot:Z:\tmp\mirai-wine.png,quit' \
+  tools/packaging/windows-wine.sh "" mirai 'Z:\path\to\game.sgf'
+```
+
+Expect the same window as on Linux, the engine button naming `local-default` and live
+candidates. A GStreamer abort (`'playbin3' element not found`) means a plugin is missing
+from `stage.sh`.
+
 ## 6. Verifying the remote path
 
 This is the loopback and cancellation runbook. §4 only diffs a `[final]` block
@@ -714,3 +732,4 @@ These are ability boundaries, not a backlog. Do not file them as missing tests.
 |---|---|
 | The harness does not deliver physical Wayland input | `action:`, `press:`, `page:`, `set:`, `board:` and the rest call production handlers. They do not synthesise a key, a double-click or a compositor event. Say so if that is what was checked |
 | No image golden | Inspect the PNG; a pixel oracle breaks with the next margin change |
+| The Windows network path is unverified | Wine refuses a socket option quinn sets, so `mirai-server.exe` and remote profiles cannot bind under Wine; they have only run on Linux |

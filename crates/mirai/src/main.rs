@@ -30,6 +30,8 @@ mod util;
 mod widgets;
 mod window;
 mod window_shell;
+#[cfg(windows)]
+mod windows_package;
 
 use gtk::gio;
 use gtk::glib;
@@ -39,6 +41,8 @@ const APP_ID: &str = "io.github.zhaob1n.Mirai";
 const RESOURCE_PREFIX: &str = "/io/github/zhaob1n/Mirai";
 
 fn main() -> glib::ExitCode {
+    #[cfg(windows)]
+    windows_package::prepare();
     i18n::init();
     tracing_subscriber::fmt()
         .with_env_filter(
