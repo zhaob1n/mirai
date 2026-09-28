@@ -49,11 +49,37 @@ impl Layout {
         )
     }
 
+    /// Grid spacings across and down: the intersections less one, plus the padding.
+    fn units(size: Size, coords: bool) -> (f32, f32) {
+        let extra = 2.0 * EDGE_PAD + if coords { 2.0 * COORD_PAD } else { 0.0 };
+        (
+            (size.w as f32 - 1.0).max(1.0) + extra,
+            (size.h as f32 - 1.0).max(1.0) + extra,
+        )
+    }
+
+    /// The narrowest width at which a `height`-tall allocation still sizes the board by its
+    /// height; any narrower and the width limits it.
+    ///
+    /// `compute` takes the smaller of two f32 quotients, so this settles each candidate with
+    /// that same comparison: the rounded product alone lands one pixel wide at many heights.
+    fn fit_width(height: i32, size: Size, coords: bool) -> i32 {
+        let (units_x, units_y) = Layout::units(size, coords);
+        let limit = height as f32 / units_y;
+        let fits = |width: i32| width as f32 / units_x >= limit;
+        let mut width = (height as f32 * units_x / units_y).ceil() as i32;
+        while width > 0 && fits(width - 1) {
+            width -= 1;
+        }
+        while !fits(width) {
+            width += 1;
+        }
+        width
+    }
+
     /// Computes the geometry for a `size` board inside a `width` x `height` allocation.
     fn compute(width: i32, height: i32, size: Size, coords: bool) -> Layout {
-        let extra = 2.0 * EDGE_PAD + if coords { 2.0 * COORD_PAD } else { 0.0 };
-        let units_x = (size.w as f32 - 1.0).max(1.0) + extra;
-        let units_y = (size.h as f32 - 1.0).max(1.0) + extra;
+        let (units_x, units_y) = Layout::units(size, coords);
         let cell = (width as f32 / units_x)
             .min(height as f32 / units_y)
             .max(0.0);
@@ -221,6 +247,9 @@ pub(crate) struct BoardClick {
 /// before calling, rather than holding a borrow across it.
 type ClickHook = Rc<dyn Fn(BoardClick) + 'static>;
 
+/// Told that [`BoardView::fit_width`] changed. It runs inside `size_allocate`.
+type FitHook = Box<dyn Fn() + 'static>;
+
 /// The geometry and position a single `snapshot` pass draws against.
 ///
 /// Every `draw_*` layer needs the same values, so they travel together rather than as
@@ -345,6 +374,9 @@ mod imp {
         pub play_locked: Cell<bool>,
         pub static_layer: RefCell<Option<(StaticKey, gsk::RenderNode)>>,
         pub(super) click_hook: RefCell<Option<ClickHook>>,
+        pub(super) fit_hook: RefCell<Option<FitHook>>,
+        /// [`Layout::fit_width`] of the current allocation.
+        pub(super) fit_width: Cell<i32>,
         pub dead: RefCell<Option<DeadSet>>,
         pub territory: RefCell<Option<Box<[Option<Color>]>>>,
         pub(super) projection: RefCell<Option<BoardProjection>>,
@@ -535,9 +567,16 @@ mod imp {
 
         fn size_allocate(&self, width: i32, height: i32, _baseline: i32) {
             let size = self.board_size();
-            let layout = Layout::compute(width, height, size, self.show_coords());
+            let coords = self.show_coords();
+            let layout = Layout::compute(width, height, size, coords);
             if self.layout.replace(layout) != layout {
                 self.static_layer.borrow_mut().take();
+            }
+            let fit = Layout::fit_width(height, size, coords);
+            if self.fit_width.replace(fit) != fit
+                && let Some(hook) = self.fit_hook.borrow().as_ref()
+            {
+                hook();
             }
         }
 
@@ -1272,6 +1311,16 @@ impl BoardView {
         *self.imp().click_hook.borrow_mut() = Some(Rc::new(hook));
     }
 
+    /// The narrowest width at which the board keeps the size its current height gives it.
+    pub(crate) fn fit_width(&self) -> i32 {
+        self.imp().fit_width.get()
+    }
+
+    /// Window installs the sole hook told when [`BoardView::fit_width`] changes.
+    pub(crate) fn set_fit_hook(&self, hook: impl Fn() + 'static) {
+        *self.imp().fit_hook.borrow_mut() = Some(Box::new(hook));
+    }
+
     /// Hit-tests `(x, y)` and delivers the click to the window hook. No default play path.
     pub(crate) fn click_at(&self, button: u32, x: f64, y: f64) {
         crate::widgets::release_focus(self);
@@ -1844,6 +1893,26 @@ mod tests {
         assert!((bare.origin_x - right).abs() < 0.01);
         // The whole board, plus its padding, fits.
         assert!(with_coords.origin_x - with_coords.cell * (EDGE_PAD + COORD_PAD) >= -0.01);
+    }
+
+    /// The sidebar docks at exactly `fit_width` (`window::install_sidebar_breakpoint`), so
+    /// the board must be the same size there as in any wider allocation, and smaller one
+    /// pixel narrower — otherwise docking or folding the sidebar resizes the board.
+    #[test]
+    fn fit_width_is_the_narrowest_width_the_height_still_sizes() {
+        let tall = Size::new(9, 13).expect("a 9x13 board is valid");
+        for (size, coords) in [
+            (Size::square(19), false),
+            (Size::square(19), true),
+            (tall, true),
+        ] {
+            for height in 2..=1600 {
+                let fit = Layout::fit_width(height, size, coords);
+                let cell = |width| Layout::compute(width, height, size, coords).cell;
+                assert_eq!(cell(fit), cell(fit + 400), "{size:?} {coords} {height}");
+                assert!(cell(fit - 1) < cell(fit), "{size:?} {coords} {height}");
+            }
+        }
     }
 
     /// The preview snapshot used to replay inside `snapshot`. A pass must advance the

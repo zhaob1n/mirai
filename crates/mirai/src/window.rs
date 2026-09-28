@@ -145,9 +145,13 @@ pub struct Ui {
     sounds: StoneSounds,
     scale_guard: Cell<bool>,
     pending_auto_analyse: Cell<bool>,
-    /// `Some(sidebar was shown)` while a game hides the review surfaces; see
-    /// [`sync_play_layout`].
+    /// `Some(the folded sidebar was open over the board)` while a game hides the review
+    /// surfaces; see [`sync_play_layout`].
     play_layout: Cell<Option<bool>>,
+    /// Whether the user keeps the docked sidebar open. Only a change made while it is docked
+    /// and no game runs records here — a fold, a folded overlay and a game do not — so a
+    /// dock and the end of a game both restore it; see [`install_sidebar_breakpoint`].
+    sidebar_wanted: Cell<bool>,
     /// The View menu's Win-Rate Graph switch; see [`sync_graph`].
     show_graph: Cell<bool>,
     /// Bumped on every open and on every wholesale record replacement. A slower
@@ -345,14 +349,7 @@ pub fn present(
         };
         button.set_tooltip_text(Some(&tip));
     });
-    let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
-        adw::BreakpointConditionLengthType::MaxWidth,
-        SIDEBAR_BREAKPOINT_SP,
-        adw::LengthUnit::Sp,
-    ));
-    breakpoint.add_setter(&split, "collapsed", Some(&true.to_value()));
-    breakpoint.add_setter(&split, "show-sidebar", Some(&false.to_value()));
-    window.add_breakpoint(breakpoint);
+    install_sidebar_breakpoint(&window, &board);
 
     let title = window.title_widget();
     let clock_box = window.clock_box();
@@ -399,6 +396,7 @@ pub fn present(
         scale_guard: Cell::new(false),
         pending_auto_analyse: Cell::new(false),
         play_layout: Cell::new(None),
+        sidebar_wanted: Cell::new(true),
         show_graph: Cell::new(show_graph),
         load_generation: Cell::new(0),
         tasks: WindowTasks::default(),
@@ -2142,8 +2140,115 @@ fn set_candidate_sidebar_width(split: &adw::OverlaySplitView, detailed: bool) {
     split.set_max_sidebar_width(width);
 }
 
-/// At this width or narrower the sidebar folds into an overlay.
-const SIDEBAR_BREAKPOINT_SP: f64 = 926.0;
+/// The narrowest window that docks the sidebar beside content `fit` pixels wide.
+///
+/// The content never goes below its own minimum width, which the navigation bar sets, nor
+/// below the editing tools on one line. The fit is measured from the board's height, and a
+/// wrapped toolbar would make the docked board shorter than the folded one: narrowing would
+/// fold at one width and widening dock at another, resizing the board both times.
+fn docked_width(window: &MiraiWindow, fit: i32) -> f64 {
+    let split = window.split();
+    let sidebar = adw::LengthUnit::Sp.to_px(split.max_sidebar_width(), Some(&window.settings()));
+    let minimum = window
+        .board_view()
+        .measure(gtk::Orientation::Horizontal, -1)
+        .0;
+    let tools = window
+        .editor_toolbar()
+        .measure(gtk::Orientation::Horizontal, -1)
+        .1;
+    f64::from(fit.max(minimum).max(tools)) + sidebar
+}
+
+/// Docks the sidebar exactly while the board keeps the size the window's height gives it.
+///
+/// A fixed breakpoint width left a band where narrowing the window shrank the board beside
+/// the docked sidebar, and folding it then grew the board back; widening docked the sidebar
+/// long before there was room for it, shrinking the board again. The threshold instead is
+/// the board's [`BoardView::fit_width`] plus the sidebar: below it the docked board would be
+/// sized by its width, and at or above it the sidebar fits beside a board sized by its
+/// height. Folding does not change the board's height, so the two sides of the threshold
+/// show the same board.
+///
+/// Docking restores [`Ui::sidebar_wanted`], not a breakpoint setter's snapshot of the startup
+/// value: the threshold moves with the board's height, so hiding the graph or starting a
+/// game can fold and dock the sidebar without the user touching the window.
+///
+/// The board reports its fit from `size_allocate`, too late for this layout pass to see a
+/// changed condition, so the update waits for an idle and lands on the next frame.
+fn install_sidebar_breakpoint(window: &MiraiWindow, board: &BoardView) {
+    let split = window.split();
+    let condition = |window: &MiraiWindow, fit: i32| {
+        // `max-width` applies at or below its value; the sidebar folds below the threshold.
+        let threshold = docked_width(window, fit).ceil() - 1.0;
+        adw::BreakpointCondition::new_length(
+            adw::BreakpointConditionLengthType::MaxWidth,
+            threshold,
+            adw::LengthUnit::Px,
+        )
+    };
+    let breakpoint = adw::Breakpoint::new(condition(window, board.fit_width()));
+    window.add_breakpoint(breakpoint.clone());
+
+    // Changing `collapsed` shows or hides the sidebar without animating, unless it is
+    // pinned; pinning is only how a hidden sidebar stays hidden across a dock. A sidebar
+    // opened over the folded board stays open when it docks, and that becomes the choice.
+    breakpoint.connect_apply(glib::clone!(
+        #[weak]
+        split,
+        move |_| split.set_collapsed(true)
+    ));
+    let weak = window.downgrade();
+    breakpoint.connect_unapply(glib::clone!(
+        #[weak]
+        split,
+        move |_| {
+            let window = weak.upgrade();
+            let in_game = window
+                .as_ref()
+                .and_then(|window| window.with_ui(|ui| ui.play_layout.get().is_some()))
+                .unwrap_or(false);
+            let wanted = window
+                .as_ref()
+                .and_then(|window| window.with_ui(|ui| ui.sidebar_wanted.get()))
+                .unwrap_or(true);
+            let show = !in_game && (wanted || split.shows_sidebar());
+            split.set_pin_sidebar(!show);
+            split.set_collapsed(false);
+            split.set_pin_sidebar(false);
+            if !in_game && let Some(window) = window {
+                window.with_ui(|ui| ui.sidebar_wanted.set(show));
+            }
+        }
+    ));
+
+    let pending = Rc::new(Cell::new(false));
+    let resync = Rc::new(glib::clone!(
+        #[weak]
+        window,
+        #[weak]
+        board,
+        #[weak]
+        breakpoint,
+        move || breakpoint.set_condition(Some(&condition(&window, board.fit_width())))
+    ));
+    board.set_fit_hook(glib::clone!(
+        #[strong]
+        resync,
+        move || {
+            if pending.replace(true) {
+                return;
+            }
+            let pending = pending.clone();
+            let resync = resync.clone();
+            glib::idle_add_local_once(move || {
+                pending.set(false);
+                resync();
+            });
+        }
+    ));
+    split.connect_max_sidebar_width_notify(move |_| resync());
+}
 
 /// The tallest default window: the board is as large as this makes it, and no larger.
 const DEFAULT_HEIGHT_CAP: i32 = 1080;
@@ -2153,20 +2258,21 @@ const DEFAULT_HEIGHT_CAP: i32 = 1080;
 /// The board is square, so any other aspect ratio leaves bare background beside or under
 /// it. The window takes most of the shortest monitor's height, up to [`DEFAULT_HEIGHT_CAP`];
 /// the board gets what is left after the header, the editing tools, the navigation bar and
-/// the graph; the width is that board plus the sidebar. The chrome is measured rather than
-/// assumed, so text scaling and a remembered graph height stay square. Below the sidebar
-/// breakpoint the sidebar is an overlay and the window is only as wide as the board. A tiling
-/// compositor ignores all of this.
+/// the graph; the width is that board plus the sidebar, just wide enough to dock it (see
+/// [`install_sidebar_breakpoint`]), or the board alone with the sidebar folded where that
+/// would not fit the narrowest monitor, the board shrinking to that monitor's width if it
+/// must. The chrome is measured rather than assumed, so text scaling and a remembered graph
+/// height stay square. A tiling compositor ignores all of this.
 fn fit_default_size(window: &MiraiWindow, graph: &WinrateGraph) {
     let natural = |widget: &gtk::Widget| widget.measure(gtk::Orientation::Vertical, -1).1;
     let Some(display) = gdk::Display::default() else {
         return;
     };
     let monitors = display.monitors();
-    let Some(monitor_height) = (0..monitors.n_items())
+    let Some((monitor_width, monitor_height)) = (0..monitors.n_items())
         .filter_map(|i| monitors.item(i).and_downcast::<gdk::Monitor>())
-        .map(|m| m.geometry().height())
-        .min()
+        .map(|m| (m.geometry().width(), m.geometry().height()))
+        .reduce(|(w0, h0), (w1, h1)| (w0.min(w1), h0.min(h1)))
     else {
         return;
     };
@@ -2180,44 +2286,40 @@ fn fit_default_size(window: &MiraiWindow, graph: &WinrateGraph) {
     let chrome = natural(window.header_bar().upcast_ref()) + natural(board_view.upcast_ref())
         - natural(&board);
 
-    let settings = window.settings();
-    let split = window.split();
-    let sidebar = adw::LengthUnit::Sp.to_px(split.max_sidebar_width(), Some(&settings));
-    let breakpoint = adw::LengthUnit::Sp.to_px(SIDEBAR_BREAKPOINT_SP, Some(&settings));
-    // The narrowest board that still keeps the sidebar docked beside it.
-    let docked_side = (breakpoint - sidebar).floor() as i32 + 1;
-
-    // A graph remembered from a taller screen may not fit this one. It gets at most a third
-    // of what it shares with the board, and no more than leaves the board wide enough to
-    // dock the sidebar -- unless that would take it under a quarter, when the sidebar
-    // cannot dock at this height anyway. A hidden graph takes no room at all.
+    // A graph remembered from a taller screen may not fit this one: it gets at most a third
+    // of what it shares with the board. A hidden graph takes no room at all.
     let graph_height = if graph.is_visible() {
         natural(graph.upcast_ref())
     } else {
         0
     };
     let room = height - (chrome - graph_height);
-    let cap = (room / 3).min((room - docked_side).max(room / 4));
     let graph_height = if graph.is_visible() {
-        graph.limit_height(graph_height.min(cap))
+        graph.limit_height(graph_height.min(room / 3))
     } else {
         0
     };
     let side = (room - graph_height).max(1);
     let chrome = height - side;
 
-    let width = if side >= docked_side {
-        (f64::from(side) + sidebar).round() as i32
+    // Where even the board alone is wider than the monitor, as on a narrow portrait display,
+    // it shrinks to that width and the window's height with it, so the board stays square.
+    let docked = docked_width(window, side).ceil() as i32;
+    let (width, side) = if docked <= monitor_width {
+        (docked, side)
     } else {
-        side
+        let side = side.min(monitor_width);
+        (side, side)
     };
+    let height = chrome + side;
     tracing::debug!(width, height, chrome, "default window size");
     window.set_default_size(width, height);
 }
 
 /// A game shows the board and the play bar only. The graph, the navigation row and the
 /// sidebar are review tools, and the analysis in them would be hints; they return when the
-/// game is over, the sidebar as it was before the game.
+/// game is over, the sidebar as the user left it: docked, as [`Ui::sidebar_wanted`] says, and
+/// folded, open over the board if it was open when the game began.
 fn sync_play_layout(ui: &Ui) {
     let playing = matches!(
         ui.play.play_state(),
@@ -2231,11 +2333,12 @@ fn sync_play_layout(ui: &Ui) {
     };
     let split = window.split();
     // `play_layout` is what `sync_graph` and the sidebar guard read, so it changes first.
-    let sidebar_shown = if playing {
-        ui.play_layout.set(Some(split.shows_sidebar()));
-        None
+    let overlay_open = if playing {
+        ui.play_layout
+            .set(Some(split.is_collapsed() && split.shows_sidebar()));
+        false
     } else {
-        ui.play_layout.take()
+        ui.play_layout.take().unwrap_or(false)
     };
     sync_graph(ui, &window);
     window.nav().set_visible(!playing);
@@ -2249,8 +2352,10 @@ fn sync_play_layout(ui: &Ui) {
     }
     if playing {
         split.set_show_sidebar(false);
-    } else if let Some(shown) = sidebar_shown {
-        split.set_show_sidebar(shown);
+    } else if split.is_collapsed() {
+        split.set_show_sidebar(overlay_open);
+    } else {
+        split.set_show_sidebar(ui.sidebar_wanted.get() || overlay_open);
     }
 }
 
@@ -2373,11 +2478,19 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
     {
         let weak = weak.clone();
         split.connect_show_sidebar_notify(move |split| {
-            // Uncollapsing, and a breakpoint unapplying, both show the sidebar again; during
-            // a game it stays shut, since it would show the engine's hints.
-            let in_game = weak
-                .upgrade()
-                .and_then(|window| window.with_ui(|ui| ui.play_layout.get().is_some()));
+            // Docking can show the sidebar again; during a game it stays shut, since it
+            // would show the engine's hints.
+            let in_game = weak.upgrade().and_then(|window| {
+                window.with_ui(|ui| {
+                    let in_game = ui.play_layout.get().is_some();
+                    // `set_collapsed` notifies once `collapsed` holds its new value, so a
+                    // fold's own change is never taken for the user's choice.
+                    if !in_game && !split.is_collapsed() {
+                        ui.sidebar_wanted.set(split.shows_sidebar());
+                    }
+                    in_game
+                })
+            });
             if in_game == Some(true) && split.shows_sidebar() {
                 split.set_show_sidebar(false);
                 return;

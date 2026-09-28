@@ -76,7 +76,8 @@ The win-rate graph is always from Black's view; the Analysis sidebar reads the s
 The graph's solid curve is Black's win rate, the dashed curve is Black's score lead, and its
 bottom bars mark blunders. Click or drag the graph to navigate the main line. Drag the divider
 to resize it; mirai remembers its height. <kbd>g</kbd> toggles the graph and <kbd>F9</kbd>
-toggles the sidebar. At 926 pixels or narrower the sidebar opens as an overlay.
+toggles the sidebar. When the window is too narrow for the sidebar to sit beside the board
+without shrinking it, the sidebar opens as an overlay instead.
 
 The header title shows `•` for an unsaved record. A saved record uses its file name; a new
 one uses `Black vs White`, then the event, then `Untitled`. The status subtitle appears only
