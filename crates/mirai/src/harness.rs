@@ -16,7 +16,8 @@
 //! Steps run in order: `wait:<ms>`, `wait-status:<text>`, `action:<prefix.name>`,
 //! `action:<prefix.name>=<string arg>`, `press:<button text>`, `page:<preferences page>`,
 //! `stack:<view stack page>`, `select:<row title>=<index>`, `set:<row title>=<number>`,
-//! `fill:<entry placeholder>=<text>`, `shot:<path.png>`, `shot:<path.png>=<widget id>`,
+//! `fill:<entry placeholder>=<text>`, `size:<w>x<h>`, `shot:<path.png>`,
+//! `shot:<path.png>=<widget id>`,
 //! `board:<primary|secondary|menu|hover>:<GTP>` enters the board's production hit-test path.
 //! `close-window`, `quit`.
 
@@ -56,6 +57,9 @@ enum Step {
     /// Scroll the first mapped `ScrolledWindow` that has somewhere to scroll by this many
     /// pixels, through its vertical adjustment — what the wheel and scrollbar end in.
     Scroll(f64),
+    /// Ask for a new window size through `set_default_size`, which a floating window on
+    /// Wayland honours, and log what it got: the size, the sidebar fold and the board.
+    Size(i32, i32),
     /// Write a PNG of the whole window, or of the one widget whose Blueprint id is given —
     /// a 300x100 strip of the list you changed instead of a 1500x1600 window.
     Shot(String, Option<String>),
@@ -101,6 +105,9 @@ fn parse(script: &str) -> Vec<Step> {
                 "stack" => Some(Step::Stack(rest.to_string())),
                 "divider" => rest.parse().ok().map(Step::Divider),
                 "scroll" => rest.parse().ok().map(Step::Scroll),
+                "size" => rest
+                    .split_once('x')
+                    .and_then(|(w, h)| Some(Step::Size(w.parse().ok()?, h.parse().ok()?))),
                 "sort" => Some(Step::Sort(rest.to_string())),
                 "select" => rest.rsplit_once('=').and_then(|(title, index)| {
                     index
@@ -274,6 +281,11 @@ pub fn install(app: &adw::Application) {
                         if done { "ok" } else { "NOTHING TO SCROLL" }
                     );
                     glib::timeout_future(Duration::from_millis(250)).await;
+                }
+                Step::Size(width, height) => {
+                    resize(&app, width, height);
+                    glib::timeout_future(Duration::from_millis(500)).await;
+                    eprintln!("harness: size {width}x{height} -> {}", layout_summary(&app));
                 }
                 Step::Sort(title) => {
                     let done = sort_by_column(&app, &title);
@@ -553,6 +565,33 @@ fn drag_divider(app: &adw::Application, height: i32) -> bool {
     };
     paned.set_position((paned.position() + graph.height() - height).max(0));
     true
+}
+
+fn resize(app: &adw::Application, width: i32, height: i32) {
+    if let Some(window) = app.active_window() {
+        window.set_default_size(width, height);
+    }
+}
+
+/// The window's size, whether the sidebar is folded or shown, and the board's allocation.
+fn layout_summary(app: &adw::Application) -> String {
+    let Some(window) = app
+        .active_window()
+        .and_downcast::<crate::window_shell::MiraiWindow>()
+    else {
+        return "NO WINDOW".into();
+    };
+    let split = window.split();
+    let board = window.content_paned().start_child();
+    let (bw, bh) = board.map_or((0, 0), |b| (b.width(), b.height()));
+    format!(
+        "{}x{} collapsed={} sidebar={} board={bw}x{bh} side={}",
+        window.width(),
+        window.height(),
+        split.is_collapsed(),
+        split.shows_sidebar(),
+        bw.min(bh),
+    )
 }
 
 /// Scrolls the first mapped `gtk::ScrolledWindow` whose content is taller than its page by
