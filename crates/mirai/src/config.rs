@@ -488,11 +488,12 @@ impl Config {
         Ok(dirs.config_dir().join("config.toml"))
     }
 
-    /// `$XDG_DATA_HOME/mirai`, for the autosave and KataGo logs.
+    /// `$XDG_DATA_HOME/mirai`, for the autosave and KataGo logs. On Windows the local, not
+    /// the roaming, application data: none of it belongs on another machine.
     pub fn data_dir() -> Result<PathBuf, ConfigError> {
         let dirs = directories::ProjectDirs::from("io.github", "zhaob1n", "mirai")
             .ok_or(ConfigError::NoHome)?;
-        Ok(dirs.data_dir().to_path_buf())
+        Ok(dirs.data_local_dir().to_path_buf())
     }
 
     /// Loads the configuration. A missing file is an empty config, not an error; a

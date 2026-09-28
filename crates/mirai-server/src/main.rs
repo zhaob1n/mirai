@@ -568,7 +568,7 @@ fn default_config_path() -> PathBuf {
 /// application uses, in this user's own data directory, never the shared temp directory.
 fn default_log_dir() -> Option<PathBuf> {
     directories::ProjectDirs::from("io.github", "zhaob1n", "mirai")
-        .map(|d| d.data_dir().join("katago-logs"))
+        .map(|d| d.data_local_dir().join("katago-logs"))
 }
 
 fn report_missing_config(path: &std::path::Path) {
