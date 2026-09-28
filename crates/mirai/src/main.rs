@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
 //! mirai — a KataGo analysis and playing GUI.
+// A release build is a GUI program on Windows: the default console subsystem would open a
+// console window beside it. A debug build keeps the console for logs and the harness.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
 mod application_shell;
