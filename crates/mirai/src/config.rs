@@ -130,11 +130,12 @@ fn xdg_dir_list(value: Option<&OsStr>, fallback: &[&str]) -> Vec<PathBuf> {
     }
 }
 
-/// The first executable named `name` on `PATH`.
+/// The first executable named `name` on `PATH`, with the platform's executable suffix.
 fn which(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
+    let file = format!("{name}{}", std::env::consts::EXE_SUFFIX);
     std::env::split_paths(&path)
-        .map(|dir| dir.join(name))
+        .map(|dir| dir.join(&file))
         .find(|candidate| candidate.is_file())
 }
 
