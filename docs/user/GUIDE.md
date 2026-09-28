@@ -496,9 +496,9 @@ defaults. A running clock bounds the engine's thinking time.
 
 | Ruleset | Default komi | Ruleset | Default komi |
 |---|---|---|---|
-| Tromp-Taylor | 7.5 | Stone scoring | 7.5 |
+| Tromp-Taylor | 7.5 | Stone Scoring | 7.5 |
 | Chinese | 7.5 | AGA | 7.5 |
-| Chinese (OGS) | 7.5 | AGA (button) | 7.0 |
+| Chinese (OGS) | 7.5 | AGA (Button) | 7.0 |
 | Japanese | 6.5 | New Zealand | 7.0 |
 | Korean | 6.5 | | |
 

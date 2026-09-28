@@ -25,6 +25,7 @@ use mirai_engine::{AnalyzeReq, Engine, EngineDesc, EngineError, Report, SubEvent
 
 use crate::config::{Config, ConfigError, ProfileKind};
 use crate::engines::{Built, EnginePool};
+use crate::i18n;
 
 /// How long settings may keep changing before they are written. A spin row saves on every
 /// step and a drag is dozens of steps; one write when it settles is enough.
@@ -167,10 +168,14 @@ pub enum EngineState {
 impl EngineState {
     pub fn label(&self) -> String {
         match self {
-            Self::None => "No engine".to_string(),
-            Self::Starting { profile } => format!("Starting {profile}…"),
+            Self::None => i18n::gettext("No engine"),
+            Self::Starting { profile } => {
+                i18n::gettext_f("Starting {profile}…", &[("profile", profile)])
+            }
             Self::Ready { description, .. } => description.clone(),
-            Self::Failed { profile, .. } => format!("{profile} unavailable"),
+            Self::Failed { profile, .. } => {
+                i18n::gettext_f("{profile} unavailable", &[("profile", profile)])
+            }
         }
     }
 }
@@ -266,7 +271,7 @@ mod imp {
                 show_move_numbers: Cell::new(false),
                 ownership_overlay: Cell::new(false),
                 policy_overlay: Cell::new(false),
-                engine_label: RefCell::new(String::from("No engine")),
+                engine_label: RefCell::new(crate::i18n::gettext("No engine")),
                 status: RefCell::new(String::new()),
                 busy: Cell::new(false),
                 file_path: RefCell::new(String::new()),
@@ -524,7 +529,10 @@ impl AppState {
             }
             Err(e) => {
                 tracing::warn!(%e, "could not save the configuration");
-                self.toast(format!("Could not save settings: {e}"));
+                self.toast(i18n::gettext_f(
+                    "Could not save settings: {error}",
+                    &[("error", &e.message())],
+                ));
             }
         }
     }
@@ -895,7 +903,10 @@ impl AppState {
                 let description = if desc.katago_version.is_empty() {
                     desc.name.clone()
                 } else {
-                    format!("{} ({})", desc.name, desc.katago_version)
+                    i18n::gettext_f(
+                        "{name} ({version})",
+                        &[("name", &desc.name), ("version", &desc.katago_version)],
+                    )
                 };
                 EngineState::Ready {
                     profile: desc.name,
@@ -960,7 +971,10 @@ impl AppState {
     /// fingerprint the dialog showed.
     pub fn activate_profile(&self, name: &str) {
         let Some(profile) = self.config().profile(name).cloned() else {
-            self.toast(format!("No engine profile named “{name}”"));
+            self.toast(i18n::gettext_f(
+                "No engine profile named “{name}”",
+                &[("name", name)],
+            ));
             return;
         };
         if let Some(task) = self.imp().activation_task.borrow_mut().take() {
@@ -1045,9 +1059,12 @@ impl AppState {
                 Ok(Ok(fingerprint)) => {
                     this.ask_trust(&profile_name, &url, &fingerprint, activation);
                 }
-                Ok(Err(e)) => this.fail_activation(&profile_name, e.to_string()),
-                Err(_) => this
-                    .fail_activation(&profile_name, "the certificate check was cancelled".into()),
+                Ok(Err(e)) => this.fail_activation(&profile_name, i18n::engine_error(&e)),
+                Err(_) => this.fail_activation(
+                    &profile_name,
+                    // Translators: follows the profile name, as in "Remote: the certificate check was cancelled".
+                    i18n::gettext("the certificate check was cancelled"),
+                ),
             }
         });
         *self.imp().activation_task.borrow_mut() = Some(handle);
@@ -1055,7 +1072,11 @@ impl AppState {
 
     fn ask_trust(&self, name: &str, url: &str, fingerprint: &str, activation: u64) {
         let Some(parent) = self.dialog_parent() else {
-            self.fail_activation(name, "no window to confirm the certificate".into());
+            self.fail_activation(
+                name,
+                // Translators: follows the profile name, as in "Remote: no window to confirm the certificate".
+                i18n::gettext("no window to confirm the certificate"),
+            );
             return;
         };
         let this = self.clone();
@@ -1078,12 +1099,13 @@ impl AppState {
                     return;
                 }
                 on_cancel_state.set_busy(false);
-                on_cancel_state
-                    .set_status("Certificate was not trusted. The token was not sent.".to_string());
+                on_cancel_state.set_status(i18n::gettext(
+                    "Certificate was not trusted. The token was not sent.",
+                ));
                 on_cancel_state.replace_engine(None);
                 on_cancel_state.set_engine_state(EngineState::Failed {
                     profile: on_cancel_name.clone(),
-                    message: "certificate was not trusted".into(),
+                    message: i18n::gettext("certificate was not trusted"),
                 });
                 on_cancel_state.restart_analysis();
             },
@@ -1100,7 +1122,10 @@ impl AppState {
         }
         self.save_config();
         let Some(profile) = self.config().profile(name).cloned() else {
-            self.fail_activation(name, format!("No engine profile named “{name}”"));
+            self.fail_activation(
+                name,
+                i18n::gettext_f("No engine profile named “{name}”", &[("name", name)]),
+            );
             return;
         };
         self.set_busy(true);
@@ -1142,7 +1167,10 @@ impl AppState {
 
     fn fail_activation(&self, profile: &str, message: String) {
         self.set_busy(false);
-        self.toast(format!("{profile}: {message}"));
+        self.toast(i18n::gettext_f(
+            "{profile}: {message}",
+            &[("profile", profile), ("message", &message)],
+        ));
         self.replace_engine(None);
         self.set_engine_state(EngineState::Failed {
             profile: profile.to_string(),
@@ -1317,7 +1345,7 @@ impl AppState {
 
     pub fn on_engine_error(&self, e: EngineError) {
         tracing::warn!(%e, "engine error");
-        self.toast(e.to_string());
+        self.toast(i18n::engine_error(&e));
         if matches!(e, EngineError::EngineExited(_) | EngineError::Startup(_)) {
             self.set_engine(None);
         }
@@ -1330,7 +1358,7 @@ impl AppState {
     /// Reports an illegal move only when the board itself does not already explain it.
     pub fn toast_illegal_move(&self, error: IllegalMove) {
         if !matches!(error, IllegalMove::Occupied) {
-            self.toast(error.to_string());
+            self.toast(i18n::illegal_move(error));
         }
     }
 

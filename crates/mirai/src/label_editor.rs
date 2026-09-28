@@ -3,11 +3,13 @@
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
+use glib::clone;
 use gtk::{CompositeTemplate, glib};
 
 use mirai_core::Point;
 
 use crate::app::NodeRef;
+use crate::i18n;
 use crate::window_shell::MiraiWindow;
 
 mod imp {
@@ -80,7 +82,7 @@ pub(crate) fn present(window: &MiraiWindow, point: Point) {
     let entry = dialog.imp().entry.get();
     entry.set_text(&prefill);
 
-    dialog.imp().cancel_button.connect_clicked(glib::clone!(
+    dialog.imp().cancel_button.connect_clicked(clone!(
         #[weak]
         dialog,
         move |_| {
@@ -91,7 +93,7 @@ pub(crate) fn present(window: &MiraiWindow, point: Point) {
     let weak = window.downgrade();
     dialog.imp().apply_button.connect_clicked({
         let weak = weak.clone();
-        glib::clone!(
+        clone!(
             #[weak]
             dialog,
             move |_| apply_label(&dialog, &weak, node, point)
@@ -99,7 +101,7 @@ pub(crate) fn present(window: &MiraiWindow, point: Point) {
     });
     entry.connect_activate({
         let weak = weak.clone();
-        glib::clone!(
+        clone!(
             #[weak]
             dialog,
             move |_| apply_label(&dialog, &weak, node, point)
@@ -121,8 +123,9 @@ fn apply_label(
         window.with_ui(|ui| {
             let cursor = ui.state.cursor();
             if ui.play.is_active() || ui.state.resolve_node(node) != Some(cursor) {
-                ui.state
-                    .toast("The position changed; open the label editor again");
+                ui.state.toast(i18n::gettext(
+                    "The position changed; open the label editor again",
+                ));
             } else {
                 ui.state
                     .with_edit_session(|session| session.set_label(point, text.as_str()));

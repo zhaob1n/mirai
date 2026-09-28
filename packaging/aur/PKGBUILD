@@ -10,7 +10,7 @@ pkgdesc='Go analysis, review and play with KataGo'
 arch=('x86_64' 'aarch64')
 url='https://github.com/zhaob1n/mirai'
 license=('GPL-3.0-or-later')
-makedepends=('blueprint-compiler' 'cargo' 'git' 'gtk4' 'just' 'libadwaita')
+makedepends=('blueprint-compiler' 'cargo' 'gettext' 'git' 'gtk4' 'just' 'libadwaita')
 # makepkg's LTO turns the C that ring and zstd-sys build into GCC bitcode, which rust-lld,
 # rustc's default linker, cannot read: every C symbol is then undefined at link time.
 options=('!lto')

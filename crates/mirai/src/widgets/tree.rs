@@ -376,7 +376,8 @@ impl MoveTreeView {
         {
             let tree = self.state().tree();
             if !tree.main_line().contains(&id) {
-                let item = gio::MenuItem::new(Some("Set as Main Line"), None);
+                let item =
+                    gio::MenuItem::new(Some(&crate::i18n::gettext("Set as Main Line")), None);
                 item.set_action_and_target_value(
                     Some("win.promote-line-at"),
                     Some(&id.0.to_variant()),
@@ -384,7 +385,7 @@ impl MoveTreeView {
                 menu.append_item(&item);
             }
             if tree.parent(id).is_some() {
-                let item = gio::MenuItem::new(Some("Delete Branch"), None);
+                let item = gio::MenuItem::new(Some(&crate::i18n::gettext("Delete Branch")), None);
                 item.set_action_and_target_value(
                     Some("win.delete-branch-at"),
                     Some(&id.0.to_variant()),

@@ -317,9 +317,11 @@ impl WinrateGraph {
             .set(i32::from(state.config().ui.graph_height));
         this.imp().pinned.set(true);
         this.set_hexpand(true);
-        this.set_tooltip_text(Some(
+        let summary = crate::i18n::gettext(
             "Black win rate (solid) and Black score lead (dashed) over the main line",
-        ));
+        );
+        this.set_tooltip_text(Some(&summary));
+        this.update_property(&[gtk::accessible::Property::Description(&summary)]);
         let click = gtk::GestureClick::new();
         click.set_button(gdk::BUTTON_PRIMARY);
         {

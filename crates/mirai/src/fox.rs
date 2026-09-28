@@ -13,14 +13,17 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use adw::prelude::*;
+use glib::clone;
 use gtk::{gio, glib};
 use mirai_client::fox;
 pub(crate) use mirai_client::fox::FoxGame;
+use mirai_client::play::{Outcome, outcome};
 use mirai_core::GameTree;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 use crate::fox_picker::{FoxPickerDialog, FoxRow};
+use crate::i18n;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(25);
 const RETRIES: u32 = 3;
@@ -29,12 +32,55 @@ const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 enum FoxError {
+    #[error("Enter an exact Fox nickname or numeric UID")]
+    EmptyQuery,
+    #[error("This player has hidden their game records")]
+    HiddenRecords,
+    /// A message from Fox, or from the Fox parsers in `mirai-client`.
     #[error("{0}")]
     Service(String),
+    #[error("Fox returned invalid data: the player UID is missing")]
+    MissingUid,
     #[error("Fox returned invalid data: {0}")]
     InvalidData(String),
+    #[error("Could not reach Fox: request failed")]
+    RequestFailed,
+    #[error("Could not reach Fox: response was not UTF-8 ({0})")]
+    NotUtf8(String),
+    #[error("Could not reach Fox: response was unexpectedly large")]
+    ResponseTooLarge,
+    #[error("Could not reach Fox: request timed out")]
+    TimedOut,
     #[error("Could not reach Fox: {0}")]
-    Request(String),
+    Io(String),
+}
+
+/// The sentence shown for `error`. Server and I/O detail stays inside `{error}`.
+fn fox_error_message(error: &FoxError) -> String {
+    match error {
+        FoxError::EmptyQuery => i18n::gettext("Enter an exact Fox nickname or numeric UID"),
+        FoxError::HiddenRecords => i18n::gettext("This player has hidden their game records"),
+        // Parser and server text from mirai-client. The status-page title is the frame.
+        FoxError::Service(detail) => detail.clone(),
+        FoxError::MissingUid => {
+            i18n::gettext("Fox returned invalid data: the player UID is missing")
+        }
+        FoxError::InvalidData(detail) => {
+            i18n::gettext_f("Fox returned invalid data: {error}", &[("error", detail)])
+        }
+        FoxError::RequestFailed => i18n::gettext("Could not reach Fox: request failed"),
+        FoxError::NotUtf8(detail) => i18n::gettext_f(
+            "Could not reach Fox: response was not UTF-8 ({error})",
+            &[("error", detail)],
+        ),
+        FoxError::ResponseTooLarge => {
+            i18n::gettext("Could not reach Fox: response was unexpectedly large")
+        }
+        FoxError::TimedOut => i18n::gettext("Could not reach Fox: request timed out"),
+        FoxError::Io(detail) => {
+            i18n::gettext_f("Could not reach Fox: {error}", &[("error", detail)])
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -149,7 +195,7 @@ fn remember_search(search: LastSearch, runtime: &tokio::runtime::Handle) {
 /// `gio` rather than a HTTP crate: it is already linked, it honours the desktop's proxy
 /// settings, and it keeps the request on the GLib main context where the dialog lives.
 async fn get_body(url: &str) -> Result<String, FoxError> {
-    let mut last_error = "request failed".to_string();
+    let mut last_error = FoxError::RequestFailed;
     for attempt in 1..=RETRIES {
         let file = gio::File::for_uri(url);
         match glib::future_with_timeout(REQUEST_TIMEOUT, read_capped(&file, MAX_RESPONSE_BYTES))
@@ -157,19 +203,19 @@ async fn get_body(url: &str) -> Result<String, FoxError> {
         {
             Ok(Ok(body)) => match String::from_utf8(body) {
                 Ok(text) => return Ok(text),
-                Err(error) => last_error = format!("response was not UTF-8 ({error})"),
+                Err(error) => last_error = FoxError::NotUtf8(error.to_string()),
             },
             Ok(Err(BodyError::TooLarge)) => {
-                last_error = "response was unexpectedly large".to_string();
+                last_error = FoxError::ResponseTooLarge;
             }
-            Ok(Err(BodyError::Io(error))) => last_error = error.to_string(),
-            Err(_) => last_error = "request timed out".to_string(),
+            Ok(Err(BodyError::Io(error))) => last_error = FoxError::Io(error.to_string()),
+            Err(_) => last_error = FoxError::TimedOut,
         }
         if attempt < RETRIES {
             glib::timeout_future(RETRY_BASE * attempt).await;
         }
     }
-    Err(FoxError::Request(last_error))
+    Err(last_error)
 }
 
 #[derive(Debug)]
@@ -207,26 +253,23 @@ async fn read_capped(file: &gio::File, cap: usize) -> Result<Vec<u8>, BodyError>
 async fn search_games(query: &str) -> Result<Games, FoxError> {
     let query = query.trim();
     if query.is_empty() {
-        return Err(FoxError::Service(
-            "Enter an exact Fox nickname or numeric UID".to_string(),
-        ));
+        return Err(FoxError::EmptyQuery);
     }
 
     // A numeric query is already a UID; looking it up as a nickname would only fail.
     let (uid, account) = if query.bytes().all(|b| b.is_ascii_digit()) {
-        (query.to_string(), format!("UID {query}"))
+        (
+            query.to_string(),
+            i18n::gettext_f("UID {uid}", &[("uid", query)]),
+        )
     } else {
         let body = get_body(&fox::user_url(query)).await?;
         let user = fox::parse_user(&body, query).map_err(FoxError::Service)?;
         if user.hidden {
-            return Err(FoxError::Service(
-                "This player has hidden their game records".to_string(),
-            ));
+            return Err(FoxError::HiddenRecords);
         }
         if user.uid.is_empty() {
-            return Err(FoxError::InvalidData(
-                "the player UID is missing".to_string(),
-            ));
+            return Err(FoxError::MissingUid);
         }
         (user.uid, user.name)
     };
@@ -254,8 +297,19 @@ fn list_row(game: &FoxGame) -> FoxRow {
         details.push(fox::display_text(&game.date));
     }
     details.push(format!("{}×{}", game.board_size, game.board_size));
-    details.push(format!("{} moves", game.moves));
-    details.push(game.result());
+    let moves = game.moves.to_string();
+    details.push(i18n::ngettext_f(
+        "{moves} move",
+        "{moves} moves",
+        game.moves as u64,
+        &[("moves", &moves)],
+    ));
+    // Compact SGF notation (B+3.5, W+R) where it says everything; words where it cannot.
+    let result = game.result();
+    details.push(match outcome(&result) {
+        Outcome::None | Outcome::Win(_) => i18n::result_phrase(&result),
+        _ => result,
+    });
     if !game.title.is_empty() {
         details.push(fox::display_text(&game.title));
     }
@@ -268,44 +322,44 @@ impl FoxPickerDialog {
         let widgets = dialog.widgets();
         widgets.stack.set_visible_child(&widgets.status_page);
 
-        widgets.cancel_button.connect_clicked(glib::clone!(
+        widgets.cancel_button.connect_clicked(clone!(
             #[weak]
             dialog,
             move |_| {
                 dialog.close();
             }
         ));
-        widgets.entry.connect_search_changed(glib::clone!(
+        widgets.entry.connect_search_changed(clone!(
             #[weak]
             dialog,
             move |_| dialog.refresh_actions()
         ));
-        widgets.entry.connect_activate(glib::clone!(
+        widgets.entry.connect_activate(clone!(
             #[weak]
             dialog,
             move |_| dialog.start_search()
         ));
-        widgets.search_button.connect_clicked(glib::clone!(
+        widgets.search_button.connect_clicked(clone!(
             #[weak]
             dialog,
             move |_| dialog.start_search()
         ));
-        widgets.open_button.connect_clicked(glib::clone!(
+        widgets.open_button.connect_clicked(clone!(
             #[weak]
             dialog,
             move |_| dialog.start_download()
         ));
-        dialog.connect_selection_changed(glib::clone!(
+        dialog.connect_selection_changed(clone!(
             #[weak]
             dialog,
             move || dialog.refresh_actions()
         ));
-        widgets.result_list.connect_activate(glib::clone!(
+        widgets.result_list.connect_activate(clone!(
             #[weak]
             dialog,
             move |_, _| dialog.start_download()
         ));
-        dialog.connect_closed(glib::clone!(
+        dialog.connect_closed(clone!(
             #[weak]
             dialog,
             move |_| {
@@ -358,10 +412,12 @@ impl FoxPickerDialog {
             return;
         }
         widgets.banner.set_revealed(false);
-        widgets.loading_page.set_title("Searching Fox");
         widgets
             .loading_page
-            .set_description(Some("Looking up the player and their recent games."));
+            .set_title(&i18n::gettext("Searching Fox"));
+        widgets.loading_page.set_description(Some(&i18n::gettext(
+            "Looking up the player and their recent games.",
+        )));
         widgets.stack.set_visible_child(&widgets.loading_page);
         self.set_busy(true);
 
@@ -395,10 +451,12 @@ impl FoxPickerDialog {
                 widgets
                     .status_page
                     .set_icon_name(Some("dialog-warning-symbolic"));
-                widgets.status_page.set_title("Couldn’t load games");
                 widgets
                     .status_page
-                    .set_description(Some(&error.to_string()));
+                    .set_title(&i18n::gettext("Couldn’t load games"));
+                widgets
+                    .status_page
+                    .set_description(Some(&fox_error_message(&error)));
                 widgets.stack.set_visible_child(&widgets.status_page);
             }
         }
@@ -411,19 +469,26 @@ impl FoxPickerDialog {
             widgets
                 .status_page
                 .set_icon_name(Some("edit-find-symbolic"));
-            widgets.status_page.set_title("No public games");
-            widgets.status_page.set_description(Some(
+            widgets
+                .status_page
+                .set_title(&i18n::gettext("No public games"));
+            widgets.status_page.set_description(Some(&i18n::gettext(
                 "This account has no visible games in Fox's recent-history window.",
-            ));
+            )));
             widgets.stack.set_visible_child(&widgets.status_page);
             return;
         }
 
-        let count = found.rows.len();
-        widgets.result_label.set_label(&format!(
-            "{} · {count} recent games",
-            fox::display_text(&found.account)
-        ));
+        let count = found.rows.len() as u64;
+        let account = fox::display_text(&found.account);
+        // Translators: {account} is a player name, or "UID" and a number.
+        let heading = i18n::ngettext_f(
+            "{account} · {count} recent game",
+            "{account} · {count} recent games",
+            count,
+            &[("account", &account), ("count", &count.to_string())],
+        );
+        widgets.result_label.set_label(&heading);
         let rows: Vec<FoxRow> = found.rows.iter().map(list_row).collect();
         self.replace_games(found.rows, &rows);
         widgets.stack.set_visible_child(&widgets.results_page);
@@ -467,7 +532,9 @@ impl FoxPickerDialog {
         };
 
         widgets.banner.set_revealed(false);
-        widgets.loading_page.set_title("Downloading game");
+        widgets
+            .loading_page
+            .set_title(&i18n::gettext("Downloading game"));
         widgets.loading_page.set_description(Some(&game.matchup()));
         widgets.stack.set_visible_child(&widgets.loading_page);
         self.set_busy(true);
@@ -492,9 +559,10 @@ impl FoxPickerDialog {
                 self.set_busy(false);
                 let widgets = self.widgets();
                 widgets.stack.set_visible_child(&widgets.results_page);
-                widgets
-                    .banner
-                    .set_title(&format!("Could not download the game: {error}"));
+                widgets.banner.set_title(&i18n::gettext_f(
+                    "Could not download the game: {error}",
+                    &[("error", &fox_error_message(&error))],
+                ));
                 widgets.banner.set_revealed(true);
             }
         }

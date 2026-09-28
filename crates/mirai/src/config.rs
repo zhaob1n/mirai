@@ -218,6 +218,39 @@ pub enum ConfigError {
     NoHome,
 }
 
+impl ConfigError {
+    /// What to show the user. [`Display`] stays the English log text; `#[error]` is not
+    /// extractable, so the UI calls this instead.
+    pub fn message(&self) -> String {
+        match self {
+            // Translators: {path} is a filesystem path; {error} is the operating-system's own message.
+            Self::Io(path, error) => crate::i18n::gettext_f(
+                "i/o error on {path}: {error}",
+                &[
+                    ("path", &path.display().to_string()),
+                    ("error", &error.to_string()),
+                ],
+            ),
+            // Translators: {path} is a filesystem path; {error} is the TOML parser's own message.
+            Self::Parse(path, error) => crate::i18n::gettext_f(
+                "{path} is not valid TOML: {error}",
+                &[
+                    ("path", &path.display().to_string()),
+                    ("error", &error.to_string()),
+                ],
+            ),
+            // Translators: {error} is the serialiser's own message.
+            Self::Serialize(error) => crate::i18n::gettext_f(
+                "could not serialise the configuration: {error}",
+                &[("error", &error.to_string())],
+            ),
+            Self::NoHome => {
+                crate::i18n::gettext("no home directory available for the configuration")
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum ProfileKind {
@@ -300,7 +333,10 @@ impl EngineProfile {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| model.display().to_string()),
             ProfileKind::Remote { url, engine, .. } => match engine {
-                Some(e) => format!("{url} ({e})"),
+                Some(engine) => {
+                    // Translators: {url} is a server address; {engine} is the remote engine's name.
+                    crate::i18n::gettext_f("{url} ({engine})", &[("url", url), ("engine", engine)])
+                }
                 None => url.clone(),
             },
         }

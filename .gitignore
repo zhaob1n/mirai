@@ -6,3 +6,6 @@
 /cert.pem
 /key.pem
 /server.toml
+
+# Derived from the sources by tools/i18n/update-po.sh.
+/po/mirai.pot

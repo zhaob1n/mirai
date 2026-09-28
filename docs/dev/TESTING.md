@@ -29,7 +29,9 @@ or a section, which survives the next edit. The optional adjacent `mirai-hmos` l
 reported separately. For Rust, run `cargo fmt --all --check`; for Blueprint, run
 `blueprint-compiler lint crates/mirai/src/{window,preferences,new_game,fox_picker,label_editor,profile_editor}.blp crates/mirai/src/panels/analysis.blp`.
 Avoid `cargo clippy --fix`: it rewrites files you have not reviewed.
-`harness.rs` and `probe.rs` have prose examples, not doc-tests.
+`harness.rs` and `probe.rs` have prose examples, not doc-tests. Every build runs
+`msgfmt --check` over `po/` (`crates/mirai/build.rs`); for the data templates,
+`desktop-file-validate` and `appstreamcli validate` on what `just install` merged.
 
 ## 2. What is covered where
 
@@ -251,6 +253,8 @@ opposite colour in Setup, and does nothing with mark tools.
 Traps:
 
 - Mnemonic underscores are stripped (`press:Save` matches `_Save`).
+- Needles match the text on screen, which follows the locale. Run English scripts with
+  `LANGUAGE=en`, or write the needles in the language you run.
 - Substring match is depth-first. Choose a needle unique to the control, or
   switch the page first when titles repeat.
 - A popover lives on its own surface, so its contents never appear in a `shot`.
@@ -658,6 +662,7 @@ Symptom, cause or guard, and location. Rendering mechanics live in
 | Typing in a comment passes, deletes a branch or toggles analysis; Ctrl+Z in a field undoes the record | The key was made an application accelerator. Those run in the window's capture phase, before the focused field. Only combinations no text field uses may be `KeyScope::Global`; check with `focus:comment` and `tools/ui/type-keys.sh` | `window::SHORTCUTS`, `view_shortcuts` |
 | `harness: action … -> MISSING` | No such action on the active window, or a typo. `app.*` goes to the application | `harness::activate`, `window::install_actions` |
 | `harness: screenshot failed: nothing was drawn` | The window never mapped, or a modal grabbed before `present()` | Lengthen the preceding `wait:` |
+| A string stays English in a translated window | Not passed to a gettext function as a literal, so `xgettext` never saw it; or `po/` not updated since. A string from `mirai-core`/`mirai-client` is English by design and must be worded in `crates/mirai` | `tools/i18n/update-po.sh`, then `msgfmt --statistics`; [`TRANSLATING.md`](TRANSLATING.md) |
 | The harness does nothing at all | Release build (`#[cfg(debug_assertions)]`), `MIRAI_HARNESS` unset, or every step malformed | `harness::install` |
 
 `RUST_LOG` (both binaries use `EnvFilter`, defaulting to `info`):
@@ -684,6 +689,7 @@ Run §1; choose evidence for the surface changed:
 | Per-frame drawing | Measure `MIRAI_FRAMES=1` with a finished search during a sidebar fold; use `tools/perf/frame-stats.py` and [`RENDERING.md` §§6–8](RENDERING.md) |
 | Signals, properties, capture or teardown | Recipe (e): exit 0, no autosave or orphaned KataGo |
 | New action | Drive `action:` and confirm `ok`, not `MISSING` |
+| User-visible text | `tools/i18n/update-po.sh`, translate the new messages, and look at the window with `LANGUAGE=zh_CN` ([`TRANSLATING.md`](TRANSLATING.md)) |
 | Engine config generation or editor | Recipe (g), both modes and PNGs |
 
 Check new `.rs` files for the SPDX header, never set `GDK_BACKEND` in test or

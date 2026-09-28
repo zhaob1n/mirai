@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use mirai_core::{
-    Color, DeadSet, GameInfo, GameTree, NodeId, Point, SplitMix64, TimeControl, clock_text,
-    fixed_handicap, score, think_budget,
+    Color, DeadSet, GameInfo, GameTree, IllegalMove, NodeId, Point, SplitMix64, TimeControl,
+    clock_text, fixed_handicap, score, think_budget,
 };
 use mirai_engine::{AnalyzeReq, MoveInfo, Report, Want};
 
@@ -94,11 +94,10 @@ pub struct PlaySession {
     territory: Box<[Option<Color>]>,
     in_byo: [bool; 2],
     clocks: HashMap<NodeId, ClockSnap>,
-    pub reason: String,
+    pub end: Option<GameEnd>,
     pub forced_result: Option<String>,
-    pub summary: String,
-    /// Last SGF result (`"B+R"`, `"W+3.5"`, `"0"`), written by [`Play::rescore`].
-    result: String,
+    /// The last count, written by [`Play::rescore`].
+    count: Option<Count>,
 }
 
 impl PlaySession {
@@ -214,26 +213,111 @@ fn seed_from_clock() -> u64 {
         .unwrap_or(0x5EED)
 }
 
-pub fn result_phrase(result: &str) -> String {
+/// Why a game stopped before it was counted. A frontend words it; [`Play::summary`] is
+/// the English.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GameEnd {
+    BothPassed,
+    Resigned(Color),
+    LostOnTime(Color),
+}
+
+impl GameEnd {
+    fn english(self) -> String {
+        match self {
+            GameEnd::BothPassed => "Both players passed.".to_string(),
+            GameEnd::Resigned(c) => format!("{} resigned.", c.name()),
+            GameEnd::LostOnTime(c) => format!("{} lost on time.", c.name()),
+        }
+    }
+}
+
+/// The board as last counted, whatever a resignation or a time loss decided.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Count {
+    pub black: f32,
+    pub white: f32,
+    /// Some points were taken from the engine's ownership estimate, not settled.
+    pub approximate: bool,
+    /// The count as an SGF result, `"B+3.5"` or `"0"`.
+    pub result: String,
+}
+
+/// An SGF result (`RE`) value as [`outcome`] reads it, for a frontend to word.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome<'a> {
+    /// Nothing recorded.
+    None,
+    Draw,
+    Resignation(Color),
+    Time(Color),
+    Forfeit(Color),
+    /// A winner by the margin as written, e.g. `"7.5"`.
+    Points(Color, &'a str),
+    /// A winner by an unrecorded margin: `"B+"`.
+    Win(Color),
+    /// Something else, shown as written.
+    Other(&'a str),
+}
+
+pub fn outcome(result: &str) -> Outcome<'_> {
     if result.is_empty() {
-        return "No result".to_string();
+        return Outcome::None;
     }
     if result == "0" || result.eq_ignore_ascii_case("draw") {
-        return "Jigo — a draw".to_string();
+        return Outcome::Draw;
     }
-    let (winner, margin) = match result.split_once('+') {
-        Some((w, m)) => (w, m),
-        None => return result.to_string(),
+    let Some((winner, margin)) = result.split_once('+') else {
+        return Outcome::Other(result);
     };
-    let who = match Color::from_letter(winner) {
-        Some(c) => c.name(),
-        None => return result.to_string(),
+    let Some(who) = Color::from_letter(winner) else {
+        return Outcome::Other(result);
     };
     match margin {
-        "R" | "r" => format!("{who} wins by resignation"),
-        "T" | "t" => format!("{who} wins on time"),
-        "F" | "f" => format!("{who} wins by forfeit"),
-        m => format!("{who} wins by {m}"),
+        "" => Outcome::Win(who),
+        "R" | "r" => Outcome::Resignation(who),
+        "T" | "t" => Outcome::Time(who),
+        "F" | "f" => Outcome::Forfeit(who),
+        m => Outcome::Points(who, m),
+    }
+}
+
+/// [`outcome`] as English prose, for a frontend that does not localise.
+pub fn result_phrase(result: &str) -> String {
+    match outcome(result) {
+        Outcome::None => "No result".to_string(),
+        Outcome::Draw => "Jigo — a draw".to_string(),
+        Outcome::Resignation(c) => format!("{} wins by resignation", c.name()),
+        Outcome::Time(c) => format!("{} wins on time", c.name()),
+        Outcome::Forfeit(c) => format!("{} wins by forfeit", c.name()),
+        Outcome::Points(c, m) => format!("{} wins by {m}", c.name()),
+        Outcome::Win(c) => format!("{} wins", c.name()),
+        Outcome::Other(text) => text.to_string(),
+    }
+}
+
+/// Why a human move was refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlayError {
+    NotYourTurn,
+    Illegal(IllegalMove),
+}
+
+impl std::fmt::Display for PlayError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PlayError::NotYourTurn => f.write_str("not your turn"),
+            PlayError::Illegal(e) => e.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for PlayError {}
+
+/// The English text, for a frontend that shows the error as it is.
+impl From<PlayError> for String {
+    fn from(e: PlayError) -> String {
+        e.to_string()
     }
 }
 
@@ -241,20 +325,28 @@ pub fn result_phrase(result: &str) -> String {
 pub struct Play {
     session: Option<PlaySession>,
     rng: SplitMix64,
+    human_name: String,
 }
 
 impl Default for Play {
     fn default() -> Play {
-        Play {
-            session: None,
-            rng: SplitMix64::new(seed_from_clock()),
-        }
+        Play::with_human_name("You")
     }
 }
 
 impl Play {
     pub fn new() -> Play {
         Play::default()
+    }
+
+    /// A player that records the human as `name` rather than "You", for a frontend that
+    /// localises it.
+    pub fn with_human_name(name: impl Into<String>) -> Play {
+        Play {
+            session: None,
+            rng: SplitMix64::new(seed_from_clock()),
+            human_name: name.into(),
+        }
     }
 
     pub fn is_active(&self) -> bool {
@@ -284,22 +376,60 @@ impl Play {
         self.session.as_ref().map(|s| s.territory.as_ref())
     }
 
-    /// The result as English prose, e.g. "Black wins by resignation". `None` before the
-    /// game has been counted at all.
-    pub fn result_phrase(&self) -> Option<String> {
+    /// The game's SGF result: what a resignation or a time loss forced, else the count.
+    /// `None` before the game has been counted at all.
+    pub fn result(&self) -> Option<&str> {
         let s = self.session.as_ref()?;
-        (!s.result.is_empty()).then(|| result_phrase(&s.result))
+        s.forced_result
+            .as_deref()
+            .or(s.count.as_ref().map(|c| c.result.as_str()))
+    }
+
+    /// Why the game stopped; `None` while it is being played.
+    pub fn end(&self) -> Option<GameEnd> {
+        self.session.as_ref()?.end
+    }
+
+    /// The board as last counted; `None` before the game has been counted.
+    pub fn count(&self) -> Option<&Count> {
+        self.session.as_ref()?.count.as_ref()
     }
 
     pub fn human(&self) -> Option<Color> {
         self.session.as_ref().and_then(|s| s.human)
     }
 
+    /// [`end`](Play::end), [`result`](Play::result) and [`count`](Play::count) as English
+    /// prose; empty before the count.
     pub fn summary(&self) -> String {
-        self.session
-            .as_ref()
-            .map(|s| s.summary.clone())
-            .unwrap_or_default()
+        let Some(s) = self.session.as_ref() else {
+            return String::new();
+        };
+        let Some(count) = &s.count else {
+            return String::new();
+        };
+        let reason = s.end.map(GameEnd::english).unwrap_or_default();
+        match &s.forced_result {
+            Some(forced) => format!(
+                "{reason}\n\n{}\n\nCount without the resignation: {} ({:.1} — {:.1}{})",
+                result_phrase(forced),
+                result_phrase(&count.result),
+                count.black,
+                count.white,
+                if count.approximate { ", estimated" } else { "" },
+            ),
+            None => format!(
+                "{reason}\n\n{}\n\nBlack {:.1} — White {:.1}{}",
+                result_phrase(&count.result),
+                count.black,
+                count.white,
+                if count.approximate {
+                    " (estimated)"
+                } else {
+                    ""
+                },
+            ),
+        }
     }
 
     pub fn clocks(&self) -> Option<(String, String)> {
@@ -331,9 +461,8 @@ impl Play {
         info.date = date.to_string();
         for c in [Color::Black, Color::White] {
             info.players[c.index()].name = match setup.human {
-                Some(h) if h == c => "You".to_string(),
-                Some(_) => engine_name.to_string(),
-                None => "You".to_string(),
+                Some(h) if h != c => engine_name.to_string(),
+                _ => self.human_name.clone(),
             };
         }
         let stones = fixed_handicap(setup.size, setup.handicap);
@@ -372,10 +501,9 @@ impl Play {
             territory: vec![None; setup.size.points()].into_boxed_slice(),
             in_byo: [in_byo; 2],
             clocks: HashMap::new(),
-            reason: String::new(),
+            end: None,
             forced_result: None,
-            summary: String::new(),
-            result: String::new(),
+            count: None,
         });
         self.rng = SplitMix64::new(seed_from_clock());
         self.snapshot_clock(game.cursor());
@@ -467,11 +595,11 @@ impl Play {
         Some(req)
     }
 
-    pub fn human_play(&mut self, game: &mut GameSession, p: Point) -> Result<(), String> {
+    pub fn human_play(&mut self, game: &mut GameSession, p: Point) -> Result<(), PlayError> {
         if !matches!(self.state(), PlayState::HumanTurn) {
-            return Err("not your turn".into());
+            return Err(PlayError::NotYourTurn);
         }
-        game.play(p).map_err(|e| e.to_string())?;
+        game.play(p).map_err(PlayError::Illegal)?;
         let color = game
             .tree()
             .node(game.cursor())
@@ -482,7 +610,7 @@ impl Play {
         Ok(())
     }
 
-    pub fn pass(&mut self, game: &mut GameSession) -> Result<(), String> {
+    pub fn pass(&mut self, game: &mut GameSession) -> Result<(), PlayError> {
         self.human_play(game, Point::PASS)
     }
 
@@ -498,7 +626,7 @@ impl Play {
         self.end_game(
             game,
             Some(format!("{}+R", loser.other().katago())),
-            format!("{} resigned.", loser.name()),
+            GameEnd::Resigned(loser),
         );
     }
 
@@ -531,9 +659,8 @@ impl Play {
             s.resign_streak = 0;
             s.dead = DeadSet::empty(size);
             s.forced_result = None;
-            s.reason.clear();
-            s.summary.clear();
-            s.result.clear();
+            s.end = None;
+            s.count = None;
             s.state = PlayState::HumanTurn;
         }
         game.set_result(String::new());
@@ -551,7 +678,7 @@ impl Play {
         }
         self.snapshot_clock(game.cursor());
         if Self::two_passes(game) {
-            self.end_game(game, None, "Both players passed.".to_string());
+            self.end_game(game, None, GameEnd::BothPassed);
             return;
         }
         self.advance(game);
@@ -593,7 +720,7 @@ impl Play {
             self.end_game(
                 game,
                 Some(format!("{}+R", ai.other().katago())),
-                format!("{} resigned.", ai.name()),
+                GameEnd::Resigned(ai),
             );
             return;
         }
@@ -636,15 +763,15 @@ impl Play {
         self.end_game(
             game,
             Some(format!("{}+T", loser.other().katago())),
-            format!("{} lost on time.", loser.name()),
+            GameEnd::LostOnTime(loser),
         );
     }
 
-    fn end_game(&mut self, game: &mut GameSession, forced: Option<String>, reason: String) {
+    fn end_game(&mut self, game: &mut GameSession, forced: Option<String>, end: GameEnd) {
         if let Some(s) = self.session.as_mut() {
             s.state = PlayState::Scoring;
             s.resign_streak = 0;
-            s.reason = reason;
+            s.end = Some(end);
             s.forced_result = forced.clone();
         }
         if let Some(r) = &forced {
@@ -705,36 +832,17 @@ impl Play {
         };
         let counted = score(&position.board, &rules.rules(), komi, handicap, &s.dead);
         s.territory = counted.territory.clone();
-        let counted_str = counted.result_string();
-        s.summary = match &s.forced_result {
-            Some(forced) => format!(
-                "{}\n\n{}\n\nCount without the resignation: {} ({:.1} — {:.1}{})",
-                s.reason,
-                result_phrase(forced),
-                result_phrase(&counted_str),
-                counted.black,
-                counted.white,
-                if counted.approximate {
-                    ", estimated"
-                } else {
-                    ""
-                },
-            ),
-            None => format!(
-                "{}\n\n{}\n\nBlack {:.1} — White {:.1}{}",
-                s.reason,
-                result_phrase(&counted_str),
-                counted.black,
-                counted.white,
-                if counted.approximate {
-                    " (estimated)"
-                } else {
-                    ""
-                },
-            ),
+        let count = Count {
+            black: counted.black,
+            white: counted.white,
+            approximate: counted.approximate,
+            result: counted.result_string(),
         };
-        let result = s.forced_result.clone().unwrap_or(counted_str);
-        s.result = result.clone();
+        let result = s
+            .forced_result
+            .clone()
+            .unwrap_or_else(|| count.result.clone());
+        s.count = Some(count);
         game.set_result(result);
     }
 
@@ -952,11 +1060,16 @@ mod tests {
     }
 
     #[test]
-    fn result_phrases_read_like_english() {
-        assert_eq!(result_phrase("B+R"), "Black wins by resignation");
-        assert_eq!(result_phrase("W+T"), "White wins on time");
-        assert_eq!(result_phrase("B+7.5"), "Black wins by 7.5");
-        assert_eq!(result_phrase("0"), "Jigo — a draw");
+    fn sgf_results_are_read_into_outcomes() {
+        assert_eq!(outcome("B+R"), Outcome::Resignation(Color::Black));
+        assert_eq!(outcome("W+t"), Outcome::Time(Color::White));
+        assert_eq!(outcome("B+7.5"), Outcome::Points(Color::Black, "7.5"));
+        assert_eq!(outcome("W+"), Outcome::Win(Color::White));
+        assert_eq!(outcome("0"), Outcome::Draw);
+        assert_eq!(outcome("Draw"), Outcome::Draw);
+        assert_eq!(outcome(""), Outcome::None);
+        assert_eq!(outcome("Void"), Outcome::Other("Void"));
+        assert_eq!(outcome("X+R"), Outcome::Other("X+R"));
     }
 
     #[test]

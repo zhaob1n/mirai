@@ -20,6 +20,7 @@ use mirai_core::{Color, Point, Size};
 
 use crate::app::{AppState, EngineState};
 use crate::batch::Blunder;
+use crate::i18n;
 use crate::util::{pct1, si_visits, signed1, visits_per_second};
 use crate::widgets::winrate::severity_of_drop;
 
@@ -335,7 +336,7 @@ impl AnalysisPanel {
         // The move itself is the one column with nothing to rank by, so its header is inert.
         columns.append_column(&column(
             Col {
-                title: "Move",
+                title: i18n::pgettext("column", "Move"),
                 property: "mv",
                 width_chars: 4,
                 ..Col::default()
@@ -344,7 +345,7 @@ impl AnalysisPanel {
         ));
         columns.append_column(&column(
             Col {
-                title: "Win",
+                title: i18n::pgettext("column", "Win"),
                 property: "winrate",
                 width_chars: 6,
                 sortable: true,
@@ -353,7 +354,7 @@ impl AnalysisPanel {
         ));
         columns.append_column(&column(
             Col {
-                title: "Score",
+                title: i18n::pgettext("column", "Score"),
                 property: "score",
                 width_chars: 6,
                 sortable: true,
@@ -364,7 +365,7 @@ impl AnalysisPanel {
         // the position rather than of the move, so it is not useful on its own here.
         let loss_column = column(
             Col {
-                title: "Loss",
+                title: i18n::pgettext("column", "Loss"),
                 property: "loss",
                 width_chars: 5,
                 sortable: true,
@@ -381,7 +382,7 @@ impl AnalysisPanel {
         columns.append_column(&loss_column);
         columns.append_column(&column(
             Col {
-                title: "Visits",
+                title: i18n::pgettext("column", "Visits"),
                 property: "visits",
                 width_chars: 5,
                 sortable: true,
@@ -390,7 +391,7 @@ impl AnalysisPanel {
         ));
         let prior_column = column(
             Col {
-                title: "Prior",
+                title: i18n::pgettext("column", "Prior"),
                 property: "prior",
                 width_chars: 6,
                 sortable: true,
@@ -574,29 +575,57 @@ impl AnalysisPanel {
         let inner = self.inner();
         match headline {
             Some(h) => {
-                let name = match h.color {
-                    Color::Black => "Black to play",
-                    Color::White => "White to play",
+                let spread = format!("{:.1}", h.stdev);
+                let (name, tooltip) = match h.color {
+                    Color::Black => (
+                        i18n::gettext("Black to play"),
+                        // Translators: {points} is how widely the predicted final score spreads, such as 3.2.
+                        i18n::gettext_f(
+                            "Black to play · final score spread ±{points} points",
+                            &[("points", &spread)],
+                        ),
+                    ),
+                    Color::White => (
+                        i18n::gettext("White to play"),
+                        // Translators: {points} is how widely the predicted final score spreads, such as 3.2.
+                        i18n::gettext_f(
+                            "White to play · final score spread ±{points} points",
+                            &[("points", &spread)],
+                        ),
+                    ),
                 };
                 inner.to_move.set_label(stone(h.color));
                 inner.to_move.set_visible(true);
                 inner
                     .to_move
-                    .update_property(&[gtk::accessible::Property::Label(name)]);
-                let speed = match h.speed {
-                    Some(rate) => format!(" · {}", visits_per_second(rate)),
-                    None => String::new(),
+                    .update_property(&[gtk::accessible::Property::Label(&name)]);
+                let visits = si_visits(h.visits);
+                let detail = match h.speed {
+                    Some(rate) => {
+                        let speed = visits_per_second(rate);
+                        // Translators: {visits} is an abbreviated count such as 1.2k; {speed} is a rate such as 840/s.
+                        i18n::ngettext_f(
+                            "{visits} visit · {speed}",
+                            "{visits} visits · {speed}",
+                            h.visits as u64,
+                            &[("visits", &visits), ("speed", &speed)],
+                        )
+                    }
+                    None => {
+                        // Translators: {visits} is an abbreviated count such as 1.2k.
+                        i18n::ngettext_f(
+                            "{visits} visit",
+                            "{visits} visits",
+                            h.visits as u64,
+                            &[("visits", &visits)],
+                        )
+                    }
                 };
-                inner
-                    .detail
-                    .set_label(&format!("{} visits{speed}", si_visits(h.visits)));
+                inner.detail.set_label(&detail);
                 inner.detail.set_visible(true);
                 // KataGo's spread of the final score is easily read as the error of the
                 // lead, so it stays out of the line and is there for whoever asks.
-                inner.status.set_tooltip_text(Some(&format!(
-                    "{name} · final score spread ±{:.1} points",
-                    h.stdev
-                )));
+                inner.status.set_tooltip_text(Some(&tooltip));
                 inner.status.set_visible(true);
                 inner.start_actions.set_visible(false);
             }
@@ -613,10 +642,13 @@ impl AnalysisPanel {
                     // A failed or missing engine says so even with live analysis on: it was
                     // likely turned on while the engine was still starting.
                     EngineState::Failed { message, .. } => (message, false),
-                    EngineState::None => ("No engine".to_string(), false),
-                    _ if live => ("Analysing…".to_string(), false),
+                    EngineState::None => (i18n::gettext("No engine"), false),
+                    _ if live => (i18n::gettext("Analysing…"), false),
                     // Live analysis may be asked for early: it starts once the net loads.
-                    EngineState::Starting { profile } => (format!("Starting {profile}…"), true),
+                    EngineState::Starting { profile } => (
+                        i18n::gettext_f("Starting {profile}…", &[("profile", &profile)]),
+                        true,
+                    ),
                     // The buttons say it all.
                     EngineState::Ready { .. } => (String::new(), true),
                 };
@@ -741,11 +773,18 @@ impl AnalysisPanel {
         if old_len != new_len {
             if new_len == 0 {
                 inner.blunder_group.set_visible(false);
-                inner.blunder_expander.set_label(Some("Blunders"));
-            } else {
                 inner
                     .blunder_expander
-                    .set_label(Some(&format!("Blunders ({new_len})")));
+                    .set_label(Some(&i18n::gettext("Blunders")));
+            } else {
+                let count = new_len.to_string();
+                let label = i18n::ngettext_f(
+                    "Blunder ({count})",
+                    "Blunders ({count})",
+                    new_len as u64,
+                    &[("count", &count)],
+                );
+                inner.blunder_expander.set_label(Some(&label));
                 inner.blunder_group.set_visible(true);
             }
         }
@@ -772,17 +811,59 @@ fn update_blunder_row(row: &adw::ActionRow, drop: &gtk::Label, b: Blunder, size:
     }
     drop.set_css_classes(&classes);
     // The emoji stone is a picture and the arrow a glyph; the accessible label says both.
-    let best = b
-        .best
-        .map(|best| format!(" · best {}", size.to_gtp(best)))
-        .unwrap_or_default();
+    let number = b.move_number.to_string();
+    let accessible = match (b.player, b.best) {
+        (Color::Black, Some(best)) => {
+            let best = size.to_gtp(best);
+            // Translators: {loss} is a percentage such as −3.2%; {played} and {best} are coordinates such as D4.
+            i18n::gettext_f(
+                "Move {number} · Black · {loss} · played {played} · best {best}",
+                &[
+                    ("number", &number),
+                    ("loss", &loss),
+                    ("played", played.as_str()),
+                    ("best", best.as_str()),
+                ],
+            )
+        }
+        (Color::White, Some(best)) => {
+            let best = size.to_gtp(best);
+            // Translators: {loss} is a percentage such as −3.2%; {played} and {best} are coordinates such as D4.
+            i18n::gettext_f(
+                "Move {number} · White · {loss} · played {played} · best {best}",
+                &[
+                    ("number", &number),
+                    ("loss", &loss),
+                    ("played", played.as_str()),
+                    ("best", best.as_str()),
+                ],
+            )
+        }
+        (Color::Black, None) => {
+            // Translators: {loss} is a percentage such as −3.2%; {played} is a coordinate such as D4.
+            i18n::gettext_f(
+                "Move {number} · Black · {loss} · played {played}",
+                &[
+                    ("number", &number),
+                    ("loss", &loss),
+                    ("played", played.as_str()),
+                ],
+            )
+        }
+        (Color::White, None) => {
+            // Translators: {loss} is a percentage such as −3.2%; {played} is a coordinate such as D4.
+            i18n::gettext_f(
+                "Move {number} · White · {loss} · played {played}",
+                &[
+                    ("number", &number),
+                    ("loss", &loss),
+                    ("played", played.as_str()),
+                ],
+            )
+        }
+    };
     row.upcast_ref::<gtk::Widget>()
-        .update_property(&[gtk::accessible::Property::Label(&format!(
-            "Move {} · {} · {loss} · played {}{best}",
-            b.move_number,
-            b.player.name(),
-            size.to_gtp(b.played),
-        ))]);
+        .update_property(&[gtk::accessible::Property::Label(&accessible)]);
 }
 
 /// The root reading the status line needs. The root's win rate and lead are the graph's.
@@ -806,9 +887,8 @@ fn stone(color: Color) -> &'static str {
 }
 
 /// One column of the candidate list: where its text comes from, and how wide it sits.
-#[derive(Clone, Copy)]
 struct Col {
-    title: &'static str,
+    title: String,
     /// The [`CandidateObject`] property the cell follows.
     property: &'static str,
     /// Natural width in characters, GTK's own `-1` for "as wide as the text".
@@ -826,7 +906,7 @@ struct Col {
 impl Default for Col {
     fn default() -> Col {
         Col {
-            title: "",
+            title: String::new(),
             property: "",
             width_chars: -1,
             sortable: false,
@@ -848,6 +928,8 @@ where
     T: for<'a> glib::value::FromValue<'a> + 'static,
 {
     let text = Rc::new(text);
+    let width_chars = col.width_chars;
+    let property = col.property;
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(move |_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
@@ -858,15 +940,15 @@ where
             .hexpand(true)
             // Both bounds, not just the minimum: a cell whose *natural* width still tracked
             // its digits would go on re-measuring the column.
-            .width_chars(col.width_chars)
-            .max_width_chars(col.width_chars)
+            .width_chars(width_chars)
+            .max_width_chars(width_chars)
             .single_line_mode(true)
             .ellipsize(pango::EllipsizeMode::End)
             .build();
         item.set_child(Some(&label));
         let text = text.clone();
         gtk::ListItem::this_expression("item")
-            .chain_property::<CandidateObject>(col.property)
+            .chain_property::<CandidateObject>(property)
             .chain_closure_with_callback(move |values| {
                 let value = values[1]
                     .get::<T>()
@@ -893,7 +975,7 @@ where
         let expr = gtk::PropertyExpression::new(
             CandidateObject::static_type(),
             None::<gtk::Expression>,
-            col.property,
+            property,
         );
         this.set_sorter(Some(&gtk::NumericSorter::new(Some(expr))));
     }
@@ -940,7 +1022,7 @@ fn rank_column() -> gtk::ColumnViewColumn {
             .bind(&label, "css-classes", Some(item));
     });
     let this = gtk::ColumnViewColumn::builder()
-        .title("#")
+        .title(i18n::pgettext("column", "#"))
         .factory(&factory)
         .resizable(false)
         .build();

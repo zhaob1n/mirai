@@ -23,6 +23,7 @@ use mirai_core::{Color, GameTree, NodeId, Point};
 use mirai_engine::{Engine, Want};
 
 use crate::app::{AppState, Change, NodeRef, TreeEpoch};
+use crate::i18n;
 use crate::window_shell::MiraiWindow;
 
 /// A move that cost its own player win rate, as measured by the sweep.
@@ -91,7 +92,7 @@ impl BatchAnalysis {
     pub fn new(state: &AppState, window: &MiraiWindow) -> BatchAnalysis {
         let banner = adw::Banner::builder()
             .revealed(false)
-            .button_label("Cancel")
+            .button_label(i18n::gettext("Cancel"))
             .build();
         let this = BatchAnalysis {
             state: state.clone(),
@@ -122,12 +123,13 @@ impl BatchAnalysis {
 
     pub fn start(&self) {
         if self.running.get() {
-            self.state.toast("Whole-game analysis is already running");
+            self.state
+                .toast(i18n::gettext("Whole-game analysis is already running"));
             return;
         }
         let Some(engine) = self.state.engine() else {
             self.state
-                .toast("No engine — start one in Preferences first");
+                .toast(i18n::gettext("No engine — start one in Preferences first"));
             return;
         };
         let (visits, max_candidates) = {
@@ -142,7 +144,7 @@ impl BatchAnalysis {
             .state
             .with_tree_cached(|t| mirai_client::batch::plan_mainline(t, Want::OWNERSHIP, visits));
         if plan.len() < 2 {
-            self.state.toast("Nothing to analyse yet");
+            self.state.toast(i18n::gettext("Nothing to analyse yet"));
             return;
         }
         // A sweep is background work: it must not preempt the live search the user is
@@ -175,7 +177,7 @@ impl BatchAnalysis {
         let runtime_task = self.state.runtime().spawn(async move {
             let mut failed = false;
             mirai_client::batch::sweep(engine.as_ref(), plan, workers, |analysed, _, _| {
-                let item = analysed.result.clone().map_err(|e| e.to_string());
+                let item = analysed.result.clone().map_err(|e| i18n::engine_error(&e));
                 failed |= item.is_err();
                 // One dead search stops the sweep here: the desktop reports it on the
                 // banner rather than leaving a silent hole in the graph.
@@ -222,9 +224,12 @@ impl BatchAnalysis {
         // would arm another coalesced tick after the sweep has already ended.
         self.disarm_projection();
         self.state.changed(Change::Tree);
-        self.state.toast(format!(
-            "Analysis cancelled after {} positions",
-            self.done.get()
+        let done = self.done.get();
+        self.state.toast(i18n::ngettext_f(
+            "Analysis cancelled after {positions} position",
+            "Analysis cancelled after {positions} positions",
+            done as u64,
+            &[("positions", done.to_string().as_str())],
         ));
     }
 
@@ -265,10 +270,11 @@ impl BatchAnalysis {
     }
 
     fn update_banner(&self) {
-        self.banner.set_title(&format!(
-            "Analysing {}/{}…",
-            self.done.get(),
-            self.total.get()
+        let done = self.done.get().to_string();
+        let total = self.total.get().to_string();
+        self.banner.set_title(&i18n::gettext_f(
+            "Analysing {done}/{total}…",
+            &[("done", done.as_str()), ("total", total.as_str())],
         ));
     }
 
@@ -293,10 +299,23 @@ impl BatchAnalysis {
         self.state.changed(Change::Tree);
 
         let n = blunders(&self.state.tree(), self.state.tree_epoch()).len();
-        self.state.toast(match n {
-            0 => format!("Analysed {analysed} positions — no blunders"),
-            1 => format!("Analysed {analysed} positions — 1 blunder"),
-            n => format!("Analysed {analysed} positions — {n} blunders"),
+        let positions = analysed.to_string();
+        self.state.toast(if n == 0 {
+            i18n::gettext_f(
+                "Analysed {positions} positions — no blunders",
+                &[("positions", positions.as_str())],
+            )
+        } else {
+            let blunders_n = n.to_string();
+            i18n::ngettext_f(
+                "Analysed {positions} positions — {blunders} blunder",
+                "Analysed {positions} positions — {blunders} blunders",
+                n as u64,
+                &[
+                    ("positions", positions.as_str()),
+                    ("blunders", blunders_n.as_str()),
+                ],
+            )
         });
     }
 
@@ -306,7 +325,10 @@ impl BatchAnalysis {
         self.state.set_busy(false);
         self.disarm_projection();
         self.state.changed(Change::Tree);
-        self.state.toast(format!("Analysis stopped: {message}"));
+        self.state.toast(i18n::gettext_f(
+            "Analysis stopped: {error}",
+            &[("error", message.as_str())],
+        ));
     }
 
     /// Marks the graph and blunder list dirty. The caller arms the timer only when this
