@@ -21,7 +21,9 @@ use mirai_core::{
 use mirai_proto::types::dq_policy;
 
 use crate::app::{AppState, EditorTool};
-use crate::widgets::paint::{fill_disc, hline, over, rgba8, stroke_disc, stroke_rect, vline};
+use crate::widgets::paint::{
+    StackLabel, fill_disc, hline, over, rgba8, stroke_disc, stroke_rect, vline,
+};
 
 /// Wood beyond the outermost grid line, in cells.
 const EDGE_PAD: f32 = 0.6;
@@ -807,7 +809,7 @@ mod imp {
             // once per stone per frame. The digits stay in a stack buffer, the same one the
             // candidate figures use, so the pass does not allocate a String per stone either.
             let layout = obj.create_pango_layout(None);
-            let mut text = StackLabel::new();
+            let mut text = StackLabel::default();
             for y in 0..size.h {
                 for x in 0..size.w {
                     let p = size.point(x, y);
@@ -823,7 +825,7 @@ mod imp {
                         use std::fmt::Write;
                         write!(buf, "{n}")
                     });
-                    let scale = match text.len {
+                    let scale = match text.as_str().len() {
                         1 => 0.48,
                         2 => 0.42,
                         3 => 0.32,
@@ -1013,7 +1015,7 @@ mod imp {
                 let fg = text_on(over(blob, wood_color(dark)));
                 // Three lines, formatted into stack buffers. A `Vec<(String, f32)>` here
                 // allocated once per labelled candidate per snapshot.
-                let mut lines = [StackLabel::new(); 3];
+                let mut lines = [StackLabel::default(); 3];
                 let mut scales = [0.0f32; 3];
                 let mut n = 0usize;
                 lines[n].write(|buf| crate::util::write_pct1(buf, info.winrate_for(to_play)));
@@ -1177,48 +1179,6 @@ fn policy_texture(report: &mirai_engine::Report, size: Size) -> Option<gdk::Text
         pixel[3] = (alpha * 255.0) as u8;
     }
     Some(texture(buf, size))
-}
-
-/// One board label, formatted in place. Three of these replace the
-/// `Vec<(String, f32)>` a labelled blob used to allocate on every snapshot;
-/// a fourth holds each stone's move number. 24 bytes covers the longest
-/// `pct1` / `signed1` / `si_visits` (`+1024.0`, `4295.0m`).
-#[derive(Clone, Copy)]
-struct StackLabel {
-    bytes: [u8; 24],
-    len: u8,
-}
-
-impl StackLabel {
-    fn new() -> Self {
-        Self {
-            bytes: [0; 24],
-            len: 0,
-        }
-    }
-
-    fn write(&mut self, f: impl FnOnce(&mut Self) -> std::fmt::Result) {
-        self.len = 0;
-        f(self).expect("a board label fits in 24 bytes");
-    }
-
-    fn as_str(&self) -> &str {
-        std::str::from_utf8(&self.bytes[..self.len as usize]).expect("a board label is utf-8")
-    }
-}
-
-impl std::fmt::Write for StackLabel {
-    fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        let incoming = s.as_bytes();
-        let start = self.len as usize;
-        let end = start + incoming.len();
-        if end > self.bytes.len() {
-            return Err(std::fmt::Error);
-        }
-        self.bytes[start..end].copy_from_slice(incoming);
-        self.len = end as u8;
-        Ok(())
-    }
 }
 
 fn draw_text(

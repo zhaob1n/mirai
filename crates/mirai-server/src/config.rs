@@ -174,6 +174,12 @@ impl ServerConfig {
             if t.value.is_empty() {
                 bail!("[[token]] #{} has an empty value", i + 1);
             }
+            if t.max_subs == 0 {
+                bail!(
+                    "[[token]] #{} has max_subs = 0, which would refuse every search",
+                    i + 1
+                );
+            }
             if t.value == EXAMPLE_TOKEN || t.value == MINIMAL_TOKEN_PLACEHOLDER {
                 bail!(
                     "[[token]] #{} is the example placeholder; replace it with the output of `mirai-server --generate-token`",
@@ -439,6 +445,10 @@ mod tests {
         assert!(dup.is_err(), "duplicate engine names make `Open` ambiguous");
 
         assert!(parse("[[token]]\nvalue=''\n").is_err(), "empty token");
+        assert!(
+            parse("[[token]]\nvalue='v'\nmax_subs=0\n").is_err(),
+            "a token that can open nothing"
+        );
 
         let dup_token = parse("[[token]]\nvalue='same'\n[[token]]\nvalue='same'\n");
         assert!(

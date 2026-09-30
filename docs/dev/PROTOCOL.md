@@ -572,8 +572,9 @@ and then stays silent would otherwise hold that slot for the life of the connect
 QUIC keep-alives reset the idle timer. The server releases the slot if `Hello` has
 not arrived within 10 s of the slot being taken (`PREAUTH_DEADLINE` in `session.rs`).
 The clock covers the handshake, opening the control stream and the first frame. A
-client SHOULD send `Hello` immediately after the handshake; a server MAY enforce its
-own bound.
+first frame that is refused is answered within 2 s more ([§8.6](#86-connection-loss-and-shutdown)),
+so an unauthenticated peer holds a slot for at most 12 s. A client SHOULD send `Hello`
+immediately after the handshake; a server MAY enforce its own bound.
 
 Once the handshake has completed, expiry closes with application code 1 and reason
 `pre-authentication deadline`, and no `Error` frame — there may be no control stream
@@ -658,10 +659,11 @@ explanation. The reference server bounds the write and acknowledgement wait
 to 2 s; an unresponsive peer cannot hold a session slot indefinitely and may
 receive only the connection close, not the `Error` frame.
 
-The reference server queues at most 32 control replies per connection. A peer
-that does not read them is disconnected, with application code 0, when the queue
-fills or a write stalls for 10 s. Its subscriptions then cancel as on any
-connection loss; control backpressure must not block reading a `Cancel`.
+The reference server queues up to 32 control replies per connection. While the queue
+is full it stops reading the control stream until the queue drains, so a burst of
+pipelined requests is answered in full. A peer that does not read its replies
+is disconnected, with application code 0, once a control write has stalled for
+10 s; its subscriptions then cancel as on any connection loss.
 
 ---
 

@@ -857,7 +857,9 @@ impl Play {
     ///
     /// The move is played at that node, never at the view cursor. The view then follows
     /// the move. A stale anchor, a replaced record, or a root that is not this engine's
-    /// side to move changes nothing and returns `false`.
+    /// side to move changes nothing and returns `false`. The anchor names the request, so
+    /// the report's turn is not compared: KataGo counts the request's moves, which after
+    /// a setup node or an SGF `MN` is not the head's move number.
     pub fn apply_ai_report_for(
         &mut self,
         game: &mut GameSession,
@@ -881,7 +883,7 @@ impl Play {
         }
         let (move_number, board_points) = {
             let pos = game.tree_cached_mut().position(anchor.id);
-            if pos.to_play != ai || report.turn != pos.move_number {
+            if pos.to_play != ai {
                 return false;
             }
             (pos.move_number, pos.board.size.points())
@@ -1549,21 +1551,23 @@ mod tests {
         assert_eq!(game.tree().info.result, "");
     }
 
+    /// KataGo's turn counts the moves the request carries, which an SGF `MN` on the head
+    /// does not change; only the side to move has to match.
     #[test]
-    fn the_root_must_report_the_requested_player_and_turn() {
+    fn a_report_needs_the_requested_player_not_the_heads_move_number() {
         let (mut game, mut play) = engine_to_move(TimeControl::UNLIMITED);
+        let root = game.tree().root();
+        game.tree_mut().node_mut(root).move_number_override = Some(40);
         let p = game.tree().info.size.point(3, 3);
-        let _req = play.ai_request(&mut game).unwrap();
+        let req = play.ai_request(&mut game).unwrap();
         let anchor = play.request_anchor().unwrap();
         let mut report = report_at(&mut game, p);
+        report.turn = req.moves.len() as u16;
         report.root.current_player = Color::White;
-        assert!(!play.apply_ai_report_for(&mut game, anchor, &report, 0.0, 0.0, 3));
-        report.root.current_player = Color::Black;
-        report.turn += 1;
         assert!(!play.apply_ai_report_for(&mut game, anchor, &report, 0.0, 0.0, 3));
         assert_eq!(game.cursor(), game.tree().root());
         assert!(game.tree().children(game.tree().root()).is_empty());
-        report.turn -= 1;
+        report.root.current_player = Color::Black;
         assert!(play.apply_ai_report_for(&mut game, anchor, &report, 0.0, 0.0, 3));
     }
 
