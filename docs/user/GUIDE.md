@@ -180,8 +180,8 @@ on turns the other off.
 ### One-off score estimate
 
 <kbd>Ctrl</kbd>+<kbd>E</kbd> runs a short 400-visit search, derives the dead stones from the
-ownership map, counts the board under the game's own rules and komi, and shows the count next
-to KataGo's own score lead. Works whether or not live analysis is on.
+ownership map, counts the board under the game's own rules and komi, and shows the count
+next to KataGo's Black-positive score lead. Works whether or not live analysis is on.
 
 ---
 

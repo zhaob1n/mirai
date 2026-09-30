@@ -1970,11 +1970,11 @@ fn show_estimate(ui: &Ui, report: &Report) {
     );
     let visits_label = util::si_visits(report.root.visits);
     let lead_text = util::signed1(lead);
-    // Translators: {visits} is a visit count, sometimes abbreviated (1.2k). {lead} is a
-    // signed score, such as +3.4.
+    // Translators: {visits} is a visit count, sometimes abbreviated (1.2k). {lead} is
+    // Black's signed score lead, positive when Black is ahead, such as +3.4.
     let lead_line = ngettext_f(
-        "KataGo lead after {visits} visit: {lead}",
-        "KataGo lead after {visits} visits: {lead}",
+        "KataGo lead for Black after {visits} visit: {lead}",
+        "KataGo lead for Black after {visits} visits: {lead}",
         report.root.visits as u64,
         &[("visits", &visits_label), ("lead", &lead_text)],
     );
