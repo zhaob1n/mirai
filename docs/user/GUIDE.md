@@ -34,7 +34,8 @@ Boards from 2×2 to 19×19, matching a stock KataGo build.
 ### On Windows
 
 Windows support is experimental, and stutter there is expected; the
-[README](../../README.md#requirements) says why. The Windows build is either a zip —
+[README](../../README.md#requirements) says why. The Windows build, from the
+[releases page](https://github.com/zhaob1n/mirai/releases), is either a zip —
 unpack it anywhere and run `bin\mirai.exe` — or an installer that puts mirai in your Start
 menu and offers it for `.sgf` files, with no administrator rights needed. Use a Windows
 KataGo release (`katago.exe` with its DLLs). For the first-run discovery below, put
