@@ -33,12 +33,13 @@ Boards from 2×2 to 19×19, matching a stock KataGo build.
 
 ### On Windows
 
-The Windows build is either a zip — unpack it anywhere and run `bin\mirai.exe` — or an
-installer that puts mirai in your Start menu and offers it for `.sgf` files, with no
-administrator rights needed. Use a Windows KataGo release (`katago.exe` with its DLLs). For
-the first-run discovery below, put KataGo's folder on `PATH` and networks in
-`%USERPROFILE%\.katago\models`; otherwise choose both in Preferences. `mirai-server` on
-Windows is untested.
+Windows support is experimental, and stutter there is expected; the
+[README](../../README.md#requirements) says why. The Windows build is either a zip —
+unpack it anywhere and run `bin\mirai.exe` — or an installer that puts mirai in your Start
+menu and offers it for `.sgf` files, with no administrator rights needed. Use a Windows
+KataGo release (`katago.exe` with its DLLs). For the first-run discovery below, put
+KataGo's folder on `PATH` and networks in `%USERPROFILE%\.katago\models`; otherwise choose
+both in Preferences. `mirai-server` on Windows is untested.
 
 ---
 

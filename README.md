@@ -84,7 +84,8 @@ published yet). `tools/packaging/makepkg-local.sh` builds it from this checkout'
 commit rather than from GitHub; add `-d` when cargo comes from rustup, then
 `sudo pacman -U target/archpkg/*.pkg.tar.zst`.
 
-**Windows** is cross-built on Linux, in a Fedora container, with podman (or docker):
+**Windows** support is experimental. It is cross-built on Linux, in a Fedora container,
+with podman (or docker):
 
 ```
 tools/packaging/windows-cross.sh
@@ -93,6 +94,11 @@ tools/packaging/windows-cross.sh
 That leaves a portable zip and a per-user installer in `target/windows/dist/` (not
 published yet); the [guide](docs/user/GUIDE.md#on-windows) covers KataGo on Windows. The
 first run builds the image and every crate; later runs rebuild only what changed.
+
+Expect stutter on Windows. GTK's Windows backend is far less mature than its Linux ones:
+its GPU renderers draw a black band around every window there, so GTK draws with Cairo on
+the CPU instead, and scrolling, resizing and animation can hitch. That is expected on
+Windows, not a defect of mirai.
 
 ---
 

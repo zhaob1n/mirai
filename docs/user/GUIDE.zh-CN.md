@@ -22,7 +22,7 @@ mirai 驱动的是 KataGo 的 JSON **分析**引擎，绝不是 GTP——只讲 
 
 ### 在 Windows 上
 
-Windows 版有两种：压缩包——解压到任意位置，运行 `bin\mirai.exe`；或安装程序——把 mirai 放进开始菜单，并让它可以打开 `.sgf` 文件，不需要管理员权限。请使用 Windows 版 KataGo（`katago.exe` 及其 DLL）。要让下面的首次运行自动发现它们，把 KataGo 所在文件夹加入 `PATH`，把权重放进 `%USERPROFILE%\.katago\models`；否则在首选项里选择二者。Windows 上的 `mirai-server` 尚未经过测试。
+Windows 支持尚属实验性质，在 Windows 上出现卡顿是预期的，原因见 [README](../../README.zh-CN.md#环境要求)。Windows 版有两种：压缩包——解压到任意位置，运行 `bin\mirai.exe`；或安装程序——把 mirai 放进开始菜单，并让它可以打开 `.sgf` 文件，不需要管理员权限。请使用 Windows 版 KataGo（`katago.exe` 及其 DLL）。要让下面的首次运行自动发现它们，把 KataGo 所在文件夹加入 `PATH`，把权重放进 `%USERPROFILE%\.katago\models`；否则在首选项里选择二者。Windows 上的 `mirai-server` 尚未经过测试。
 
 ---
 

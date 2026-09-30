@@ -51,13 +51,15 @@ sudo just uninstall      # 同上
 
 这会把 `mirai`、`mirai-server`、桌面文件、元信息、图标和翻译安装到 `/usr/local`；`just prefix=$HOME/.local install` 不需要 root 权限。在 Arch 上，也可以用 [`packaging/aur/`](packaging/aur/) 中的 PKGBUILD 构建 `mirai-git` 和 `mirai-server-git`（尚未发布到 AUR）。`tools/packaging/makepkg-local.sh` 会从当前检出的最新提交而不是 GitHub 构建；如果 cargo 来自 rustup，请加上 `-d`，然后执行 `sudo pacman -U target/archpkg/*.pkg.tar.zst`。
 
-**Windows** 版在 Linux 上交叉编译，在 Fedora 容器里用 podman（或 docker）完成：
+**Windows** 支持尚属实验性质。Windows 版在 Linux 上交叉编译，在 Fedora 容器里用 podman（或 docker）完成：
 
 ```
 tools/packaging/windows-cross.sh
 ```
 
 产物是 `target/windows/dist/` 下的便携压缩包和按用户安装的安装程序（尚未发布）；Windows 上如何使用 KataGo 见[指南](docs/user/GUIDE.zh-CN.md#在-windows-上)。第一次运行会构建镜像和所有 crate；之后只重新编译改动过的部分。
+
+在 Windows 上出现卡顿是预期的。GTK 的 Windows 后端远不如它的 Linux 后端成熟：在 Windows 上，它的 GPU 渲染器会在每个窗口周围画出一圈黑框，所以 GTK 改用 CPU 上的 Cairo 绘制，滚动、调整窗口大小和动画都可能卡顿。这在 Windows 上属于预期现象，不是 mirai 的缺陷。
 
 ---
 

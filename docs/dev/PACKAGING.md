@@ -96,8 +96,10 @@ refuse to start without it, GTK renders with Cairo on Windows by default. Fedora
 GTK stays at 4.22, and rawhide has 4.24, so the image follows rawhide. Rawhide moves
 daily; podman keeps the installed layer until the Containerfile changes, so a local image
 holds still, while a fresh image takes that day's rawhide. mirai picks no renderer:
-`GDK_DEBUG=dcomp` brings the GPU renderers back, band included. How much a frame costs
-under Cairo on Windows is unmeasured.
+`GDK_DEBUG=dcomp` brings the GPU renderers back, band included. Cairo draws on the CPU,
+and on real Windows scrolling, resizing and animation stutter; that is the main reason the
+Windows build is called experimental, and the README says to expect it. How much a frame
+costs there is unmeasured.
 
 **The Windows package ships its runtime.** `stage.sh` walks each executable's and module's
 imports (`objdump -p`) through the sysroot, strips what it copies, and adds what is
