@@ -1143,6 +1143,29 @@ mod tests {
         assert_eq!(games[1].len(), 2);
     }
 
+    /// FF[4] point lists compress a rectangle to `ul:lr`, and the parser accepts the two
+    /// corners in either order. Every point inside is one entry.
+    #[test]
+    fn a_compressed_point_list_expands_to_its_rectangle() {
+        let t = &parse_str("(;SZ[9]AB[aa:cb][ee]TR[cb:ba])").unwrap()[0];
+        let node = t.node(t.root());
+        let s = t.info.size;
+        let points = |xy: &[(u8, u8)]| {
+            let mut v: Vec<Point> = xy.iter().map(|&(x, y)| s.point(x, y)).collect();
+            v.sort_by_key(|p| p.0);
+            v
+        };
+        let mut black = node.setup.add_black.clone();
+        black.sort_by_key(|p| p.0);
+        assert_eq!(
+            black,
+            points(&[(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (4, 4)])
+        );
+        let mut triangles = node.marks.of(MarkKind::Triangle).to_vec();
+        triangles.sort_by_key(|p| p.0);
+        assert_eq!(triangles, points(&[(1, 0), (2, 0), (1, 1), (2, 1)]));
+    }
+
     #[test]
     fn escapes_and_soft_line_breaks() {
         let t = &parse_str("(;SZ[19]C[a\\]b\\\\c\\\nd])").unwrap()[0];
