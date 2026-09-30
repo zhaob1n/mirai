@@ -135,11 +135,14 @@ pub fn decode<T: DeserializeOwned>(buf: &mut FrameBuf, frame: &[u8]) -> Result<T
 /// One complete frame's flags and payload.
 fn split_frame(frame: &[u8]) -> Result<(u8, &[u8]), FrameError> {
     if frame.len() < 5 {
-        return Err(FrameError::Eof);
+        return Err(FrameError::Codec("truncated frame header".into()));
     }
     let len = u32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
-    if len > MAX_FRAME || frame.len() < 5 + len {
+    if len > MAX_FRAME {
         return Err(FrameError::TooLarge(len as u64));
+    }
+    if frame.len() < 5 + len {
+        return Err(FrameError::Codec("truncated frame body".into()));
     }
     Ok((frame[4], &frame[5..5 + len]))
 }
@@ -236,18 +239,21 @@ where
 }
 
 /// Reads one frame's payload into `wire` and returns its flags. The length is checked
-/// against `limit` before anything is allocated; a clean end of stream is
-/// [`FrameError::Eof`].
+/// against `limit` before anything is allocated. A stream that ends before the first
+/// header byte is [`FrameError::Eof`]; one that ends inside a frame is an error (§4 rule 8).
 async fn read_frame<R: AsyncRead + Unpin>(
     r: &mut R,
     wire: &mut Vec<u8>,
     limit: usize,
 ) -> Result<u8, FrameError> {
     let mut header = [0u8; 5];
-    match r.read_exact(&mut header).await {
-        Ok(_) => {}
-        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Err(FrameError::Eof),
-        Err(e) => return Err(e.into()),
+    let mut got = 0;
+    while got < header.len() {
+        match r.read(&mut header[got..]).await? {
+            0 if got == 0 => return Err(FrameError::Eof),
+            0 => return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into()),
+            n => got += n,
+        }
     }
     let len = u32::from_le_bytes([header[0], header[1], header[2], header[3]]) as usize;
     if len > limit {
@@ -461,13 +467,20 @@ mod tests {
         assert_eq!(sink[hdr_off + 4] & FLAG_ZSTD, FLAG_ZSTD);
     }
 
+    /// A stream may end only at a frame boundary: cut anywhere inside a frame, header
+    /// included, it is an error rather than a clean end.
     #[tokio::test]
-    async fn clean_eof_is_reported_as_eof() {
-        let empty: &[u8] = &[];
-        let mut rd = empty;
+    async fn only_a_frame_boundary_is_a_clean_end() {
         let mut buf = FrameBuf::new();
-        let r: Result<u32, _> = read_msg(&mut rd, &mut buf).await;
-        assert!(matches!(r, Err(FrameError::Eof)));
+        let frame = encode(&mut buf, &7u32).unwrap().to_vec();
+        for cut in 0..frame.len() {
+            let mut rd = &frame[..cut];
+            let r: Result<u32, _> = read_msg(&mut rd, &mut buf).await;
+            let clean = matches!(r, Err(FrameError::Eof));
+            assert!(r.is_err() && clean == (cut == 0), "cut {cut}: {r:?}");
+            let r: Result<u32, _> = decode(&mut buf, &frame[..cut]);
+            assert!(matches!(r, Err(FrameError::Codec(_))), "cut {cut}: {r:?}");
+        }
     }
 
     #[tokio::test]
