@@ -572,8 +572,9 @@ and then stays silent would otherwise hold that slot for the life of the connect
 QUIC keep-alives reset the idle timer. The server releases the slot if `Hello` has
 not arrived within 10 s of the slot being taken (`PREAUTH_DEADLINE` in `session.rs`).
 The clock covers the handshake, opening the control stream and the first frame. A
-client SHOULD send `Hello` immediately after the handshake; a server MAY enforce its
-own bound.
+first frame that is refused is answered within 2 s more ([§8.6](#86-connection-loss-and-shutdown)),
+so an unauthenticated peer holds a slot for at most 12 s. A client SHOULD send `Hello`
+immediately after the handshake; a server MAY enforce its own bound.
 
 Once the handshake has completed, expiry closes with application code 1 and reason
 `pre-authentication deadline`, and no `Error` frame — there may be no control stream
