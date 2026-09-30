@@ -21,7 +21,7 @@ use mirai_proto::msg::{ClientMsg, ErrCode, OwnershipDelta, ServerMsg, SubMsgRef}
 use mirai_proto::types::{AnalyzeReq, EngineDesc, PROTO_VERSION};
 use quinn::{Connection, Incoming, SendStream, VarInt};
 use subtle::ConstantTimeEq;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
 
 /// Reported in `Welcome.server`.
@@ -40,14 +40,44 @@ const PRIORITY_RANGE: std::ops::RangeInclusive<i8> = -8..=8;
 /// Stopping one takes a scheduler turn; this only has to cover a loaded host.
 const CANCEL_GRACE: Duration = Duration::from_secs(1);
 
-/// How long a peer may hold a session slot before it has sent `Hello`.
+/// How long a peer may hold a session slot before it has authenticated.
 ///
 /// The accept loop takes the slot before the handshake. A QUIC keep-alive
 /// resets the idle timer, so a silent peer would otherwise hold the slot until
 /// the process exits, and 32 of them refuse every real client. One clock covers
-/// the handshake, opening the control stream and the first Hello frame. After
-/// Hello the slot is a session and this bound no longer applies.
+/// the handshake, opening the control stream and the first Hello frame. A
+/// rejection decided on that frame is delivered under [`REJECT_BUDGET`], so a
+/// peer that sends a bad `Hello` and then stops reading cannot hold the slot by
+/// ignoring the `Error`. After a successful `Hello` the slot is a session and
+/// this bound no longer applies.
 pub const PREAUTH_DEADLINE: Duration = Duration::from_secs(10);
+
+/// How long [`reject`] waits for the peer to acknowledge the `Error` frame.
+///
+/// Past this the connection is closed and the session slot released, whether or
+/// not the frame was acknowledged. A peer that is not reading must not pin the
+/// slot until the process exits.
+const REJECT_BUDGET: Duration = Duration::from_secs(2);
+
+/// How long one authenticated control write may block on flow control.
+///
+/// The control reader does not wait on this: `Cancel` is applied while a write
+/// is stuck. If the peer still is not reading when the budget expires, the
+/// writer closes the connection, which drops every subscription of the session.
+const CONTROL_WRITE_BUDGET: Duration = Duration::from_secs(10);
+
+/// Floor for `report_every_ms`. The desktop interval slider starts at 20 ms;
+/// a faster interval only multiplies report traffic on a shared engine.
+const MIN_REPORT_EVERY: u16 = 20;
+
+/// Visit cap used when the request names no time bound. This is the analysis
+/// slider's upper end. A time-bounded search may ask for more visits; its clock
+/// is what stops it.
+const MAX_UNBOUNDED_VISITS: u32 = 10_000_000;
+
+/// Longest `max_time_ms` forwarded to KataGo. The desktop clock's longest think
+/// budget is half of a 10-hour main time, which is under six hours.
+const MAX_TIME_MS: u32 = 6 * 60 * 60 * 1000;
 
 /// Close reason when [`PREAUTH_DEADLINE`] expires. There may be no control
 /// stream to write an `Error` frame on, so the close itself is the signal.
@@ -79,6 +109,21 @@ pub struct Token {
     pub value: String,
     pub name: String,
     pub max_subs: u32,
+    /// Permits shared by every connection that presented this token. `max_subs`
+    /// is a property of the token, not of one connection: N connections must not
+    /// multiply it.
+    slots: Arc<tokio::sync::Semaphore>,
+}
+
+impl Token {
+    pub fn new(value: impl Into<String>, name: impl Into<String>, max_subs: u32) -> Token {
+        Token {
+            value: value.into(),
+            name: name.into(),
+            max_subs,
+            slots: Arc::new(tokio::sync::Semaphore::new(max_subs as usize)),
+        }
+    }
 }
 
 /// Everything a session needs, shared by every connection.
@@ -182,6 +227,33 @@ fn keep_forwarded_overrides(overrides: &mut Vec<(String, String)>) {
     overrides.retain(|(key, value)| {
         FORWARDED_OVERRIDES.contains(&key.as_str()) && value.len() <= MAX_OVERRIDE_VALUE
     });
+}
+
+/// Clamps what one search may cost the shared engine.
+///
+/// Priority was already clamped; visits, time and the report interval were not, so one
+/// authenticated client could ask KataGo for a report every millisecond or a search that
+/// never ends. Values the reference client sends are left alone: its interval slider
+/// starts at 20 ms, its analysis cap is 10 million visits, and a timed game carries a
+/// `max_time_ms` under six hours. A search with neither a visit cap nor a time cap is
+/// given the visit cap. Clamping, not refusing, matches priority.
+fn clamp_search(req: &mut AnalyzeReq) {
+    req.priority = req
+        .priority
+        .clamp(*PRIORITY_RANGE.start(), *PRIORITY_RANGE.end());
+    if req.report_every_ms.is_some_and(|ms| ms < MIN_REPORT_EVERY) {
+        req.report_every_ms = Some(MIN_REPORT_EVERY);
+    }
+    if req.max_time_ms.is_some_and(|ms| ms > MAX_TIME_MS) {
+        req.max_time_ms = Some(MAX_TIME_MS);
+    }
+    let visits_unbounded = match req.max_visits {
+        Some(visits) => visits > MAX_UNBOUNDED_VISITS,
+        None => true,
+    };
+    if visits_unbounded && !req.max_time_ms.is_some_and(|ms| ms > 0) {
+        req.max_visits = Some(MAX_UNBOUNDED_VISITS);
+    }
 }
 
 /// Serves one incoming connection.
@@ -316,148 +388,172 @@ async fn session_loop(
         auth.name.as_str()
     };
     let max_subs = auth.max_subs;
+    let slots = Arc::clone(&auth.slots);
     info!(session, client = ?client, token = token_name, max_subs, "authenticated");
 
-    frame::write_msg(
-        &mut tx,
-        &mut wbuf,
-        &ServerMsg::Welcome {
-            proto: PROTO_VERSION,
-            server: SERVER_NAME.to_string(),
-            session,
-            engines: host.describe(),
-        },
-    )
-    .await?;
+    // Writes run on their own task. A peer that stops reading the control stream fills
+    // its 16 KiB window and a write in this task would then never reach `Cancel`, so the
+    // search the pump is racing against would keep running. Queuing keeps `Cancel`
+    // synchronous with the read; a full queue means the peer is not draining, and the
+    // session ends rather than waiting on it.
+    let (out_tx, out_rx) = mpsc::channel(32);
+    let writer = tokio::spawn(control_writer(conn.clone(), tx, out_rx));
+    let outcome = async {
+        enqueue(
+            &out_tx,
+            ServerMsg::Welcome {
+                proto: PROTO_VERSION,
+                server: SERVER_NAME.to_string(),
+                session,
+                engines: host.describe(),
+            },
+        )?;
 
-    // Dropping this map cancels every subscription of this connection: each entry is the
-    // sending half of its pump task's cancel channel.
-    let mut subs: HashMap<u32, oneshot::Sender<()>> = HashMap::new();
-    // `max_subs` counts live KataGo queries, not map entries. `Cancel` removes the entry at
-    // once, but the query lives until its pump drops the `Subscription`; each pump holds a
-    // permit until then, so a client cannot cancel-and-reopen past its limit.
-    let slots = Arc::new(tokio::sync::Semaphore::new(max_subs as usize));
+        // Dropping this map cancels every subscription of this connection: each entry is the
+        // sending half of its pump task's cancel channel.
+        let mut subs: HashMap<u32, oneshot::Sender<()>> = HashMap::new();
+        // Permits this connection has taken and not yet released. The semaphore itself is
+        // the token's, shared with every other connection, so it cannot tell a cancelled
+        // query of *this* connection from a live query of another.
+        let mut holding = 0usize;
+        let (release_tx, mut release_rx) = mpsc::unbounded_channel();
 
-    loop {
-        let msg = match frame::read_msg::<_, ClientMsg>(&mut rx, &mut rbuf).await {
-            Ok(m) => m,
-            Err(FrameError::Eof) => return Ok(()),
-            Err(e) => return Err(e.into()),
-        };
+        loop {
+            let msg = match frame::read_msg::<_, ClientMsg>(&mut rx, &mut rbuf).await {
+                Ok(m) => m,
+                Err(FrameError::Eof) => return Ok(()),
+                Err(e) => return Err(e.into()),
+            };
 
-        match msg {
-            ClientMsg::Hello { .. } => {
-                error_msg(
-                    &mut tx,
-                    &mut wbuf,
-                    None,
-                    ErrCode::BadRequest,
-                    "already greeted",
-                )
-                .await?;
-            }
-            ClientMsg::Ping(n) => {
-                frame::write_msg(&mut tx, &mut wbuf, &ServerMsg::Pong(n)).await?;
-            }
-            ClientMsg::ListEngines => {
-                frame::write_msg(&mut tx, &mut wbuf, &ServerMsg::Engines(host.describe())).await?;
-            }
-            ClientMsg::Cancel { sub } => {
-                if subs.remove(&sub).is_some() {
-                    info!(session, sub, "cancel subscription");
-                } else {
-                    debug!(session, sub, "cancel for an unknown subscription");
+            match msg {
+                ClientMsg::Hello { .. } => {
+                    enqueue_error(&out_tx, None, ErrCode::BadRequest, "already greeted")?;
                 }
-            }
-            ClientMsg::Open {
-                sub,
-                engine,
-                mut req,
-            } => {
-                // Finished pumps drop their cancel receiver; reap them before checking ids.
-                subs.retain(|_, cancel| !cancel.is_closed());
-
-                if subs.contains_key(&sub) {
-                    error_msg(
-                        &mut tx,
-                        &mut wbuf,
-                        Some(sub),
-                        ErrCode::BadRequest,
-                        "subscription id is already in use",
-                    )
-                    .await?;
-                    continue;
+                ClientMsg::Ping(n) => enqueue(&out_tx, ServerMsg::Pong(n))?,
+                ClientMsg::ListEngines => {
+                    enqueue(&out_tx, ServerMsg::Engines(host.describe()))?;
                 }
-                let held = max_subs as usize - slots.available_permits();
-                let slot = match Arc::clone(&slots).try_acquire_owned() {
-                    Ok(slot) => Some(slot),
-                    // Some slots are held by cancelled subscriptions still stopping. That
-                    // takes their pump a scheduler turn, and a client that cancels and
-                    // reopens at its limit must not lose the race to it.
-                    Err(_) if held > subs.len() => {
-                        tokio::time::timeout(CANCEL_GRACE, Arc::clone(&slots).acquire_owned())
-                            .await
-                            .ok()
-                            .and_then(Result::ok)
+                ClientMsg::Cancel { sub } => {
+                    if subs.remove(&sub).is_some() {
+                        info!(session, sub, "cancel subscription");
+                    } else {
+                        debug!(session, sub, "cancel for an unknown subscription");
                     }
-                    Err(_) => None,
-                };
-                let Some(slot) = slot else {
-                    error_msg(
-                        &mut tx,
-                        &mut wbuf,
-                        Some(sub),
-                        ErrCode::TooManySubs,
-                        &format!("token {token_name:?} allows {max_subs} concurrent subscriptions"),
-                    )
-                    .await?;
-                    continue;
-                };
-                let Some(named) = host.resolve_engine(engine.as_deref()) else {
-                    let wanted = engine.as_deref().unwrap_or("<default>");
-                    error_msg(
-                        &mut tx,
-                        &mut wbuf,
-                        Some(sub),
-                        ErrCode::NoSuchEngine,
-                        &format!("no engine named {wanted:?}"),
-                    )
-                    .await?;
-                    continue;
-                };
-
-                if let Some(msg) = request_error(&req) {
-                    error_msg(&mut tx, &mut wbuf, Some(sub), ErrCode::BadRequest, &msg).await?;
-                    continue;
                 }
-
-                req.priority = req
-                    .priority
-                    .clamp(*PRIORITY_RANGE.start(), *PRIORITY_RANGE.end());
-                keep_forwarded_overrides(&mut req.overrides);
-                info!(
-                    session,
+                ClientMsg::Open {
                     sub,
-                    engine = %named.name,
-                    moves = req.moves.len(),
-                    max_visits = ?req.max_visits,
-                    max_candidates = ?req.max_candidates,
-                    priority = req.priority,
-                    "open subscription"
-                );
+                    engine,
+                    mut req,
+                } => {
+                    // Finished pumps drop their cancel receiver; reap them before checking ids.
+                    subs.retain(|_, cancel| !cancel.is_closed());
+                    // Drained after the reap, so a search that ended on its own is not
+                    // mistaken below for a cancelled one still stopping.
+                    while release_rx.try_recv().is_ok() {
+                        holding = holding.saturating_sub(1);
+                    }
 
-                let subscription = named.engine.subscribe(req);
-                let (cancel_tx, cancel_rx) = oneshot::channel();
-                subs.insert(sub, cancel_tx);
-                frame::write_msg(&mut tx, &mut wbuf, &ServerMsg::Opened { sub }).await?;
-                let conn = conn.clone();
-                tokio::spawn(async move {
-                    pump(conn, session, sub, subscription, cancel_rx).await;
-                    // Only now is the query gone: `pump` has dropped the subscription.
-                    drop(slot);
-                });
+                    if subs.contains_key(&sub) {
+                        enqueue_error(
+                            &out_tx,
+                            Some(sub),
+                            ErrCode::BadRequest,
+                            "subscription id is already in use",
+                        )?;
+                        continue;
+                    }
+                    let slot = match Arc::clone(&slots).try_acquire_owned() {
+                        Ok(slot) => Some(slot),
+                        // A cancelled query of this connection still holds its permit. Stopping
+                        // takes the pump a scheduler turn, and a client that cancels and reopens
+                        // at its limit must not lose the race to it. Another connection's live
+                        // query is not that race: refuse it at once.
+                        Err(_) if holding > subs.len() => {
+                            tokio::time::timeout(CANCEL_GRACE, Arc::clone(&slots).acquire_owned())
+                                .await
+                                .ok()
+                                .and_then(Result::ok)
+                        }
+                        Err(_) => None,
+                    };
+                    let Some(slot) = slot else {
+                        enqueue_error(
+                            &out_tx,
+                            Some(sub),
+                            ErrCode::TooManySubs,
+                            &format!(
+                                "token {token_name:?} allows {max_subs} concurrent subscriptions"
+                            ),
+                        )?;
+                        continue;
+                    };
+                    let Some(named) = host.resolve_engine(engine.as_deref()) else {
+                        let wanted = engine.as_deref().unwrap_or("<default>");
+                        enqueue_error(
+                            &out_tx,
+                            Some(sub),
+                            ErrCode::NoSuchEngine,
+                            &format!("no engine named {wanted:?}"),
+                        )?;
+                        continue;
+                    };
+
+                    if let Some(msg) = request_error(&req) {
+                        enqueue_error(&out_tx, Some(sub), ErrCode::BadRequest, &msg)?;
+                        continue;
+                    }
+
+                    clamp_search(&mut req);
+                    keep_forwarded_overrides(&mut req.overrides);
+                    info!(
+                        session,
+                        sub,
+                        engine = %named.name,
+                        moves = req.moves.len(),
+                        max_visits = ?req.max_visits,
+                        max_candidates = ?req.max_candidates,
+                        priority = req.priority,
+                        "open subscription"
+                    );
+
+                    let subscription = named.engine.subscribe(req);
+                    let (cancel_tx, cancel_rx) = oneshot::channel();
+                    subs.insert(sub, cancel_tx);
+                    enqueue(&out_tx, ServerMsg::Opened { sub })?;
+                    holding += 1;
+                    let conn = conn.clone();
+                    let slot = PumpSlot {
+                        permit: Some(slot),
+                        released: release_tx.clone(),
+                    };
+                    tokio::spawn(async move {
+                        pump(conn, session, sub, subscription, cancel_rx).await;
+                        // Only now is the query gone: `pump` has dropped the subscription.
+                        drop(slot);
+                    });
+                }
             }
         }
+    }
+    .await;
+    // A write still blocked on flow control must not outlive the session: aborting it
+    // drops the send stream, and `serve` closes the connection.
+    writer.abort();
+    outcome
+}
+
+/// A pump's share of its token's quota. Dropped when the pump ends — or unwinds — it
+/// returns the permit first and then tells its session, so the session's count of the
+/// permits it holds never stays high.
+struct PumpSlot {
+    permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    released: mpsc::UnboundedSender<()>,
+}
+
+impl Drop for PumpSlot {
+    fn drop(&mut self) {
+        drop(self.permit.take());
+        let _ = self.released.send(());
     }
 }
 
@@ -515,13 +611,10 @@ async fn stream_events(
         warn!(session, sub, error = %e, "could not write the subscription preamble");
         return;
     }
-
     let mut enc = match SubStreamEncoder::new(SUB_STREAM_LEVEL) {
         Ok(enc) => enc,
         Err(e) => {
-            // A stream that ends without `Done` or `Failed` fails on the client.
             warn!(session, sub, error = %e, "could not start the stream's compressor");
-            let _ = stream.finish();
             return;
         }
     };
@@ -580,27 +673,73 @@ async fn send(
     enc.write(stream, &msg).await
 }
 
-async fn error_msg(
-    tx: &mut SendStream,
-    buf: &mut FrameBuf,
+fn enqueue(tx: &mpsc::Sender<ServerMsg>, msg: ServerMsg) -> anyhow::Result<()> {
+    tx.try_send(msg)
+        .map_err(|_| anyhow::anyhow!("the peer is not reading the control stream"))
+}
+
+fn enqueue_error(
+    tx: &mpsc::Sender<ServerMsg>,
     sub: Option<u32>,
     code: ErrCode,
     msg: &str,
-) -> Result<(), FrameError> {
+) -> anyhow::Result<()> {
     warn!(?sub, %code, msg, "rejecting");
-    frame::write_msg(
+    enqueue(
         tx,
-        buf,
-        &ServerMsg::Error {
+        ServerMsg::Error {
             sub,
             code,
             msg: msg.to_string(),
         },
     )
-    .await
+}
+
+/// Writes control messages until the peer, the connection, or the budget gives up.
+///
+/// A stuck write must not be the only thing keeping the connection open: on timeout the
+/// connection is closed, which fails the reader's next read and drops every subscription.
+async fn control_writer(conn: Connection, mut tx: SendStream, mut rx: mpsc::Receiver<ServerMsg>) {
+    let mut buf = FrameBuf::new();
+    loop {
+        let msg = tokio::select! {
+            biased;
+            _ = conn.closed() => return,
+            msg = rx.recv() => match msg {
+                Some(msg) => msg,
+                None => return,
+            },
+        };
+        if write_control(&conn, &mut tx, &mut buf, &msg).await.is_err() {
+            conn.close(VarInt::from_u32(0), b"bye");
+            return;
+        }
+    }
+}
+
+async fn write_control(
+    conn: &Connection,
+    tx: &mut SendStream,
+    buf: &mut FrameBuf,
+    msg: &ServerMsg,
+) -> anyhow::Result<()> {
+    let write = frame::write_msg(tx, buf, msg);
+    tokio::pin!(write);
+    tokio::select! {
+        biased;
+        _ = conn.closed() => anyhow::bail!("connection closed"),
+        result = &mut write => result.map_err(anyhow::Error::from),
+        _ = tokio::time::sleep(CONTROL_WRITE_BUDGET) => {
+            anyhow::bail!("control write timed out")
+        }
+    }
 }
 
 /// Reports a fatal handshake problem, then closes the connection with application code 1.
+///
+/// The write and the wait for its acknowledgement are bounded by [`REJECT_BUDGET`].
+/// Peers that acknowledge in time receive the `Error`; others still release the
+/// session slot when the budget expires.
 async fn reject(
     tx: &mut SendStream,
     buf: &mut FrameBuf,
@@ -608,9 +747,30 @@ async fn reject(
     code: ErrCode,
     msg: &str,
 ) {
-    let _ = error_msg(tx, buf, None, code, msg).await;
-    // Flush before the close: a reset would discard the error the client needs to see.
-    let _ = stream_flush(tx).await;
+    warn!(%code, msg, "rejecting");
+    let deliver = async {
+        let _ = frame::write_msg(
+            tx,
+            buf,
+            &ServerMsg::Error {
+                sub: None,
+                code,
+                msg: msg.to_string(),
+            },
+        )
+        .await;
+        // Flush before the close: a reset would discard the error the client needs to see.
+        let _ = stream_flush(tx).await;
+    };
+    tokio::pin!(deliver);
+    tokio::select! {
+        biased;
+        _ = conn.closed() => {}
+        _ = tokio::time::sleep(REJECT_BUDGET) => {
+            warn!("pre-authentication rejection was not acknowledged");
+        }
+        _ = &mut deliver => {}
+    }
     conn.close(VarInt::from_u32(CODE_REJECTED), code.as_str().as_bytes());
 }
 
@@ -632,11 +792,7 @@ mod tests {
             engines: Vec::new(),
             tokens: tokens
                 .iter()
-                .map(|(v, max)| Token {
-                    value: (*v).to_string(),
-                    name: (*v).to_string(),
-                    max_subs: *max,
-                })
+                .map(|(v, max)| Token::new(*v, *v, *max))
                 .collect(),
         }
     }
@@ -773,11 +929,7 @@ mod tests {
                         name: "recorder".into(),
                         engine,
                     }],
-                    tokens: vec![Token {
-                        value: "secret".into(),
-                        name: "test".into(),
-                        max_subs: 4,
-                    }],
+                    tokens: vec![Token::new("secret", "test", 4)],
                 }),
                 incoming,
                 Duration::from_secs(2),
@@ -943,11 +1095,7 @@ mod tests {
             serve(
                 Arc::new(Host {
                     engines: Vec::new(),
-                    tokens: vec![Token {
-                        value: "secret".into(),
-                        name: "test".into(),
-                        max_subs: 1,
-                    }],
+                    tokens: vec![Token::new("secret", "test", 1)],
                 }),
                 incoming,
                 Duration::from_secs(2),
@@ -1063,11 +1211,7 @@ mod tests {
                         gate: Arc::clone(&gate),
                     }),
                 }],
-                tokens: vec![Token {
-                    value: "secret".into(),
-                    name: "test".into(),
-                    max_subs,
-                }],
+                tokens: vec![Token::new("secret", "test", max_subs)],
             });
             let accepting = endpoint.clone();
             tokio::spawn(async move {
@@ -1226,11 +1370,7 @@ mod tests {
                 .expect("handshake");
             let host = Host {
                 engines: Vec::new(),
-                tokens: vec![Token {
-                    value: "secret".into(),
-                    name: "test".into(),
-                    max_subs: 1,
-                }],
+                tokens: vec![Token::new("secret", "test", 1)],
             };
             let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
             session_loop(&host, &conn, 1, deadline).await
@@ -1434,11 +1574,7 @@ mod tests {
                         name: "holding".into(),
                         engine,
                     }],
-                    tokens: vec![Token {
-                        value: "secret".into(),
-                        name: "test".into(),
-                        max_subs: 4,
-                    }],
+                    tokens: vec![Token::new("secret", "test", 4)],
                 }),
                 incoming,
                 Duration::from_secs(2),
@@ -1527,6 +1663,270 @@ mod tests {
             .await
             .expect("serve did not finish")
             .expect("serve task");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn search_cost_is_clamped_without_refusing_the_request() {
+        let mut req = AnalyzeReq::new(Size::square(19), RuleSet::Chinese, 7.5);
+        req.max_visits = Some(u32::MAX);
+        req.max_time_ms = None;
+        req.report_every_ms = Some(1);
+        req.priority = 100;
+        clamp_search(&mut req);
+        assert_eq!(req.max_visits, Some(MAX_UNBOUNDED_VISITS));
+        assert_eq!(req.report_every_ms, Some(MIN_REPORT_EVERY));
+        assert_eq!(req.priority, *PRIORITY_RANGE.end());
+        assert!(request_error(&req).is_none(), "clamping is not a refusal");
+
+        req.max_visits = None;
+        clamp_search(&mut req);
+        assert_eq!(req.max_visits, Some(MAX_UNBOUNDED_VISITS));
+
+        // A timed search may ask for unlimited visits: the clock is the bound.
+        // The desktop client does this for play.
+        let mut timed = AnalyzeReq::new(Size::square(19), RuleSet::Chinese, 7.5);
+        timed.max_visits = Some(u32::MAX);
+        timed.max_time_ms = Some(60_000);
+        timed.report_every_ms = Some(200);
+        timed.priority = 8;
+        clamp_search(&mut timed);
+        assert_eq!(timed.max_visits, Some(u32::MAX));
+        assert_eq!(timed.max_time_ms, Some(60_000));
+        assert_eq!(timed.report_every_ms, Some(200));
+        assert_eq!(timed.priority, 8);
+
+        timed.max_time_ms = Some(u32::MAX);
+        clamp_search(&mut timed);
+        assert_eq!(timed.max_time_ms, Some(MAX_TIME_MS));
+
+        // Zero milliseconds cannot be relied on to bound a search.
+        timed.max_time_ms = Some(0);
+        clamp_search(&mut timed);
+        assert_eq!(timed.max_visits, Some(MAX_UNBOUNDED_VISITS));
+    }
+
+    /// A bad `Hello` whose `Error` is never read must still release the session slot.
+    /// Quinn ACKs received packets even when the application does not read them; the
+    /// bound also protects against a peer withholding that ACK while sending other traffic.
+    #[tokio::test]
+    async fn a_rejection_that_is_not_read_releases_its_slot() {
+        let sessions = Arc::new(tokio::sync::Semaphore::new(1));
+        let (endpoint, fp, dir) = test_endpoint("reject-unread");
+        let addr = endpoint.local_addr().expect("bound");
+        let accepting = endpoint.clone();
+        let slots = Arc::clone(&sessions);
+        let served = tokio::spawn(async move {
+            let incoming = tokio::time::timeout(Duration::from_secs(2), accepting.accept())
+                .await
+                .expect("the client never connected")
+                .expect("endpoint closed");
+            let permit = slots.try_acquire_owned().expect("session slot");
+            let _permit = permit;
+            serve(
+                Arc::new(Host {
+                    engines: Vec::new(),
+                    tokens: vec![Token::new("secret", "test", 1)],
+                }),
+                incoming,
+                Duration::from_secs(2),
+            )
+            .await;
+        });
+
+        let (conn, _) = mirai_proto::transport::connect(&format!("mirai://{addr}"), fp)
+            .await
+            .expect("handshake");
+        let (mut tx, _rx) = conn.open_bi().await.expect("control stream");
+        frame::write_msg(
+            &mut tx,
+            &mut FrameBuf::new(),
+            &ClientMsg::Hello {
+                proto: PROTO_VERSION,
+                token: "wrong".into(),
+                client: "test".into(),
+            },
+        )
+        .await
+        .expect("write Hello");
+        // Do not read. Dropping the recv half would reset the stream and the server
+        // would see that instead of a peer that simply is not reading.
+        tokio::time::timeout(Duration::from_secs(4), conn.closed())
+            .await
+            .expect("an unread rejection held the connection");
+        tokio::time::timeout(Duration::from_secs(2), served)
+            .await
+            .expect("serve did not return after the rejection budget")
+            .expect("serve task");
+        assert_eq!(
+            sessions.available_permits(),
+            1,
+            "an unread rejection still holds a session slot"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Filling the control-stream window must not pin the search. The reader used to
+    /// block in the write, so `Cancel` was never seen and dropping the connection was
+    /// the only way out — and a keep-alive meant there was no way out.
+    #[tokio::test]
+    async fn a_peer_that_stops_reading_the_control_stream_drops_its_searches() {
+        let mut client = Client::connect(1, true).await;
+        assert!(matches!(client.open(1).await, ServerMsg::Opened { sub: 1 }));
+        // More Pongs than a 16 KiB stream window holds. The client keeps writing; it
+        // does not read, so the server's next control write blocks on flow control.
+        for n in 0..3_000u64 {
+            if frame::write_msg(&mut client.tx, &mut client.buf, &ClientMsg::Ping(n))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+        client.dropped().await;
+    }
+
+    /// `max_subs` is the token's, not the connection's. A second connection must not
+    /// get another copy of the limit.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn one_token_shares_its_subscription_limit_across_connections() {
+        let (endpoint, fp, dir) = test_endpoint("quota");
+        let addr = endpoint.local_addr().expect("bound");
+        let (dropped_tx, mut dropped) = tokio::sync::mpsc::unbounded_channel();
+        let gate = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let host = Arc::new(Host {
+            engines: vec![NamedEngine {
+                name: "flood".into(),
+                engine: Arc::new(Flood {
+                    dropped: dropped_tx,
+                    gate: Arc::clone(&gate),
+                }),
+            }],
+            tokens: vec![Token::new("secret", "shared", 1)],
+        });
+        let accepting = endpoint.clone();
+        let accept_host = Arc::clone(&host);
+        tokio::spawn(async move {
+            for _ in 0..2 {
+                let incoming = accepting.accept().await.expect("incoming");
+                let host = Arc::clone(&accept_host);
+                tokio::spawn(async move {
+                    serve(host, incoming, Duration::from_secs(2)).await;
+                });
+            }
+        });
+
+        async fn greet(
+            addr: std::net::SocketAddr,
+            fp: &str,
+        ) -> (Connection, SendStream, quinn::RecvStream, FrameBuf) {
+            let (conn, _) =
+                mirai_proto::transport::connect(&format!("mirai://{addr}"), fp.to_string())
+                    .await
+                    .expect("handshake");
+            let (mut tx, mut rx) = conn.open_bi().await.expect("control stream");
+            let mut buf = FrameBuf::new();
+            frame::write_msg(
+                &mut tx,
+                &mut buf,
+                &ClientMsg::Hello {
+                    proto: PROTO_VERSION,
+                    token: "secret".into(),
+                    client: "test".into(),
+                },
+            )
+            .await
+            .expect("write Hello");
+            let welcome: ServerMsg =
+                tokio::time::timeout(Duration::from_secs(2), frame::read_msg(&mut rx, &mut buf))
+                    .await
+                    .expect("no Welcome")
+                    .expect("read Welcome");
+            assert!(matches!(welcome, ServerMsg::Welcome { .. }), "{welcome:?}");
+            (conn, tx, rx, buf)
+        }
+
+        let (_conn_a, mut tx_a, mut rx_a, mut buf_a) = greet(addr, &fp).await;
+        let (_conn_b, mut tx_b, mut rx_b, mut buf_b) = greet(addr, &fp).await;
+        let open = |sub| ClientMsg::Open {
+            sub,
+            engine: None,
+            req: AnalyzeReq::new(Size::square(19), RuleSet::Chinese, 7.5),
+        };
+        frame::write_msg(&mut tx_a, &mut buf_a, &open(1))
+            .await
+            .expect("open");
+        let opened: ServerMsg = tokio::time::timeout(
+            Duration::from_secs(2),
+            frame::read_msg(&mut rx_a, &mut buf_a),
+        )
+        .await
+        .expect("no Opened")
+        .expect("read Opened");
+        assert!(matches!(opened, ServerMsg::Opened { sub: 1 }), "{opened:?}");
+
+        frame::write_msg(&mut tx_b, &mut buf_b, &open(1))
+            .await
+            .expect("open");
+        let refused: ServerMsg = tokio::time::timeout(
+            Duration::from_secs(2),
+            frame::read_msg(&mut rx_b, &mut buf_b),
+        )
+        .await
+        .expect("no answer")
+        .expect("read answer");
+        assert!(
+            matches!(
+                refused,
+                ServerMsg::Error {
+                    sub: Some(1),
+                    code: ErrCode::TooManySubs,
+                    ..
+                }
+            ),
+            "a second connection was given its own limit: {refused:?}"
+        );
+
+        frame::write_msg(&mut tx_a, &mut buf_a, &ClientMsg::Cancel { sub: 1 })
+            .await
+            .expect("cancel");
+        tokio::time::timeout(Duration::from_secs(1), dropped.recv())
+            .await
+            .expect("the first subscription was not dropped")
+            .expect("engine gone");
+        {
+            let (open, cv) = &*gate;
+            *open.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = true;
+            cv.notify_all();
+        }
+        let mut moved = false;
+        for sub in 2..20u32 {
+            frame::write_msg(&mut tx_b, &mut buf_b, &open(sub))
+                .await
+                .expect("reopen");
+            let again: ServerMsg = tokio::time::timeout(
+                Duration::from_secs(2),
+                frame::read_msg(&mut rx_b, &mut buf_b),
+            )
+            .await
+            .expect("the shared slot never came back")
+            .expect("read");
+            match again {
+                ServerMsg::Opened { .. } => {
+                    moved = true;
+                    break;
+                }
+                ServerMsg::Error {
+                    code: ErrCode::TooManySubs,
+                    ..
+                } => tokio::time::sleep(Duration::from_millis(20)).await,
+                other => panic!("the token's slot did not move to the other connection: {other:?}"),
+            }
+        }
+        assert!(
+            moved,
+            "the token's slot did not move to the other connection"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

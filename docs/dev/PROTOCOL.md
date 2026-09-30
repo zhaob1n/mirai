@@ -651,9 +651,17 @@ stale positions after a five-second outage burns search threads on positions nob
 watching.
 
 Both peers close normally with application code 0 and reason `bye` ([§9.2](#92-quic-application-codes)).
-On a fatal handshake rejection the server MUST flush and finish the `Error` frame
-and wait for its acknowledgement before closing with code 1 and the
-`ErrCode::as_str()` reason. Closing immediately could discard the explanation.
+On a fatal handshake rejection the server MUST attempt to write and finish the
+`Error` frame before closing with code 1 and the `ErrCode::as_str()` reason.
+It SHOULD wait for the frame's acknowledgement so the peer can read the
+explanation. The reference server bounds the write and acknowledgement wait
+to 2 s; an unresponsive peer cannot hold a session slot indefinitely and may
+receive only the connection close, not the `Error` frame.
+
+The reference server queues at most 32 control replies per connection. A peer
+that does not read them is disconnected, with application code 0, when the queue
+fills or a write stalls for 10 s. Its subscriptions then cancel as on any
+connection loss; control backpressure must not block reading a `Cancel`.
 
 ---
 
@@ -691,8 +699,11 @@ No other code carries meaning beyond "the peer is gone".
 
 | Limit | Value | Enforcement |
 |---|---|---|
-| Concurrent subscriptions | token's `max_subs`, default 4; per connection on the reference server | server MUST refuse further `Open` with `TooManySubs`. The reference server counts a cancelled subscription until its search has stopped; an `Open` at the limit waits up to 1 s (`CANCEL_GRACE`) for a cancelled one to stop before refusing. Servers MAY enforce a global token quota; clients MUST NOT assume either model |
+| Outstanding subscriptions | token's `max_subs`, default 64; shared by all connections using that token on the reference server. Counts requests queued in the engine as well as running ones: the reference server forwards every accepted `Open` at once and KataGo schedules them — `numAnalysisThreads` at a time, then highest `priority` first, earlier first on a tie, without pre-empting a started search. The limit guards against a runaway client; it is not the concurrency control | server MUST refuse further `Open` with `TooManySubs`. A cancelled search holds its permit until its pump drops the engine subscription. At the limit, only a connection that just cancelled one of its own searches waits up to 1 s (`CANCEL_GRACE`) for that search to stop before refusing; other connections are refused immediately. Clients MUST NOT assume either a per-connection or global token quota |
 | `AnalyzeReq.moves` + `initial_stones` | ≤ 4096 together on the reference server (`MAX_REQUEST_STONES`) | refused with `Error { Some(sub), BadRequest }`; limits zstd-inflated engine input |
+| `AnalyzeReq.report_every_ms` | ≥ 20 ms when present on the reference server | smaller intervals raised to 20 ms before forwarding to KataGo |
+| `AnalyzeReq.max_time_ms` | ≤ 6 h on the reference server | longer times reduced to 6 h before forwarding; `Some(0)` is forwarded but is not a time cap for the visit limit below |
+| `AnalyzeReq.max_visits` | ≤ 10,000,000 without a nonzero time cap on the reference server | an absent or larger visit limit is capped; a time-limited search may use `u32::MAX` and ends on time instead |
 | `AnalyzeReq.avoid` | ≤ 64 specs and ≤ 1024 points across them on the reference server (`MAX_AVOID_SPECS`, `MAX_AVOID_POINTS`) | refused with `Error { Some(sub), BadRequest }` |
 | `AnalyzeReq.overrides` | only `wideRootNoise` and `humanSLProfile`, values ≤ 64 bytes, on the reference server (`FORWARDED_OVERRIDES`, `MAX_OVERRIDE_VALUE`) | other entries dropped, not rejected ([§7.3](#73-analyzereq)) |
 | First control frame | payload and decompressed plaintext each ≤ 1024 bytes on the reference server (`MAX_HELLO_FRAME`) | header checked before reading the body; inflation stops at the bound; `Error { None, BadRequest }`, then close with code 1 |

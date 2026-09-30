@@ -172,11 +172,7 @@ async fn run(
         tokens: cfg
             .tokens
             .into_iter()
-            .map(|t| Token {
-                value: t.value,
-                name: t.name,
-                max_subs: t.max_subs,
-            })
+            .map(|t| Token::new(t.value, t.name, t.max_subs))
             .collect(),
     });
 

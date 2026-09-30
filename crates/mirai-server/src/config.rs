@@ -31,7 +31,7 @@ model  = "/path/to/model.bin.gz"
 [[token]]
 value = "<64 hex chars from `mirai-server --generate-token`>"
 name  = "laptop"
-max_subs = 4"#;
+max_subs = 64"#;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -82,6 +82,10 @@ pub struct TokenCfg {
     pub value: String,
     #[serde(default)]
     pub name: String,
+    /// Requests this token may have outstanding — queued in KataGo or running — across
+    /// all its connections. KataGo schedules them (`numAnalysisThreads` at a time, then
+    /// by priority and arrival), so this is a guard against a runaway client, not the
+    /// concurrency limit.
     #[serde(default = "default_max_subs")]
     pub max_subs: u32,
 }
@@ -95,8 +99,11 @@ fn default_cert() -> PathBuf {
 fn default_key() -> PathBuf {
     PathBuf::from("key.pem")
 }
+/// Covers the desktop client's own worst case — a whole-game sweep keeps up to 16
+/// positions in flight, plus live analysis and a play or score request per window —
+/// several times over, so several windows or devices can share one token.
 fn default_max_subs() -> u32 {
-    4
+    64
 }
 
 impl ServerConfig {
@@ -355,10 +362,9 @@ mod tests {
     }
 
     #[test]
-    fn token_max_subs_defaults_and_listen_override_wins() {
+    fn token_max_subs_and_listen_override_wins() {
         let cfg = parse(FULL).unwrap();
         assert_eq!(cfg.tokens[0].max_subs, 2);
-        assert_eq!(cfg.tokens[1].max_subs, 4, "default max_subs");
         assert_eq!(cfg.tokens[1].name, "");
 
         let from_file = cfg.listen_addr(None).unwrap();
@@ -380,7 +386,7 @@ mod tests {
         let cfg = parse(MINIMAL_EXAMPLE).unwrap();
         assert_eq!(cfg.engines.len(), 1);
         assert_eq!(cfg.tokens.len(), 1);
-        assert_eq!(cfg.tokens[0].max_subs, 4);
+        assert_eq!(cfg.tokens[0].max_subs, 64);
     }
 
     #[test]

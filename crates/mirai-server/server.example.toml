@@ -46,4 +46,6 @@ search_threads   = 16              # numSearchThreadsPerAnalysisThread
 [[token]]
 value    = "0000000000000000000000000000000000000000000000000000000000000000"
 name     = "laptop"
-max_subs = 4                       # concurrent subscriptions this token may hold open
+max_subs = 64                      # requests this token may have queued or running, across every
+                                   # connection. KataGo runs numAnalysisThreads at once and queues
+                                   # the rest by priority, then arrival; this only stops a runaway client

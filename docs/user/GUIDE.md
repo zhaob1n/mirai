@@ -376,6 +376,9 @@ fails to start it is logged and skipped; the server exits only if none came up.
 `0.0.0.0:9678`; `127.0.0.1` would be this machine only.
 
 One server serves several clients from the one KataGo; it does not start a copy per person.
+KataGo analyses `analysis_threads` positions at once and queues the rest: an engine move or
+live analysis goes ahead of a whole-game analysis, otherwise first come, first served.
+`max_subs` (default 64) only caps how many requests one token may have queued or running.
 
 ### On the laptop
 
