@@ -372,6 +372,9 @@ lazy first query would look like a hang — then prints its **certificate finger
 that visible. `mirai-server --print-fingerprint` prints it again at any time. If one engine
 fails to start it is logged and skipped; the server exits only if none came up.
 
+If a running KataGo later exits, new requests fail until the server restarts that
+engine in the background; in-flight requests are not replayed.
+
 **4. Open UDP port 9678** through the desktop's firewall. The example listens on
 `0.0.0.0:9678`; `127.0.0.1` would be this machine only.
 
