@@ -215,9 +215,10 @@ mirai-server --generate-token
 ```
 mkdir -p ~/.config/mirai
 cp crates/mirai-server/server.example.toml ~/.config/mirai/server.toml
+chmod 600 ~/.config/mirai/server.toml
 ```
 
-若设置了该变量，路径就是 `$XDG_CONFIG_HOME/mirai/server.toml`。把令牌贴进 `[[token]]`，并设置 KataGo 程序和权重。相对路径相对于配置文件所在目录解析。令牌超过 256 字节时，服务器不会启动。
+若设置了该变量，路径就是 `$XDG_CONFIG_HOME/mirai/server.toml`。把生成的令牌贴进 `[[token]]`（示例中的全零令牌会被拒绝），并设置 KataGo 程序和权重。令牌是密钥，请只允许自己的账号读取配置文件；如果其他用户可读，服务器会警告。相对路径相对于配置文件所在目录解析。令牌超过 256 字节时，服务器不会启动。
 
 **3. 启动。**
 

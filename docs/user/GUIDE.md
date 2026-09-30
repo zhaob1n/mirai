@@ -355,11 +355,14 @@ mirai-server --generate-token
 ```
 mkdir -p ~/.config/mirai
 cp crates/mirai-server/server.example.toml ~/.config/mirai/server.toml
+chmod 600 ~/.config/mirai/server.toml
 ```
 
 That path is `$XDG_CONFIG_HOME/mirai/server.toml` when the variable is set. Paste the
-token into `[[token]]` and set the KataGo binary and model. Relative paths resolve next
-to the config file. A token longer than 256 bytes stops the server starting.
+generated token into `[[token]]` (the example's all-zero token is rejected) and set
+the KataGo binary and model. Keep this bearer secret readable only by your account;
+the server warns if other users can read the file. Relative paths resolve next to
+the config file. A token longer than 256 bytes stops the server starting.
 
 **3. Start it.**
 
