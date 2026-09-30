@@ -126,6 +126,11 @@ impl NewGameDialog {
             1,
             play.rules.default_komi() as f64,
         );
+        // KataGo accepts only an integer or half-integer komi. Snap arrow clicks
+        // and focus-out to that grid; `setup` still rounds a value that has not
+        // been committed yet.
+        imp.komi_row.set_numeric(true);
+        imp.komi_row.set_snap_to_ticks(true);
 
         let labels: Vec<String> = RuleSet::ALL
             .iter()
@@ -319,6 +324,20 @@ impl NewGameDialog {
 
     fn setup(&self) -> GameSetup {
         let imp = self.imp();
+        // Commit typed text. Enter on Start does not always focus-out the row first,
+        // and an uncommitted SpinRow still reports its previous value.
+        for row in [
+            &imp.komi_row,
+            &imp.custom_size_row,
+            &imp.main_time_row,
+            &imp.periods_row,
+            &imp.period_seconds_row,
+            &imp.increment_row,
+            &imp.visits_row,
+            &imp.seconds_row,
+        ] {
+            row.update();
+        }
         let size = self.selected_size();
         let handicap = selected_handicap(size, imp.handicap_row.selected());
         let human = match imp.colour_row.selected() {
@@ -356,7 +375,7 @@ impl NewGameDialog {
         GameSetup {
             size,
             rules: rules_at(imp.rules_row.selected()),
-            komi: imp.komi_row.value() as f32,
+            komi: komi_points(imp.komi_row.value()),
             handicap,
             human,
             tc,
@@ -478,6 +497,12 @@ fn strength_labels() -> Vec<String> {
     ]
 }
 
+/// Nearest half-point. The wire stores `komi * 2` as an integer, so 7.3 would
+/// otherwise be written into the record and silently become 7.5 in analysis.
+fn komi_points(value: f64) -> f32 {
+    ((value * 2.0).round() / 2.0) as f32
+}
+
 fn configure_spin(row: &adw::SpinRow, min: f64, max: f64, step: f64, digits: u32, value: f64) {
     row.configure(
         Some(&gtk::Adjustment::new(
@@ -582,5 +607,17 @@ mod tests {
             }
             assert_eq!(selected_handicap(size, 0), 0);
         }
+    }
+
+    #[test]
+    fn komi_is_stored_as_a_half_point() {
+        assert_eq!(komi_points(7.5), 7.5);
+        assert_eq!(komi_points(7.0), 7.0);
+        assert_eq!(komi_points(7.3), 7.5);
+        assert_eq!(komi_points(7.2), 7.0);
+        assert_eq!(komi_points(7.25), 7.5);
+        assert_eq!(komi_points(0.0), 0.0);
+        assert_eq!(komi_points(-0.2), 0.0);
+        assert_eq!(komi_points(-0.3), -0.5);
     }
 }
