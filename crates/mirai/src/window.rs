@@ -772,19 +772,28 @@ fn install_board_hook(ui: &Ui) {
 }
 
 fn on_board_click(ui: &Ui, click: BoardClick) {
-    let p = click.point;
-    if p.is_pass() {
-        return;
-    }
     let primary = click.button == gdk::BUTTON_PRIMARY;
     let secondary = click.button == gdk::BUTTON_SECONDARY;
+    // A pass is not an intersection a click can land on.
+    let point = click.point.filter(|p| !p.is_pass());
 
     if ui.play.is_active() {
-        if primary {
+        // A miss is not a move. Secondary clicks stay ignored for the whole game.
+        if let Some(p) = point.filter(|_| primary) {
             ui.play.on_board_click(p);
         }
         return;
     }
+
+    let Some(p) = point else {
+        // Play's right-click deletes the current branch and does not need an
+        // intersection. Setup and marks do; a miss there is not a click.
+        if secondary && ui.state.editor_tool() == EditorTool::Play {
+            ui.board.clear_preview();
+            delete_branch(ui);
+        }
+        return;
+    };
 
     if secondary {
         ui.board.clear_preview();
