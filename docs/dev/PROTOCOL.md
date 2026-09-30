@@ -375,7 +375,7 @@ Scale constants are normative (`types.rs`): `LCB_SCALE` 16384.0 · `UTILITY_SCAL
 
 Guaranteed tolerances, asserted by `mirai-proto/tests/wire_size.rs` —
 `dequantisation_error_stays_inside_the_documented_tolerances`:
-winrate ≤ 1e-4 (measured 7.644e-6) · score lead ≤ 0.02 points (measured 0.0125) ·
+winrate ≤ 1e-4 (measured 7.644e-6) · score lead ≤ 0.02 points (measured 0.015625) ·
 ownership ≤ 0.005 (measured 0.00394).
 
 `utility_lcb` is the one field whose source routinely leaves that range. KataGo's lower
