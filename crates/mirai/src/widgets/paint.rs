@@ -115,3 +115,37 @@ pub fn vline(snapshot: &gtk::Snapshot, x: f32, y0: f32, y1: f32, width: f32, col
         &graphene::Rect::new(x - width * 0.5, y0, width, y1 - y0),
     );
 }
+
+/// A short label formatted in place, so `snapshot()` never allocates a `String` for its
+/// text. 24 bytes covers the longest board figure `pct1` / `signed1` / `si_visits`
+/// (`+1024.0`, `4295.0m`) and the graph's `100.0%`.
+#[derive(Clone, Copy, Default)]
+pub struct StackLabel {
+    bytes: [u8; 24],
+    len: u8,
+}
+
+impl StackLabel {
+    pub fn write(&mut self, f: impl FnOnce(&mut Self) -> std::fmt::Result) {
+        self.len = 0;
+        f(self).expect("a label fits in 24 bytes");
+    }
+
+    pub fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.bytes[..self.len as usize]).expect("a label is utf-8")
+    }
+}
+
+impl std::fmt::Write for StackLabel {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        let incoming = s.as_bytes();
+        let start = self.len as usize;
+        let end = start + incoming.len();
+        if end > self.bytes.len() {
+            return Err(std::fmt::Error);
+        }
+        self.bytes[start..end].copy_from_slice(incoming);
+        self.len = end as u8;
+        Ok(())
+    }
+}

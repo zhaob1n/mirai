@@ -21,7 +21,7 @@ use mirai_core::{Color, GameTree, NodeId};
 
 use crate::app::AppState;
 use crate::palette;
-use crate::widgets::paint::{fill_disc, hline, rgba8, with_alpha};
+use crate::widgets::paint::{StackLabel, fill_disc, hline, rgba8, with_alpha};
 
 /// How badly a move hurt the player who played it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -765,8 +765,13 @@ impl WinrateGraph {
         if let Some(winrate) = samples[cursor_index].winrate {
             fill_disc(snapshot, x, geom.y_winrate(winrate), 3.0, &accent);
             // Black's, as every figure on the graph is; the tooltip says so once.
-            let text = format!("{:.1}%", winrate * 100.0);
-            let layout = self.create_pango_layout(Some(&text));
+            let mut text = StackLabel::default();
+            text.write(|buf| {
+                use std::fmt::Write;
+                crate::util::write_pct1(buf, winrate)?;
+                buf.write_char('%')
+            });
+            let layout = self.create_pango_layout(Some(text.as_str()));
             let tx = (x + 5.0)
                 .min(geom.right - layout.pixel_size().0 as f32)
                 .max(geom.left);
