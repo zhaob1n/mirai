@@ -19,6 +19,12 @@ appid := "io.github.zhaob1n.Mirai"
 root := destdir + prefix
 icons := "crates/mirai/resources/icons/hicolor"
 
+# The checks every commit owes. Run from the repository root.
+check:
+    cargo fmt --all --check
+    cargo clippy --locked --workspace --all-targets -- -D warnings
+    cargo test --locked --workspace
+
 # Build both binaries in release mode.
 build:
     cargo build --locked --release -p mirai -p mirai-server

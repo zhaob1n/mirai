@@ -1410,9 +1410,9 @@ msgstr "{result}（估算）"
 
 #: crates/mirai/src/window.rs:1964
 #, rust-format
-msgid "KataGo lead after {visits} visit: {lead}"
-msgid_plural "KataGo lead after {visits} visits: {lead}"
-msgstr[0] "KataGo 目差（计算量 {visits}）：{lead}"
+msgid "KataGo lead for Black after {visits} visit: {lead}"
+msgid_plural "KataGo lead for Black after {visits} visits: {lead}"
+msgstr[0] "KataGo 黑方目差（计算量 {visits}）：{lead}"
 
 #: crates/mirai/src/window.rs:1970
 msgid "Score estimate"

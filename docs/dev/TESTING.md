@@ -23,6 +23,9 @@ cargo build --release --workspace
 cargo test -p mirai-proto --test wire_size -- --nocapture   # prints the measured byte budget
 ```
 
+`just check` runs formatting, all-target Clippy with warnings denied, and the full
+workspace suite with the lockfile — the checks every commit owes.
+
 For documentation edits, run `python tools/docs/check-links.py`. It checks local
 files and heading anchors, and refuses a source file cited with a line number: cite a symbol
 or a section, which survives the next edit. The optional adjacent `mirai-hmos` link is
@@ -44,7 +47,7 @@ needed, `cargo test -p <crate> -- --list`.
 | `mirai-proto` | INV-6 quantisation and the INV-2 flip; the frame length cap enforced *before* allocate; a control frame's zstd plaintext stops inflating at the read's limit; trailing bytes and a flag the stream does not allow refused; a subscription stream decodes frame by frame, compresses a repeat to a back-reference, refuses a bomb and an oversized window, and restores ownership sent as changes; a stream cannot run more than one window ahead of its reader; cert reuse; a mismatched pin refused as a mismatch, not as a generic failure; an openssl-style pin of the real certificate connects; a probe returns the fingerprint and opens no stream | `cargo test -p mirai-proto`. The byte budget is the `wire_size` command in §1 — read the printed numbers, do not copy them into this table |
 | `mirai-engine` | The JSON handed to KataGo (empty `avoidMoves` dropped, never `analyzeTurns`, `terminate` behind INV-3); decode order and Black-perspective values; a candidate cap keeps the engine's best, not KataGo's first; reporting perspective forced on the command line; a comma in an override path is an error; a user-supplied config is overridden only for the two thread counts; the generated analysis config carries every key KataGo demands and is not rewritten when unchanged; calibration selects the measured winner and covers the thread product; dropping a subscription forgets it before the tail is decoded; a decode failure still terminates the search; a dead remote address fails instead of hanging; the MRP session rules against a scripted server; a probe returns the fingerprint and sends no Hello, and a wrong pin fails before Hello | `cargo test -p mirai-engine`. These tests never start KataGo. A real engine is §4 |
 | `mirai-client` | A request built from the last setup/`PL` boundary, with territory komi taken from that boundary; a sweep hands back a result before the rest of the plan is dispatched; blunder drop measured from the mover, above the 2% noise floor; an illegal move changes nothing; dirty is a document token; an unpinned connect probes and waits, and Trust is what sends the pin; temperature 0 is deterministic and one bad report does not resign; Fox dialect normalised before `sgf::parse` | `cargo test -p mirai-client` |
-| `mirai-server` | Token shape; a misspelled key is an error; relative paths resolve against the config directory; the example config parses; exact-match auth (no `[[token]]` rejects everyone); a client cannot raise its own priority; an off-board or oversized request is refused with `BadRequest` before the engine sees it, and only allow-listed overrides reach the engine; a silent pre-auth connection is closed and its session slot returns; a cancelled subscription stops even when its stream is not read, and keeps its `max_subs` slot until it has; an oversized first frame, compressed or not, or `Hello` field is refused as `BadRequest` and kept out of the log | `cargo test -p mirai-server`. Example: `crates/mirai-server/server.example.toml` |
+| `mirai-server` | Token shape and placeholder rejection; misspelled keys and duplicate tokens refused; relative paths resolved against the config directory; an authenticated client cannot exceed its token's cross-connection subscription quota or raise priority; off-board, oversized or unbounded requests constrained before KataGo; silent pre-auth and blocked error writes release session slots; cancellation stops the search even when its stream is not read; oversized/compressed Hello refused without logging secrets; a truncated subscription preamble fails rather than hanging | `cargo test -p mirai-server`. Example: `crates/mirai-server/server.example.toml` |
 | `mirai` | Display-free projections and dispatch only: a comment or mark does not run the `Tree` refresh and one move projects once; a returning remote link re-requests analysis, only for the window's current engine; a score overlay is drawn on the real position, never a pinned variation; a pick is never faded; config merge and discovery order; a missing Human model does not overwrite the saved strength; handicap only where the board has points; cache power 0 or at least 2^14; Clear Board keeps size/rules/komi; the slider spans the line through the cursor; widget geometry lifted out of `snapshot()`; harness grammar; `EnginePool` sharing, stranding and teardown. Nothing drawn | `cargo test -p mirai`. What the window looks like is §5 |
 
 ## 3. Testing philosophy
@@ -212,8 +215,10 @@ printf '%s\n' '{"id":"gt","boardXSize":19,"boardYSize":19,"rules":"chinese","kom
 ## 5. Testing the GUI
 
 The harness lives in `crates/mirai/src/harness.rs`; use a **debug** build. Tune
-`wait:` for the local engine. Stderr records completed steps. Window layout is
-mapped in [`ARCHITECTURE.md` §7](ARCHITECTURE.md#7-gui-architecture).
+`wait:` for the local engine. Stderr records completed steps; a failed, missing,
+timed-out or malformed step makes the process exit 1 after normal shutdown.
+Successful scripts exit 0. Window layout is mapped in
+[`ARCHITECTURE.md` §7](ARCHITECTURE.md#7-gui-architecture).
 
 Action names are whatever `window::install_actions` registers. A typo logs
 `MISSING`. The recipes below name the actions they need. `win.open` and
@@ -273,13 +278,13 @@ Traps:
 
 | Step | Meaning | Delay after |
 |---|---|---|
-| `wait:<ms>` | Sleep. Non-numeric is **dropped**, not treated as zero | — |
+| `wait:<ms>` | Sleep. A non-numeric argument fails the script | — |
 | `wait-status:<substring>` | Wait up to 10 s for a visible label on the active window to contain the text | — |
 | `action:<prefix.name>` | Activate an action with no parameter | 120 ms |
 | `action:<prefix.name>=<string>` | Activate with a string parameter (`action:win.set-engine=workstation`, `action:win.edit-tool=triangle`) | 120 ms |
 | `press:<label substring>` | Activate the first matching mapped, sensitive button, action row or menu item; toggle an expander. Scoped to the visible dialog when one is up | 250 ms |
 | `page:<preferences page title>` | Open that `adw::PreferencesPage` (`page:Analysis`). The dialog must already be presented | 250 ms |
-| `set:<row title>=<number>` | Set the first visible matching `adw::SpinRow` (`set:Maximum Visits=2000`). Non-numeric is dropped, not treated as zero | 250 ms |
+| `set:<row title>=<number>` | Set the first visible matching `adw::SpinRow` (`set:Maximum Visits=2000`). A non-numeric argument fails the script | 250 ms |
 | `select:<row title>=<index>` | Set the first visible matching `adw::ComboRow`. Index 0 is its prompt or default | 250 ms |
 | `stack:<view stack page title>` | Show that `adw::ViewStack` page — `stack:Moves` for the branch graph | 250 ms |
 | `sort:<column title>` | Sort the first `GtkColumnView` by that column, and flip direction if it is already primary | 250 ms |
@@ -295,10 +300,11 @@ Traps:
 | `close-window` | Close only the active window through its normal shutdown path | 250 ms |
 | `quit` | `app.quit()`, ending the script | — |
 
-Unknown kinds are logged and skipped. Whitespace around steps is trimmed, so a
-script may wrap. `mod harness` is `#[cfg(debug_assertions)]` and `install`
-returns immediately when `MIRAI_HARNESS` is unset — **a release build ignores
-the variable. Always use a debug build.**
+Unknown or malformed steps fail the script, rather than silently skipping the
+step. Whitespace around steps is trimmed, so a script may wrap. `mod harness`
+is `#[cfg(debug_assertions)]` and `install` returns immediately when
+`MIRAI_HARNESS` is unset — **a release build ignores the variable. Always use
+a debug build.**
 
 Every step logs to stderr:
 
@@ -552,13 +558,15 @@ once the server is already up.
 ```sh
 cargo run -q -p mirai-server -- --generate-token        # 64 hex chars; needs no config file
 mkdir -p ~/.config/mirai && cp crates/mirai-server/server.example.toml ~/.config/mirai/server.toml
+chmod 600 ~/.config/mirai/server.toml                   # bearer token stays private
 $EDITOR ~/.config/mirai/server.toml                     # paste the token, set the engine paths
 cargo run -q -p mirai-server -- --print-fingerprint     # creates the cert if missing
 RUST_LOG=info,mirai_server=debug cargo run --release -p mirai-server
 ```
 
-`server.example.toml` is the annotated reference;
-`the_documented_minimal_example_parses` keeps it honest. `--config` and
+`server.example.toml` is the annotated reference; its all-zero token is
+deliberately invalid until replaced. `the_documented_minimal_example_requires_a_real_token`
+checks the minimal config's placeholder and its replacement. `--config` and
 `--listen` override the file. With no `[[token]]` block the server starts and
 warns that every client will be rejected. Lines to look for — version and
 thread count are whatever this process started:
@@ -584,7 +592,7 @@ persists nothing. Compare it with the server's startup log (the same grouping;
 
 ```text
 INFO connection open session=1 peer=127.0.0.1:53412
-INFO authenticated session=1 token=laptop max_subs=4
+INFO authenticated session=1 token=laptop max_subs=64
 INFO open subscription session=1 sub=1 engine=default moves=20 max_visits=Some(1000000) max_candidates=Some(10) priority=4
 INFO subscription done session=1 sub=1 visits=6500
 ```

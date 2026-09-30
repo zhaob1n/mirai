@@ -173,7 +173,7 @@ mod tests {
     use super::*;
     use crate::frame::{self, FrameBuf, SUB_STREAM_LEVEL, SubStreamDecoder, SubStreamEncoder};
     use crate::types::PROTO_VERSION;
-    use mirai_core::{Color, Point, Size};
+    use mirai_core::{Color, Point, RuleSet, Size};
 
     fn sample_report() -> Report {
         let mut r = Report::empty(42, Color::White);
@@ -282,6 +282,48 @@ mod tests {
                 0x04, 0x13, 0x13, 0x00,
             ]
         );
+    }
+
+    /// Declaration order is the wire discriminant (PROTOCOL §6). Reordering a variant
+    /// renumbers every later one and still leaves the Hello/Welcome byte fixtures green.
+    #[test]
+    fn message_discriminants_match_the_catalogue() {
+        fn lead(msg: &impl Serialize) -> u8 {
+            postcard::to_stdvec(msg).unwrap()[0]
+        }
+        let req = AnalyzeReq::new(Size::square(19), RuleSet::Chinese, 7.5);
+        assert_eq!(
+            lead(&ClientMsg::Open {
+                sub: 0,
+                engine: None,
+                req,
+            }),
+            1
+        );
+        assert_eq!(lead(&ClientMsg::Cancel { sub: 1 }), 2);
+        assert_eq!(lead(&ClientMsg::ListEngines), 3);
+        assert_eq!(lead(&ClientMsg::Ping(7)), 4);
+        assert_eq!(lead(&ServerMsg::Engines(Vec::new())), 1);
+        assert_eq!(lead(&ServerMsg::Opened { sub: 1 }), 2);
+        assert_eq!(lead(&ServerMsg::Pong(7)), 3);
+        assert_eq!(
+            lead(&ServerMsg::Error {
+                sub: None,
+                code: ErrCode::Internal,
+                msg: String::new(),
+            }),
+            4
+        );
+        assert_eq!(lead(&SubMsg::Report(Report::empty(0, Color::Black))), 0);
+        assert_eq!(lead(&SubMsg::Done(Report::empty(0, Color::Black))), 1);
+        assert_eq!(lead(&SubMsg::Failed(String::new())), 2);
+        assert_eq!(postcard::to_stdvec(&ErrCode::BadVersion).unwrap(), [0]);
+        assert_eq!(postcard::to_stdvec(&ErrCode::Unauthorized).unwrap(), [1]);
+        assert_eq!(postcard::to_stdvec(&ErrCode::NoSuchEngine).unwrap(), [2]);
+        assert_eq!(postcard::to_stdvec(&ErrCode::TooManySubs).unwrap(), [3]);
+        assert_eq!(postcard::to_stdvec(&ErrCode::BadRequest).unwrap(), [4]);
+        assert_eq!(postcard::to_stdvec(&ErrCode::EngineFailed).unwrap(), [5]);
+        assert_eq!(postcard::to_stdvec(&ErrCode::Internal).unwrap(), [6]);
     }
 
     /// A stream of maps through the real codec, sender and receiver each with their own

@@ -13,16 +13,18 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use clap::Parser;
-use mirai_engine::{Engine, LocalEngine};
+use mirai_engine::{Engine, EngineError, LocalEngine, LocalEngineConfig, SubEvent, Subscription};
 use mirai_proto::transport;
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, watch};
 use tracing::{error, info, warn};
 
 /// Caps pre-authentication frame buffers as well as authenticated sessions.
-/// A slot taken before `Hello` is released when `PREAUTH_DEADLINE` expires,
-/// so silent peers cannot fill this.
+/// A silent peer releases its slot at `PREAUTH_DEADLINE`; a peer whose first
+/// frame is rejected gets only a short additional bounded delivery window.
 const MAX_SESSIONS: usize = 32;
 
 use config::ServerConfig;
@@ -150,8 +152,20 @@ async fn run(
         );
         return ExitCode::FAILURE;
     }
-    let engines = start_engines(&cfg).await;
-    if engines.is_empty() {
+    // Install signal handlers before KataGo's potentially minutes-long startup.
+    // A signal during a cold GPU handshake cancels that spawn, shuts down any
+    // engines already started, and never binds the listener.
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        shutdown_tx.send_replace(true);
+    });
+    let Started { named, live } = start_engines(&cfg, &mut shutdown_rx).await;
+    if *shutdown_rx.borrow() {
+        shutdown_engines(live).await;
+        return ExitCode::SUCCESS;
+    }
+    if named.is_empty() {
         error!("no engine started; there is nothing to serve");
         return ExitCode::FAILURE;
     }
@@ -163,20 +177,17 @@ async fn run(
         Ok(e) => e,
         Err(e) => {
             error!(%listen, "could not bind: {e}");
+            shutdown_engines(live).await;
             return ExitCode::FAILURE;
         }
     };
 
     let host = Arc::new(Host {
-        engines,
+        engines: named,
         tokens: cfg
             .tokens
             .into_iter()
-            .map(|t| Token {
-                value: t.value,
-                name: t.name,
-                max_subs: t.max_subs,
-            })
+            .map(|t| Token::new(t.value, t.name, t.max_subs))
             .collect(),
     });
 
@@ -193,37 +204,207 @@ async fn run(
     );
 
     let sessions = Arc::new(Semaphore::new(MAX_SESSIONS));
-    while let Some(incoming) = endpoint.accept().await {
-        let peer = incoming.remote_address();
-        let Ok(permit) = Arc::clone(&sessions).try_acquire_owned() else {
-            warn!(
-                %peer,
-                max_sessions = MAX_SESSIONS,
-                "connection refused: session limit reached"
-            );
-            incoming.refuse();
-            continue;
-        };
-        let host = Arc::clone(&host);
-        tokio::spawn(async move {
-            // Keeping the owned permit in the task releases it on every return
-            // and unwind, including when the pre-authentication deadline closes
-            // a silent peer.
-            let _permit = permit;
-            session::serve(host, incoming, session::PREAUTH_DEADLINE).await;
-        });
+    loop {
+        tokio::select! {
+            biased;
+            _ = shutdown_rx.changed() => {
+                info!("termination signal, shutting down");
+                break;
+            }
+            incoming = endpoint.accept() => {
+                let Some(incoming) = incoming else {
+                    break;
+                };
+                let peer = incoming.remote_address();
+                let Ok(permit) = Arc::clone(&sessions).try_acquire_owned() else {
+                    warn!(
+                        %peer,
+                        max_sessions = MAX_SESSIONS,
+                        "connection refused: session limit reached"
+                    );
+                    incoming.refuse();
+                    continue;
+                };
+                let host = Arc::clone(&host);
+                tokio::spawn(async move {
+                    // Keeping the owned permit in the task releases it on every return
+                    // and unwind, including when the pre-authentication deadline closes
+                    // a silent peer.
+                    let _permit = permit;
+                    session::serve(host, incoming, session::PREAUTH_DEADLINE).await;
+                });
+            }
+        }
     }
 
+    endpoint.close(quinn::VarInt::from_u32(0), b"bye");
+    // Sessions notice the close and drop their searches. Don't wait out a stuck one:
+    // the control-write budget already bounds that, and a second signal exits now.
+    let _ = tokio::time::timeout(
+        Duration::from_secs(5),
+        sessions.acquire_many(MAX_SESSIONS as u32),
+    )
+    .await;
+    drop(host);
+    shutdown_engines(live).await;
     info!("endpoint closed");
     ExitCode::SUCCESS
 }
 
+struct Started {
+    named: Vec<NamedEngine>,
+    live: Vec<Arc<LiveEngine>>,
+}
+
+/// One KataGo process, replaced if it exits.
+///
+/// `LocalEngine` marks itself dead and fails live searches, then stays dead. A headless
+/// host has nobody to toggle the profile, so the next failed subscribe starts a new
+/// process. Restarts back off so a bad binary does not fork in a loop.
+struct LiveEngine {
+    name: String,
+    cfg: LocalEngineConfig,
+    current: std::sync::Mutex<Option<Arc<LocalEngine>>>,
+    restarting: AtomicBool,
+    stop: watch::Sender<bool>,
+    weak: std::sync::Weak<LiveEngine>,
+}
+
+fn lock_engine(
+    mutex: &std::sync::Mutex<Option<Arc<LocalEngine>>>,
+) -> std::sync::MutexGuard<'_, Option<Arc<LocalEngine>>> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+impl LiveEngine {
+    fn start(name: String, engine: LocalEngine, cfg: LocalEngineConfig) -> Arc<LiveEngine> {
+        Arc::new_cyclic(|weak| LiveEngine {
+            name,
+            cfg,
+            current: std::sync::Mutex::new(Some(Arc::new(engine))),
+            restarting: AtomicBool::new(false),
+            stop: watch::channel(false).0,
+            weak: weak.clone(),
+        })
+    }
+
+    fn kick(&self) {
+        if *self.stop.borrow() || self.restarting.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let Some(this) = self.weak.upgrade() else {
+            self.restarting.store(false, Ordering::Release);
+            return;
+        };
+        info!(engine = %self.name, "engine exited; restarting");
+        tokio::spawn(async move { this.restart().await });
+    }
+
+    async fn restart(self: Arc<Self>) {
+        let mut stop = self.stop.subscribe();
+        let mut delay = Duration::from_secs(1);
+        loop {
+            if *stop.borrow() {
+                break;
+            }
+            tokio::select! {
+                _ = stop.changed() => break,
+                _ = tokio::time::sleep(delay) => {}
+            }
+            if *stop.borrow() {
+                break;
+            }
+            // Dropping a pending spawn kills its child (LocalEngine sets kill_on_drop).
+            // Shutdown must not wait out the full first-run GPU startup timeout.
+            let started = tokio::select! {
+                _ = stop.changed() => break,
+                result = LocalEngine::spawn(self.cfg.clone()) => result,
+            };
+            match started {
+                Ok(engine) => {
+                    let mut pending = Some(engine);
+                    {
+                        let mut current = lock_engine(&self.current);
+                        if !*self.stop.borrow() {
+                            *current = pending.take().map(Arc::new);
+                        }
+                    }
+                    if let Some(engine) = pending {
+                        engine.shutdown().await;
+                    } else {
+                        info!(engine = %self.name, "engine restarted");
+                    }
+                    break;
+                }
+                Err(err) => {
+                    warn!(engine = %self.name, "engine restart failed, retrying: {err}");
+                    delay = (delay * 2).min(Duration::from_secs(60));
+                }
+            }
+        }
+        self.restarting.store(false, Ordering::Release);
+    }
+
+    async fn shutdown(self: Arc<Self>) {
+        self.stop.send_replace(true);
+        let current = lock_engine(&self.current).take();
+        if let Some(engine) = current.and_then(|engine| Arc::try_unwrap(engine).ok()) {
+            engine.shutdown().await;
+        }
+    }
+}
+
+impl Engine for LiveEngine {
+    fn subscribe(&self, req: mirai_proto::types::AnalyzeReq) -> Subscription {
+        if *self.stop.borrow() {
+            return Subscription::failed(EngineError::EngineExited("shutting down".into()));
+        }
+        let Some(engine) = lock_engine(&self.current).clone() else {
+            self.kick();
+            return Subscription::failed(EngineError::EngineExited("katago is restarting".into()));
+        };
+        let sub = engine.subscribe(req);
+        if matches!(
+            sub.current(),
+            SubEvent::Failed(EngineError::EngineExited(_))
+        ) {
+            self.kick();
+        }
+        sub
+    }
+
+    fn describe(&self) -> mirai_proto::types::EngineDesc {
+        match lock_engine(&self.current).as_ref() {
+            Some(engine) => engine.describe(),
+            None => mirai_proto::types::EngineDesc::placeholder(self.name.clone()),
+        }
+    }
+}
+
+async fn shutdown_engines(live: Vec<Arc<LiveEngine>>) {
+    let mut tasks = tokio::task::JoinSet::new();
+    for engine in live {
+        tasks.spawn(engine.shutdown());
+    }
+    while let Some(result) = tasks.join_next().await {
+        if let Err(err) = result {
+            warn!("engine shutdown task failed: {err}");
+        }
+    }
+}
+
 /// Starts every configured engine. A failure is logged and skipped, never fatal on its
 /// own: one broken GPU config should not take a working engine offline with it.
-async fn start_engines(cfg: &ServerConfig) -> Vec<NamedEngine> {
+async fn start_engines(cfg: &ServerConfig, shutdown: &mut watch::Receiver<bool>) -> Started {
     let default_log_dir = default_log_dir();
-    let mut out = Vec::with_capacity(cfg.engines.len());
+    let mut named = Vec::with_capacity(cfg.engines.len());
+    let mut live = Vec::with_capacity(cfg.engines.len());
     for e in &cfg.engines {
+        if *shutdown.borrow() {
+            break;
+        }
         info!(
             engine = %e.name,
             katago = %e.katago.display(),
@@ -237,7 +418,11 @@ async fn start_engines(cfg: &ServerConfig) -> Vec<NamedEngine> {
                 continue;
             }
         };
-        match LocalEngine::spawn(local).await {
+        let started = tokio::select! {
+            _ = shutdown.changed() => break,
+            result = LocalEngine::spawn(local.clone()) => result,
+        };
+        match started {
             Ok(engine) => {
                 let desc = engine.describe();
                 info!(
@@ -248,17 +433,53 @@ async fn start_engines(cfg: &ServerConfig) -> Vec<NamedEngine> {
                     human_model = desc.has_human_model,
                     "engine ready"
                 );
-                out.push(NamedEngine {
+                let running = LiveEngine::start(e.name.clone(), engine, local);
+                named.push(NamedEngine {
                     name: e.name.clone(),
-                    engine: Arc::new(engine),
+                    engine: running.clone(),
                 });
+                live.push(running);
             }
             Err(err) => {
                 error!(engine = %e.name, "engine failed to start, continuing without it: {err}");
             }
         }
     }
-    out
+    Started { named, live }
+}
+
+/// First SIGINT, SIGTERM or SIGHUP starts an orderly shutdown. A second one exits
+/// immediately, the same way the desktop application does when quit is wedged.
+async fn shutdown_signal() {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let (mut interrupt, mut terminate, mut hangup) = match (
+        signal(SignalKind::interrupt()),
+        signal(SignalKind::terminate()),
+        signal(SignalKind::hangup()),
+    ) {
+        (Ok(interrupt), Ok(terminate), Ok(hangup)) => (interrupt, terminate, hangup),
+        _ => {
+            warn!("could not install termination signal handlers");
+            std::future::pending::<()>().await;
+            return;
+        }
+    };
+    tokio::select! {
+        _ = interrupt.recv() => {}
+        _ = terminate.recv() => {}
+        _ = hangup.recv() => {}
+    }
+    tokio::spawn(async move {
+        // 128 + the signal number, as a shell reports a process that signal killed.
+        let code = tokio::select! {
+            _ = interrupt.recv() => 128 + 2,
+            _ = terminate.recv() => 128 + 15,
+            _ = hangup.recv() => 128 + 1,
+        };
+        warn!("second termination signal, exiting immediately");
+        std::process::exit(code);
+    });
 }
 
 /// Subject alternative names for a generated certificate. Clients verify by SHA-256
@@ -382,5 +603,82 @@ mod tests {
         );
         assert_eq!(a.listen.as_deref(), Some("127.0.0.1:9678"));
         assert!(a.print_fingerprint);
+    }
+
+    /// A process that dies during a query must not leave the headless host
+    /// permanently advertising a dead engine. The failed request is not replayed;
+    /// a later request uses a newly spawned KataGo.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_dead_engine_restarts_for_a_later_request() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "mirai-server-restart-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let script = dir.join("katago");
+        let marker = dir.join("ran-once");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nread -r version\nread -r models\n\
+                 printf '%s\\n' '{{\"id\":\"v0\",\"action\":\"query_version\",\"version\":\"fake\"}}' \
+                 '{{\"id\":\"m0\",\"action\":\"query_models\",\"models\":[]}}'\n\
+                 if [ ! -e '{}' ]; then\n\
+                   touch '{}'\n\
+                   read -r query\n\
+                   exit 17\n\
+                 fi\n\
+                 while read -r query; do :; done\n",
+                marker.display(),
+                marker.display(),
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let mut cfg =
+            LocalEngineConfig::new("fake", &script, dir.join("model"), dir.join("config"));
+        cfg.log_dir = dir.clone();
+        cfg.startup_timeout = Duration::from_secs(2);
+        let first = LocalEngine::spawn(cfg.clone()).await.unwrap();
+        let engine = LiveEngine::start("fake".into(), first, cfg);
+        let req = || {
+            mirai_proto::types::AnalyzeReq::new(
+                mirai_core::Size::square(19),
+                mirai_core::RuleSet::Chinese,
+                7.5,
+            )
+        };
+        let failure =
+            tokio::time::timeout(Duration::from_secs(2), engine.subscribe(req()).finish())
+                .await
+                .expect("first KataGo did not exit")
+                .unwrap_err();
+        assert!(matches!(failure, EngineError::EngineExited(_)), "{failure}");
+        assert!(matches!(
+            engine.subscribe(req()).current(),
+            SubEvent::Failed(EngineError::EngineExited(_))
+        ));
+
+        let mut recovered = false;
+        for _ in 0..40 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let sub = engine.subscribe(req());
+            if matches!(sub.current(), SubEvent::Pending) {
+                recovered = true;
+                break;
+            }
+        }
+        assert!(recovered, "a later request still sees the dead process");
+        engine.shutdown().await;
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

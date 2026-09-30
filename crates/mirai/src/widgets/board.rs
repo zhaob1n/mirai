@@ -114,6 +114,17 @@ impl Layout {
         }
         Some(size.point(ix as u8, iy as u8))
     }
+
+    /// Whether `(x, y)` lies on the grid, up to half a cell outside its outer lines.
+    /// The coordinate margin and the letterbox are not the board.
+    fn on_grid(&self, size: Size, x: f64, y: f64) -> bool {
+        if self.cell <= 0.0 {
+            return false;
+        }
+        let fx = (x as f32 - self.origin_x) / self.cell;
+        let fy = (y as f32 - self.origin_y) / self.cell;
+        (-0.5..=size.w as f32 - 0.5).contains(&fx) && (-0.5..=size.h as f32 - 0.5).contains(&fy)
+    }
 }
 
 /// Opacity floor and ceiling for a candidate blob.
@@ -235,10 +246,11 @@ fn is_dark() -> bool {
     adw::StyleManager::default().is_dark()
 }
 
-/// A hit-tested intersection click. Window installs the only hook.
+/// A click delivered to the window hook. `point` is `None` when the pointer
+/// missed every intersection: Play's right-click still deletes the branch.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct BoardClick {
-    pub point: Point,
+    pub point: Option<Point>,
     pub button: u32,
 }
 
@@ -1322,12 +1334,23 @@ impl BoardView {
     }
 
     /// Hit-tests `(x, y)` and delivers the click to the window hook. No default play path.
+    ///
+    /// A secondary click on the grid is delivered even between intersections: in the
+    /// Play tool it deletes the current branch and needs no point. Off the grid, and for
+    /// every other button — a placement — a miss is not a click.
     pub(crate) fn click_at(&self, button: u32, x: f64, y: f64) {
         crate::widgets::release_focus(self);
-        let Some(point) = self.point_at(x, y) else {
-            return;
+        let point = self.point_at(x, y);
+        let on_grid = || {
+            let size = self.imp().board_size();
+            self.imp().layout.get().on_grid(size, x, y)
         };
-        self.clear_preview();
+        if point.is_none() && (button != gdk::BUTTON_SECONDARY || !on_grid()) {
+            return;
+        }
+        if point.is_some() {
+            self.clear_preview();
+        }
         let hook = self.imp().click_hook.borrow().clone();
         if let Some(hook) = hook {
             hook(BoardClick { point, button });
@@ -1876,6 +1899,21 @@ mod tests {
         assert_eq!(l.hit(size, 50.0, 40.0 - 20.0), None);
         // A zero-size layout never hits.
         assert_eq!(Layout::default().hit(size, 0.0, 0.0), None);
+    }
+
+    /// Between four intersections is a miss for placement but still the board; the
+    /// coordinate margin and anything past half a cell outside the lines is not.
+    #[test]
+    fn the_grid_extends_half_a_cell_past_its_lines() {
+        let size = Size::square(19);
+        let l = layout();
+        assert_eq!(l.hit(size, 65.0, 55.0), None);
+        assert!(l.on_grid(size, 65.0, 55.0));
+        assert!(l.on_grid(size, 50.0 + 18.0 * 30.0 + 10.0, 40.0));
+        assert!(!l.on_grid(size, 50.0 + 18.0 * 30.0 + 20.0, 40.0));
+        assert!(!l.on_grid(size, 50.0 - 20.0, 40.0));
+        assert!(!l.on_grid(size, 50.0, 40.0 - 20.0));
+        assert!(!Layout::default().on_grid(size, 0.0, 0.0));
     }
 
     #[test]

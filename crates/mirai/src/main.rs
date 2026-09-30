@@ -111,5 +111,11 @@ fn main() -> glib::ExitCode {
         harness::install(app.upcast_ref());
     });
 
-    application.run()
+    let code = application.run();
+    // After `run`: the application has shut down its windows and engines normally.
+    #[cfg(debug_assertions)]
+    if harness::failed() {
+        return glib::ExitCode::FAILURE;
+    }
+    code
 }

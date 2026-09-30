@@ -180,8 +180,8 @@ on turns the other off.
 ### One-off score estimate
 
 <kbd>Ctrl</kbd>+<kbd>E</kbd> runs a short 400-visit search, derives the dead stones from the
-ownership map, counts the board under the game's own rules and komi, and shows the count next
-to KataGo's own score lead. Works whether or not live analysis is on.
+ownership map, counts the board under the game's own rules and komi, and shows the count
+next to KataGo's Black-positive score lead. Works whether or not live analysis is on.
 
 ---
 
@@ -298,6 +298,11 @@ and <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes back the whole exchange rather than a doc
 *Both (no engine)* is still a game: you play both colours, there is no engine move and no
 **Resign**, and editing stays closed until the session ends.
 
+You can navigate back to review earlier moves during a game. The clock and engine
+continue at the latest played move, not the viewed position; when the engine replies,
+the board follows the new move. Playing on an earlier position is disabled, and
+**Undo** retracts the latest exchange rather than the position you were reviewing.
+
 **Clocks** appear in the play bar under the board navigation, not in the header. Black is
 `●`, White is `○`, and the side to move is shown in the accent colour.
 
@@ -326,7 +331,8 @@ After two passes mirai searches briefly, estimates dead stones from ownership an
 under the game's rules and komi. The scoring view fades dead stones and marks territory
 with squares in the owner's colour.
 
-**Click any group to toggle it alive or dead.** The count updates locally, without another
+**Click any group to toggle it alive or dead** once the count is shown; while the status
+line says `Counting…` the board is read-only. The count updates locally, without another
 engine query; use it to correct a misjudged group or seki. **Close** keeps counting;
 **Review Game** ends the session so the record can be edited, and **Analyse Game** ends it
 and starts whole-game analysis.
@@ -355,11 +361,14 @@ mirai-server --generate-token
 ```
 mkdir -p ~/.config/mirai
 cp crates/mirai-server/server.example.toml ~/.config/mirai/server.toml
+chmod 600 ~/.config/mirai/server.toml
 ```
 
 That path is `$XDG_CONFIG_HOME/mirai/server.toml` when the variable is set. Paste the
-token into `[[token]]` and set the KataGo binary and model. Relative paths resolve next
-to the config file. A token longer than 256 bytes stops the server starting.
+generated token into `[[token]]` (the example's all-zero token is rejected) and set
+the KataGo binary and model. Keep this bearer secret readable only by your account;
+the server warns if other users can read the file. Relative paths resolve next to
+the config file. A token longer than 256 bytes stops the server starting.
 
 **3. Start it.**
 
@@ -372,10 +381,16 @@ lazy first query would look like a hang — then prints its **certificate finger
 that visible. `mirai-server --print-fingerprint` prints it again at any time. If one engine
 fails to start it is logged and skipped; the server exits only if none came up.
 
+If a running KataGo later exits, new requests fail until the server restarts that
+engine in the background; in-flight requests are not replayed.
+
 **4. Open UDP port 9678** through the desktop's firewall. The example listens on
 `0.0.0.0:9678`; `127.0.0.1` would be this machine only.
 
 One server serves several clients from the one KataGo; it does not start a copy per person.
+KataGo analyses `analysis_threads` positions at once and queues the rest: an engine move or
+live analysis goes ahead of a whole-game analysis, otherwise first come, first served.
+`max_subs` (default 64) only caps how many requests one token may have queued or running.
 
 ### On the laptop
 
@@ -468,7 +483,7 @@ does not delete engine profiles.
 
 | Setting | Default | Range | Change it when |
 |---|---|---|---|
-| **Mode** | Visits | Visits / Time per move / Human-like | Visits controls search work; Time per move fixes the time; Human-like imitates a rank and requires a compatible network |
+| **Mode** | Visits | Visits / Time per move / Human-like | Visits controls search work; Time per move fixes the time; Human-like imitates a rank and requires a compatible network — without a clock it searches 40 visits a move |
 | **Visits per Move** | 800 | 1 – 1 000 000 | strength in Visits mode |
 | **Seconds per Move** | 5.0 | 0.1 – 600 | fixed time per move |
 | **Human Model Profile** | `rank_5k` | free text | rank to imitate with a human model |

@@ -46,6 +46,10 @@ const BYE_CODE: u32 = 0;
 /// Longest backoff between reconnection attempts.
 const MAX_BACKOFF_MS: u64 = 8_000;
 
+/// A server-opened stream must identify its subscription promptly. With no usable
+/// preamble there is no id to fail individually, so the whole connection is lost.
+const PREAMBLE_BUDGET: Duration = Duration::from_secs(10);
+
 // ---------------------------------------------------------------------------------------
 // Public surface
 // ---------------------------------------------------------------------------------------
@@ -703,9 +707,24 @@ async fn uni_acceptor(conn: Connection, int: mpsc::UnboundedSender<Int>) {
 /// Reads the 4-byte LE subscription preamble, then framed [`SubMsg`]s.
 async fn sub_reader(mut recv: RecvStream, int: mpsc::UnboundedSender<Int>) {
     let mut preamble = [0u8; 4];
-    if let Err(e) = recv.read_exact(&mut preamble).await {
-        tracing::debug!(error = %e, "subscription stream without a usable preamble");
-        return;
+    match tokio::time::timeout(PREAMBLE_BUDGET, recv.read_exact(&mut preamble)).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(quinn::ReadExactError::ReadError(quinn::ReadError::Reset(code))))
+            if code.into_inner() == u64::from(CANCEL_CODE) =>
+        {
+            // A Cancel may reset a just-opened stream before its preamble arrives.
+            // That subscription was already removed locally; other searches survive.
+            return;
+        }
+        Ok(Err(e)) => {
+            tracing::debug!(error = %e, "subscription stream without a usable preamble");
+            let _ = int.send(Int::Lost(format!("subscription stream preamble: {e}")));
+            return;
+        }
+        Err(_) => {
+            let _ = int.send(Int::Lost("subscription stream preamble timed out".into()));
+            return;
+        }
     }
     let sub = u32::from_le_bytes(preamble);
 
@@ -908,5 +927,62 @@ mod tests {
             }
             Err(_elapsed) => {} // still handshaking; the QUIC idle timeout will end it
         }
+    }
+    /// Without four preamble bytes no subscription id can be recovered. The reader
+    /// must fail the connection, not leave the Open pending indefinitely.
+    #[tokio::test]
+    async fn a_truncated_subscription_preamble_fails_the_connection() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let dir = std::env::temp_dir().join(format!(
+                "mirai-remote-preamble-{}-{nonce}",
+                std::process::id()
+            ));
+            std::fs::create_dir(&dir).unwrap();
+            let (certs, key) = transport::load_or_generate_cert(
+                &dir.join("cert.pem"),
+                &dir.join("key.pem"),
+                &["localhost".into()],
+            )
+            .unwrap();
+            let fp = transport::fingerprint_of(&certs);
+            let endpoint = transport::server_endpoint(
+                std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 0)),
+                certs,
+                key,
+            )
+            .unwrap();
+            let addr = endpoint.local_addr().unwrap();
+            let accepting = endpoint.clone();
+            let server = tokio::spawn(async move {
+                let conn = accepting.accept().await.unwrap().await.unwrap();
+                let mut stream = conn.open_uni().await.unwrap();
+                tokio::io::AsyncWriteExt::write_all(&mut stream, &[7])
+                    .await
+                    .unwrap();
+                stream.finish().unwrap();
+                conn.closed().await;
+            });
+            let (conn, _) = transport::connect(&format!("mirai://{addr}"), fp)
+                .await
+                .unwrap();
+            let recv = conn.accept_uni().await.unwrap();
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            sub_reader(recv, tx).await;
+            match rx.recv().await {
+                Some(Int::Lost(why)) => assert!(why.contains("preamble"), "{why}"),
+                _ => panic!("truncated preamble did not fail the connection"),
+            }
+            conn.close(VarInt::from_u32(BYE_CODE), b"bye");
+            server.await.unwrap();
+            let _ = std::fs::remove_dir_all(dir);
+        })
+        .await
+        .expect("truncated preamble hung");
     }
 }

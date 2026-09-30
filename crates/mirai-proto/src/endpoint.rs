@@ -59,6 +59,11 @@ pub fn parse_url(url: &str) -> Result<(String, u16), AddressError> {
             if host.is_empty() {
                 return Err(AddressError::new(url, "empty host"));
             }
+            // `fe80::1` would otherwise split into host `fe80:` and port 1. The grammar
+            // allows an IPv6 literal only inside `[]`.
+            if host.contains(':') {
+                return Err(AddressError::new(url, "IPv6 literals must be bracketed"));
+            }
             Ok((
                 host.to_string(),
                 port.parse()
@@ -127,6 +132,23 @@ mod tests {
         assert_eq!(
             parse_url("mirai://[::1]").unwrap(),
             ("::1".into(), DEFAULT_PORT)
+        );
+    }
+
+    #[test]
+    fn a_bare_ipv6_literal_is_rejected_instead_of_splitting_off_a_port() {
+        for url in [
+            "fe80::1",
+            "mirai://fe80::1",
+            "mirai://fe80::1/",
+            "mirai://fe80::1:9678",
+        ] {
+            let err = parse_url(url).expect_err(url);
+            assert_eq!(err.reason, "IPv6 literals must be bracketed", "{url}");
+        }
+        assert_eq!(
+            parse_url("mirai://[fe80::1]:9678").unwrap(),
+            ("fe80::1".to_string(), 9678)
         );
     }
 

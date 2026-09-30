@@ -586,11 +586,12 @@ fn handle_change(ui: &Ui, change: Change) {
                 ui.board.clear_preview();
             }
             ui.move_tree.refresh();
-            // The board has just dropped its pin; the row would name another position's
-            // move once `refresh` rewrites it in place.
+            // The pin belongs to the node we just left. `moved_cursor` emits Report
+            // immediately after this, and that handler refreshes the panel. Doing it
+            // here as well rebuilt the candidate rows twice on every navigation.
             ui.analysis.clear_selection();
-            ui.analysis.refresh();
             update_editor_actions(ui);
+            update_play_lock(ui);
         }
         Change::Report => {
             ui.board.refresh_report();
@@ -617,9 +618,6 @@ fn handle_change(ui: &Ui, change: Change) {
             update_clocks(ui);
             update_play_controls(ui);
             sync_play_editability(ui);
-            ui.board.set_play_locked(
-                ui.play.is_active() && !matches!(ui.play.play_state(), PlayState::HumanTurn),
-            );
             update_editor_actions(ui);
         }
         Change::BatchProgress(_, _) => schedule_batch_projection(ui),
@@ -675,7 +673,7 @@ fn connect_editor_tools(window: &MiraiWindow, ui: &Ui) {
 
 fn update_editor_actions(ui: &Ui) {
     let active = ui.play.is_active();
-    let human = matches!(ui.play.play_state(), PlayState::HumanTurn);
+    let human = ui.play.human_can_move();
     if let Some(action) = win_simple(ui, "undo") {
         action.set_enabled(if active { true } else { ui.state.can_undo() });
     }
@@ -774,19 +772,28 @@ fn install_board_hook(ui: &Ui) {
 }
 
 fn on_board_click(ui: &Ui, click: BoardClick) {
-    let p = click.point;
-    if p.is_pass() {
-        return;
-    }
     let primary = click.button == gdk::BUTTON_PRIMARY;
     let secondary = click.button == gdk::BUTTON_SECONDARY;
+    // A pass is not an intersection a click can land on.
+    let point = click.point.filter(|p| !p.is_pass());
 
     if ui.play.is_active() {
-        if primary {
+        // A miss is not a move. Secondary clicks stay ignored for the whole game.
+        if let Some(p) = point.filter(|_| primary) {
             ui.play.on_board_click(p);
         }
         return;
     }
+
+    let Some(p) = point else {
+        // Play's right-click deletes the current branch and does not need an
+        // intersection. Setup and marks do; a miss there is not a click.
+        if secondary && ui.state.editor_tool() == EditorTool::Play {
+            ui.board.clear_preview();
+            delete_branch(ui);
+        }
+        return;
+    };
 
     if secondary {
         ui.board.clear_preview();
@@ -982,10 +989,10 @@ fn update_clocks(ui: &Ui) {
     ui.clock_box.set_visible(true);
     ui.play_bar.set_visible(true);
 
-    let to_play = ui.state.to_play();
+    let to_play = ui.play.side_to_move();
     for (label, mine) in [
-        (&ui.clock_black, to_play == Color::Black),
-        (&ui.clock_white, to_play == Color::White),
+        (&ui.clock_black, to_play == Some(Color::Black)),
+        (&ui.clock_white, to_play == Some(Color::White)),
     ] {
         if mine {
             label.add_css_class("active");
@@ -1002,8 +1009,7 @@ fn update_play_controls(ui: &Ui) {
         PlayState::HumanTurn | PlayState::AiThinking | PlayState::AiStalled(_)
     );
     ui.play_controls.set_visible(in_progress);
-    ui.pass_button
-        .set_sensitive(matches!(state, PlayState::HumanTurn));
+    update_play_lock(ui);
     ui.retry_button
         .set_visible(matches!(state, PlayState::AiStalled(_)));
     ui.undo_button.set_sensitive(ui.play.is_active());
@@ -1012,6 +1018,14 @@ fn update_play_controls(ui: &Ui) {
     ui.play_bar
         .set_visible(in_progress || ui.clock_box.is_visible());
     sync_play_layout(ui);
+}
+
+/// The human moves only on their turn at the play head. Reviewing an earlier position
+/// during a game locks the board and Pass, so nothing looks playable that is refused.
+fn update_play_lock(ui: &Ui) {
+    let can_move = ui.play.human_can_move();
+    ui.board.set_play_locked(ui.play.is_active() && !can_move);
+    ui.pass_button.set_sensitive(can_move);
 }
 
 fn versus(black: &str, white: &str) -> String {
@@ -1956,11 +1970,11 @@ fn show_estimate(ui: &Ui, report: &Report) {
     );
     let visits_label = util::si_visits(report.root.visits);
     let lead_text = util::signed1(lead);
-    // Translators: {visits} is a visit count, sometimes abbreviated (1.2k). {lead} is a
-    // signed score, such as +3.4.
+    // Translators: {visits} is a visit count, sometimes abbreviated (1.2k). {lead} is
+    // Black's signed score lead, positive when Black is ahead, such as +3.4.
     let lead_line = ngettext_f(
-        "KataGo lead after {visits} visit: {lead}",
-        "KataGo lead after {visits} visits: {lead}",
+        "KataGo lead for Black after {visits} visit: {lead}",
+        "KataGo lead for Black after {visits} visits: {lead}",
         report.root.visits as u64,
         &[("visits", &visits_label), ("lead", &lead_text)],
     );

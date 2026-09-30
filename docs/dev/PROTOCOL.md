@@ -53,6 +53,7 @@ Parsing (`endpoint.rs` — `parse_url`), which a client MUST reproduce:
 3. A leading `[` starts an IPv6 literal ending at the first `]`. An optional `:port`
    may follow; anything else after `]` is an error.
 4. Otherwise split host and port at the **last** `:`; a non-numeric port is an error.
+   If the host side still contains `:`, reject the URL: IPv6 literals must be bracketed.
 5. Absent port means 9678.
 
 No path, query or userinfo. Credentials travel in `Hello.token`, never in the URL.
@@ -96,7 +97,7 @@ MRP pins certificates instead of using PKI, so a LAN server needs no public DNS 
 | Later connections: compare, and abort the TLS handshake on mismatch. A mismatch is a **hard failure** — no fallback check, no one-time override, no retry of that connection. | MUST |
 | Do NOT validate against a trust store, do NOT validate hostname/SAN, do NOT reject on `notBefore`/`notAfter`. The fingerprint is the entire check. | MUST |
 | Still verify the TLS 1.3 `CertificateVerify` signature against the leaf's public key. Pinning replaces chain validation, not proof of key possession. | MUST |
-| Normalise a user-supplied pin — trim, lowercase, strip `:` — so a fingerprint pasted from `openssl x509 -fingerprint -sha256` works. | SHOULD |
+| Normalise a user-supplied pin — trim, lowercase, strip `:`, internal whitespace and an optional `SHA256 Fingerprint=` prefix — so a fingerprint pasted from `openssl x509 -fingerprint -sha256` works. After normalisation the client MUST reject anything other than 64 hex digits *before* the handshake; a malformed pin is not a fingerprint mismatch. | SHOULD / MUST |
 
 **SNI.** A client connecting to an IP literal sends `localhost` as SNI. Servers MUST NOT
 route or authorise on SNI, or reject a handshake because SNI disagrees with the certificate.
@@ -154,10 +155,10 @@ zstd level 1 and window 2^19 on control streams; subscription windows are 2^16.
 |---|---|---|
 | 1 | Never emit `len > MAX_FRAME`. | MUST NOT |
 | 2 | Read the 5-byte header first and reject `len > MAX_FRAME` **before** reading or allocating the body. | MUST |
-| 3 | Bound each frame's decompressed size to `MAX_FRAME`; abort inflation as soon as it would exceed the bound. Do not trust the zstd content-size field. A receiver MAY use a smaller plaintext limit where appropriate ([§9.3](#93-limits)). Separately, refuse control-frame zstd windows larger than 2^19: the window is allocated from its header before the plaintext bound applies. | MUST |
+| 3 | Bound each frame's decompressed size to `MAX_FRAME`; abort inflation as soon as it would exceed the bound. Do not trust the zstd content-size field. A receiver MAY use a smaller plaintext limit where appropriate ([§9.3](#93-limits)). A control-frame sender MUST declare a zstd window no larger than 2^19; the receiver MUST refuse a larger one, which would be allocated from its header before the plaintext bound applies. | MUST |
 | 4 | Reject a `flags` value the stream does not allow. | MUST |
 | 5 | A payload decodes to exactly one message; reject trailing bytes after it. | MUST |
-| 6 | Control stream: compress iff the postcard payload is **strictly greater than** `COMPRESS_THRESHOLD`. Interop does not depend on it: receivers MUST accept either form at any size, so a minimal implementation MAY always send `flags = 0x00`. | SHOULD / MUST |
+| 6 | Control stream: compress iff the postcard payload is **strictly greater than** `COMPRESS_THRESHOLD`. Within the frame and window limits above, receivers MUST accept either form at any payload size, so a minimal implementation MAY always send `flags = 0x00`. | SHOULD / MUST |
 | 7 | Control stream: the reference encoder streams at level 1 with **no content-size field and no checksum**; receivers MUST NOT require either. | MUST NOT |
 | 8 | A stream ending exactly at a frame boundary is a graceful end, not an error. Ending inside a frame is an error. | MUST |
 | 9 | Frames carry no message-type tag: the type follows from stream and direction. | — |
@@ -374,7 +375,7 @@ Scale constants are normative (`types.rs`): `LCB_SCALE` 16384.0 · `UTILITY_SCAL
 
 Guaranteed tolerances, asserted by `mirai-proto/tests/wire_size.rs` —
 `dequantisation_error_stays_inside_the_documented_tolerances`:
-winrate ≤ 1e-4 (measured 7.644e-6) · score lead ≤ 0.02 points (measured 0.0125) ·
+winrate ≤ 1e-4 (measured 7.644e-6) · score lead ≤ 0.02 points (measured 0.015625) ·
 ownership ≤ 0.005 (measured 0.00394).
 
 `utility_lcb` is the one field whose source routinely leaves that range. KataGo's lower
@@ -607,6 +608,13 @@ its stream ends. Stream termination follows [§3](#3-stream-topology);
 | (Server) Reject a duplicate live id with `Error { Some(sub), BadRequest }`, and reap finished subscriptions before applying that and the `max_subs` check. | MUST |
 | (Client) Treat a subscription stream that reaches clean EOF without `Done`/`Failed` as failed — never as success, never waiting indefinitely. | MUST |
 
+If a subscription stream ends or stalls before its complete four-byte preamble,
+the client cannot know its id. The reference client closes the connection and fails
+all live subscriptions, with a 10 s preamble deadline. A preamble-free
+`RESET_STREAM` with code 1 (`CODE_CANCELLED`) is an intentional cancellation
+instead and does not fail unrelated searches. A stream whose id is known but
+ends without a terminal message fails only that subscription.
+
 ### 8.4 Cancellation (INV-3)
 
 Cancellation must *discard* in-flight reports, so it is propagated on both streams.
@@ -643,9 +651,17 @@ stale positions after a five-second outage burns search threads on positions nob
 watching.
 
 Both peers close normally with application code 0 and reason `bye` ([§9.2](#92-quic-application-codes)).
-On a fatal handshake rejection the server MUST flush and finish the `Error` frame
-and wait for its acknowledgement before closing with code 1 and the
-`ErrCode::as_str()` reason. Closing immediately could discard the explanation.
+On a fatal handshake rejection the server MUST attempt to write and finish the
+`Error` frame before closing with code 1 and the `ErrCode::as_str()` reason.
+It SHOULD wait for the frame's acknowledgement so the peer can read the
+explanation. The reference server bounds the write and acknowledgement wait
+to 2 s; an unresponsive peer cannot hold a session slot indefinitely and may
+receive only the connection close, not the `Error` frame.
+
+The reference server queues at most 32 control replies per connection. A peer
+that does not read them is disconnected, with application code 0, when the queue
+fills or a write stalls for 10 s. Its subscriptions then cancel as on any
+connection loss; control backpressure must not block reading a `Cancel`.
 
 ---
 
@@ -683,8 +699,11 @@ No other code carries meaning beyond "the peer is gone".
 
 | Limit | Value | Enforcement |
 |---|---|---|
-| Concurrent subscriptions | token's `max_subs`, default 4; per connection on the reference server | server MUST refuse further `Open` with `TooManySubs`. The reference server counts a cancelled subscription until its search has stopped; an `Open` at the limit waits up to 1 s (`CANCEL_GRACE`) for a cancelled one to stop before refusing. Servers MAY enforce a global token quota; clients MUST NOT assume either model |
+| Outstanding subscriptions | token's `max_subs`, default 64; shared by all connections using that token on the reference server. Counts requests queued in the engine as well as running ones: the reference server forwards every accepted `Open` at once and KataGo schedules them — `numAnalysisThreads` at a time, then highest `priority` first, earlier first on a tie, without pre-empting a started search. The limit guards against a runaway client; it is not the concurrency control | server MUST refuse further `Open` with `TooManySubs`. A cancelled search holds its permit until its pump drops the engine subscription. At the limit, only a connection that just cancelled one of its own searches waits up to 1 s (`CANCEL_GRACE`) for that search to stop before refusing; other connections are refused immediately. Clients MUST NOT assume either a per-connection or global token quota |
 | `AnalyzeReq.moves` + `initial_stones` | ≤ 4096 together on the reference server (`MAX_REQUEST_STONES`) | refused with `Error { Some(sub), BadRequest }`; limits zstd-inflated engine input |
+| `AnalyzeReq.report_every_ms` | ≥ 20 ms when present on the reference server | smaller intervals raised to 20 ms before forwarding to KataGo |
+| `AnalyzeReq.max_time_ms` | ≤ 6 h on the reference server | longer times reduced to 6 h before forwarding; `Some(0)` is forwarded but is not a time cap for the visit limit below |
+| `AnalyzeReq.max_visits` | ≤ 10,000,000 without a nonzero time cap on the reference server | an absent or larger visit limit is capped; a time-limited search may use `u32::MAX` and ends on time instead |
 | `AnalyzeReq.avoid` | ≤ 64 specs and ≤ 1024 points across them on the reference server (`MAX_AVOID_SPECS`, `MAX_AVOID_POINTS`) | refused with `Error { Some(sub), BadRequest }` |
 | `AnalyzeReq.overrides` | only `wideRootNoise` and `humanSLProfile`, values ≤ 64 bytes, on the reference server (`FORWARDED_OVERRIDES`, `MAX_OVERRIDE_VALUE`) | other entries dropped, not rejected ([§7.3](#73-analyzereq)) |
 | First control frame | payload and decompressed plaintext each ≤ 1024 bytes on the reference server (`MAX_HELLO_FRAME`) | header checked before reading the body; inflation stops at the bound; `Error { None, BadRequest }`, then close with code 1 |

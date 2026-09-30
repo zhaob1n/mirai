@@ -136,8 +136,8 @@ struct Component {
     adjacent: SmallVec<[u32; 8]>,
 }
 
-/// An owned region this small is eye space rather than territory. Used only to keep the
-/// seki test from firing on a live group that happens to sit next to an unfilled dame.
+/// An owned region no bigger than this is eye space, not proof of independent life.
+/// Two such regions are two eyes; one region bigger than this is territory.
 const MAX_EYE: u32 = 2;
 
 /// Area or territory count of a final position.
@@ -208,29 +208,51 @@ pub fn score(
         }
     }
 
-    // Seki: a chain that shares an empty region with the enemy and owns no region bigger
-    // than eye space. The bare "shares a region with the enemy" test the rules describe
-    // would also catch every settled group standing next to an unfilled dame, and would
-    // then tax its territory, so the size condition is required to tell a real seki from
-    // an ordinary boundary.
-    let in_seki: Vec<bool> = comps
+    // A chain is alive on its own when it has two eyes or any region bigger than eye
+    // space. Seki is the remaining case: it shares an empty region with an enemy chain
+    // that is also not alive on its own. Touching an unfilled dame is not enough — a
+    // live group with only small eyes stands next to dame in ordinary finished games,
+    // and taxing those eyes miscounts Japanese and Korean territory.
+    let independent: Vec<bool> = comps
         .iter()
         .map(|c| {
-            let Some(col) = c.color else { return false };
-            let mut shares_region = false;
-            let mut only_eyes = true;
+            let Some(col) = c.color else {
+                return false;
+            };
+            let mut eyes = 0u32;
             for &a in &c.adjacent {
                 let nb = &comps[a as usize];
-                if nb.color.is_some() {
+                if nb.color.is_some() || owner[a as usize] != Some(col) {
                     continue;
                 }
-                match owner[a as usize] {
-                    None => shares_region = true,
-                    Some(o) if o == col && nb.size > MAX_EYE => only_eyes = false,
-                    Some(_) => {}
+                if nb.size > MAX_EYE {
+                    return true;
                 }
+                eyes += 1;
             }
-            shares_region && only_eyes
+            eyes >= 2
+        })
+        .collect();
+    let in_seki: Vec<bool> = comps
+        .iter()
+        .enumerate()
+        .map(|(id, c)| {
+            let Some(col) = c.color else {
+                return false;
+            };
+            if independent[id] {
+                return false;
+            }
+            c.adjacent.iter().any(|&a| {
+                let nb = &comps[a as usize];
+                if nb.color.is_some() || owner[a as usize].is_some() {
+                    return false;
+                }
+                nb.adjacent.iter().any(|&e| match comps[e as usize].color {
+                    Some(ecol) if ecol != col => !independent[e as usize],
+                    _ => false,
+                })
+            })
         })
         .collect();
 
@@ -589,5 +611,65 @@ mod tests {
         assert_eq!(res(40.0, 40.0).result_string(), "0");
         assert_eq!(res(45.0, 41.5).margin(), 3.5);
         assert_eq!(res(40.0, 47.0).result_string(), "W+7");
+    }
+
+    /// Two separate eyes beside one unfilled dame are ordinary life. The old test treated
+    /// "small eyes and a shared empty region" as seki and taxed both eyes.
+    #[test]
+    fn two_eyes_beside_an_unfilled_dame_are_territory() {
+        let b = board_from(&[
+            ". X X X X X .",
+            ". X . X . X .",
+            ". X X X X X O",
+            ". . . . . . .",
+            "O O O O O O O",
+        ]);
+        let scored = score(
+            &b,
+            &RuleSet::Japanese.rules(),
+            0.0,
+            0,
+            &DeadSet::empty(b.size),
+        );
+        assert!(!scored.approximate);
+        assert_eq!(
+            scored.black, 2.0,
+            "each eye is one point and the dame is not"
+        );
+        assert_eq!(scored.white, 0.0);
+        assert_eq!(
+            scored.territory[b.size.point(2, 1).index()],
+            Some(Color::Black)
+        );
+        assert_eq!(
+            scored.territory[b.size.point(4, 1).index()],
+            Some(Color::Black)
+        );
+        assert_eq!(scored.territory[b.size.point(3, 3).index()], None);
+    }
+
+    /// One eye each and three shared liberties in the middle column: whoever fills the
+    /// last one is captured, so neither does. Those eyes are not territory.
+    #[test]
+    fn an_eye_inside_a_seki_is_taxed_one_point() {
+        let b = board_from(&["X X X . O O O", "X . X . O . O", "X X X . O O O"]);
+        let scored = score(
+            &b,
+            &RuleSet::Japanese.rules(),
+            0.0,
+            0,
+            &DeadSet::empty(b.size),
+        );
+        assert_eq!(scored.black, 0.0);
+        assert_eq!(scored.white, 0.0);
+        assert_eq!(
+            scored.territory[b.size.point(1, 1).index()],
+            Some(Color::Black),
+            "the eye is still marked; the tax is what removes the point"
+        );
+        assert_eq!(
+            scored.territory[b.size.point(5, 1).index()],
+            Some(Color::White)
+        );
     }
 }

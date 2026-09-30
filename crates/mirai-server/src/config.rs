@@ -16,6 +16,15 @@ use serde::Deserialize;
 
 pub const DEFAULT_LISTEN: &str = "0.0.0.0:9678";
 
+/// The all-zero token shipped in `server.example.toml`. It is in the repository, so a
+/// config that still has it must not start: anyone who has read the example could
+/// authenticate.
+const EXAMPLE_TOKEN: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+/// The token placeholder printed when no server config exists. Copying that
+/// snippet verbatim must not grant access to anyone who knows its public text.
+const MINIMAL_TOKEN_PLACEHOLDER: &str = "<64 hex chars from `mirai-server --generate-token`>";
+
 /// The minimal file a first-time user has to write. Shown verbatim when the config is
 /// missing, so the error is actionable without opening documentation.
 pub const MINIMAL_EXAMPLE: &str = r#"listen = "0.0.0.0:9678"
@@ -31,7 +40,7 @@ model  = "/path/to/model.bin.gz"
 [[token]]
 value = "<64 hex chars from `mirai-server --generate-token`>"
 name  = "laptop"
-max_subs = 4"#;
+max_subs = 64"#;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -82,6 +91,10 @@ pub struct TokenCfg {
     pub value: String,
     #[serde(default)]
     pub name: String,
+    /// Requests this token may have outstanding — queued in KataGo or running — across
+    /// all its connections. KataGo schedules them (`numAnalysisThreads` at a time, then
+    /// by priority and arrival), so this is a guard against a runaway client, not the
+    /// concurrency limit.
     #[serde(default = "default_max_subs")]
     pub max_subs: u32,
 }
@@ -95,8 +108,11 @@ fn default_cert() -> PathBuf {
 fn default_key() -> PathBuf {
     PathBuf::from("key.pem")
 }
+/// Covers the desktop client's own worst case — a whole-game sweep keeps up to 16
+/// positions in flight, plus live analysis and a play or score request per window —
+/// several times over, so several windows or devices can share one token.
 fn default_max_subs() -> u32 {
-    4
+    64
 }
 
 impl ServerConfig {
@@ -113,6 +129,20 @@ impl ServerConfig {
     pub fn load(path: &Path) -> anyhow::Result<ServerConfig> {
         let text =
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(path)
+                .with_context(|| format!("checking {}", path.display()))?
+                .permissions()
+                .mode();
+            if mode & 0o077 != 0 {
+                tracing::warn!(
+                    config = %path.display(),
+                    "server config is accessible by other users and contains bearer tokens; chmod 600 this file"
+                );
+            }
+        }
         ServerConfig::parse(&text, path).with_context(|| format!("parsing {}", path.display()))
     }
 
@@ -143,6 +173,15 @@ impl ServerConfig {
         for (i, t) in self.tokens.iter().enumerate() {
             if t.value.is_empty() {
                 bail!("[[token]] #{} has an empty value", i + 1);
+            }
+            if t.value == EXAMPLE_TOKEN || t.value == MINIMAL_TOKEN_PLACEHOLDER {
+                bail!(
+                    "[[token]] #{} is the example placeholder; replace it with the output of `mirai-server --generate-token`",
+                    i + 1
+                );
+            }
+            if self.tokens[..i].iter().any(|p| p.value == t.value) {
+                bail!("two [[token]] blocks have the same value");
             }
         }
         Ok(())
@@ -355,10 +394,9 @@ mod tests {
     }
 
     #[test]
-    fn token_max_subs_defaults_and_listen_override_wins() {
+    fn token_max_subs_and_listen_override_wins() {
         let cfg = parse(FULL).unwrap();
         assert_eq!(cfg.tokens[0].max_subs, 2);
-        assert_eq!(cfg.tokens[1].max_subs, 4, "default max_subs");
         assert_eq!(cfg.tokens[1].name, "");
 
         let from_file = cfg.listen_addr(None).unwrap();
@@ -376,11 +414,13 @@ mod tests {
     }
 
     #[test]
-    fn the_documented_minimal_example_parses() {
-        let cfg = parse(MINIMAL_EXAMPLE).unwrap();
+    fn the_documented_minimal_example_requires_a_real_token() {
+        let err = parse(MINIMAL_EXAMPLE).unwrap_err();
+        assert!(format!("{err:#}").contains("example placeholder"));
+        let cfg = parse(&MINIMAL_EXAMPLE.replace(MINIMAL_TOKEN_PLACEHOLDER, "secret")).unwrap();
         assert_eq!(cfg.engines.len(), 1);
         assert_eq!(cfg.tokens.len(), 1);
-        assert_eq!(cfg.tokens[0].max_subs, 4);
+        assert_eq!(cfg.tokens[0].max_subs, 64);
     }
 
     #[test]
@@ -399,5 +439,32 @@ mod tests {
         assert!(dup.is_err(), "duplicate engine names make `Open` ambiguous");
 
         assert!(parse("[[token]]\nvalue=''\n").is_err(), "empty token");
+
+        let dup_token = parse("[[token]]\nvalue='same'\n[[token]]\nvalue='same'\n");
+        assert!(
+            dup_token.is_err(),
+            "duplicate token values make quotas ambiguous"
+        );
+    }
+
+    #[test]
+    fn the_example_placeholder_token_is_refused() {
+        let err = parse(&format!("[[token]]\nvalue = \"{EXAMPLE_TOKEN}\"\n")).unwrap_err();
+        let text = format!("{err:#}");
+        assert!(
+            text.contains("example placeholder"),
+            "the refusal must say to replace it: {text}"
+        );
+    }
+
+    #[test]
+    fn the_shipped_example_is_refused_until_its_token_is_replaced() {
+        let raw = include_str!("../server.example.toml");
+        let err = parse(raw).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("example placeholder"),
+            "{err:#}"
+        );
+        assert!(parse(&raw.replace(EXAMPLE_TOKEN, "ab")).is_ok());
     }
 }

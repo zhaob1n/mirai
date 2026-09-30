@@ -35,6 +35,8 @@ const CELL_W: f32 = 20.0;
 const CELL_H: f32 = 20.0;
 const MARGIN: f32 = 10.0;
 const RADIUS: f32 = 6.0;
+/// Elbow ink. Translucent, so two rectangles that share a pixel blend twice.
+const EDGE_WIDTH: f32 = 1.5;
 
 /// A node placed on the grid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,6 +125,25 @@ fn cell_xy(depth: u32, lane: u32) -> (f32, f32) {
     (
         MARGIN + RADIUS + lane as f32 * CELL_W,
         MARGIN + RADIUS + depth as f32 * CELL_H,
+    )
+}
+
+/// Where a child drop starts. The horizontal trunk is centred on the parent and
+/// [`EDGE_WIDTH`] tall; a drop from the centre overlaps that rectangle and the
+/// joint paints darker than either stroke.
+#[inline]
+fn drop_top(parent_y: f32) -> f32 {
+    parent_y + EDGE_WIDTH * 0.5
+}
+
+/// A parent's trunk in x, from its own lane to its furthest child. Both ends reach the
+/// outer edge of the drop there, not its centre line, so each elbow is a square corner
+/// with no notch.
+#[inline]
+fn trunk_x(own_x: f32, furthest_child_x: f32) -> (f32, f32) {
+    (
+        own_x - EDGE_WIDTH * 0.5,
+        furthest_child_x + EDGE_WIDTH * 0.5,
     )
 }
 
@@ -471,9 +492,10 @@ impl MoveTreeView {
         // Edges first: right-angle elbows, across at the parent then down. Every segment is
         // axis-aligned, so they are rectangles rather than a stroked path — and one horizontal
         // per parent rather than one per child, because the ink is translucent and overlapping
-        // rectangles would blend twice where two children share a trunk. The drops are one per
-        // child and never overlap: siblings always land in different lanes. Trunk spans were
-        // computed in `lay_out`; this pass only draws what the viewport can see.
+        // rectangles would blend twice where two children share a trunk. A drop starts at the
+        // bottom of that stroke, not at the parent's centre, for the same reason. The drops
+        // are one per child and never overlap: siblings always land in different lanes. Trunk
+        // spans were computed in `lay_out`; this pass only draws what the viewport can see.
         let view = self.viewport();
         for node in &layout.nodes {
             let Some(parent) = node.parent else { continue };
@@ -486,7 +508,7 @@ impl MoveTreeView {
             }
             let (_, py) = cell_xy(p.depth, p.lane);
             let (cx, cy) = cell_xy(node.depth, node.lane);
-            vline(snapshot, cx, py, cy, 1.5, &edge_color);
+            vline(snapshot, cx, drop_top(py), cy, EDGE_WIDTH, &edge_color);
         }
         for (index, span) in layout.trunks.iter().enumerate() {
             let Some((left, right)) = *span else { continue };
@@ -500,7 +522,8 @@ impl MoveTreeView {
                 continue;
             }
             let (_, py) = cell_xy(p.depth, p.lane);
-            hline(snapshot, left, right, py, 1.5, &edge_color);
+            let (x0, x1) = trunk_x(left, right);
+            hline(snapshot, x0, x1, py, EDGE_WIDTH, &edge_color);
         }
 
         // Nodes.
@@ -694,6 +717,31 @@ mod tests {
             cell_xy(0, 1),
             (origin.0 + CELL_W, origin.1),
             "the next lane is one column across"
+        );
+    }
+
+    /// Both elbows: the trunk and each drop share an edge but no pixel (the ink is
+    /// translucent, so overlap blends twice), and together they fill the corners
+    /// instead of leaving a notch.
+    #[test]
+    fn an_elbow_is_a_square_corner_without_overlap() {
+        let (px, py) = cell_xy(3, 1);
+        let (cx, cy) = cell_xy(4, 3);
+        let half = EDGE_WIDTH * 0.5;
+        let (left, right) = trunk_x(px, cx);
+        let trunk = (left, right, py - half, py + half);
+        let main_drop = (px - half, px + half, drop_top(py), cy);
+        let branch_drop = (cx - half, cx + half, drop_top(py), cy);
+        for drop in [main_drop, branch_drop] {
+            assert_eq!(drop.2, trunk.3, "the drop starts where the trunk ends");
+        }
+        assert_eq!(
+            trunk.0, main_drop.0,
+            "the trunk reaches the main line's outer edge"
+        );
+        assert_eq!(
+            trunk.1, branch_drop.1,
+            "the trunk reaches the branch's outer edge"
         );
     }
 

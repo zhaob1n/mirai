@@ -132,31 +132,98 @@ fn a_report_stream_compresses_each_report_against_the_last() {
 
 #[test]
 fn dequantisation_error_stays_inside_the_documented_tolerances() {
-    // Winrate: <= 1e-4 absolute. Score lead: <= 0.02 points. Ownership: <= 0.005.
+    // PROTOCOL §7.2: max round-trip error is half a quantum. A sweep whose step is a
+    // multiple of the quantum (lead stepped by 1/40 against a 1/32 grid) never sees it.
+    fn half_quantum(x: f64, decode: impl Fn(f64) -> f64) -> f64 {
+        (decode(x) - x).abs().max((decode(-x) - (-x)).abs())
+    }
     let mut worst_wr = 0.0f64;
-    let mut worst_lead = 0.0f64;
-    let mut worst_own = 0.0f64;
-
     for i in 0..=10_000 {
         let wr = i as f64 / 10_000.0;
         worst_wr = worst_wr.max((dq16(q16(wr)) as f64 - wr).abs());
     }
-    for i in -40_000..=40_000i32 {
-        let lead = i as f64 / 40.0; // -1000.0 ..= 1000.0 in 0.025 steps
-        let back = dqs(qs(lead, SCORE_SCALE), SCORE_SCALE) as f64;
-        worst_lead = worst_lead.max((back - lead).abs());
+    let wr_half = {
+        let x = 0.5 / 65535.0;
+        (dq16(q16(x)) as f64 - x).abs()
+    };
+    let lead = half_quantum(0.5 / SCORE_SCALE, |x| {
+        dqs(qs(x, SCORE_SCALE), SCORE_SCALE) as f64
+    });
+    let lcb = half_quantum(0.5 / LCB_SCALE, |x| dqs(qs(x, LCB_SCALE), LCB_SCALE) as f64);
+    let utility = half_quantum(0.5 / UTILITY_SCALE, |x| {
+        dqs(qs(x, UTILITY_SCALE), UTILITY_SCALE) as f64
+    });
+    let stdev = {
+        let x = 0.5 / STDEV_SCALE;
+        (dqu(qu(x, STDEV_SCALE), STDEV_SCALE) as f64 - x).abs()
+    };
+    let own = {
+        let x = 0.5 / 127.0;
+        (dq_own(q_own(x)) as f64 - x).abs()
+    };
+    let policy = {
+        let x = 0.5 / 65534.0;
+        (dq_policy(q_policy(x)).unwrap() as f64 - x).abs()
+    };
+    let raw_var = {
+        let x = 0.5 / RAW_VAR_TIME_SCALE;
+        (dqu(qu(x, RAW_VAR_TIME_SCALE), RAW_VAR_TIME_SCALE) as f64 - x).abs()
+    };
+    // The whole documented range still round-trips: a larger scale would saturate
+    // the i16/i8 before a big lead or a settled point, which a half-quantum probe
+    // near zero cannot see.
+    let mut worst_lead_range = 0.0f64;
+    for i in -1000..=1000 {
+        let v = i as f64;
+        worst_lead_range =
+            worst_lead_range.max((dqs(qs(v, SCORE_SCALE), SCORE_SCALE) as f64 - v).abs());
     }
-    for i in -1000..=1000i32 {
-        let v = i as f64 / 1000.0;
-        worst_own = worst_own.max((dq_own(q_own(v)) as f64 - v).abs());
+    let mut worst_own_range = 0.0f64;
+    for i in -200..=200 {
+        let v = i as f64 / 200.0;
+        worst_own_range = worst_own_range.max((dq_own(q_own(v)) as f64 - v).abs());
     }
 
-    println!(
-        "worst winrate err {worst_wr:.3e}, lead err {worst_lead:.5}, ownership err {worst_own:.5}"
+    println!("worst winrate err {worst_wr:.3e}, lead err {lead:.6}, ownership err {own:.5}");
+    assert!(
+        worst_lead_range <= 0.02,
+        "score lead over ±1000: {worst_lead_range}"
+    );
+    assert!(
+        worst_own_range <= 0.005,
+        "ownership over ±1: {worst_own_range}"
     );
     assert!(worst_wr <= 1e-4, "winrate error {worst_wr}");
-    assert!(worst_lead <= 0.02, "score lead error {worst_lead}");
-    assert!(worst_own <= 0.005, "ownership error {worst_own}");
+    assert!(
+        (wr_half - 0.5 / 65535.0).abs() < 1e-8,
+        "winrate half-quantum measured {wr_half}"
+    );
+    assert!(
+        (lead - 0.015625).abs() < 1e-9,
+        "score lead half-quantum is 0.015625, measured {lead}"
+    );
+    assert!(lead <= 0.02, "score lead error {lead}");
+    assert!((own - 0.5 / 127.0).abs() < 1e-6, "ownership error {own}");
+    assert!(own <= 0.005, "ownership error {own}");
+    // Literals, not the constants: these are the normative figures in PROTOCOL §7.2,
+    // so a changed scale must fail here and send someone to the specification.
+    assert!((lcb - 3.0517578125e-5).abs() < 1e-12, "lcb error {lcb}");
+    assert!(
+        (utility - 6.103515625e-5).abs() < 1e-12,
+        "utility error {utility}"
+    );
+    assert!((stdev - 0.015625).abs() < 1e-9, "score stdev error {stdev}");
+    assert!(policy <= 1e-4, "policy error {policy}");
+    assert_ne!(
+        q_policy(1.0),
+        POLICY_ILLEGAL,
+        "q_policy must not use the illegal sentinel for a legal probability"
+    );
+    assert!(dq_policy(q_policy(1.0)).is_some());
+    assert!(
+        (raw_var - 0.125).abs() < 1e-9,
+        "raw_var_time_left error {raw_var}"
+    );
 }
 
 #[test]

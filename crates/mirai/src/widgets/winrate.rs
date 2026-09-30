@@ -562,6 +562,7 @@ impl WinrateGraph {
     }
 
     fn draw(&self, snapshot: &gtk::Snapshot) {
+        let _t = crate::render_probe::Timer::new("graph-snapshot");
         let (width, height) = (self.width(), self.height());
         if width < 8 || height < 8 {
             return;
