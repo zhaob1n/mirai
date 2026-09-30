@@ -608,6 +608,13 @@ its stream ends. Stream termination follows [§3](#3-stream-topology);
 | (Server) Reject a duplicate live id with `Error { Some(sub), BadRequest }`, and reap finished subscriptions before applying that and the `max_subs` check. | MUST |
 | (Client) Treat a subscription stream that reaches clean EOF without `Done`/`Failed` as failed — never as success, never waiting indefinitely. | MUST |
 
+If a subscription stream ends or stalls before its complete four-byte preamble,
+the client cannot know its id. The reference client closes the connection and fails
+all live subscriptions, with a 10 s preamble deadline. A preamble-free
+`RESET_STREAM` with code 1 (`CODE_CANCELLED`) is an intentional cancellation
+instead and does not fail unrelated searches. A stream whose id is known but
+ends without a terminal message fails only that subscription.
+
 ### 8.4 Cancellation (INV-3)
 
 Cancellation must *discard* in-flight reports, so it is propagated on both streams.
