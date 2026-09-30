@@ -43,7 +43,7 @@ cancellation. Wire values are quantised, not floating-point ([§7](#7-value-type
 ```
 mirai-url = [ "mirai://" ] host [ ":" port ] [ "/" ]
 host      = reg-name | IPv4address | "[" IPv6address [ "%" zone ] "]"
-port      = 1*DIGIT                                       ; default 9678
+port      = 1*DIGIT                                       ; default 9678, at most 65535
 ```
 
 Parsing (`endpoint.rs` — `parse_url`), which a client MUST reproduce:
@@ -51,11 +51,13 @@ Parsing (`endpoint.rs` — `parse_url`), which a client MUST reproduce:
 1. Trim whitespace; strip an optional `mirai://` prefix; strip one trailing `/`. Any
    other `/` is an error: there is no path.
 2. Empty host is an error, including a missing host before `:` and an empty `[]`.
-3. A leading `[` starts an IPv6 literal ending at the first `]`. An optional `:port`
+3. A leading `[` starts an IPv6 literal ending at the first `]`. The text inside must be
+   an IPv6 address, optionally followed by `%` and a non-empty zone. An optional `:port`
    may follow; anything else after `]` is an error.
-4. Otherwise split host and port at the **last** `:`; a non-numeric port is an error.
-   If the host side still contains `:`, reject the URL: IPv6 literals must be bracketed.
-5. Absent port means 9678.
+4. Otherwise split host and port at the **last** `:`. If the host side still contains
+   `:`, reject the URL: IPv6 literals must be bracketed. A host containing `[`, `]` or
+   `%` is an error.
+5. A port is digits only, no sign, within `u16`; absent means 9678.
 
 A link-local literal needs its zone, written as the interface name or index the resolver
 takes (`[fe80::1%eth0]`, not RFC 6874's `%25`). The zone stays part of the host.

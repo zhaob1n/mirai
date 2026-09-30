@@ -46,35 +46,58 @@ pub fn parse_url(url: &str) -> Result<(String, u16), AddressError> {
         if host.is_empty() {
             return Err(AddressError::new(url, "empty host"));
         }
+        let (addr, zone) = host
+            .split_once('%')
+            .map_or((host, None), |(a, z)| (a, Some(z)));
+        if addr.parse::<std::net::Ipv6Addr>().is_err() {
+            return Err(AddressError::new(url, "not an IPv6 address inside []"));
+        }
+        if zone == Some("") {
+            return Err(AddressError::new(url, "empty zone after %"));
+        }
         let port = if after.is_empty() {
             DEFAULT_PORT
         } else {
             let Some(port) = after.strip_prefix(':') else {
                 return Err(AddressError::new(url, "trailing junk"));
             };
-            port.parse()
-                .map_err(|_| AddressError::new(url, "bad port"))?
+            parse_port(url, port)?
         };
         return Ok((host.to_string(), port));
     }
-    match rest.rsplit_once(':') {
-        Some((host, port)) => {
-            if host.is_empty() {
-                return Err(AddressError::new(url, "empty host"));
-            }
-            // `fe80::1` would otherwise split into host `fe80:` and port 1. The grammar
-            // allows an IPv6 literal only inside `[]`.
-            if host.contains(':') {
-                return Err(AddressError::new(url, "IPv6 literals must be bracketed"));
-            }
-            Ok((
-                host.to_string(),
-                port.parse()
-                    .map_err(|_| AddressError::new(url, "bad port"))?,
-            ))
-        }
-        None => Ok((rest.to_string(), DEFAULT_PORT)),
+    let (host, port) = rest
+        .rsplit_once(':')
+        .map_or((rest, None), |(host, port)| (host, Some(port)));
+    if host.is_empty() {
+        return Err(AddressError::new(url, "empty host"));
     }
+    if host.contains(['[', ']']) {
+        return Err(AddressError::new(url, "unmatched bracket"));
+    }
+    // `fe80::1` would otherwise split into host `fe80:` and port 1. The grammar allows an
+    // IPv6 literal only inside `[]`.
+    if host.contains(':') {
+        return Err(AddressError::new(url, "IPv6 literals must be bracketed"));
+    }
+    if host.contains('%') {
+        return Err(AddressError::new(
+            url,
+            "a zone is allowed only on a bracketed IPv6 literal",
+        ));
+    }
+    let port = match port {
+        Some(port) => parse_port(url, port)?,
+        None => DEFAULT_PORT,
+    };
+    Ok((host.to_string(), port))
+}
+
+/// `1*DIGIT` within `u16`. `str::parse` alone would also take a leading `+`.
+fn parse_port(url: &str, port: &str) -> Result<u16, AddressError> {
+    if port.is_empty() || !port.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(AddressError::new(url, "bad port"));
+    }
+    port.parse().map_err(|_| AddressError::new(url, "bad port"))
 }
 
 /// The SNI name to present for `host`.
@@ -160,6 +183,32 @@ mod tests {
             parse_url("mirai://[fe80::1%eth0]:9678").unwrap(),
             ("fe80::1%eth0".to_string(), 9678)
         );
+    }
+
+    /// What the grammar does not produce is refused while the URL is still at hand, not
+    /// passed on to fail in the resolver with a message that does not say why.
+    #[test]
+    fn a_host_outside_the_grammar_is_refused_by_name() {
+        for (url, reason) in [
+            ("[box.local]", "not an IPv6 address inside []"),
+            ("mirai://[10.0.0.1]:9678", "not an IPv6 address inside []"),
+            ("mirai://[fe80::1%]", "empty zone after %"),
+            (
+                "box%eth0",
+                "a zone is allowed only on a bracketed IPv6 literal",
+            ),
+            (
+                "mirai://10.0.0.1%eth0:9678",
+                "a zone is allowed only on a bracketed IPv6 literal",
+            ),
+            ("mirai://[::1", "unmatched bracket"),
+            ("box]:9678", "unmatched bracket"),
+            ("box:+80", "bad port"),
+            ("box:", "bad port"),
+        ] {
+            let err = parse_url(url).expect_err(url);
+            assert_eq!(err.reason, reason, "{url}");
+        }
     }
 
     #[test]
