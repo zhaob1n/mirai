@@ -569,7 +569,9 @@ impl Drop for PumpSlot {
 ///
 /// `cancel` is raced against every await, not only the wait for the next event: opening the
 /// stream waits on the peer's stream limit and a write waits on its flow control, and a
-/// client that stops reading would otherwise keep a cancelled query running.
+/// client that stops reading would otherwise keep a cancelled query running. Once the stream
+/// is open the peer's `STOP_SENDING` is raced too (§8.4): a search without a report interval
+/// writes nothing until it ends, so no failed write would reveal it.
 async fn pump(
     conn: Connection,
     session: u64,
@@ -591,15 +593,19 @@ async fn pump(
             }
         },
     };
-    tokio::select! {
+    // Not a borrow of `stream`: `stream_events` needs it mutably.
+    let stopped = stream.stopped();
+    let dropped = tokio::select! {
         biased;
-        _ = cancel => {
-            // The losing branch, and the subscription it owned, is already dropped. Reset
-            // rather than finish: buffered stale reports must never arrive.
-            let _ = stream.reset(VarInt::from_u32(CODE_CANCELLED));
-            info!(session, sub, "subscription dropped");
-        }
-        () = stream_events(&mut stream, session, sub, subscription) => {}
+        _ = cancel => true,
+        _ = stopped => true,
+        () = stream_events(&mut stream, session, sub, subscription) => false,
+    };
+    if dropped {
+        // The losing branch, and the subscription it owned, is already dropped. Reset
+        // rather than finish: buffered stale reports must never arrive.
+        let _ = stream.reset(VarInt::from_u32(CODE_CANCELLED));
+        info!(session, sub, "subscription dropped");
     }
 }
 
@@ -1147,16 +1153,20 @@ mod tests {
     }
 
     /// Publishes incompressible reports until its subscription is dropped, so a stream
-    /// nobody reads blocks on flow control within a few reports. Dropping a subscription
-    /// sends on `dropped`, then waits for `gate` to open: a query that is slow to die.
+    /// nobody reads blocks on flow control within a few reports. Like KataGo, a request
+    /// without a report interval publishes nothing. Dropping a subscription sends on
+    /// `dropped`, then waits for `gate` to open: a query that is slow to die.
     struct Flood {
         dropped: tokio::sync::mpsc::UnboundedSender<()>,
         gate: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
     }
 
     impl Engine for Flood {
-        fn subscribe(&self, _req: AnalyzeReq) -> Subscription {
+        fn subscribe(&self, req: AnalyzeReq) -> Subscription {
             let (tx, rx) = tokio::sync::watch::channel(SubEvent::Pending);
+            if req.report_every_ms.is_none() {
+                return self.guarded(rx, Some(tx));
+            }
             tokio::spawn(async move {
                 let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
                 loop {
@@ -1174,11 +1184,28 @@ mod tests {
                     tokio::time::sleep(Duration::from_millis(1)).await;
                 }
             });
+            self.guarded(rx, None)
+        }
+
+        fn describe(&self) -> EngineDesc {
+            EngineDesc::placeholder("flood")
+        }
+    }
+
+    impl Flood {
+        /// `quiet` is the sender of a search that publishes nothing; the guard keeps it
+        /// alive so the subscription stays open until it is dropped.
+        fn guarded(
+            &self,
+            rx: tokio::sync::watch::Receiver<SubEvent>,
+            quiet: Option<tokio::sync::watch::Sender<SubEvent>>,
+        ) -> Subscription {
             let dropped = self.dropped.clone();
             let gate = Arc::clone(&self.gate);
             Subscription::new(
                 rx,
                 mirai_engine::CancelGuard::new(move || {
+                    drop(quiet);
                     let _ = dropped.send(());
                     let (open, cv) = &*gate;
                     let mut open = open.lock().unwrap();
@@ -1188,10 +1215,6 @@ mod tests {
                 }),
             )
         }
-
-        fn describe(&self) -> EngineDesc {
-            EngineDesc::placeholder("flood")
-        }
     }
 
     struct Client {
@@ -1200,7 +1223,7 @@ mod tests {
         buf: FrameBuf,
         dropped: tokio::sync::mpsc::UnboundedReceiver<()>,
         gate: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
-        _conn: Connection,
+        conn: Connection,
         _endpoint: quinn::Endpoint,
         dir: std::path::PathBuf,
     }
@@ -1238,7 +1261,7 @@ mod tests {
                 buf: FrameBuf::new(),
                 dropped,
                 gate,
-                _conn: conn,
+                conn,
                 _endpoint: endpoint,
                 dir,
             };
@@ -1269,9 +1292,11 @@ mod tests {
             .expect("read")
         }
 
-        /// Opens `sub` and returns the answer. The subscription stream is never read.
+        /// Opens a reporting search as `sub` and returns the answer. The subscription stream
+        /// is never read.
         async fn open(&mut self, sub: u32) -> ServerMsg {
-            let req = AnalyzeReq::new(Size::square(19), RuleSet::Chinese, 7.5);
+            let mut req = AnalyzeReq::new(Size::square(19), RuleSet::Chinese, 7.5);
+            req.report_every_ms = Some(MIN_REPORT_EVERY);
             self.send(ClientMsg::Open {
                 sub,
                 engine: None,
@@ -1311,6 +1336,28 @@ mod tests {
         // Far longer than the flood needs to fill a 16 KiB window.
         tokio::time::sleep(Duration::from_millis(300)).await;
         client.send(ClientMsg::Cancel { sub: 1 }).await;
+        client.dropped().await;
+    }
+
+    /// §8.4 lets a client stop a subscription with `STOP_SENDING` alone. A search without
+    /// a report interval writes nothing until it ends, so no failed write reveals the stop.
+    #[tokio::test]
+    async fn stop_sending_alone_drops_a_search_that_is_not_reporting() {
+        let mut client = Client::connect(1, true).await;
+        let req = AnalyzeReq::new(Size::square(19), RuleSet::Chinese, 7.5);
+        client
+            .send(ClientMsg::Open {
+                sub: 1,
+                engine: None,
+                req,
+            })
+            .await;
+        assert!(matches!(client.recv().await, ServerMsg::Opened { sub: 1 }));
+        let mut stream = tokio::time::timeout(Duration::from_secs(2), client.conn.accept_uni())
+            .await
+            .expect("no subscription stream")
+            .expect("accept uni");
+        stream.stop(VarInt::from_u32(CODE_CANCELLED)).expect("stop");
         client.dropped().await;
     }
 
