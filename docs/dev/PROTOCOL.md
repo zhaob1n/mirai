@@ -53,6 +53,7 @@ Parsing (`endpoint.rs` — `parse_url`), which a client MUST reproduce:
 3. A leading `[` starts an IPv6 literal ending at the first `]`. An optional `:port`
    may follow; anything else after `]` is an error.
 4. Otherwise split host and port at the **last** `:`; a non-numeric port is an error.
+   If the host side still contains `:`, reject the URL: IPv6 literals must be bracketed.
 5. Absent port means 9678.
 
 No path, query or userinfo. Credentials travel in `Hello.token`, never in the URL.
