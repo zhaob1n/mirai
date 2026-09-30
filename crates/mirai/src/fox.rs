@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! The GTK half of Fox Go lookup: a `gio` transport, the last-search cache, and the picker
-//! dialog.
+//! The GTK half of Fox Go lookup: a libsoup transport, the last-search cache, and the
+//! picker dialog.
 //!
 //! The endpoints, the reply shapes and the SGF dialect live in [`mirai_client::fox`], which
 //! the HarmonyOS client uses as well. This file does not reimplement any of them — it cannot
-//! even use that module's `Fetch` trait, because GIO's futures are `!Send`, so it composes
-//! the URL builders with the pure parsers instead.
+//! even use that module's `Fetch` trait, because libsoup's futures are `!Send`, so it
+//! composes the URL builders with the pure parsers instead.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -14,12 +14,14 @@ use std::time::Duration;
 
 use adw::prelude::*;
 use glib::clone;
+use glib::translate::IntoGlib;
 use gtk::{gio, glib};
 use mirai_client::fox;
 pub(crate) use mirai_client::fox::FoxGame;
 use mirai_client::play::{Outcome, outcome};
 use mirai_core::GameTree;
 use serde::{Deserialize, Serialize};
+use soup::prelude::*;
 
 use crate::config::Config;
 use crate::fox_picker::{FoxPickerDialog, FoxRow};
@@ -192,15 +194,18 @@ fn remember_search(search: LastSearch, runtime: &tokio::runtime::Handle) {
 
 /// Fetches `url` as text, retrying a few times with a growing pause.
 ///
-/// `gio` rather than a HTTP crate: it is already linked, it honours the desktop's proxy
-/// settings, and it keeps the request on the GLib main context where the dialog lives.
+/// libsoup rather than a Rust HTTP crate: its futures run on the GLib main context where
+/// the dialog lives, and it takes the desktop's proxy settings from GIO. Not
+/// `gio::File::for_uri`, which reaches `https://` only through GVfs's daemon — libsoup
+/// underneath, and absent on Windows and on desktops that do not install it.
 async fn get_body(url: &str) -> Result<String, FoxError> {
+    // One session per lookup, so a retry reuses its connection.
+    let session = soup::Session::builder()
+        .user_agent(fox::user_agent())
+        .build();
     let mut last_error = FoxError::RequestFailed;
     for attempt in 1..=RETRIES {
-        let file = gio::File::for_uri(url);
-        match glib::future_with_timeout(REQUEST_TIMEOUT, read_capped(&file, MAX_RESPONSE_BYTES))
-            .await
-        {
+        match glib::future_with_timeout(REQUEST_TIMEOUT, fetch(&session, url)).await {
             Ok(Ok(body)) => match String::from_utf8(body) {
                 Ok(text) => return Ok(text),
                 Err(error) => last_error = FoxError::NotUtf8(error.to_string()),
@@ -208,7 +213,10 @@ async fn get_body(url: &str) -> Result<String, FoxError> {
             Ok(Err(BodyError::TooLarge)) => {
                 last_error = FoxError::ResponseTooLarge;
             }
-            Ok(Err(BodyError::Io(error))) => last_error = FoxError::Io(error.to_string()),
+            Ok(Err(BodyError::Status(status))) => {
+                last_error = FoxError::Io(format!("HTTP {status}"));
+            }
+            Ok(Err(BodyError::Io(error))) => last_error = FoxError::Io(error),
             Err(_) => last_error = FoxError::TimedOut,
         }
         if attempt < RETRIES {
@@ -221,25 +229,40 @@ async fn get_body(url: &str) -> Result<String, FoxError> {
 #[derive(Debug)]
 enum BodyError {
     TooLarge,
-    Io(glib::Error),
+    /// The server answered with something other than a 2xx.
+    Status(i32),
+    Io(String),
 }
 
-/// Reads `file` whole, giving up as soon as it has seen more than `cap` bytes.
-///
-/// Streamed rather than `load_contents`, which buffers the entire body before its size can
-/// be checked: an endless or hostile response must cost at most `cap` bytes of memory.
-async fn read_capped(file: &gio::File, cap: usize) -> Result<Vec<u8>, BodyError> {
-    const CHUNK: usize = 64 * 1024;
-    let stream = file
-        .read_future(glib::Priority::DEFAULT)
+/// GETs `url` and reads its body, capped at [`MAX_RESPONSE_BYTES`].
+async fn fetch(session: &soup::Session, url: &str) -> Result<Vec<u8>, BodyError> {
+    let message =
+        soup::Message::new("GET", url).map_err(|error| BodyError::Io(error.to_string()))?;
+    let body = session
+        .send_future(&message, glib::Priority::DEFAULT)
         .await
-        .map_err(BodyError::Io)?;
+        .map_err(|error| BodyError::Io(error.to_string()))?;
+    // libsoup hands over the body whatever the status; an error page is not Fox's reply.
+    let status = message.status().into_glib();
+    if !(200..300).contains(&status) {
+        return Err(BodyError::Status(status));
+    }
+    read_capped(&body, MAX_RESPONSE_BYTES).await
+}
+
+/// Reads `stream` whole, giving up as soon as it has seen more than `cap` bytes.
+///
+/// Streamed rather than read in one call (`send_and_read`), which buffers the entire body
+/// before its size can be checked: an endless or hostile response must cost at most `cap`
+/// bytes of memory.
+async fn read_capped(stream: &gio::InputStream, cap: usize) -> Result<Vec<u8>, BodyError> {
+    const CHUNK: usize = 64 * 1024;
     let mut body = Vec::new();
     loop {
         let chunk = stream
             .read_bytes_future(CHUNK, glib::Priority::DEFAULT)
             .await
-            .map_err(BodyError::Io)?;
+            .map_err(|error| BodyError::Io(error.to_string()))?;
         if chunk.is_empty() {
             return Ok(body);
         }
@@ -569,6 +592,28 @@ impl FoxPickerDialog {
     }
 }
 
+/// Readies GIO's TLS backend on the blocking pool, once per process.
+///
+/// Otherwise the first `https://` connection does it on the GTK thread while libsoup builds
+/// the TLS client: 20–35 ms on Linux, reading the system certificate bundle, and an
+/// unmeasured walk of the certificate stores on Windows. glib-networking loads that store
+/// twice, once for the default database and once more for the credentials every connection
+/// shares; building a throwaway client connection here fills both, behind locks, so a
+/// lookup that races this merely waits for it. Without glib-networking the constructor
+/// just fails.
+fn warm_tls(runtime: &tokio::runtime::Handle) {
+    static WARM: std::sync::Once = std::sync::Once::new();
+    WARM.call_once(|| {
+        runtime.spawn_blocking(|| {
+            let stream = gio::SimpleIOStream::new(
+                &gio::MemoryInputStream::new(),
+                &gio::MemoryOutputStream::new_resizable(),
+            );
+            let _ = gio::TlsClientConnection::new(&stream, None::<&gio::SocketConnectable>);
+        });
+    });
+}
+
 /// Shows the picker for `parent`'s window, reusing the one kept in `slot`.
 ///
 /// One picker per window: libadwaita refuses to present the same dialog in two
@@ -584,6 +629,7 @@ pub(crate) fn present(
         .borrow_mut()
         .get_or_insert_with(FoxPickerDialog::wired)
         .clone();
+    warm_tls(&runtime);
     dialog.set_runtime(runtime);
     dialog.install_handler(on_open);
     dialog.prepare_to_show();
@@ -656,13 +702,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Reads the file at `path` through [`read_capped`].
+    fn read_file_capped(path: &Path, cap: usize) -> Result<Vec<u8>, BodyError> {
+        glib::MainContext::new().block_on(async {
+            let stream = gio::File::for_path(path)
+                .read_future(glib::Priority::DEFAULT)
+                .await
+                .expect("open the file");
+            read_capped(stream.upcast_ref(), cap).await
+        })
+    }
+
     #[test]
     fn an_endless_response_is_cut_off_at_the_cap() {
         // `/dev/zero` never ends: buffering it whole before checking its size would run the
         // process out of memory. The capped reader must stop once it passes the cap.
-        let context = glib::MainContext::new();
-        let endless = gio::File::for_path("/dev/zero");
-        let result = context.block_on(read_capped(&endless, 1024 * 1024));
+        let result = read_file_capped(Path::new("/dev/zero"), 1024 * 1024);
         assert!(matches!(result, Err(BodyError::TooLarge)), "{result:?}");
     }
 
@@ -671,12 +726,37 @@ mod tests {
         let path = std::env::temp_dir().join(format!("mirai-fox-body-{}", std::process::id()));
         let body: Vec<u8> = (0..200_000u32).map(|i| i as u8).collect();
         std::fs::write(&path, &body).unwrap();
-        let context = glib::MainContext::new();
-        let file = gio::File::for_path(&path);
-        let exact = context.block_on(read_capped(&file, body.len()));
-        let over = context.block_on(read_capped(&file, body.len() - 1));
+        let exact = read_file_capped(&path, body.len());
+        let over = read_file_capped(&path, body.len() - 1);
         let _ = std::fs::remove_file(&path);
         assert_eq!(exact.expect("a body exactly at the cap is accepted"), body);
         assert!(matches!(over, Err(BodyError::TooLarge)), "{over:?}");
+    }
+
+    #[test]
+    fn only_a_2xx_body_is_taken_for_the_reply() {
+        // libsoup hands over an error page's body like any other. Parsed as Fox's JSON, a
+        // 503 would surface as a baffling parser message, or pass for an empty record list.
+        let reply = br#"{"result":0,"chesslist":[]}"#;
+        let (ok, busy) = glib::MainContext::new().block_on(async {
+            let server = soup::Server::builder().build();
+            server.add_handler(None, move |_, message, path, _| {
+                let status = if path == "/busy" { 503 } else { 200 };
+                message.set_status(status, None);
+                message.set_response(Some("application/json"), soup::MemoryUse::Copy, reply);
+            });
+            server
+                .listen_local(0, soup::ServerListenOptions::IPV4_ONLY)
+                .expect("listen on loopback");
+            let base = server.uris()[0].to_string();
+            let session = soup::Session::new();
+            // A proxy taken from the environment must not intercept a loopback request.
+            session.set_proxy_resolver(None::<&gio::ProxyResolver>);
+            let ok = fetch(&session, &format!("{base}ok")).await;
+            let busy = fetch(&session, &format!("{base}busy")).await;
+            (ok, busy)
+        });
+        assert_eq!(ok.expect("a 200 is the reply"), reply);
+        assert!(matches!(busy, Err(BodyError::Status(503))), "{busy:?}");
     }
 }

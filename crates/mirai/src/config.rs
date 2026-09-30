@@ -130,11 +130,12 @@ fn xdg_dir_list(value: Option<&OsStr>, fallback: &[&str]) -> Vec<PathBuf> {
     }
 }
 
-/// The first executable named `name` on `PATH`.
+/// The first executable named `name` on `PATH`, with the platform's executable suffix.
 fn which(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
+    let file = format!("{name}{}", std::env::consts::EXE_SUFFIX);
     std::env::split_paths(&path)
-        .map(|dir| dir.join(name))
+        .map(|dir| dir.join(&file))
         .find(|candidate| candidate.is_file())
 }
 
@@ -487,11 +488,12 @@ impl Config {
         Ok(dirs.config_dir().join("config.toml"))
     }
 
-    /// `$XDG_DATA_HOME/mirai`, for the autosave and KataGo logs.
+    /// `$XDG_DATA_HOME/mirai`, for the autosave and KataGo logs. On Windows the local, not
+    /// the roaming, application data: none of it belongs on another machine.
     pub fn data_dir() -> Result<PathBuf, ConfigError> {
         let dirs = directories::ProjectDirs::from("io.github", "zhaob1n", "mirai")
             .ok_or(ConfigError::NoHome)?;
-        Ok(dirs.data_dir().to_path_buf())
+        Ok(dirs.data_local_dir().to_path_buf())
     }
 
     /// Loads the configuration. A missing file is an empty config, not an error; a
@@ -837,15 +839,13 @@ mod tests {
 
     #[test]
     fn xdg_system_directories_keep_precedence_and_ignore_relative_entries() {
-        let encoded = std::env::join_paths(["/opt/katago-a", "relative", "/opt/katago-b"])
+        // Absolute on every platform: `/opt/...` is not absolute on Windows, which wants a
+        // drive as well.
+        let a = std::env::temp_dir().join("katago-a");
+        let b = std::env::temp_dir().join("katago-b");
+        let encoded = std::env::join_paths([a.as_path(), Path::new("relative"), b.as_path()])
             .expect("join XDG path list");
-        assert_eq!(
-            xdg_dir_list(Some(&encoded), &["/fallback"]),
-            ["/opt/katago-a", "/opt/katago-b"]
-                .into_iter()
-                .map(PathBuf::from)
-                .collect::<Vec<_>>()
-        );
+        assert_eq!(xdg_dir_list(Some(&encoded), &["/fallback"]), [a, b]);
         assert_eq!(
             xdg_dir_list(Some(OsStr::new("")), &["/usr/local/share", "/usr/share"]),
             ["/usr/local/share", "/usr/share"]

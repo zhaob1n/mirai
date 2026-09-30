@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Huang Zhaobin
+#
+# Cross-build environment for the Windows (x86_64-pc-windows-gnu) build of mirai.
+# Driven by tools/packaging/windows-cross.sh; see docs/dev/PACKAGING.md.
+#
+# Fedora ships the whole GTK 4 stack cross-compiled for MinGW, but not libadwaita, which
+# is built here from its release tarball against that sysroot.
+#
+# Rawhide, because it is the only Fedora release whose MinGW GTK is 4.24: Fedora 45 stays
+# on 4.22, where GDK composites every window through DirectComposition and the GL and
+# Vulkan renderers draw a black band around it (gtk#7567, fixed in 4.24 by making DComp
+# opt-in). Pin the first stable release that ships MinGW GTK 4.24 once there is one.
+
+FROM registry.fedoraproject.org/fedora:rawhide
+
+# Optional mirror for the `rawhide` repository, e.g. a nearby Fedora mirror's mirrorlist
+# URL. Empty keeps Fedora's metalink.
+ARG FEDORA_MIRRORLIST=
+RUN if [ -n "$FEDORA_MIRRORLIST" ]; then \
+        dnf config-manager setopt "rawhide.mirrorlist=$FEDORA_MIRRORLIST" rawhide.metalink= ; \
+    fi
+
+# The Fedora image installs only en_US translations; the package ships GTK's, GLib's and
+# libadwaita's catalogues for each language mirai is translated into, so take them all.
+RUN echo '%_install_langs all' > /etc/rpm/macros.image-language-conf
+
+# Native gtk4, libadwaita and gobject-introspection (cairo and freetype2) are here only
+# for their typelibs: blueprint-compiler runs on the build machine inside the
+# `CompositeTemplate` derive and resolves `using Gtk 4.0` against them. gettext's msgfmt
+# compiles mirai's catalogues in build.rs and libadwaita's below. librsvg2-tools and
+# icoutils turn the SVG app icon into the executables' .ico; the NSIS compiler (packaged as
+# mingw32-nsis) builds the installer. libsoup is Fox lookup's HTTP client, and
+# glib-networking the TLS backend it reaches `https://` through.
+RUN dnf -y install --setopt=install_weak_deps=False \
+        mingw64-gcc mingw64-gtk4 mingw64-appstream mingw64-fribidi \
+        mingw64-adwaita-icon-theme mingw64-hicolor-icon-theme mingw64-librsvg2 \
+        mingw64-gstreamer1-plugins-good mingw64-libsoup3 mingw64-glib-networking \
+        gcc meson ninja-build sassc glib2-devel blueprint-compiler gtk4 libadwaita \
+        gobject-introspection gettext rustup curl xz zip \
+        librsvg2-tools icoutils mingw32-nsis \
+    && dnf clean all
+
+ARG ADW_VERSION=1.9.4
+ARG ADW_SHA256=f5ab3453ee743dc293cdf96d6821789cd20e8d125d9b41637703c12bfa4162ee
+RUN curl -fsSL --retry 5 --retry-all-errors -o /tmp/adw.tar.xz \
+        "https://download.gnome.org/sources/libadwaita/${ADW_VERSION%.*}/libadwaita-${ADW_VERSION}.tar.xz" \
+    && echo "$ADW_SHA256  /tmp/adw.tar.xz" | sha256sum -c \
+    && tar -C /tmp -xf /tmp/adw.tar.xz \
+    && cd "/tmp/libadwaita-${ADW_VERSION}" \
+    && mingw64-meson _build \
+        -Dintrospection=disabled -Dvapi=false -Dtests=false -Dexamples=false \
+        -Ddocumentation=false \
+    && ninja -C _build install \
+    && cd / && rm -rf /tmp/adw.tar.xz "/tmp/libadwaita-${ADW_VERSION}"
+
+# The toolchain lives outside CARGO_HOME's registry, which the wrapper mounts as a volume.
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
+ARG RUSTUP_DIST_SERVER=
+ARG RUSTUP_UPDATE_ROOT=
+RUN export ${RUSTUP_DIST_SERVER:+RUSTUP_DIST_SERVER=$RUSTUP_DIST_SERVER} \
+           ${RUSTUP_UPDATE_ROOT:+RUSTUP_UPDATE_ROOT=$RUSTUP_UPDATE_ROOT} \
+    && rustup-init -y --no-modify-path --profile minimal --default-toolchain stable \
+        --component clippy,rustfmt --target x86_64-pc-windows-gnu
+
+# Everything that makes `cargo --target x86_64-pc-windows-gnu` use the MinGW sysroot.
+ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
+    CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc \
+    AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar \
+    PKG_CONFIG_x86_64_pc_windows_gnu=x86_64-w64-mingw32-pkg-config \
+    PKG_CONFIG_ALLOW_CROSS=1 \
+    MINGW_SYSROOT=/usr/x86_64-w64-mingw32/sys-root/mingw

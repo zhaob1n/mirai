@@ -48,7 +48,7 @@ needed, `cargo test -p <crate> -- --list`.
 | `mirai-engine` | The JSON handed to KataGo (empty `avoidMoves` dropped, never `analyzeTurns`, `terminate` behind INV-3); decode order and Black-perspective values; a candidate cap keeps the engine's best, not KataGo's first; reporting perspective forced on the command line; a comma in an override path is an error; a user-supplied config is overridden only for the two thread counts; the generated analysis config carries every key KataGo demands and is not rewritten when unchanged; calibration selects the measured winner and covers the thread product; dropping a subscription forgets it before the tail is decoded; a decode failure still terminates the search; a dead remote address fails instead of hanging; a subscription stream without its preamble fails the connection instead of hanging; the MRP session rules against a scripted server; a probe returns the fingerprint and sends no Hello, and a wrong pin fails before Hello | `cargo test -p mirai-engine`. These tests never start KataGo. A real engine is §4 |
 | `mirai-client` | A request built from the last setup/`PL` boundary, with territory komi taken from that boundary; a sweep hands back a result before the rest of the plan is dispatched; blunder drop measured from the mover, above the 2% noise floor; an illegal move changes nothing; dirty is a document token; an unpinned connect probes and waits, and Trust is what sends the pin; temperature 0 is deterministic and one bad report does not resign; Fox dialect normalised before `sgf::parse`; only a single step onto a placed stone sounds, and a capture is told by the stones it removed | `cargo test -p mirai-client` |
 | `mirai-server` | Token shape and placeholder rejection; misspelled keys, duplicate tokens and a zero `max_subs` refused; relative paths resolved against the config directory; an authenticated client cannot exceed its token's cross-connection subscription quota or raise priority; off-board, oversized or unbounded requests constrained before KataGo, with only allow-listed overrides forwarded; silent pre-auth and blocked error writes release session slots; cancellation stops the search even when its stream is not read, and `STOP_SENDING` alone stops a search that is not reporting; a pipelined burst is answered in full, while a peer that stops reading its control stream loses its searches; oversized/compressed Hello refused without logging secrets | `cargo test -p mirai-server`. Example: `crates/mirai-server/server.example.toml` |
-| `mirai` | Display-free projections and dispatch only: a comment or mark does not run the `Tree` refresh and one move projects once; a returning remote link re-requests analysis, only for the window's current engine; a score overlay is drawn on the real position, never a pinned variation; a pick is never faded; config merge and discovery order; a missing Human model does not overwrite the saved strength; handicap only where the board has points; cache power 0 or at least 2^14; Clear Board keeps size/rules/komi; the slider spans the line through the cursor; widget geometry lifted out of `snapshot()`; harness grammar; `EnginePool` sharing, stranding and teardown. Nothing drawn | `cargo test -p mirai`. What the window looks like is §5 |
+| `mirai` | Display-free projections and dispatch only: a comment or mark does not run the `Tree` refresh and one move projects once; a returning remote link re-requests analysis, only for the window's current engine; a score overlay is drawn on the real position, never a pinned variation; a pick is never faded; config merge and discovery order; a missing Human model does not overwrite the saved strength; handicap only where the board has points; cache power 0 or at least 2^14; Clear Board keeps size/rules/komi; the slider spans the line through the cursor; widget geometry lifted out of `snapshot()`; harness grammar; a Fox reply is taken only from a 2xx, within its size cap (a loopback libsoup server); `EnginePool` sharing, stranding and teardown. Nothing drawn | `cargo test -p mirai`. What the window looks like is §5 |
 
 ## 3. Testing philosophy
 
@@ -549,6 +549,24 @@ The self-play fixture has `MRAI` on its nodes. Expect the analysis panel, not
 the StatusPage; visits in the detail line and no `/s`; the graph still reads
 Black's `…%`. The sidebar percentage is the side to move.
 
+**(i) The Windows build, under Wine.** Stage the debug build, which carries the harness,
+and run it in the Wine prefix `target/windows/wine`
+([PACKAGING.md](PACKAGING.md#decisions) lists what Wine cannot show). Wine sees the host
+through drive `Z:`. With a Windows KataGo's folder in `WINEPATH` and a network in
+`target/windows/wine/drive_c/users/$USER/.katago/models`, first-run discovery seeds
+`local-default` as it would on Windows:
+
+```sh
+tools/packaging/windows-cross.sh debug
+WINEPATH='Z:\path\to\katago-windows' \
+  MIRAI_HARNESS='wait:4000,action:win.last,action:win.toggle-analysis,wait:45000,shot:Z:\tmp\mirai-wine.png,quit' \
+  tools/packaging/windows-wine.sh "" mirai 'Z:\path\to\game.sgf'
+```
+
+Expect the same window as on Linux, the engine button naming `local-default` and live
+candidates. A GStreamer abort (`'playbin3' element not found`) means a plugin is missing
+from `stage.sh`.
+
 ## 6. Verifying the remote path
 
 This is the loopback and cancellation runbook. §4 only diffs a `[final]` block
@@ -714,3 +732,5 @@ These are ability boundaries, not a backlog. Do not file them as missing tests.
 |---|---|
 | The harness does not deliver physical Wayland input | `action:`, `press:`, `page:`, `set:`, `board:` and the rest call production handlers. They do not synthesise a key, a double-click or a compositor event. Say so if that is what was checked |
 | No image golden | Inspect the PNG; a pixel oracle breaks with the next margin change |
+| The Windows network path is unverified | Wine refuses a socket option quinn sets, so `mirai-server.exe` and remote profiles cannot bind under Wine; they have only run on Linux |
+| The Windows window frame and frame cost need real Windows | Wine has no DirectComposition and `shot:` renders the widget tree, not the window, so a band like gtk#7567's cannot show under Wine; nor do Wine's frame timings stand for Windows' |
