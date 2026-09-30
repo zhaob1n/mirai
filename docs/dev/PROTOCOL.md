@@ -97,7 +97,7 @@ MRP pins certificates instead of using PKI, so a LAN server needs no public DNS 
 | Later connections: compare, and abort the TLS handshake on mismatch. A mismatch is a **hard failure** — no fallback check, no one-time override, no retry of that connection. | MUST |
 | Do NOT validate against a trust store, do NOT validate hostname/SAN, do NOT reject on `notBefore`/`notAfter`. The fingerprint is the entire check. | MUST |
 | Still verify the TLS 1.3 `CertificateVerify` signature against the leaf's public key. Pinning replaces chain validation, not proof of key possession. | MUST |
-| Normalise a user-supplied pin — trim, lowercase, strip `:` — so a fingerprint pasted from `openssl x509 -fingerprint -sha256` works. | SHOULD |
+| Normalise a user-supplied pin — trim, lowercase, strip `:`, internal whitespace and an optional `SHA256 Fingerprint=` prefix — so a fingerprint pasted from `openssl x509 -fingerprint -sha256` works. After normalisation the client MUST reject anything other than 64 hex digits *before* the handshake; a malformed pin is not a fingerprint mismatch. | SHOULD / MUST |
 
 **SNI.** A client connecting to an IP literal sends `localhost` as SNI. Servers MUST NOT
 route or authorise on SNI, or reject a handshake because SNI disagrees with the certificate.

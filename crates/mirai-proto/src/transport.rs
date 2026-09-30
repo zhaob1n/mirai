@@ -101,6 +101,9 @@ pub fn transport_config() -> quinn::TransportConfig {
             .expect("30s is a valid idle timeout"),
     ));
     tc.max_concurrent_uni_streams(quinn::VarInt::from_u32(256));
+    // One bidirectional stream per connection: the control stream. quinn's default is
+    // 100, which would let a peer open streams MRP does not define.
+    tc.max_concurrent_bidi_streams(quinn::VarInt::from_u32(1));
     tc.stream_receive_window(quinn::VarInt::from_u32(STREAM_WINDOW));
     tc
 }
@@ -246,10 +249,12 @@ pub fn server_endpoint(
 // ---------------------------------------------------------------------------------------
 /// Certificate verification for a pinned connection, or for a probe that only records.
 ///
-/// A pin is normalised first — trim, lowercase, strip `:` — so a value pasted from
-/// `openssl x509 -fingerprint` matches the lowercase hex the server prints. The
-/// accept-anything mode exists only for [`probe`]: it never opens a stream, so it
-/// cannot carry a token. [`connect`] always passes a pin.
+/// A pin is normalised first — trim, lowercase, strip `:`, an optional
+/// `SHA256 Fingerprint=` prefix and internal whitespace — and must then be 64 hex
+/// digits. [`connect`] rejects anything else before the handshake, so a paste error
+/// is not reported as a certificate mismatch. The accept-anything mode exists only
+/// for [`probe`]: it never opens a stream, so it cannot carry a token. [`connect`]
+/// always passes a pin.
 #[derive(Debug)]
 pub struct TofuVerifier {
     expected: Option<String>,
@@ -276,10 +281,37 @@ impl TofuVerifier {
 
 /// A user-supplied pin in the form every comparison uses.
 ///
-/// `openssl x509 -fingerprint -sha256` prints uppercase hex with colons, often
-/// with surrounding whitespace. The pin itself is lowercase hex, no separators.
+/// `openssl x509 -fingerprint -sha256` prints `SHA256 Fingerprint=` plus uppercase hex
+/// with colons, often with surrounding whitespace. The pin itself is lowercase hex, no
+/// separators.
 fn normalize_fingerprint(raw: &str) -> String {
-    raw.trim().to_ascii_lowercase().replace(':', "")
+    let s = raw.trim().to_ascii_lowercase();
+    let s = s
+        .strip_prefix("sha256 fingerprint=")
+        .unwrap_or(s.as_str())
+        .trim();
+    s.chars()
+        .filter(|c| *c != ':' && !c.is_whitespace())
+        .collect()
+}
+
+/// Normalises `raw` and refuses anything that is not a SHA-256 fingerprint.
+///
+/// A malformed pin must fail here. Reported as a certificate mismatch, it looks like the
+/// server changed identity, and §2.2 then forbids overriding that failure.
+fn canonical_pin(raw: &str) -> Result<String, TransportError> {
+    let pin = normalize_fingerprint(raw);
+    if pin.is_empty() {
+        return Err(TransportError::Cert(
+            "a certificate pin is required before the token can be sent".into(),
+        ));
+    }
+    if pin.len() != 64 || !pin.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(TransportError::Cert(
+            "certificate pin must be 64 hex digits; colons and an openssl 'SHA256 Fingerprint=' prefix are optional".into(),
+        ));
+    }
+    Ok(pin)
 }
 
 impl ServerCertVerifier for TofuVerifier {
@@ -350,7 +382,7 @@ pub fn client_endpoint(
     expected: String,
     observed: Arc<Mutex<Option<String>>>,
 ) -> Result<quinn::Endpoint, TransportError> {
-    endpoint_with(TofuVerifier::new(expected, observed))
+    endpoint_with(TofuVerifier::new(canonical_pin(&expected)?, observed))
 }
 
 fn observe_endpoint(
@@ -395,12 +427,7 @@ async fn open_connection(
     let observed = Arc::new(Mutex::new(None));
     let (endpoint, expected) = match trust {
         Trust::Pin(pin) => {
-            let pin = normalize_fingerprint(&pin);
-            if pin.is_empty() {
-                return Err(TransportError::Cert(
-                    "a certificate pin is required before the token can be sent".into(),
-                ));
-            }
+            let pin = canonical_pin(&pin)?;
             (client_endpoint(pin.clone(), observed.clone())?, Some(pin))
         }
         Trust::Observe => (observe_endpoint(observed.clone())?, None),
@@ -501,6 +528,30 @@ pub async fn connect(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pin_accepts_openssl_output_and_rejects_a_non_fingerprint() {
+        let hex = "ab".repeat(32);
+        let pairs: Vec<_> = hex
+            .as_bytes()
+            .chunks(2)
+            .map(|pair| std::str::from_utf8(pair).unwrap().to_ascii_uppercase())
+            .collect();
+        let pasted = format!("SHA256 Fingerprint={}\n", pairs.join(":"));
+        assert_eq!(canonical_pin(&pasted).unwrap(), hex);
+        assert_eq!(canonical_pin(&format!(" {hex} ")).unwrap(), hex);
+
+        let short = canonical_pin(&"ab".repeat(20)).unwrap_err();
+        assert!(
+            matches!(&short, TransportError::Cert(msg) if msg.contains("64 hex")),
+            "{short}"
+        );
+        let empty = canonical_pin(" :: ").unwrap_err();
+        assert!(
+            matches!(&empty, TransportError::Cert(msg) if msg.contains("required")),
+            "{empty}"
+        );
+    }
 
     #[test]
     fn generated_cert_is_reused_and_private_key_is_restricted() {
