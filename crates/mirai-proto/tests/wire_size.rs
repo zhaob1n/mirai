@@ -213,7 +213,11 @@ fn dequantisation_error_stays_inside_the_documented_tolerances() {
         "utility error {utility}"
     );
     assert!((stdev - 0.015625).abs() < 1e-9, "score stdev error {stdev}");
-    assert!(policy <= 1e-4, "policy error {policy}");
+    // Not a binary fraction like the others: f32 rounding leaves about 1e-12 here.
+    assert!(
+        (policy - 0.5 / 65534.0).abs() < 1e-10,
+        "policy error {policy}"
+    );
     assert_ne!(
         q_policy(1.0),
         POLICY_ILLEGAL,
