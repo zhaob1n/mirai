@@ -1486,10 +1486,17 @@ mod tests {
         state.go_prev();
         let changes = take();
         assert!(!changes.iter().any(|c| matches!(c, Change::Tree)));
+        let cursor_at = changes
+            .iter()
+            .position(|c| matches!(c, Change::Cursor { project: true }))
+            .expect("navigation emits Cursor");
+        let report_at = changes
+            .iter()
+            .position(|c| matches!(c, Change::Report))
+            .expect("navigation emits Report; the panel refreshes in that handler only");
         assert!(
-            changes
-                .iter()
-                .any(|c| matches!(c, Change::Cursor { project: true }))
+            cursor_at < report_at,
+            "Cursor clears the pin before Report refreshes the panel"
         );
 
         state.play_move(point).expect("existing move");

@@ -586,10 +586,10 @@ fn handle_change(ui: &Ui, change: Change) {
                 ui.board.clear_preview();
             }
             ui.move_tree.refresh();
-            // The board has just dropped its pin; the row would name another position's
-            // move once `refresh` rewrites it in place.
+            // The pin belongs to the node we just left. `moved_cursor` emits Report
+            // immediately after this, and that handler refreshes the panel. Doing it
+            // here as well rebuilt the candidate rows twice on every navigation.
             ui.analysis.clear_selection();
-            ui.analysis.refresh();
             update_editor_actions(ui);
             update_play_lock(ui);
         }
