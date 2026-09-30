@@ -23,6 +23,9 @@ cargo build --release --workspace
 cargo test -p mirai-proto --test wire_size -- --nocapture   # prints the measured byte budget
 ```
 
+`just check` runs formatting, all-target Clippy with warnings denied, and the full
+workspace suite with the lockfile — the checks every commit owes.
+
 For documentation edits, run `python tools/docs/check-links.py`. It checks local
 files and heading anchors, and refuses a source file cited with a line number: cite a symbol
 or a section, which survives the next edit. The optional adjacent `mirai-hmos` link is

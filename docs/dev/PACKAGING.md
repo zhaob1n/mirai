@@ -5,7 +5,7 @@ Commands are in the [README](../../README.md#requirements).
 
 |Path|What|
 |---|---|
-|`justfile`|`build`, `install [mirai\|server]`, `uninstall [mirai\|server]`; honours `PREFIX` and `DESTDIR`. The one list of installed files|
+|`justfile`|`check`, `build`, `install [mirai\|mirai-server\|all]`, `uninstall [mirai\|mirai-server\|all]`; honours `PREFIX` and `DESTDIR`. The one list of installed files|
 |`data/`|templates of the desktop entry and AppStream metainfo (`*.in`), shared by every package; `just install` merges the translations from `po/` into them. Icons come from `crates/mirai/resources/icons/`|
 |`po/`|one gettext catalogue per language in `po/LINGUAS`, compiled by `just install` into `share/locale` ([TRANSLATING](TRANSLATING.md))|
 |`packaging/aur/`|split PKGBUILD and its `.SRCINFO`: `mirai-git` (the GUI, desktop files, icons) and `mirai-server-git` (the headless host, which needs no GTK), from one build, installed with `just`|
