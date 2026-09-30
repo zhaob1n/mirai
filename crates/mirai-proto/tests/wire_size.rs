@@ -142,10 +142,6 @@ fn dequantisation_error_stays_inside_the_documented_tolerances() {
         let wr = i as f64 / 10_000.0;
         worst_wr = worst_wr.max((dq16(q16(wr)) as f64 - wr).abs());
     }
-    let wr_half = {
-        let x = 0.5 / 65535.0;
-        (dq16(q16(x)) as f64 - x).abs()
-    };
     let lead = half_quantum(0.5 / SCORE_SCALE, |x| {
         dqs(qs(x, SCORE_SCALE), SCORE_SCALE) as f64
     });
@@ -160,10 +156,6 @@ fn dequantisation_error_stays_inside_the_documented_tolerances() {
     let own = {
         let x = 0.5 / 127.0;
         (dq_own(q_own(x)) as f64 - x).abs()
-    };
-    let policy = {
-        let x = 0.5 / 65534.0;
-        (dq_policy(q_policy(x)).unwrap() as f64 - x).abs()
     };
     let raw_var = {
         let x = 0.5 / RAW_VAR_TIME_SCALE;
@@ -195,10 +187,6 @@ fn dequantisation_error_stays_inside_the_documented_tolerances() {
     );
     assert!(worst_wr <= 1e-4, "winrate error {worst_wr}");
     assert!(
-        (wr_half - 0.5 / 65535.0).abs() < 1e-8,
-        "winrate half-quantum measured {wr_half}"
-    );
-    assert!(
         (lead - 0.015625).abs() < 1e-9,
         "score lead half-quantum is 0.015625, measured {lead}"
     );
@@ -213,11 +201,17 @@ fn dequantisation_error_stays_inside_the_documented_tolerances() {
         "utility error {utility}"
     );
     assert!((stdev - 0.015625).abs() < 1e-9, "score stdev error {stdev}");
-    // Not a binary fraction like the others: f32 rounding leaves about 1e-12 here.
-    assert!(
-        (policy - 0.5 / 65534.0).abs() < 1e-10,
-        "policy error {policy}"
-    );
+    // q16 and q_policy spell their scale separately in the encoder and the decoder, so a
+    // round trip cannot see one side changed alone: a half-quantum probe sits on a
+    // rounding tie. Exact codes can. Each encoder gets one point per direction a wrong
+    // scale would round (65534 or 65536 for q16, 65533 or 65535 for q_policy), and each
+    // decoder the full-scale code, which is exactly 1 only at the right divisor.
+    assert_eq!(q16(0.5), 32768);
+    assert_eq!(q16(0.75), 49151);
+    assert_eq!(dq16(65535), 1.0);
+    assert_eq!(q_policy(0.5), 32767);
+    assert_eq!(q_policy(0.25), 16384);
+    assert_eq!(dq_policy(65534), Some(1.0));
     assert_ne!(
         q_policy(1.0),
         POLICY_ILLEGAL,
