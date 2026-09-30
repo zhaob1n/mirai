@@ -155,10 +155,10 @@ zstd level 1 and window 2^19 on control streams; subscription windows are 2^16.
 |---|---|---|
 | 1 | Never emit `len > MAX_FRAME`. | MUST NOT |
 | 2 | Read the 5-byte header first and reject `len > MAX_FRAME` **before** reading or allocating the body. | MUST |
-| 3 | Bound each frame's decompressed size to `MAX_FRAME`; abort inflation as soon as it would exceed the bound. Do not trust the zstd content-size field. A receiver MAY use a smaller plaintext limit where appropriate ([§9.3](#93-limits)). Separately, refuse control-frame zstd windows larger than 2^19: the window is allocated from its header before the plaintext bound applies. | MUST |
+| 3 | Bound each frame's decompressed size to `MAX_FRAME`; abort inflation as soon as it would exceed the bound. Do not trust the zstd content-size field. A receiver MAY use a smaller plaintext limit where appropriate ([§9.3](#93-limits)). A control-frame sender MUST declare a zstd window no larger than 2^19; the receiver MUST refuse a larger one, which would be allocated from its header before the plaintext bound applies. | MUST |
 | 4 | Reject a `flags` value the stream does not allow. | MUST |
 | 5 | A payload decodes to exactly one message; reject trailing bytes after it. | MUST |
-| 6 | Control stream: compress iff the postcard payload is **strictly greater than** `COMPRESS_THRESHOLD`. Interop does not depend on it: receivers MUST accept either form at any size, so a minimal implementation MAY always send `flags = 0x00`. | SHOULD / MUST |
+| 6 | Control stream: compress iff the postcard payload is **strictly greater than** `COMPRESS_THRESHOLD`. Within the frame and window limits above, receivers MUST accept either form at any payload size, so a minimal implementation MAY always send `flags = 0x00`. | SHOULD / MUST |
 | 7 | Control stream: the reference encoder streams at level 1 with **no content-size field and no checksum**; receivers MUST NOT require either. | MUST NOT |
 | 8 | A stream ending exactly at a frame boundary is a graceful end, not an error. Ending inside a frame is an error. | MUST |
 | 9 | Frames carry no message-type tag: the type follows from stream and direction. | — |
