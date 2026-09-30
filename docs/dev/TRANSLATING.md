@@ -8,7 +8,8 @@ Copyright (C) 2026 Huang Zhaobin
 mirai is translated with GNU gettext, as GNOME applications are. The interface, the desktop
 entry and the AppStream metainfo share one catalogue per language in `po/`. User documents
 are translated as separate files (`README.zh-CN.md`, `docs/user/GUIDE.zh-CN.md`); developer
-documents stay English.
+documents are written in English, except the original Chinese Fox API field notes in
+[`FOX_KIFU_API_SPEC.md`](FOX_KIFU_API_SPEC.md).
 
 ## Adding or updating a language
 
