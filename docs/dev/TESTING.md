@@ -212,8 +212,10 @@ printf '%s\n' '{"id":"gt","boardXSize":19,"boardYSize":19,"rules":"chinese","kom
 ## 5. Testing the GUI
 
 The harness lives in `crates/mirai/src/harness.rs`; use a **debug** build. Tune
-`wait:` for the local engine. Stderr records completed steps. Window layout is
-mapped in [`ARCHITECTURE.md` §7](ARCHITECTURE.md#7-gui-architecture).
+`wait:` for the local engine. Stderr records completed steps; a failed, missing,
+timed-out or malformed step makes the process exit 1 after normal shutdown.
+Successful scripts exit 0. Window layout is mapped in
+[`ARCHITECTURE.md` §7](ARCHITECTURE.md#7-gui-architecture).
 
 Action names are whatever `window::install_actions` registers. A typo logs
 `MISSING`. The recipes below name the actions they need. `win.open` and
@@ -273,13 +275,13 @@ Traps:
 
 | Step | Meaning | Delay after |
 |---|---|---|
-| `wait:<ms>` | Sleep. Non-numeric is **dropped**, not treated as zero | — |
+| `wait:<ms>` | Sleep. A non-numeric argument fails the script | — |
 | `wait-status:<substring>` | Wait up to 10 s for a visible label on the active window to contain the text | — |
 | `action:<prefix.name>` | Activate an action with no parameter | 120 ms |
 | `action:<prefix.name>=<string>` | Activate with a string parameter (`action:win.set-engine=workstation`, `action:win.edit-tool=triangle`) | 120 ms |
 | `press:<label substring>` | Activate the first matching mapped, sensitive button, action row or menu item; toggle an expander. Scoped to the visible dialog when one is up | 250 ms |
 | `page:<preferences page title>` | Open that `adw::PreferencesPage` (`page:Analysis`). The dialog must already be presented | 250 ms |
-| `set:<row title>=<number>` | Set the first visible matching `adw::SpinRow` (`set:Maximum Visits=2000`). Non-numeric is dropped, not treated as zero | 250 ms |
+| `set:<row title>=<number>` | Set the first visible matching `adw::SpinRow` (`set:Maximum Visits=2000`). A non-numeric argument fails the script | 250 ms |
 | `select:<row title>=<index>` | Set the first visible matching `adw::ComboRow`. Index 0 is its prompt or default | 250 ms |
 | `stack:<view stack page title>` | Show that `adw::ViewStack` page — `stack:Moves` for the branch graph | 250 ms |
 | `sort:<column title>` | Sort the first `GtkColumnView` by that column, and flip direction if it is already primary | 250 ms |
@@ -295,10 +297,11 @@ Traps:
 | `close-window` | Close only the active window through its normal shutdown path | 250 ms |
 | `quit` | `app.quit()`, ending the script | — |
 
-Unknown kinds are logged and skipped. Whitespace around steps is trimmed, so a
-script may wrap. `mod harness` is `#[cfg(debug_assertions)]` and `install`
-returns immediately when `MIRAI_HARNESS` is unset — **a release build ignores
-the variable. Always use a debug build.**
+Unknown or malformed steps fail the script, rather than silently skipping the
+step. Whitespace around steps is trimmed, so a script may wrap. `mod harness`
+is `#[cfg(debug_assertions)]` and `install` returns immediately when
+`MIRAI_HARNESS` is unset — **a release build ignores the variable. Always use
+a debug build.**
 
 Every step logs to stderr:
 

@@ -18,8 +18,13 @@
 //! `stack:<view stack page>`, `select:<row title>=<index>`, `set:<row title>=<number>`,
 //! `fill:<entry placeholder>=<text>`, `size:<w>x<h>`, `shot:<path.png>`,
 //! `shot:<path.png>=<widget id>`,
-//! `board:<primary|secondary|menu|hover>:<GTP>` enters the board's production hit-test path.
+//! `board:<primary|secondary|hover>:<GTP>` enters the board's production hit-test path.
 //! `close-window`, `quit`.
+//!
+//! Label steps match the text on screen, which follows the locale: an English script
+//! needs `LANGUAGE=en`, or needles written in the language the process runs. A step
+//! that does not land or does not parse makes the process exit 1 once the application
+//! has shut down normally (`main` checks [`failed`] after `run`).
 
 use std::time::Duration;
 
@@ -29,6 +34,7 @@ use gtk::glib;
 
 #[derive(Debug)]
 enum Step {
+    Invalid(String),
     Wait(u64),
     WaitStatus(String),
     Action(String, Option<String>),
@@ -79,20 +85,12 @@ fn parse(script: &str) -> Vec<Step> {
             match kind {
                 "wait" => rest.parse().ok().map(Step::Wait),
                 "wait-status" => Some(Step::WaitStatus(rest.to_string())),
-                "board" => match rest.split_once(':') {
-                    Some((button, point)) => Some(Step::Board(button.into(), point.into())),
-                    None => {
-                        eprintln!("harness: board {rest:?} -> FAILED: expected button:GTP");
-                        None
-                    }
-                },
-                "tree" => match rest.split_once(':') {
-                    Some((button, cell)) => Some(Step::Tree(button.into(), cell.into())),
-                    None => {
-                        eprintln!("harness: tree {rest:?} -> FAILED: expected button:depth:lane");
-                        None
-                    }
-                },
+                "board" => rest
+                    .split_once(':')
+                    .map(|(button, point)| Step::Board(button.into(), point.into())),
+                "tree" => rest
+                    .split_once(':')
+                    .map(|(button, cell)| Step::Tree(button.into(), cell.into())),
                 "focus" => Some(Step::Focus(rest.to_string())),
                 "shot" => Some(match rest.rsplit_once('=') {
                     Some((path, region)) => Step::Shot(path.to_string(), Some(region.to_string())),
@@ -128,11 +126,9 @@ fn parse(script: &str) -> Vec<Step> {
                     Some((name, arg)) => Step::Action(name.to_string(), Some(arg.to_string())),
                     None => Step::Action(rest.to_string(), None),
                 }),
-                other => {
-                    eprintln!("harness: ignoring unknown step {other:?}");
-                    None
-                }
+                _ => None,
             }
+            .or_else(|| Some(Step::Invalid(step.to_string())))
         })
         .collect()
 }
@@ -172,6 +168,20 @@ pub fn application_id(production: &'static str) -> &'static str {
     }
 }
 
+/// Set by the first step that does not land. `main` turns it into exit status 1
+/// after `application.run()` returns, so the failure never bypasses the normal
+/// window, config and engine shutdown.
+static FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether a scripted step failed. Read by `main` once the application has shut down.
+pub fn failed() -> bool {
+    FAILED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn mark_failed() {
+    FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Starts the script against `app`, if `MIRAI_HARNESS` is set.
 ///
 /// Called from both `activate` and `open`, and `open` may fire again later, so the script
@@ -195,11 +205,18 @@ pub fn install(app: &adw::Application) {
     glib::spawn_future_local(async move {
         for step in steps {
             match step {
+                Step::Invalid(text) => {
+                    mark_failed();
+                    eprintln!("harness: invalid step {text:?} -> FAILED");
+                }
                 Step::Wait(ms) => {
                     glib::timeout_future(Duration::from_millis(ms)).await;
                 }
                 Step::WaitStatus(text) => {
                     let found = wait_status(&app, &text).await;
+                    if !found {
+                        mark_failed();
+                    }
                     eprintln!(
                         "harness: wait-status {text:?} -> {}",
                         if found { "ok" } else { "TIMEOUT" }
@@ -207,6 +224,9 @@ pub fn install(app: &adw::Application) {
                 }
                 Step::Action(name, arg) => {
                     let done = activate(&app, &name, arg.as_deref());
+                    if !done {
+                        mark_failed();
+                    }
                     eprintln!(
                         "harness: action {name} -> {}",
                         if done { "ok" } else { "MISSING" }
@@ -218,6 +238,7 @@ pub fn install(app: &adw::Application) {
                     match board_click(&app, &button, &point) {
                         Ok(()) => eprintln!("harness: board {button}:{point} -> ok"),
                         Err(error) => {
+                            mark_failed();
                             eprintln!("harness: board {button}:{point} -> FAILED: {error}")
                         }
                     }
@@ -227,6 +248,7 @@ pub fn install(app: &adw::Application) {
                     match tree_press(&app, &button, &cell) {
                         Ok(()) => eprintln!("harness: tree {button}:{cell} -> ok"),
                         Err(error) => {
+                            mark_failed();
                             eprintln!("harness: tree {button}:{cell} -> FAILED: {error}")
                         }
                     }
@@ -237,6 +259,9 @@ pub fn install(app: &adw::Application) {
                         .active_window()
                         .and_then(|window| find_named(window.upcast_ref(), &name))
                         .is_some_and(|widget| widget.grab_focus());
+                    if !done {
+                        mark_failed();
+                    }
                     eprintln!(
                         "harness: focus {name:?} -> {}",
                         if done { "ok" } else { "NOT FOCUSABLE" }
@@ -244,6 +269,9 @@ pub fn install(app: &adw::Application) {
                 }
                 Step::Press(label) => {
                     let done = press(&app, &label);
+                    if !done {
+                        mark_failed();
+                    }
                     eprintln!(
                         "harness: press {label:?} -> {}",
                         if done { "ok" } else { "NOT FOUND" }
@@ -252,6 +280,9 @@ pub fn install(app: &adw::Application) {
                 }
                 Step::Page(title) => {
                     let done = show_page(&app, &title);
+                    if !done {
+                        mark_failed();
+                    }
                     eprintln!(
                         "harness: page {title:?} -> {}",
                         if done { "ok" } else { "NOT FOUND" }
@@ -260,6 +291,9 @@ pub fn install(app: &adw::Application) {
                 }
                 Step::Stack(title) => {
                     let done = show_stack_page(&app, &title);
+                    if !done {
+                        mark_failed();
+                    }
                     eprintln!(
                         "harness: stack {title:?} -> {}",
                         if done { "ok" } else { "NOT FOUND" }
@@ -268,6 +302,9 @@ pub fn install(app: &adw::Application) {
                 }
                 Step::Divider(height) => {
                     let done = drag_divider(&app, height);
+                    if !done {
+                        mark_failed();
+                    }
                     eprintln!(
                         "harness: divider {height} -> {}",
                         if done { "ok" } else { "NOT LAID OUT" }
@@ -276,6 +313,9 @@ pub fn install(app: &adw::Application) {
                 }
                 Step::Scroll(dy) => {
                     let done = scroll(&app, dy);
+                    if !done {
+                        mark_failed();
+                    }
                     eprintln!(
                         "harness: scroll {dy} -> {}",
                         if done { "ok" } else { "NOTHING TO SCROLL" }
@@ -289,6 +329,9 @@ pub fn install(app: &adw::Application) {
                 }
                 Step::Sort(title) => {
                     let done = sort_by_column(&app, &title);
+                    if !done {
+                        mark_failed();
+                    }
                     eprintln!(
                         "harness: sort {title:?} -> {}",
                         if done { "ok" } else { "NOT FOUND" }
@@ -297,6 +340,9 @@ pub fn install(app: &adw::Application) {
                 }
                 Step::Select(title, index) => {
                     let done = select(&app, &title, index);
+                    if !done {
+                        mark_failed();
+                    }
                     eprintln!(
                         "harness: select {title:?}={index} -> {}",
                         if done { "ok" } else { "NOT FOUND" }
@@ -305,6 +351,9 @@ pub fn install(app: &adw::Application) {
                 }
                 Step::Set(title, value) => {
                     let done = set_spin(&app, &title, value);
+                    if !done {
+                        mark_failed();
+                    }
                     eprintln!(
                         "harness: set {title:?}={value} -> {}",
                         if done { "ok" } else { "NOT FOUND" }
@@ -313,6 +362,9 @@ pub fn install(app: &adw::Application) {
                 }
                 Step::Fill(field, text) => {
                     let done = fill(&app, &field, &text);
+                    if !done {
+                        mark_failed();
+                    }
                     eprintln!(
                         "harness: fill {field:?} -> {}",
                         if done { "ok" } else { "NOT FOUND" }
@@ -335,7 +387,10 @@ pub fn install(app: &adw::Application) {
                     }
                     match result {
                         Ok(()) => eprintln!("harness: wrote {path}"),
-                        Err(e) => eprintln!("harness: screenshot failed: {e}"),
+                        Err(e) => {
+                            mark_failed();
+                            eprintln!("harness: screenshot failed: {e}")
+                        }
                     }
                 }
                 Step::CloseWindow => {
@@ -343,6 +398,9 @@ pub fn install(app: &adw::Application) {
                         window.close();
                         true
                     });
+                    if !done {
+                        mark_failed();
+                    }
                     eprintln!(
                         "harness: close-window -> {}",
                         if done { "ok" } else { "NO WINDOW" }
@@ -350,7 +408,10 @@ pub fn install(app: &adw::Application) {
                     glib::timeout_future(Duration::from_millis(250)).await;
                 }
                 Step::Quit => {
-                    eprintln!("harness: quitting");
+                    eprintln!(
+                        "harness: quitting{}",
+                        if failed() { " (a step failed)" } else { "" }
+                    );
                     app.quit();
                     return;
                 }
@@ -977,14 +1038,16 @@ mod tests {
         assert!(matches!(steps[12], Step::Quit));
     }
 
+    /// A typo must fail the script. Silently dropping it once let a broken script
+    /// report success.
     #[test]
-    fn unknown_and_empty_steps_are_dropped_not_fatal() {
-        assert!(parse("").is_empty());
-        assert!(parse("  ,  ").is_empty());
-        assert_eq!(parse("frobnicate:3,wait:10").len(), 1);
-        // A malformed wait is dropped rather than silently becoming zero.
-        assert!(parse("wait:soon").is_empty());
-        assert!(parse("select:Model=not-an-index").is_empty());
-        assert!(parse("fill:Nickname").is_empty());
+    fn malformed_and_unknown_steps_fail_instead_of_vanishing() {
+        let steps = parse("wait:soon, frobnicate:3, board:D4, set:Visits=many, , wait:10");
+        assert_eq!(steps.len(), 5, "only the empty step is dropped");
+        assert!(matches!(&steps[0], Step::Invalid(s) if s == "wait:soon"));
+        assert!(matches!(&steps[1], Step::Invalid(s) if s == "frobnicate:3"));
+        assert!(matches!(&steps[2], Step::Invalid(s) if s == "board:D4"));
+        assert!(matches!(&steps[3], Step::Invalid(s) if s == "set:Visits=many"));
+        assert!(matches!(steps[4], Step::Wait(10)));
     }
 }
