@@ -821,4 +821,48 @@ mod tests {
             override_config(&cfg()).unwrap()
         );
     }
+
+    /// Exercises the real subprocess reader and supervisor, not just `Inner::handle`:
+    /// a KataGo process dying mid-query must fail its subscriber and refuse new work.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn subprocess_exit_fails_live_and_future_subscriptions() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("mirai-fake-katago-{}-{nonce}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let script = dir.join("katago");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nread -r version\nread -r models\n\
+             printf '%s\\n' '{\"id\":\"v0\",\"action\":\"query_version\",\"version\":\"fake\"}' \
+             '{\"id\":\"m0\",\"action\":\"query_models\",\"models\":[]}'\n\
+             read -r query\nexit 17\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let mut cfg =
+            LocalEngineConfig::new("fake", &script, dir.join("model"), dir.join("config"));
+        cfg.log_dir = dir.clone();
+        cfg.startup_timeout = Duration::from_secs(2);
+        let engine = LocalEngine::spawn(cfg).await.unwrap();
+        let err = tokio::time::timeout(Duration::from_secs(2), engine.subscribe(req()).finish())
+            .await
+            .expect("subprocess did not exit")
+            .unwrap_err();
+        assert!(matches!(err, EngineError::EngineExited(message) if message.contains("17")));
+        assert!(matches!(
+            engine.subscribe(req()).current(),
+            SubEvent::Failed(EngineError::EngineExited(_))
+        ));
+        engine.shutdown().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
