@@ -26,8 +26,6 @@ Do not modify this section without explicit approval.
   reader should recover the decisions and the scars from these files, the
   comments, and the Git history.
 - Prefer mermaid over ASCII diagrams.
-- Prefer lsp over grep when feasible
-- Don't spawn a subagent when you already have all the context to finish the task.
 
 ### Development
 
@@ -42,6 +40,12 @@ Do not modify this section without explicit approval.
 - Launch a reviewer subagent before a branch is merged into main.
 - Helper scripts and tools that paid for themselves stay in the tree so
   the next task can reuse them.
+
+### Tooling
+
+- Prefer lsp over grep when feasible.
+- Don't spawn a subagent when you already have all the context to finish the task.
+- Reuse subagents when appropriate rather than spawn new ones.
 
 ---
 
