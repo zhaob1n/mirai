@@ -32,7 +32,10 @@ impl AddressError {
 /// Splits `mirai://host:port` (or a bare `host:port` / `host`) into its parts.
 pub fn parse_url(url: &str) -> Result<(String, u16), AddressError> {
     let rest = url.trim().strip_prefix(URL_SCHEME).unwrap_or(url.trim());
-    let rest = rest.trim_end_matches('/');
+    let rest = rest.strip_suffix('/').unwrap_or(rest);
+    if rest.contains('/') {
+        return Err(AddressError::new(url, "a mirai URL has no path"));
+    }
     if rest.is_empty() {
         return Err(AddressError::new(url, "empty host"));
     }
@@ -78,9 +81,11 @@ pub fn parse_url(url: &str) -> Result<(String, u16), AddressError> {
 ///
 /// A self-signed certificate is generated for its hostname and MRP verifies the pin, not
 /// the name, but a TLS client still needs a syntactically valid server name and an IP
-/// literal is not one.
+/// literal is not one. Neither is a link-local literal with its zone (`fe80::1%eth0`),
+/// which resolves as an address but would otherwise be sent as a name.
 pub fn sni_for(host: &str) -> String {
-    if host.parse::<std::net::IpAddr>().is_ok() {
+    let ip = host.split_once('%').map_or(host, |(ip, _zone)| ip);
+    if ip.parse::<std::net::IpAddr>().is_ok() {
         "localhost".to_string()
     } else {
         host.to_string()
@@ -150,12 +155,33 @@ mod tests {
             parse_url("mirai://[fe80::1]:9678").unwrap(),
             ("fe80::1".to_string(), 9678)
         );
+        // The zone of a link-local literal stays with the host: resolving needs it.
+        assert_eq!(
+            parse_url("mirai://[fe80::1%eth0]:9678").unwrap(),
+            ("fe80::1%eth0".to_string(), 9678)
+        );
+    }
+
+    #[test]
+    fn a_url_ends_with_at_most_one_slash_and_has_no_path() {
+        assert_eq!(parse_url("mirai://box:1/").unwrap(), ("box".into(), 1));
+        assert_eq!(parse_url("[::1]/").unwrap(), ("::1".into(), DEFAULT_PORT));
+        for url in [
+            "mirai://box//",
+            "mirai://box:1//",
+            "mirai://box/path",
+            "[::1]/x",
+        ] {
+            let err = parse_url(url).expect_err(url);
+            assert_eq!(err.reason, "a mirai URL has no path", "{url}");
+        }
     }
 
     #[test]
     fn ip_literals_fall_back_to_a_syntactically_valid_sni() {
         assert_eq!(sni_for("192.168.1.10"), "localhost");
         assert_eq!(sni_for("fe80::1"), "localhost");
+        assert_eq!(sni_for("fe80::1%eth0"), "localhost");
         assert_eq!(sni_for("box.local"), "box.local");
     }
 }

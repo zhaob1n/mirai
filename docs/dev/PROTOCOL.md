@@ -42,19 +42,23 @@ cancellation. Wire values are quantised, not floating-point ([§7](#7-value-type
 
 ```
 mirai-url = [ "mirai://" ] host [ ":" port ] [ "/" ]
-host      = reg-name | IPv4address | "[" IPv6address "]"
+host      = reg-name | IPv4address | "[" IPv6address [ "%" zone ] "]"
 port      = 1*DIGIT                                       ; default 9678
 ```
 
 Parsing (`endpoint.rs` — `parse_url`), which a client MUST reproduce:
 
-1. Trim whitespace; strip an optional `mirai://` prefix; strip trailing `/`.
+1. Trim whitespace; strip an optional `mirai://` prefix; strip one trailing `/`. Any
+   other `/` is an error: there is no path.
 2. Empty host is an error, including a missing host before `:` and an empty `[]`.
 3. A leading `[` starts an IPv6 literal ending at the first `]`. An optional `:port`
    may follow; anything else after `]` is an error.
 4. Otherwise split host and port at the **last** `:`; a non-numeric port is an error.
    If the host side still contains `:`, reject the URL: IPv6 literals must be bracketed.
 5. Absent port means 9678.
+
+A link-local literal needs its zone, written as the interface name or index the resolver
+takes (`[fe80::1%eth0]`, not RFC 6874's `%25`). The zone stays part of the host.
 
 No path, query or userinfo. Credentials travel in `Hello.token`, never in the URL.
 
@@ -99,8 +103,9 @@ MRP pins certificates instead of using PKI, so a LAN server needs no public DNS 
 | Still verify the TLS 1.3 `CertificateVerify` signature against the leaf's public key. Pinning replaces chain validation, not proof of key possession. | MUST |
 | Normalise a user-supplied pin — trim, lowercase, strip `:`, internal whitespace and an optional `SHA256 Fingerprint=` prefix — so a fingerprint pasted from `openssl x509 -fingerprint -sha256` works. After normalisation the client MUST reject anything other than 64 hex digits *before* the handshake; a malformed pin is not a fingerprint mismatch. | SHOULD / MUST |
 
-**SNI.** A client connecting to an IP literal sends `localhost` as SNI. Servers MUST NOT
-route or authorise on SNI, or reject a handshake because SNI disagrees with the certificate.
+**SNI.** A client connecting to an IP literal, with or without a zone, sends `localhost` as
+SNI. Servers MUST NOT route or authorise on SNI, or reject a handshake because SNI
+disagrees with the certificate.
 
 **Provisioning.** A server MAY generate a self-signed certificate on first start and
 reuse it. Rotation invalidates every client pin and requires user approval.
