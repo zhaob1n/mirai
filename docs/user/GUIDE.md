@@ -298,6 +298,11 @@ and <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes back the whole exchange rather than a doc
 *Both (no engine)* is still a game: you play both colours, there is no engine move and no
 **Resign**, and editing stays closed until the session ends.
 
+You can navigate back to review earlier moves during a game. The clock and engine
+continue at the latest played move, not the viewed position; when the engine replies,
+the board follows the new move. Playing on an earlier position is disabled, and
+**Undo** retracts the latest exchange rather than the position you were reviewing.
+
 **Clocks** appear in the play bar under the board navigation, not in the header. Black is
 `●`, White is `○`, and the side to move is shown in the accent colour.
 
@@ -326,7 +331,8 @@ After two passes mirai searches briefly, estimates dead stones from ownership an
 under the game's rules and komi. The scoring view fades dead stones and marks territory
 with squares in the owner's colour.
 
-**Click any group to toggle it alive or dead.** The count updates locally, without another
+**Click any group to toggle it alive or dead** once the count is shown; while the status
+line says `Counting…` the board is read-only. The count updates locally, without another
 engine query; use it to correct a misjudged group or seki. **Close** keeps counting;
 **Review Game** ends the session so the record can be edited, and **Analyse Game** ends it
 and starts whole-game analysis.
@@ -477,7 +483,7 @@ does not delete engine profiles.
 
 | Setting | Default | Range | Change it when |
 |---|---|---|---|
-| **Mode** | Visits | Visits / Time per move / Human-like | Visits controls search work; Time per move fixes the time; Human-like imitates a rank and requires a compatible network |
+| **Mode** | Visits | Visits / Time per move / Human-like | Visits controls search work; Time per move fixes the time; Human-like imitates a rank and requires a compatible network — without a clock it searches 40 visits a move |
 | **Visits per Move** | 800 | 1 – 1 000 000 | strength in Visits mode |
 | **Seconds per Move** | 5.0 | 0.1 – 600 | fixed time per move |
 | **Human Model Profile** | `rank_5k` | free text | rank to imitate with a human model |

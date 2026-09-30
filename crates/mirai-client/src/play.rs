@@ -4,6 +4,11 @@
 //!
 //! The GTK controller and the HarmonyOS view model both drive this. Clocks, resignation,
 //! move sampling and scoring live here; frontends own timers, dialogs and drawing.
+//!
+//! The session remembers a play head — the node the game is at — separately from the view
+//! cursor. Navigation may move the cursor; a move, an undo and a clock step still apply at
+//! the head. An engine report is anchored to that node's epoch and id when the request is
+//! built, and is ignored unless that anchor is still the head.
 
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -18,21 +23,18 @@ use crate::{GameSession, dead_from_ownership};
 
 pub const DEFAULT_HUMAN_PROFILE: &str = "rank_5k";
 
+/// Visits for a human-like AI when no clock bounds the search. Without a bound the
+/// request asks for `u32::MAX` visits and the engine's move never comes. The figure is
+/// KataGo's `gtp_human5k_example.cfg`; there it only backs a move sampled from the human
+/// policy, while mirai still picks from the search, so play is stronger than the rank.
+const HUMAN_UNTIMED_VISITS: u32 = 40;
+
 /// How strong the AI plays.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Strength {
     Visits(u32),
     TimeMs(u32),
     Human { profile: String },
-}
-
-impl Strength {
-    pub fn visits(&self) -> Option<u32> {
-        match self {
-            Strength::Visits(v) => Some(*v),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -98,6 +100,11 @@ pub struct PlaySession {
     pub forced_result: Option<String>,
     /// The last count, written by [`Play::rescore`].
     count: Option<Count>,
+    /// The node the game is being played at. The view cursor may move; this does not.
+    head: NodeId,
+    /// [`GameSession::epoch`](crate::GameSession::epoch) when this game started. A replaced
+    /// record must not be treated as this game, even when a node id collides.
+    epoch: u64,
 }
 
 impl PlaySession {
@@ -321,11 +328,29 @@ impl From<PlayError> for String {
     }
 }
 
+/// The position an engine request was built for.
+///
+/// A report is applied only when this still names the play head: the same document epoch,
+/// the same node, and the generation of the request that is still outstanding. Navigation
+/// does not retire it. Undo, a later request, or a replaced record does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlayAnchor {
+    epoch: u64,
+    id: NodeId,
+    generation: u64,
+}
+
 /// Frontend-agnostic play session sitting on a [`GameSession`].
 pub struct Play {
     session: Option<PlaySession>,
     rng: SplitMix64,
     human_name: String,
+    /// Bumped for every engine request and every action that retires one. A report carries
+    /// the generation it was asked under; a later request invalidates the earlier report
+    /// even when both positions have the same move number and the same side to move.
+    request_gen: u64,
+    ai_anchor: Option<PlayAnchor>,
+    score_anchor: Option<PlayAnchor>,
 }
 
 impl Default for Play {
@@ -346,6 +371,9 @@ impl Play {
             session: None,
             rng: SplitMix64::new(seed_from_clock()),
             human_name: name.into(),
+            request_gen: 0,
+            ai_anchor: None,
+            score_anchor: None,
         }
     }
 
@@ -489,6 +517,8 @@ impl Play {
         } else {
             setup.tc.byo_periods
         };
+        let epoch = game.epoch();
+        let head = game.cursor();
         self.session = Some(PlaySession {
             human: setup.human,
             tc: setup.tc,
@@ -504,6 +534,8 @@ impl Play {
             end: None,
             forced_result: None,
             count: None,
+            head,
+            epoch,
         });
         self.rng = SplitMix64::new(seed_from_clock());
         self.snapshot_clock(game.cursor());
@@ -512,6 +544,7 @@ impl Play {
 
     pub fn stop(&mut self) {
         self.session = None;
+        self.retire_requests();
     }
 
     fn snapshot_clock(&mut self, id: NodeId) {
@@ -520,6 +553,60 @@ impl Play {
         };
         let snap = s.snap();
         s.clocks.insert(id, snap);
+    }
+
+    fn retire_requests(&mut self) {
+        self.request_gen = self.request_gen.wrapping_add(1);
+        self.ai_anchor = None;
+        self.score_anchor = None;
+    }
+
+    fn issue_anchor(&mut self, epoch: u64, id: NodeId) -> PlayAnchor {
+        self.request_gen = self.request_gen.wrapping_add(1);
+        PlayAnchor {
+            epoch,
+            id,
+            generation: self.request_gen,
+        }
+    }
+
+    /// Still the request we asked for, and still the node the game is at.
+    fn anchor_live(&self, game: &GameSession, anchor: PlayAnchor) -> bool {
+        let Some(s) = self.session.as_ref() else {
+            return false;
+        };
+        anchor.generation == self.request_gen
+            && anchor.epoch == s.epoch
+            && anchor.epoch == game.epoch()
+            && anchor.id == s.head
+            && game.tree().contains(anchor.id)
+    }
+
+    fn tree_is_ours(&self, game: &GameSession) -> bool {
+        self.session
+            .as_ref()
+            .is_some_and(|s| game.epoch() == s.epoch && game.tree().contains(s.head))
+    }
+
+    fn at_head(&self, game: &GameSession) -> bool {
+        self.tree_is_ours(game)
+            && self
+                .session
+                .as_ref()
+                .is_some_and(|s| game.cursor() == s.head)
+    }
+
+    /// Side to move at the play head. The view cursor is not consulted: a review
+    /// position must not run the other clock or resign the other player.
+    fn mover(&self, game: &mut GameSession) -> Option<Color> {
+        let head = self
+            .session
+            .as_ref()
+            .and_then(|s| (game.epoch() == s.epoch).then_some(s.head))?;
+        if !game.tree().contains(head) {
+            return None;
+        }
+        Some(game.tree_cached_mut().position(head).to_play)
     }
 
     fn two_passes(game: &GameSession) -> bool {
@@ -536,7 +623,9 @@ impl Play {
             }
             return;
         };
-        let to_play = game.to_play();
+        let Some(to_play) = self.mover(game) else {
+            return;
+        };
         if let Some(s) = self.session.as_mut() {
             s.state = if to_play == ai {
                 PlayState::AiThinking
@@ -560,6 +649,7 @@ impl Play {
             return;
         }
         s.state = PlayState::AiStalled(reason.into());
+        self.retire_requests();
     }
 
     /// Asks for the engine's move again after [`Play::ai_failed`].
@@ -573,17 +663,37 @@ impl Play {
         s.state = PlayState::AiThinking;
     }
 
+    /// The search for the play head, not for whatever node is on screen.
+    ///
+    /// Records the anchor [`Play::request_anchor`] returns. A later request, undo, or
+    /// [`Play::stop`] retires it, so a report built for this call cannot land afterwards.
     pub fn ai_request(&mut self, game: &mut GameSession) -> Option<AnalyzeReq> {
         let s = self.session.as_ref()?;
+        if !matches!(s.state, PlayState::AiThinking) {
+            return None;
+        }
         let ai = s.ai()?;
+        let epoch = s.epoch;
+        let head = s.head;
         let i = ai.index();
         let seconds = think_budget(&s.tc, s.remaining[i], s.byo_left[i], s.in_byo[i]);
+        if game.epoch() != epoch || !game.tree().contains(head) {
+            return None;
+        }
+        if game.tree_cached_mut().position(head).to_play != ai {
+            return None;
+        }
         let ms = match &s.strength {
             Strength::TimeMs(t) => Some(*t),
             _ => seconds.map(|sec| (sec * 1000.0).max(100.0) as u32),
         };
-        let mut req =
-            game.request_for_cursor(Want::OWNERSHIP, s.strength.visits().unwrap_or(u32::MAX));
+        let visits = match &s.strength {
+            Strength::Visits(v) => *v,
+            Strength::Human { .. } if ms.is_none() => HUMAN_UNTIMED_VISITS,
+            // Time decides: the search ends on the clock, not on a visit count.
+            _ => u32::MAX,
+        };
+        let mut req = game.request_for(head, Want::OWNERSHIP, visits);
         req.max_time_ms = ms;
         req.priority = 8;
         req.report_every_ms = Some(200);
@@ -592,11 +702,47 @@ impl Play {
             req.overrides
                 .push(("humanSLProfile".to_string(), profile.clone()));
         }
+        let anchor = self.issue_anchor(epoch, head);
+        self.ai_anchor = Some(anchor);
+        self.score_anchor = None;
         Some(req)
     }
 
+    /// The anchor of the latest [`Play::ai_request`], if that request is still outstanding.
+    pub fn request_anchor(&self) -> Option<PlayAnchor> {
+        self.ai_anchor
+    }
+
+    /// The anchor of the latest [`Play::scoring_request`], if that count is still outstanding.
+    pub fn score_anchor(&self) -> Option<PlayAnchor> {
+        self.score_anchor
+    }
+
+    /// Whether either player's clock is running, without cloning a terminal result
+    /// string on each timer tick.
+    pub fn is_clock_running(&self) -> bool {
+        self.session
+            .as_ref()
+            .is_some_and(|s| matches!(s.state, PlayState::HumanTurn | PlayState::AiThinking))
+    }
+
+    /// Whose clock runs. `None` when no clock should: stalled, scoring, over, or the
+    /// record this session started is no longer the one in `game`.
+    pub fn side_to_move(&self, game: &mut GameSession) -> Option<Color> {
+        self.is_clock_running().then(|| self.mover(game)).flatten()
+    }
+
+    /// Whether a human move would be accepted now: it is the human's turn and the view
+    /// is at the play head. A frontend uses this to lock the board while reviewing.
+    pub fn accepts_human_move(&self, game: &GameSession) -> bool {
+        matches!(self.state(), PlayState::HumanTurn) && self.at_head(game)
+    }
+
     pub fn human_play(&mut self, game: &mut GameSession, p: Point) -> Result<(), PlayError> {
-        if !matches!(self.state(), PlayState::HumanTurn) {
+        // A click while reviewing is a point on the viewed board, not a move at the
+        // live position. Playing it either forks the game or drops a stone on the
+        // wrong node; both are refused.
+        if !matches!(self.state(), PlayState::HumanTurn) || !self.at_head(game) {
             return Err(PlayError::NotYourTurn);
         }
         game.play(p).map_err(PlayError::Illegal)?;
@@ -615,14 +761,20 @@ impl Play {
     }
 
     pub fn resign(&mut self, game: &mut GameSession) {
-        if !self.is_active() || matches!(self.state(), PlayState::Scoring) {
+        // Scoring is the count the player is still adjusting. Over already has a
+        // result — a timeout's `B+T` must not become a resignation.
+        if !self.is_active()
+            || matches!(self.state(), PlayState::Scoring | PlayState::Over(_))
+            || !self.tree_is_ours(game)
+        {
             return;
         }
-        let loser = self
-            .session
-            .as_ref()
-            .and_then(|s| s.human)
-            .unwrap_or_else(|| game.to_play());
+        let human = self.session.as_ref().and_then(|s| s.human);
+        let Some(loser) = human.or_else(|| self.mover(game)) else {
+            return;
+        };
+        let head = self.session.as_ref().expect("active session").head;
+        game.go_to(head);
         self.end_game(
             game,
             Some(format!("{}+R", loser.other().katago())),
@@ -630,30 +782,44 @@ impl Play {
         );
     }
 
-    pub fn undo(&mut self, game: &mut GameSession) {
-        if !self.is_active() {
-            return;
+    /// Retracts at the play head. Returns `false` at the initial position or after
+    /// the record was replaced, so a frontend leaves an existing search/count alone.
+    pub fn undo(&mut self, game: &mut GameSession) -> bool {
+        let Some((human, mut head, epoch)) =
+            self.session.as_ref().map(|s| (s.human, s.head, s.epoch))
+        else {
+            return false;
+        };
+        if game.epoch() != epoch || !game.tree().contains(head) {
+            return false;
         }
-        let human = self.session.as_ref().and_then(|s| s.human);
+        // Retract the last exchange at the play head. Deleting the view cursor
+        // instead throws away every descendant the player had only stepped back to see.
         let mut removed = 0;
         while removed < 2 {
-            let cursor = game.cursor();
-            if !game.delete_branch_at(cursor) {
+            let Some(parent) = game.tree().parent(head) else {
+                break;
+            };
+            if !game.delete_branch_at(head) {
                 break;
             }
             removed += 1;
+            head = parent;
+            let to_play = game.tree_cached_mut().position(head).to_play;
             match human {
-                Some(h) if game.to_play() != h => continue,
+                Some(h) if to_play != h => continue,
                 _ => break,
             }
         }
         if removed == 0 {
-            return;
+            return false;
         }
-        let cursor = game.cursor();
+        self.retire_requests();
+        game.go_to(head);
         let size = game.tree().info.size;
         if let Some(s) = self.session.as_mut() {
-            if let Some(snap) = s.clocks.get(&cursor).copied() {
+            s.head = head;
+            if let Some(snap) = s.clocks.get(&head).copied() {
                 s.restore(snap);
             }
             s.resign_streak = 0;
@@ -665,10 +831,13 @@ impl Play {
         }
         game.set_result(String::new());
         self.advance(game);
+        true
     }
 
     fn after_move(&mut self, game: &mut GameSession, color: Color) {
+        let id = game.cursor();
         if let Some(s) = self.session.as_mut() {
+            s.head = id;
             let i = color.index();
             if s.in_byo[i] {
                 s.remaining[i] = s.tc.byo_period_s as f32;
@@ -676,7 +845,7 @@ impl Play {
                 s.remaining[i] += s.tc.increment_s as f32;
             }
         }
-        self.snapshot_clock(game.cursor());
+        self.snapshot_clock(id);
         if Self::two_passes(game) {
             self.end_game(game, None, GameEnd::BothPassed);
             return;
@@ -684,45 +853,66 @@ impl Play {
         self.advance(game);
     }
 
-    pub fn apply_ai_report(
+    /// Applies `report` only when `anchor` is still the outstanding request for the play head.
+    ///
+    /// The move is played at that node, never at the view cursor. The view then follows
+    /// the move. A stale anchor, a replaced record, or a root that is not this engine's
+    /// side to move changes nothing and returns `false`.
+    pub fn apply_ai_report_for(
         &mut self,
         game: &mut GameSession,
+        anchor: PlayAnchor,
         report: &Report,
         temperature: f32,
         resign_threshold: f32,
         resign_required: u8,
-    ) {
-        if !matches!(self.state(), PlayState::AiThinking) {
-            return;
+    ) -> bool {
+        if !matches!(self.state(), PlayState::AiThinking)
+            || self.ai_anchor != Some(anchor)
+            || !self.anchor_live(game, anchor)
+        {
+            return false;
         }
         let Some(ai) = self.ai() else {
-            return;
+            return false;
         };
-        let position_move = game.position().move_number;
-        let board_points = game.position().board.size.points();
+        if report.root.current_player != ai {
+            return false;
+        }
+        let (move_number, board_points) = {
+            let pos = game.tree_cached_mut().position(anchor.id);
+            if pos.to_play != ai || report.turn != pos.move_number {
+                return false;
+            }
+            (pos.move_number, pos.board.size.points())
+        };
         let winrate = report.root.winrate_for(ai);
         let resign = {
             let Some(s) = self.session.as_mut() else {
-                return;
+                return false;
             };
             let (streak, resign) = resign_check(
                 winrate,
                 resign_threshold,
                 s.resign_streak,
                 resign_required,
-                position_move,
+                move_number,
                 board_points,
             );
             s.resign_streak = streak;
             resign
         };
         if resign {
+            game.go_to(anchor.id);
             self.end_game(
                 game,
                 Some(format!("{}+R", ai.other().katago())),
                 GameEnd::Resigned(ai),
             );
-            return;
+            return true;
+        }
+        if game.cursor() != anchor.id {
+            game.go_to(anchor.id);
         }
         let choice = select_move_index(&report.moves, temperature, &mut self.rng);
         let mv = match choice {
@@ -732,15 +922,17 @@ impl Play {
         if game.play(mv).is_err() && mv != Point::PASS {
             let _ = game.play(Point::PASS);
         }
+        self.ai_anchor = None;
         self.after_move(game, ai);
+        true
     }
 
     pub fn tick(&mut self, game: &mut GameSession, dt: f32) -> bool {
-        let active = match self.state() {
-            PlayState::HumanTurn | PlayState::AiThinking => game.to_play(),
-            PlayState::Idle | PlayState::AiStalled(_) | PlayState::Scoring | PlayState::Over(_) => {
-                return false;
-            }
+        if !self.is_clock_running() {
+            return false;
+        }
+        let Some(active) = self.mover(game) else {
+            return false;
         };
         let Some(s) = self.session.as_mut() else {
             return false;
@@ -759,7 +951,17 @@ impl Play {
         ) == Tick::Flag
     }
 
-    pub fn flag(&mut self, game: &mut GameSession, loser: Color) {
+    pub fn flag(&mut self, game: &mut GameSession, _claimed: Color) {
+        if !self.is_clock_running() {
+            return;
+        }
+        // The caller may have seen a review position. Only the clock at the play
+        // head can time out; the viewed side does not determine the loser.
+        let Some(loser) = self.mover(game) else {
+            return;
+        };
+        let head = self.session.as_ref().expect("active session").head;
+        game.go_to(head);
         self.end_game(
             game,
             Some(format!("{}+T", loser.other().katago())),
@@ -777,6 +979,9 @@ impl Play {
         if let Some(r) = &forced {
             game.set_result(r.clone());
         }
+        // The search that produced this ending, and any count asked for an earlier
+        // position, must not land afterwards.
+        self.retire_requests();
         if forced.is_some() {
             self.rescore(game);
             if let Some(s) = self.session.as_mut()
@@ -789,49 +994,77 @@ impl Play {
         }
     }
 
-    pub fn apply_ownership(&mut self, game: &mut GameSession, ownership: Option<&[i8]>) {
-        let board = game.position().board.clone();
+    /// Counts `ownership` only when `anchor` is still the outstanding scoring request.
+    ///
+    /// The board counted is the play head, not the view. A late count after undo or a
+    /// replaced record returns `false` and leaves the record alone.
+    pub fn apply_ownership_for(
+        &mut self,
+        game: &mut GameSession,
+        anchor: PlayAnchor,
+        ownership: Option<&[i8]>,
+    ) -> bool {
+        if !matches!(self.state(), PlayState::Scoring | PlayState::Over(_))
+            || self.score_anchor != Some(anchor)
+            || !self.anchor_live(game, anchor)
+        {
+            return false;
+        }
+        let board = &game.tree_cached_mut().position(anchor.id).board;
         let dead = match ownership {
-            Some(raw) => dead_from_ownership(&board, raw),
+            Some(raw) => dead_from_ownership(board, raw),
             None => DeadSet::empty(board.size),
         };
         if let Some(s) = self.session.as_mut() {
             s.dead = dead;
         }
         let forced = self.session.as_ref().and_then(|s| s.forced_result.clone());
+        self.score_anchor = None;
+        game.go_to(anchor.id);
         self.rescore(game);
         if let Some(result) = forced
             && let Some(s) = self.session.as_mut()
         {
             s.state = PlayState::Over(result);
         }
+        true
     }
 
     pub fn toggle_dead(&mut self, game: &mut GameSession, p: Point) {
-        if !matches!(self.state(), PlayState::Scoring) || p.is_pass() {
+        // While the engine's count is outstanding the board is read-only: its result
+        // replaces the dead set and would silently drop a mark made meanwhile.
+        if !matches!(self.state(), PlayState::Scoring)
+            || self.score_anchor.is_some()
+            || p.is_pass()
+            || !self.at_head(game)
+        {
             return;
         }
-        let board = game.position().board.clone();
+        let head = self.session.as_ref().expect("active session").head;
+        let board = &game.tree_cached_mut().position(head).board;
         if board.at(p).is_none() {
             return;
         }
         if let Some(s) = self.session.as_mut() {
-            s.dead.toggle_chain(&board, p);
+            s.dead.toggle_chain(board, p);
         }
         self.rescore(game);
     }
 
     fn rescore(&mut self, game: &mut GameSession) {
-        let position = game.position().clone();
+        if !self.tree_is_ours(game) {
+            return;
+        }
+        let head = self.session.as_ref().expect("active session").head;
         let (rules, komi, handicap) = {
             let t = game.tree();
             (t.info.rules, t.info.komi, t.info.handicap)
         };
+        let board = &game.tree_cached_mut().position(head).board;
         let Some(s) = self.session.as_mut() else {
             return;
         };
-        let counted = score(&position.board, &rules.rules(), komi, handicap, &s.dead);
-        s.territory = counted.territory.clone();
+        let counted = score(board, &rules.rules(), komi, handicap, &s.dead);
         let count = Count {
             black: counted.black,
             white: counted.white,
@@ -842,16 +1075,33 @@ impl Play {
             .forced_result
             .clone()
             .unwrap_or_else(|| count.result.clone());
+        s.territory = counted.territory;
         s.count = Some(count);
         game.set_result(result);
     }
 
-    pub fn scoring_request(&mut self, game: &mut GameSession) -> AnalyzeReq {
-        let mut req = game.request_for_cursor(Want::OWNERSHIP, 400);
+    /// Starts a count at the play head without building a query (for no-engine scoring).
+    pub fn start_count(&mut self, game: &GameSession) -> Option<PlayAnchor> {
+        let s = self.session.as_ref()?;
+        if !matches!(s.state, PlayState::Scoring | PlayState::Over(_))
+            || game.epoch() != s.epoch
+            || !game.tree().contains(s.head)
+        {
+            return None;
+        }
+        let anchor = self.issue_anchor(s.epoch, s.head);
+        self.score_anchor = Some(anchor);
+        self.ai_anchor = None;
+        Some(anchor)
+    }
+
+    pub fn scoring_request(&mut self, game: &mut GameSession) -> Option<AnalyzeReq> {
+        let anchor = self.start_count(game)?;
+        let mut req = game.request_for(anchor.id, Want::OWNERSHIP, 400);
         req.max_time_ms = None;
         req.report_every_ms = None;
         req.priority = 8;
-        req
+        Some(req)
     }
 }
 
@@ -1136,6 +1386,23 @@ mod tests {
     }
 
     #[test]
+    fn an_untimed_human_like_engine_still_has_a_bounded_search() {
+        let mut game = GameSession::blank();
+        let mut play = Play::new();
+        let setup = GameSetup {
+            human: Some(Color::White),
+            strength: Strength::Human {
+                profile: DEFAULT_HUMAN_PROFILE.into(),
+            },
+            ..GameSetup::default()
+        };
+        play.start(&mut game, setup, "KataGo", "2026-08-17");
+        let req = play.ai_request(&mut game).expect("the engine plays Black");
+        assert_eq!(req.max_time_ms, None);
+        assert_eq!(req.max_visits, Some(HUMAN_UNTIMED_VISITS));
+    }
+
+    #[test]
     fn the_clock_does_not_run_while_the_engine_is_stalled() {
         let tc = TimeControl {
             main_s: 60,
@@ -1197,5 +1464,220 @@ mod tests {
             play.clocks(),
             Some(("0:09".to_string(), "0:10".to_string()))
         );
+    }
+
+    fn report_at(game: &mut GameSession, p: Point) -> Report {
+        let turn = game.position().move_number;
+        let color = game.to_play();
+        let mut report = Report::empty(turn, color);
+        let mut candidate = mv(0, 100);
+        candidate.mv = p;
+        report.moves.push(candidate);
+        report
+    }
+
+    #[test]
+    fn navigating_during_a_search_plays_at_the_request_node_not_the_view() {
+        let mut game = GameSession::blank();
+        let mut play = Play::new();
+        play.start(&mut game, GameSetup::default(), "KataGo", "2026-08-17");
+        let size = game.tree().info.size;
+        let first = size.point(3, 3);
+        let reply = size.point(15, 15);
+        play.human_play(&mut game, first).unwrap();
+        let head = game.cursor();
+        let _req = play.ai_request(&mut game).unwrap();
+        let anchor = play.request_anchor().unwrap();
+        let report = report_at(&mut game, reply);
+
+        game.go_first();
+        assert_eq!(game.to_play(), Color::Black);
+        let req = play.ai_request(&mut game).unwrap();
+        assert_eq!(req.moves, vec![(Color::Black, first)]);
+        let current = play.request_anchor().unwrap();
+        assert!(!play.apply_ai_report_for(&mut game, anchor, &report, 0.0, 0.0, 3));
+        assert!(play.apply_ai_report_for(&mut game, current, &report, 0.0, 0.0, 3));
+        assert_eq!(game.tree().parent(game.cursor()), Some(head));
+        assert_eq!(
+            game.tree().node(game.cursor()).mv,
+            Some((Color::White, reply))
+        );
+        assert_eq!(game.tree().children(game.tree().root()), &[head]);
+        assert_eq!(play.state(), PlayState::HumanTurn);
+        game.go_first();
+        let extra = size.point(5, 5);
+        assert!(matches!(
+            play.human_play(&mut game, extra),
+            Err(PlayError::NotYourTurn)
+        ));
+        assert_eq!(game.cursor(), game.tree().root());
+        assert_eq!(game.tree().children(game.tree().root()), &[head]);
+    }
+
+    #[test]
+    fn back_to_back_requests_only_accept_the_latest_anchor() {
+        let (mut game, mut play) = engine_to_move(TimeControl::UNLIMITED);
+        let p = game.tree().info.size.point(3, 3);
+        let _old = play.ai_request(&mut game).unwrap();
+        let first = play.request_anchor().unwrap();
+        let _new = play.ai_request(&mut game).unwrap();
+        let second = play.request_anchor().unwrap();
+        let report = report_at(&mut game, p);
+
+        assert!(!play.apply_ai_report_for(&mut game, first, &report, 0.0, 0.0, 3));
+        assert_eq!(game.cursor(), game.tree().root());
+        assert_eq!(play.state(), PlayState::AiThinking);
+        assert!(play.apply_ai_report_for(&mut game, second, &report, 0.0, 0.0, 3));
+        assert_eq!(game.tree().node(game.cursor()).mv, Some((Color::Black, p)));
+        assert!(!play.apply_ai_report_for(&mut game, second, &report, 0.0, 0.0, 3));
+    }
+
+    #[test]
+    fn a_replaced_record_cannot_receive_a_report_even_if_node_ids_collide() {
+        let (mut game, mut play) = engine_to_move(TimeControl::UNLIMITED);
+        let p = game.tree().info.size.point(3, 3);
+        let _req = play.ai_request(&mut game).unwrap();
+        let anchor = play.request_anchor().unwrap();
+        let report = report_at(&mut game, p);
+        let epoch = game.epoch();
+        let info = game.tree().info.clone();
+        game.adopt(GameTree::new(info), None);
+        assert_ne!(game.epoch(), epoch);
+
+        assert!(!play.apply_ai_report_for(&mut game, anchor, &report, 0.0, 0.0, 3));
+        assert!(game.tree().children(game.tree().root()).is_empty());
+        assert_eq!(game.tree().info.result, "");
+    }
+
+    #[test]
+    fn the_root_must_report_the_requested_player_and_turn() {
+        let (mut game, mut play) = engine_to_move(TimeControl::UNLIMITED);
+        let p = game.tree().info.size.point(3, 3);
+        let _req = play.ai_request(&mut game).unwrap();
+        let anchor = play.request_anchor().unwrap();
+        let mut report = report_at(&mut game, p);
+        report.root.current_player = Color::White;
+        assert!(!play.apply_ai_report_for(&mut game, anchor, &report, 0.0, 0.0, 3));
+        report.root.current_player = Color::Black;
+        report.turn += 1;
+        assert!(!play.apply_ai_report_for(&mut game, anchor, &report, 0.0, 0.0, 3));
+        assert_eq!(game.cursor(), game.tree().root());
+        assert!(game.tree().children(game.tree().root()).is_empty());
+        report.turn -= 1;
+        assert!(play.apply_ai_report_for(&mut game, anchor, &report, 0.0, 0.0, 3));
+    }
+
+    #[test]
+    fn undo_while_reviewing_retracts_the_play_head_not_the_view_subtree() {
+        let mut game = GameSession::blank();
+        let mut play = Play::new();
+        play.start(&mut game, GameSetup::default(), "KataGo", "2026-08-17");
+        game.set_edit_history_enabled(false);
+        let size = game.tree().info.size;
+        let (first, reply, last) = (size.point(3, 3), size.point(15, 15), size.point(4, 4));
+        play.human_play(&mut game, first).unwrap();
+        let first_id = game.cursor();
+        let _req = play.ai_request(&mut game).unwrap();
+        let anchor = play.request_anchor().unwrap();
+        let report = report_at(&mut game, reply);
+        assert!(play.apply_ai_report_for(&mut game, anchor, &report, 0.0, 0.0, 3));
+        let reply_id = game.cursor();
+        play.human_play(&mut game, last).unwrap();
+        let last_id = game.cursor();
+
+        game.go_to(first_id);
+        play.undo(&mut game);
+        assert_eq!(game.cursor(), reply_id);
+        assert!(game.tree().contains(first_id));
+        assert!(game.tree().contains(reply_id));
+        assert!(!game.tree().contains(last_id));
+        assert_eq!(game.tree().children(first_id), &[reply_id]);
+        assert_eq!(play.state(), PlayState::HumanTurn);
+    }
+
+    #[test]
+    fn navigation_does_not_change_the_clock_or_the_time_loss() {
+        let tc = TimeControl {
+            main_s: 60,
+            byo_periods: 0,
+            byo_period_s: 0,
+            increment_s: 0,
+        };
+        let mut game = GameSession::blank();
+        let mut play = Play::new();
+        play.start(
+            &mut game,
+            GameSetup {
+                tc,
+                ..GameSetup::default()
+            },
+            "KataGo",
+            "2026-08-17",
+        );
+        let p = game.tree().info.size.point(3, 3);
+        play.human_play(&mut game, p).unwrap();
+        game.go_first();
+        assert_eq!(game.to_play(), Color::Black);
+        assert_eq!(play.side_to_move(&mut game), Some(Color::White));
+        assert!(!play.tick(&mut game, 1.0));
+        assert_eq!(play.clocks(), Some(("1:00".into(), "0:59".into())));
+        play.flag(&mut game, Color::Black); // the viewed player, not the timed-out player
+        assert_eq!(play.end(), Some(GameEnd::LostOnTime(Color::White)));
+        assert_eq!(game.tree().info.result, "B+T");
+    }
+
+    #[test]
+    fn resignation_cannot_replace_a_finished_result_or_late_count() {
+        let mut game = GameSession::blank();
+        let mut play = Play::new();
+        play.start(&mut game, GameSetup::default(), "KataGo", "2026-08-17");
+        let p = game.tree().info.size.point(3, 3);
+        play.human_play(&mut game, p).unwrap();
+        // White, the engine, is to move at the play head, so White loses on time.
+        play.flag(&mut game, Color::White);
+        assert_eq!(game.tree().info.result, "B+T");
+        let head = game.cursor();
+        let _req = play.scoring_request(&mut game).unwrap();
+        let count_anchor = play.score_anchor().unwrap();
+        game.go_first();
+        play.resign(&mut game);
+        play.flag(&mut game, Color::White);
+        assert_eq!(game.tree().info.result, "B+T");
+        assert_eq!(play.end(), Some(GameEnd::LostOnTime(Color::White)));
+        assert!(play.apply_ownership_for(&mut game, count_anchor, None));
+        assert_eq!(game.cursor(), head);
+        assert_eq!(game.tree().info.result, "B+T");
+        assert!(!play.apply_ownership_for(&mut game, count_anchor, None));
+        play.undo(&mut game);
+        assert_eq!(game.tree().info.result, "");
+        assert!(!play.apply_ownership_for(&mut game, count_anchor, None));
+        assert_eq!(game.tree().info.result, "");
+        assert!(play.count().is_none());
+    }
+
+    #[test]
+    fn a_mark_made_during_the_count_is_not_overwritten_by_it() {
+        let mut game = GameSession::blank();
+        let mut play = Play::new();
+        let setup = GameSetup {
+            human: None,
+            ..GameSetup::default()
+        };
+        play.start(&mut game, setup, "KataGo", "2026-08-17");
+        let p = game.tree().info.size.point(3, 3);
+        play.human_play(&mut game, p).unwrap();
+        play.pass(&mut game).unwrap();
+        play.pass(&mut game).unwrap();
+        assert_eq!(play.state(), PlayState::Scoring);
+
+        let anchor = play.start_count(&game).unwrap();
+        play.toggle_dead(&mut game, p);
+        assert!(
+            !play.is_dead(p),
+            "the board is read-only while the engine counts"
+        );
+        assert!(play.apply_ownership_for(&mut game, anchor, None));
+        play.toggle_dead(&mut game, p);
+        assert!(play.is_dead(p), "after the count the player corrects it");
     }
 }

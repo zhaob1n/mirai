@@ -591,6 +591,7 @@ fn handle_change(ui: &Ui, change: Change) {
             ui.analysis.clear_selection();
             ui.analysis.refresh();
             update_editor_actions(ui);
+            update_play_lock(ui);
         }
         Change::Report => {
             ui.board.refresh_report();
@@ -617,9 +618,6 @@ fn handle_change(ui: &Ui, change: Change) {
             update_clocks(ui);
             update_play_controls(ui);
             sync_play_editability(ui);
-            ui.board.set_play_locked(
-                ui.play.is_active() && !matches!(ui.play.play_state(), PlayState::HumanTurn),
-            );
             update_editor_actions(ui);
         }
         Change::BatchProgress(_, _) => schedule_batch_projection(ui),
@@ -675,7 +673,7 @@ fn connect_editor_tools(window: &MiraiWindow, ui: &Ui) {
 
 fn update_editor_actions(ui: &Ui) {
     let active = ui.play.is_active();
-    let human = matches!(ui.play.play_state(), PlayState::HumanTurn);
+    let human = ui.play.human_can_move();
     if let Some(action) = win_simple(ui, "undo") {
         action.set_enabled(if active { true } else { ui.state.can_undo() });
     }
@@ -982,10 +980,10 @@ fn update_clocks(ui: &Ui) {
     ui.clock_box.set_visible(true);
     ui.play_bar.set_visible(true);
 
-    let to_play = ui.state.to_play();
+    let to_play = ui.play.side_to_move();
     for (label, mine) in [
-        (&ui.clock_black, to_play == Color::Black),
-        (&ui.clock_white, to_play == Color::White),
+        (&ui.clock_black, to_play == Some(Color::Black)),
+        (&ui.clock_white, to_play == Some(Color::White)),
     ] {
         if mine {
             label.add_css_class("active");
@@ -1002,8 +1000,7 @@ fn update_play_controls(ui: &Ui) {
         PlayState::HumanTurn | PlayState::AiThinking | PlayState::AiStalled(_)
     );
     ui.play_controls.set_visible(in_progress);
-    ui.pass_button
-        .set_sensitive(matches!(state, PlayState::HumanTurn));
+    update_play_lock(ui);
     ui.retry_button
         .set_visible(matches!(state, PlayState::AiStalled(_)));
     ui.undo_button.set_sensitive(ui.play.is_active());
@@ -1012,6 +1009,14 @@ fn update_play_controls(ui: &Ui) {
     ui.play_bar
         .set_visible(in_progress || ui.clock_box.is_visible());
     sync_play_layout(ui);
+}
+
+/// The human moves only on their turn at the play head. Reviewing an earlier position
+/// during a game locks the board and Pass, so nothing looks playable that is refused.
+fn update_play_lock(ui: &Ui) {
+    let can_move = ui.play.human_can_move();
+    ui.board.set_play_locked(ui.play.is_active() && !can_move);
+    ui.pass_button.set_sensitive(can_move);
 }
 
 fn versus(black: &str, white: &str) -> String {

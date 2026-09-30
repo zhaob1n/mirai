@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use gtk::glib;
 use gtk::prelude::ObjectExt;
-use mirai_client::play::{Count, GameEnd, PlayError};
+use mirai_client::play::{Count, GameEnd, PlayAnchor, PlayError};
 use mirai_core::{Color, IllegalMove, Point};
 use mirai_engine::{Engine, Report, SubEvent};
 
@@ -247,7 +247,7 @@ impl PlayController {
             .with_session_mut(|game| self.play.borrow_mut().human_play(game, p));
         match played {
             Ok(()) => self.sync(),
-            // The state check above already refused a move out of turn.
+            // Refused because the view is not at the play head; the board is locked then.
             Err(PlayError::NotYourTurn) => {}
             Err(PlayError::Illegal(IllegalMove::Occupied)) => {}
             Err(PlayError::Illegal(error)) => self.state.toast(i18n::illegal_move(error)),
@@ -255,7 +255,8 @@ impl PlayController {
     }
 
     pub fn resign(&self) {
-        if !self.is_active() || matches!(self.play_state(), PlayState::Scoring) {
+        if !self.is_active() || matches!(self.play_state(), PlayState::Scoring | PlayState::Over(_))
+        {
             return;
         }
         self.abort_thinking();
@@ -270,11 +271,15 @@ impl PlayController {
         if !self.is_active() {
             return;
         }
+        let undone = self
+            .state
+            .with_session_mut(|game| self.play.borrow_mut().undo(game));
+        if !undone {
+            return;
+        }
         self.abort_thinking();
         self.clear_overlay();
         self.started.set(Started::Nothing);
-        self.state
-            .with_session_mut(|game| self.play.borrow_mut().undo(game));
         self.state.set_status(String::new());
         self.sync();
     }
@@ -291,10 +296,11 @@ impl PlayController {
         if self.play.borrow().ai().is_none() {
             return;
         }
-        let Some(req) = self
-            .state
-            .with_session_mut(|game| self.play.borrow_mut().ai_request(game))
-        else {
+        let Some((req, anchor)) = self.state.with_session_mut(|game| {
+            let mut play = self.play.borrow_mut();
+            let req = play.ai_request(game)?;
+            Some((req, play.request_anchor()?))
+        }) else {
             return;
         };
 
@@ -309,15 +315,17 @@ impl PlayController {
                         let visits = r.root.visits;
                         let shown = crate::util::si_visits(visits);
                         if with_play(&weak, |play| {
-                            play.state.set_status(
-                                // Translators: {visits} is a visit count, possibly abbreviated (1.2k).
-                                i18n::ngettext_f(
-                                    "Thinking… {visits} visit",
-                                    "Thinking… {visits} visits",
-                                    visits as u64,
-                                    &[("visits", shown.as_str())],
-                                ),
-                            );
+                            if play.play.borrow().request_anchor() == Some(anchor) {
+                                play.state.set_status(
+                                    // Translators: {visits} is a visit count, possibly abbreviated (1.2k).
+                                    i18n::ngettext_f(
+                                        "Thinking… {visits} visit",
+                                        "Thinking… {visits} visits",
+                                        visits as u64,
+                                        &[("visits", shown.as_str())],
+                                    ),
+                                );
+                            }
                         })
                         .is_none()
                         {
@@ -331,18 +339,33 @@ impl PlayController {
                     SubEvent::Failed(e) => {
                         let reason = i18n::engine_error(&e);
                         with_play(&weak, |play| {
-                            // May clear the engine. Do that before stalling, so the
-                            // engine-changed hook does not immediately retry a dead engine.
+                            let current = play.play.borrow().request_anchor() == Some(anchor);
+                            if !current {
+                                return;
+                            }
+                            // Clear the engine before stalling, so the engine-changed
+                            // hook cannot retry this dead engine immediately.
                             play.state.on_engine_error(e);
-                            play.fail_ai(reason);
+                            let current = play.play.borrow().request_anchor() == Some(anchor);
+                            if current {
+                                play.fail_ai(reason);
+                            }
                         });
                         return;
                     }
                 }
             }
-            with_play(&weak, |play| match done {
-                Some(report) => play.apply_ai_move(&report),
-                None => play.fail_ai(i18n::gettext("The engine ended the search without a move")),
+            with_play(&weak, |play| {
+                let current = play.play.borrow().request_anchor() == Some(anchor);
+                if !current {
+                    return;
+                }
+                match done {
+                    Some(report) => play.apply_ai_move(anchor, &report),
+                    None => {
+                        play.fail_ai(i18n::gettext("The engine ended the search without a move"))
+                    }
+                }
             });
         });
         if let Some(old) = self.thinking.borrow_mut().replace(handle) {
@@ -393,8 +416,10 @@ impl PlayController {
         self.retry();
     }
 
-    fn apply_ai_move(&self, report: &Report) {
-        if !matches!(self.play_state(), PlayState::AiThinking) {
+    fn apply_ai_move(&self, anchor: PlayAnchor, report: &Report) {
+        if self.play.borrow().request_anchor() != Some(anchor)
+            || !matches!(self.play_state(), PlayState::AiThinking)
+        {
             return;
         }
         let (temperature, threshold, required) = {
@@ -405,13 +430,22 @@ impl PlayController {
                 cfg.play.resign_streak,
             )
         };
-        self.state.with_session_mut(|game| {
-            self.play
-                .borrow_mut()
-                .apply_ai_report(game, report, temperature, threshold, required)
+        let applied = self.state.with_session_mut(|game| {
+            self.play.borrow_mut().apply_ai_report_for(
+                game,
+                anchor,
+                report,
+                temperature,
+                threshold,
+                required,
+            )
         });
-        self.started.set(Started::Nothing);
-        self.sync();
+        if applied {
+            self.started.set(Started::Nothing);
+            self.sync();
+        } else {
+            self.fail_ai(i18n::gettext("The engine ended the search without a move"));
+        }
     }
 
     // -- clocks -------------------------------------------------------------------------
@@ -436,20 +470,23 @@ impl PlayController {
         let dt = now.duration_since(self.last_tick.get()).as_secs_f32();
         self.last_tick.set(now);
 
-        let active = match self.play_state() {
-            PlayState::HumanTurn | PlayState::AiThinking => self.state.to_play(),
-            PlayState::Idle | PlayState::AiStalled(_) | PlayState::Scoring | PlayState::Over(_) => {
-                return;
-            }
-        };
+        let running = self.play.borrow().is_clock_running();
+        if !running {
+            return;
+        }
+
         let flagged = self
             .state
             .with_session_mut(|game| self.play.borrow_mut().tick(game, dt));
         self.state.notify_play_changed();
         if flagged {
             self.abort_thinking();
-            self.state
-                .with_session_mut(|game| self.play.borrow_mut().flag(game, active));
+            self.state.with_session_mut(|game| {
+                let mut play = self.play.borrow_mut();
+                if let Some(active) = play.side_to_move(game) {
+                    play.flag(game, active);
+                }
+            });
             self.sync();
         }
     }
@@ -459,6 +496,19 @@ impl PlayController {
         self.play.borrow().clocks()
     }
 
+    /// The side actually playing, not the colour at the viewed cursor.
+    pub(crate) fn side_to_move(&self) -> Option<Color> {
+        self.state
+            .with_session_mut(|game| self.play.borrow().side_to_move(game))
+    }
+
+    /// Whether a click on the board would be the human's move: their turn, viewed at
+    /// the play head. Reviewing an earlier position is read-only.
+    pub(crate) fn human_can_move(&self) -> bool {
+        self.state
+            .with_session_mut(|game| self.play.borrow().accepts_human_move(game))
+    }
+
     // -- scoring ------------------------------------------------------------------------
 
     /// Asks the engine for an ownership map so the count starts from KataGo's own idea of
@@ -466,13 +516,22 @@ impl PlayController {
     fn begin_count(&self) {
         self.abort_thinking();
         let Some(engine) = self.state.engine() else {
-            self.finish_count(None);
+            let anchor = self
+                .state
+                .with_session_mut(|game| self.play.borrow_mut().start_count(game));
+            if let Some(anchor) = anchor {
+                self.finish_count(anchor, None);
+            }
             return;
         };
         self.state.set_status(i18n::gettext("Counting…"));
-        let req = self
-            .state
-            .with_session_mut(|game| self.play.borrow_mut().scoring_request(game));
+        let Some((req, anchor)) = self.state.with_session_mut(|game| {
+            let mut play = self.play.borrow_mut();
+            let req = play.scoring_request(game)?;
+            Some((req, play.score_anchor()?))
+        }) else {
+            return;
+        };
         let mut sub = engine.subscribe(req);
         let weak = self.window.clone();
         let handle = glib::spawn_future_local(async move {
@@ -490,19 +549,22 @@ impl PlayController {
                     _ => {}
                 }
             }
-            with_play(&weak, |play| play.finish_count(ownership));
+            with_play(&weak, |play| play.finish_count(anchor, ownership));
         });
         if let Some(old) = self.thinking.borrow_mut().replace(handle) {
             old.abort();
         }
     }
 
-    fn finish_count(&self, ownership: Option<Vec<i8>>) {
-        self.state.with_session_mut(|game| {
+    fn finish_count(&self, anchor: PlayAnchor, ownership: Option<Vec<i8>>) {
+        let applied = self.state.with_session_mut(|game| {
             self.play
                 .borrow_mut()
-                .apply_ownership(game, ownership.as_deref())
+                .apply_ownership_for(game, anchor, ownership.as_deref())
         });
+        if !applied {
+            return;
+        }
         self.sync();
 
         let summary = score_summary(&self.play.borrow());
@@ -530,23 +592,21 @@ impl PlayController {
     }
 
     /// Primary-board clicks in an active game come through here so clocks and
-    /// turn order stay honest. Scoring toggles dead stones. Idle returns
-    /// `false` so the window can dispatch review and editor tools.
-    pub(crate) fn on_board_click(&self, p: Point) -> bool {
+    /// turn order stay honest. Scoring toggles dead stones; every other state
+    /// leaves the board read-only. The window calls this only while a game runs.
+    pub(crate) fn on_board_click(&self, p: Point) {
         match self.play_state() {
-            PlayState::Idle => false,
-            PlayState::HumanTurn => {
-                self.human_move(p);
-                true
-            }
+            PlayState::HumanTurn => self.human_move(p),
             // Searching, stalled, or over: the board is read-only. Undo and Retry
             // are the way out of a stall, not a click.
-            PlayState::AiThinking | PlayState::AiStalled(_) | PlayState::Over(_) => true,
+            PlayState::Idle
+            | PlayState::AiThinking
+            | PlayState::AiStalled(_)
+            | PlayState::Over(_) => {}
             PlayState::Scoring => {
                 self.state
                     .with_session_mut(|game| self.play.borrow_mut().toggle_dead(game, p));
                 self.sync();
-                true
             }
         }
     }
