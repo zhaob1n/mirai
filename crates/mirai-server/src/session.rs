@@ -61,9 +61,10 @@ const REJECT_BUDGET: Duration = Duration::from_secs(2);
 
 /// How long one authenticated control write may block on flow control.
 ///
-/// The control reader does not wait on this: `Cancel` is applied while a write
-/// is stuck. If the peer still is not reading when the budget expires, the
-/// writer closes the connection, which drops every subscription of the session.
+/// A peer that stops reading fills the reply queue, and the control reader then waits
+/// on it too, so this budget also bounds how long its `Cancel` can go unread. When the
+/// budget expires the writer closes the connection, which drops every subscription of
+/// the session.
 const CONTROL_WRITE_BUDGET: Duration = Duration::from_secs(10);
 
 /// Floor for `report_every_ms`. The desktop interval slider starts at 20 ms;
@@ -391,11 +392,11 @@ async fn session_loop(
     let slots = Arc::clone(&auth.slots);
     info!(session, client = ?client, token = token_name, max_subs, "authenticated");
 
-    // Writes run on their own task. A peer that stops reading the control stream fills
-    // its 16 KiB window and a write in this task would then never reach `Cancel`, so the
-    // search the pump is racing against would keep running. Queuing keeps `Cancel`
-    // synchronous with the read; a full queue means the peer is not draining, and the
-    // session ends rather than waiting on it.
+    // Writes run on their own task, so a write blocked on flow control does not stop the
+    // reader from applying `Cancel`. The queue absorbs a burst of replies; once it is
+    // full the reader waits for the writer, which gives up after CONTROL_WRITE_BUDGET.
+    // A full queue alone says nothing: the reader can fill it from one packet before
+    // the writer is ever scheduled.
     let (out_tx, out_rx) = mpsc::channel(32);
     let writer = tokio::spawn(control_writer(conn.clone(), tx, out_rx));
     let outcome = async {
@@ -407,7 +408,8 @@ async fn session_loop(
                 session,
                 engines: host.describe(),
             },
-        )?;
+        )
+        .await?;
 
         // Dropping this map cancels every subscription of this connection: each entry is the
         // sending half of its pump task's cancel channel.
@@ -427,11 +429,11 @@ async fn session_loop(
 
             match msg {
                 ClientMsg::Hello { .. } => {
-                    enqueue_error(&out_tx, None, ErrCode::BadRequest, "already greeted")?;
+                    enqueue_error(&out_tx, None, ErrCode::BadRequest, "already greeted").await?;
                 }
-                ClientMsg::Ping(n) => enqueue(&out_tx, ServerMsg::Pong(n))?,
+                ClientMsg::Ping(n) => enqueue(&out_tx, ServerMsg::Pong(n)).await?,
                 ClientMsg::ListEngines => {
-                    enqueue(&out_tx, ServerMsg::Engines(host.describe()))?;
+                    enqueue(&out_tx, ServerMsg::Engines(host.describe())).await?;
                 }
                 ClientMsg::Cancel { sub } => {
                     if subs.remove(&sub).is_some() {
@@ -459,7 +461,8 @@ async fn session_loop(
                             Some(sub),
                             ErrCode::BadRequest,
                             "subscription id is already in use",
-                        )?;
+                        )
+                        .await?;
                         continue;
                     }
                     let slot = match Arc::clone(&slots).try_acquire_owned() {
@@ -484,7 +487,8 @@ async fn session_loop(
                             &format!(
                                 "token {token_name:?} allows {max_subs} concurrent subscriptions"
                             ),
-                        )?;
+                        )
+                        .await?;
                         continue;
                     };
                     let Some(named) = host.resolve_engine(engine.as_deref()) else {
@@ -494,12 +498,13 @@ async fn session_loop(
                             Some(sub),
                             ErrCode::NoSuchEngine,
                             &format!("no engine named {wanted:?}"),
-                        )?;
+                        )
+                        .await?;
                         continue;
                     };
 
                     if let Some(msg) = request_error(&req) {
-                        enqueue_error(&out_tx, Some(sub), ErrCode::BadRequest, &msg)?;
+                        enqueue_error(&out_tx, Some(sub), ErrCode::BadRequest, &msg).await?;
                         continue;
                     }
 
@@ -519,7 +524,7 @@ async fn session_loop(
                     let subscription = named.engine.subscribe(req);
                     let (cancel_tx, cancel_rx) = oneshot::channel();
                     subs.insert(sub, cancel_tx);
-                    enqueue(&out_tx, ServerMsg::Opened { sub })?;
+                    enqueue(&out_tx, ServerMsg::Opened { sub }).await?;
                     holding += 1;
                     let conn = conn.clone();
                     let slot = PumpSlot {
@@ -673,12 +678,15 @@ async fn send(
     enc.write(stream, &msg).await
 }
 
-fn enqueue(tx: &mpsc::Sender<ServerMsg>, msg: ServerMsg) -> anyhow::Result<()> {
-    tx.try_send(msg)
-        .map_err(|_| anyhow::anyhow!("the peer is not reading the control stream"))
+/// Queues a control reply, waiting while the queue is full. An error means the writer
+/// has gone: the connection closed or a write outlasted [`CONTROL_WRITE_BUDGET`].
+async fn enqueue(tx: &mpsc::Sender<ServerMsg>, msg: ServerMsg) -> anyhow::Result<()> {
+    tx.send(msg)
+        .await
+        .map_err(|_| anyhow::anyhow!("the control stream writer has stopped"))
 }
 
-fn enqueue_error(
+async fn enqueue_error(
     tx: &mpsc::Sender<ServerMsg>,
     sub: Option<u32>,
     code: ErrCode,
@@ -693,6 +701,7 @@ fn enqueue_error(
             msg: msg.to_string(),
         },
     )
+    .await
 }
 
 /// Writes control messages until the peer, the connection, or the budget gives up.
@@ -1767,8 +1776,8 @@ mod tests {
     }
 
     /// Filling the control-stream window must not pin the search. The reader used to
-    /// block in the write, so `Cancel` was never seen and dropping the connection was
-    /// the only way out — and a keep-alive meant there was no way out.
+    /// block in the write for ever, so `Cancel` was never seen and a keep-alive kept the
+    /// connection open. The write budget now ends the session.
     #[tokio::test]
     async fn a_peer_that_stops_reading_the_control_stream_drops_its_searches() {
         let mut client = Client::connect(1, true).await;
@@ -1783,7 +1792,31 @@ mod tests {
                 break;
             }
         }
-        client.dropped().await;
+        tokio::time::timeout(
+            CONTROL_WRITE_BUDGET + Duration::from_secs(2),
+            client.dropped.recv(),
+        )
+        .await
+        .expect("the search outlived the control write budget")
+        .expect("engine gone");
+    }
+
+    /// A peer that pipelines requests and reads the replies is not a peer that stopped
+    /// reading. Two hundred `Ping`s in one write used to overflow the reply queue before
+    /// the writer ran, and the session was closed.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_pipelined_burst_is_answered_in_full() {
+        let mut client = Client::connect(1, true).await;
+        let mut wire = Vec::new();
+        for n in 0..200u64 {
+            wire.extend_from_slice(frame::encode(&mut client.buf, &ClientMsg::Ping(n)).unwrap());
+        }
+        tokio::io::AsyncWriteExt::write_all(&mut client.tx, &wire)
+            .await
+            .expect("write");
+        for n in 0..200u64 {
+            assert!(matches!(client.recv().await, ServerMsg::Pong(m) if m == n));
+        }
     }
 
     /// `max_subs` is the token's, not the connection's. A second connection must not

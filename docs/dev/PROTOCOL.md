@@ -658,10 +658,11 @@ explanation. The reference server bounds the write and acknowledgement wait
 to 2 s; an unresponsive peer cannot hold a session slot indefinitely and may
 receive only the connection close, not the `Error` frame.
 
-The reference server queues at most 32 control replies per connection. A peer
-that does not read them is disconnected, with application code 0, when the queue
-fills or a write stalls for 10 s. Its subscriptions then cancel as on any
-connection loss; control backpressure must not block reading a `Cancel`.
+The reference server queues up to 32 control replies per connection. While the queue
+is full it stops reading the control stream until the queue drains, so a burst of
+pipelined requests is answered in full. A peer that does not read its replies
+is disconnected, with application code 0, once a control write has stalled for
+10 s; its subscriptions then cancel as on any connection loss.
 
 ---
 
