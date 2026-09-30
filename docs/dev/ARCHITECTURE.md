@@ -51,7 +51,7 @@ flowchart TB
 | `mirai-core` | geometry, rulesets, legality, superko, scoring, game tree, SGF, time control | — | any workspace crate; GTK; tokio; anything doing real I/O |
 | `mirai-proto` | MRP value types, messages, frame codec, QUIC transport, SHA-256 for cert pins | `mirai-core` | `mirai-engine`, `mirai`, serde_json, **anything KataGo-specific** |
 | `mirai-engine` | the `Engine` trait and its two implementations; KataGo query building and response decoding | `mirai-core`, `mirai-proto` | GTK/glib/adw, `mirai`, `mirai-server` |
-| `mirai-client` | shared application layer: analysis requests, sweep planning, play, Fox, TOFU session | `mirai-core`, `mirai-engine` (`remote` feature) | GTK/glib/adw, `mirai`, `mirai-server`, KataGo JSON |
+| `mirai-client` | shared application layer: analysis requests, sweep planning, play, Fox, TOFU session, stone sounds | `mirai-core`, `mirai-engine` (`remote` feature) | GTK/glib/adw, `mirai`, `mirai-server`, KataGo JSON |
 | `mirai-server` | headless host: one KataGo per configured engine, multiplexed across clients, token auth | `mirai-core`, `mirai-engine`, `mirai-proto` | GTK, `mirai` |
 | `mirai` | `AppState`, window, custom `gsk` widgets, GTK adapters over `mirai-client`, preferences, config | all four libraries | — |
 
@@ -205,7 +205,7 @@ boundaries are [§1](#1-the-system). User settings and shortcuts are in
 | a score, fingerprint, new-game, or label dialog | `crates/mirai/src/dialogs.rs`, `crates/mirai/src/new_game.rs`, `crates/mirai/src/label_editor.rs` | `show_score_with`, `confirm_fingerprint`, `present` |
 | drive the real GUI, or count frames | `crates/mirai/src/harness.rs`, `crates/mirai/src/render_probe.rs` | [TESTING §5](TESTING.md#5-testing-the-gui) |
 | process lifetime, the runtime, or shutdown | `crates/mirai/src/main.rs`, `crates/mirai/src/application_shell.rs` | `MiraiApplication` |
-| the stone click or capture sound | `crates/mirai/src/sound.rs` | `stone_sound`, `StoneSounds::cursor_moved` |
+| the stone click or capture sound | `crates/mirai-client/src/sound.rs` (what sounds, the clips), `crates/mirai/src/sound.rs` (playback) | `stone_sound`, `render`, `StoneSounds::cursor_moved` |
 | whole-game analysis from the window | `crates/mirai/src/batch.rs` | `BatchAnalysis` |
 | mark a string for translation, or word a value the GTK-free crates keep in English | `crates/mirai/src/i18n.rs`, `po/`, `tools/i18n/update-po.sh` | `gettext_f`, `rules_label`, `result_phrase`; [TRANSLATING](TRANSLATING.md) |
 

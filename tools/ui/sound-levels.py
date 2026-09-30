@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Huang Zhaobin
 #
-# Loudness and brightness of the rendered stone-sound clips, for tuning crates/mirai/src/sound.rs.
+# Loudness and brightness of the rendered stone-sound clips, for tuning crates/mirai-client/src/sound.rs.
 #
-#   cargo test -p mirai render_clips -- --ignored && tools/ui/sound-levels.py [/tmp/mirai-sounds]
+#   cargo test -p mirai-client render_clips -- --ignored && tools/ui/sound-levels.py [/tmp/mirai-sounds]
 #
 # Per clip: peak (must stay under 1.0), then for every lid drop its loudness against the
 # placement strike that opens the clip. Loudness is K-weighted (ITU-R BS.1770 shape) over

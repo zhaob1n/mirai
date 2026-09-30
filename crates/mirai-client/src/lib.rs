@@ -13,6 +13,7 @@
 //! * [`batch`] — planning and running a whole-game sweep with bounded concurrency.
 //! * [`game`] — the record the user is editing: cursor, navigation, variations, comments.
 //! * [`session`] — connecting, trust-on-first-use, and observable connection state.
+//! * [`sound`] — which cursor step sounds, and the stone clips to play for it.
 
 pub mod analysis;
 pub mod batch;
@@ -20,6 +21,7 @@ pub mod fox;
 pub mod game;
 pub mod play;
 pub mod session;
+pub mod sound;
 
 pub use analysis::{PV_LEN, SpeedMeter, analysis_of, dead_from_ownership, request_for_node};
 pub use batch::{Analysed, Blunder, Flow, Planned, blunders, in_flight, plan_mainline, sweep};
