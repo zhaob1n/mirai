@@ -424,11 +424,6 @@ impl Report {
             policy: None,
         }
     }
-
-    /// The most-visited candidate's visit count, for relative-visit colouring.
-    pub fn best_visits(&self) -> u32 {
-        self.moves.iter().map(|m| m.visits).max().unwrap_or(0)
-    }
 }
 
 /// What a server (or a local process) can analyse.
