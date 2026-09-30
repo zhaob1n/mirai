@@ -40,32 +40,42 @@ const PRIORITY_RANGE: std::ops::RangeInclusive<i8> = -8..=8;
 /// Stopping one takes a scheduler turn; this only has to cover a loaded host.
 const CANCEL_GRACE: Duration = Duration::from_secs(1);
 
-/// How long a peer may hold a session slot before it has authenticated.
-///
-/// The accept loop takes the slot before the handshake. A QUIC keep-alive
-/// resets the idle timer, so a silent peer would otherwise hold the slot until
-/// the process exits, and 32 of them refuse every real client. One clock covers
-/// the handshake, opening the control stream and the first Hello frame. A
-/// rejection decided on that frame is delivered under [`REJECT_BUDGET`], so a
-/// peer that sends a bad `Hello` and then stops reading cannot hold the slot by
-/// ignoring the `Error`. After a successful `Hello` the slot is a session and
-/// this bound no longer applies.
-pub const PREAUTH_DEADLINE: Duration = Duration::from_secs(10);
+/// How long a peer can make a session wait. The server runs with [`Budgets::DEFAULT`];
+/// tests shrink them rather than sit through them.
+#[derive(Clone, Copy, Debug)]
+pub struct Budgets {
+    /// How long a peer may hold a session slot before it has authenticated.
+    ///
+    /// The accept loop takes the slot before the handshake. A QUIC keep-alive resets the
+    /// idle timer, so a silent peer would otherwise hold the slot until the process
+    /// exits, and 32 of them refuse every real client. One clock covers the handshake,
+    /// opening the control stream and the first Hello frame. A rejection decided on that
+    /// frame is delivered under `reject`, so a peer that sends a bad `Hello` and then
+    /// stops reading cannot hold the slot by ignoring the `Error`. After a successful
+    /// `Hello` the slot is a session and this bound no longer applies.
+    pub preauth: Duration,
+    /// How long [`reject`] waits for the peer to acknowledge the `Error` frame.
+    ///
+    /// Past this the connection is closed and the session slot released, whether or not
+    /// the frame was acknowledged. A peer that is not reading must not pin the slot
+    /// until the process exits.
+    pub reject: Duration,
+    /// How long one authenticated control write may block on flow control.
+    ///
+    /// A peer that stops reading fills the reply queue, and the control reader then
+    /// waits on it too, so this budget also bounds how long its `Cancel` can go unread.
+    /// When it expires the writer closes the connection, which drops every subscription
+    /// of the session.
+    pub control_write: Duration,
+}
 
-/// How long [`reject`] waits for the peer to acknowledge the `Error` frame.
-///
-/// Past this the connection is closed and the session slot released, whether or
-/// not the frame was acknowledged. A peer that is not reading must not pin the
-/// slot until the process exits.
-const REJECT_BUDGET: Duration = Duration::from_secs(2);
-
-/// How long one authenticated control write may block on flow control.
-///
-/// A peer that stops reading fills the reply queue, and the control reader then waits
-/// on it too, so this budget also bounds how long its `Cancel` can go unread. When the
-/// budget expires the writer closes the connection, which drops every subscription of
-/// the session.
-const CONTROL_WRITE_BUDGET: Duration = Duration::from_secs(10);
+impl Budgets {
+    pub const DEFAULT: Budgets = Budgets {
+        preauth: Duration::from_secs(10),
+        reject: Duration::from_secs(2),
+        control_write: Duration::from_secs(10),
+    };
+}
 
 /// Floor for `report_every_ms`. The desktop interval slider starts at 20 ms;
 /// a faster interval only multiplies report traffic on a shared engine.
@@ -80,7 +90,7 @@ const MAX_UNBOUNDED_VISITS: u32 = 10_000_000;
 /// budget is half of a 10-hour main time, which is under six hours.
 const MAX_TIME_MS: u32 = 6 * 60 * 60 * 1000;
 
-/// Close reason when [`PREAUTH_DEADLINE`] expires. There may be no control
+/// Close reason when [`Budgets::preauth`] expires. There may be no control
 /// stream to write an `Error` frame on, so the close itself is the signal.
 const PREAUTH_CLOSE_REASON: &[u8] = b"pre-authentication deadline";
 
@@ -259,17 +269,17 @@ fn clamp_search(req: &mut AnalyzeReq) {
 
 /// Serves one incoming connection.
 ///
-/// `preauth` bounds only the unauthenticated prefix. Once `Hello` has been read
+/// `budgets.preauth` bounds only the unauthenticated prefix. Once `Hello` has been read
 /// the session runs until the peer leaves. On expiry the connection is closed
 /// and this returns, so the caller's session permit is released. After the
 /// handshake that close is application code 1; before 1-RTT keys exist it is a
 /// transport `APPLICATION_ERROR`.
-pub async fn serve(host: Arc<Host>, incoming: Incoming, preauth: Duration) {
+pub async fn serve(host: Arc<Host>, incoming: Incoming, budgets: Budgets) {
     let peer = incoming.remote_address();
     // One clock for the handshake, the control stream and the first Hello. A
     // fresh timeout on each step would let a slow peer consume the bound three
     // times, and a QUIC keep-alive would otherwise renew the slot forever.
-    let deadline = tokio::time::Instant::now() + preauth;
+    let deadline = tokio::time::Instant::now() + budgets.preauth;
     let conn = match tokio::time::timeout_at(deadline, incoming.into_future()).await {
         Ok(Ok(conn)) => conn,
         Ok(Err(e)) => {
@@ -288,7 +298,7 @@ pub async fn serve(host: Arc<Host>, incoming: Incoming, preauth: Duration) {
 
     let session = NEXT_SESSION.fetch_add(1, Ordering::Relaxed);
     info!(session, %peer, "connection open");
-    let outcome = session_loop(&host, &conn, session, deadline).await;
+    let outcome = session_loop(&host, &conn, session, deadline, budgets).await;
     match outcome {
         Ok(()) => info!(session, %peer, "connection closed"),
         Err(e) => info!(session, %peer, error = %e, "connection closed"),
@@ -306,6 +316,7 @@ async fn session_loop(
     conn: &Connection,
     session: u64,
     preauth_deadline: tokio::time::Instant,
+    budgets: Budgets,
 ) -> anyhow::Result<()> {
     let (mut tx, mut rx) = match tokio::time::timeout_at(preauth_deadline, conn.accept_bi()).await {
         Ok(Ok(streams)) => streams,
@@ -327,7 +338,15 @@ async fn session_loop(
         Ok(Ok(msg)) => msg,
         Ok(Err(FrameError::TooLarge(_))) => {
             let msg = format!("the first frame exceeds {MAX_HELLO_FRAME} bytes");
-            reject(&mut tx, &mut wbuf, conn, ErrCode::BadRequest, &msg).await;
+            reject(
+                &mut tx,
+                &mut wbuf,
+                conn,
+                budgets.reject,
+                ErrCode::BadRequest,
+                &msg,
+            )
+            .await;
             anyhow::bail!("{msg}");
         }
         Ok(Err(e)) => return Err(e.into()),
@@ -346,6 +365,7 @@ async fn session_loop(
             &mut tx,
             &mut wbuf,
             conn,
+            budgets.reject,
             ErrCode::BadRequest,
             "expected Hello as the first control message",
         )
@@ -355,7 +375,15 @@ async fn session_loop(
 
     if token.len() > MAX_HELLO_FIELD || client.len() > MAX_HELLO_FIELD {
         let msg = format!("Hello.token and Hello.client are limited to {MAX_HELLO_FIELD} bytes");
-        reject(&mut tx, &mut wbuf, conn, ErrCode::BadRequest, &msg).await;
+        reject(
+            &mut tx,
+            &mut wbuf,
+            conn,
+            budgets.reject,
+            ErrCode::BadRequest,
+            &msg,
+        )
+        .await;
         anyhow::bail!("{msg}");
     }
 
@@ -364,6 +392,7 @@ async fn session_loop(
             &mut tx,
             &mut wbuf,
             conn,
+            budgets.reject,
             ErrCode::BadVersion,
             &format!("server speaks {PROTO_VERSION}, client offered {proto}"),
         )
@@ -376,6 +405,7 @@ async fn session_loop(
             &mut tx,
             &mut wbuf,
             conn,
+            budgets.reject,
             ErrCode::Unauthorized,
             "unknown token",
         )
@@ -394,11 +424,16 @@ async fn session_loop(
 
     // Writes run on their own task, so a write blocked on flow control does not stop the
     // reader from applying `Cancel`. The queue absorbs a burst of replies; once it is
-    // full the reader waits for the writer, which gives up after CONTROL_WRITE_BUDGET.
+    // full the reader waits for the writer, which gives up after `budgets.control_write`.
     // A full queue alone says nothing: the reader can fill it from one packet before
     // the writer is ever scheduled.
     let (out_tx, out_rx) = mpsc::channel(32);
-    let writer = tokio::spawn(control_writer(conn.clone(), tx, out_rx));
+    let writer = tokio::spawn(control_writer(
+        conn.clone(),
+        tx,
+        out_rx,
+        budgets.control_write,
+    ));
     let outcome = async {
         enqueue(
             &out_tx,
@@ -685,7 +720,7 @@ async fn send(
 }
 
 /// Queues a control reply, waiting while the queue is full. An error means the writer
-/// has gone: the connection closed or a write outlasted [`CONTROL_WRITE_BUDGET`].
+/// has gone: the connection closed or a write outlasted [`Budgets::control_write`].
 async fn enqueue(tx: &mpsc::Sender<ServerMsg>, msg: ServerMsg) -> anyhow::Result<()> {
     tx.send(msg)
         .await
@@ -714,7 +749,12 @@ async fn enqueue_error(
 ///
 /// A stuck write must not be the only thing keeping the connection open: on timeout the
 /// connection is closed, which fails the reader's next read and drops every subscription.
-async fn control_writer(conn: Connection, mut tx: SendStream, mut rx: mpsc::Receiver<ServerMsg>) {
+async fn control_writer(
+    conn: Connection,
+    mut tx: SendStream,
+    mut rx: mpsc::Receiver<ServerMsg>,
+    budget: Duration,
+) {
     let mut buf = FrameBuf::new();
     loop {
         let msg = tokio::select! {
@@ -725,7 +765,10 @@ async fn control_writer(conn: Connection, mut tx: SendStream, mut rx: mpsc::Rece
                 None => return,
             },
         };
-        if write_control(&conn, &mut tx, &mut buf, &msg).await.is_err() {
+        if write_control(&conn, &mut tx, &mut buf, &msg, budget)
+            .await
+            .is_err()
+        {
             conn.close(VarInt::from_u32(0), b"bye");
             return;
         }
@@ -737,6 +780,7 @@ async fn write_control(
     tx: &mut SendStream,
     buf: &mut FrameBuf,
     msg: &ServerMsg,
+    budget: Duration,
 ) -> anyhow::Result<()> {
     let write = frame::write_msg(tx, buf, msg);
     tokio::pin!(write);
@@ -744,7 +788,7 @@ async fn write_control(
         biased;
         _ = conn.closed() => anyhow::bail!("connection closed"),
         result = &mut write => result.map_err(anyhow::Error::from),
-        _ = tokio::time::sleep(CONTROL_WRITE_BUDGET) => {
+        _ = tokio::time::sleep(budget) => {
             anyhow::bail!("control write timed out")
         }
     }
@@ -752,13 +796,14 @@ async fn write_control(
 
 /// Reports a fatal handshake problem, then closes the connection with application code 1.
 ///
-/// The write and the wait for its acknowledgement are bounded by [`REJECT_BUDGET`].
+/// The write and the wait for its acknowledgement are bounded by `budget`.
 /// Peers that acknowledge in time receive the `Error`; others still release the
 /// session slot when the budget expires.
 async fn reject(
     tx: &mut SendStream,
     buf: &mut FrameBuf,
     conn: &Connection,
+    budget: Duration,
     code: ErrCode,
     msg: &str,
 ) {
@@ -781,7 +826,7 @@ async fn reject(
     tokio::select! {
         biased;
         _ = conn.closed() => {}
-        _ = tokio::time::sleep(REJECT_BUDGET) => {
+        _ = tokio::time::sleep(budget) => {
             warn!("pre-authentication rejection was not acknowledged");
         }
         _ = &mut deliver => {}
@@ -801,6 +846,14 @@ mod tests {
     use super::*;
     use mirai_core::{Color, Point, RuleSet};
     use mirai_proto::types::{AvoidSpec, ProtoVersion};
+
+    /// Budgets a test can wait out. A peer here is a local task that answers at once,
+    /// so a stalled control write is a real stall well within a second.
+    const TEST_BUDGETS: Budgets = Budgets {
+        preauth: Duration::from_secs(2),
+        control_write: Duration::from_secs(1),
+        ..Budgets::DEFAULT
+    };
 
     fn host(tokens: &[(&str, u32)]) -> Host {
         Host {
@@ -947,7 +1000,7 @@ mod tests {
                     tokens: vec![Token::new("secret", "test", 4)],
                 }),
                 incoming,
-                Duration::from_secs(2),
+                TEST_BUDGETS,
             )
             .await;
         });
@@ -1058,7 +1111,10 @@ mod tests {
                     tokens: Vec::new(),
                 }),
                 incoming,
-                deadline,
+                Budgets {
+                    preauth: deadline,
+                    ..TEST_BUDGETS
+                },
             )
             .await;
         });
@@ -1113,7 +1169,7 @@ mod tests {
                     tokens: vec![Token::new("secret", "test", 1)],
                 }),
                 incoming,
-                Duration::from_secs(2),
+                TEST_BUDGETS,
             )
             .await;
         });
@@ -1248,7 +1304,7 @@ mod tests {
             let accepting = endpoint.clone();
             tokio::spawn(async move {
                 let incoming = accepting.accept().await.expect("incoming");
-                serve(host, incoming, Duration::from_secs(2)).await;
+                serve(host, incoming, TEST_BUDGETS).await;
             });
 
             let (conn, _) = mirai_proto::transport::connect(&format!("mirai://{addr}"), fp)
@@ -1429,7 +1485,7 @@ mod tests {
                 tokens: vec![Token::new("secret", "test", 1)],
             };
             let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-            session_loop(&host, &conn, 1, deadline).await
+            session_loop(&host, &conn, 1, deadline, TEST_BUDGETS).await
         });
 
         let (conn, _) = mirai_proto::transport::connect(&format!("mirai://{addr}"), fp)
@@ -1633,7 +1689,7 @@ mod tests {
                     tokens: vec![Token::new("secret", "test", 4)],
                 }),
                 incoming,
-                Duration::from_secs(2),
+                TEST_BUDGETS,
             )
             .await;
         });
@@ -1785,7 +1841,7 @@ mod tests {
                     tokens: vec![Token::new("secret", "test", 1)],
                 }),
                 incoming,
-                Duration::from_secs(2),
+                TEST_BUDGETS,
             )
             .await;
         });
@@ -1840,7 +1896,7 @@ mod tests {
             }
         }
         tokio::time::timeout(
-            CONTROL_WRITE_BUDGET + Duration::from_secs(2),
+            TEST_BUDGETS.control_write + Duration::from_secs(2),
             client.dropped.recv(),
         )
         .await
@@ -1891,7 +1947,7 @@ mod tests {
                 let incoming = accepting.accept().await.expect("incoming");
                 let host = Arc::clone(&accept_host);
                 tokio::spawn(async move {
-                    serve(host, incoming, Duration::from_secs(2)).await;
+                    serve(host, incoming, TEST_BUDGETS).await;
                 });
             }
         });

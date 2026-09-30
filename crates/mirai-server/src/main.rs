@@ -23,7 +23,7 @@ use tokio::sync::{Semaphore, watch};
 use tracing::{error, info, warn};
 
 /// Caps pre-authentication frame buffers as well as authenticated sessions.
-/// A silent peer releases its slot at `PREAUTH_DEADLINE`; a peer whose first
+/// A silent peer releases its slot at `Budgets::preauth`; a peer whose first
 /// frame is rejected gets only a short additional bounded delivery window.
 const MAX_SESSIONS: usize = 32;
 
@@ -231,7 +231,7 @@ async fn run(
                     // and unwind, including when the pre-authentication deadline closes
                     // a silent peer.
                     let _permit = permit;
-                    session::serve(host, incoming, session::PREAUTH_DEADLINE).await;
+                    session::serve(host, incoming, session::Budgets::DEFAULT).await;
                 });
             }
         }

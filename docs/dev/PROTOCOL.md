@@ -570,7 +570,7 @@ the `client`/`server` identification strings.
 handshake (32, `MAX_SESSIONS` in `mirai-server`). A peer that finishes the handshake
 and then stays silent would otherwise hold that slot for the life of the connection:
 QUIC keep-alives reset the idle timer. The server releases the slot if `Hello` has
-not arrived within 10 s of the slot being taken (`PREAUTH_DEADLINE` in `session.rs`).
+not arrived within 10 s of the slot being taken (`Budgets::preauth` in `session.rs`).
 The clock covers the handshake, opening the control stream and the first frame. A
 first frame that is refused is answered within 2 s more ([§8.6](#86-connection-loss-and-shutdown)),
 so an unauthenticated peer holds a slot for at most 12 s. A client SHOULD send `Hello`
