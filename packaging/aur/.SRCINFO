@@ -13,6 +13,7 @@ pkgbase = mirai-git
 	makedepends = gtk4
 	makedepends = just
 	makedepends = libadwaita
+	makedepends = libsoup3
 	options = !lto
 	source = mirai::git+https://github.com/zhaob1n/mirai.git
 	sha256sums = SKIP
