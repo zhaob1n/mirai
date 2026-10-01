@@ -47,12 +47,16 @@ if [[ -z ${MIRAI_BIN:-} ]]; then
         cargo build --release -p mirai --quiet)
 fi
 
-open_close() { # <action> <times>: present a dialog and close it again, twice over
+repeat() { # <steps> <times>
     local steps=""
     for _ in $(seq "$2"); do
-        steps+="action:$1,wait:1000,close-dialog,wait:800,"
+        steps+=$1
     done
     printf '%s' "$steps"
+}
+
+open_close() { # <action> <times>: present a dialog and close it again
+    repeat "action:$1,wait:1000,close-dialog,wait:800," "$2"
 }
 
 declare -A script
@@ -70,8 +74,8 @@ action:win.toggle-coords,wait:500,action:win.toggle-coords,wait:500,\
 action:win.toggle-move-numbers,wait:500,action:win.toggle-move-numbers,wait:500,\
 action:win.toggle-editor,wait:700,action:win.toggle-editor,wait:700,quit"
 script[analysis]="wait:8000,action:win.next10,wait:300,action:win.toggle-analysis,wait:4000,\
-action:win.next,wait:400,action:win.next,wait:400,action:win.next,wait:400,\
-action:win.next10,wait:1500,action:win.toggle-analysis,wait:1000,quit"
+$(repeat 'action:win.next,wait:500,' 8)action:win.next10,wait:1500,\
+$(repeat 'action:win.prev,wait:500,' 4)action:win.toggle-analysis,wait:1000,quit"
 
 fox_cache() { # <path>: 200 records in the shape Fox answers with, CJK names and titles
     python3 - "$1" <<'EOF'

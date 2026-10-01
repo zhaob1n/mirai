@@ -496,6 +496,9 @@ impl AnalysisPanel {
     // -- refreshing ---------------------------------------------------------------------
 
     pub(crate) fn refresh(&self) {
+        // Between frames, at report rate: rows the view creates or destroys are created and
+        // destroyed in here, synchronously, inside the store's `items-changed`.
+        let _t = crate::render_probe::Timer::new("candidates");
         let state = self.state();
         let size = state.tree().info.size;
         let to_play = state.to_play();
@@ -995,6 +998,9 @@ fn rank_column() -> gtk::ColumnViewColumn {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
+        // One per row widget the view creates, so `frame-stats.py` counts them per step: a
+        // list that only updates in place creates none after its first report.
+        crate::render_probe::trace("candidate-row", 0.0);
         let label = gtk::Label::builder()
             .width_chars(2)
             .single_line_mode(true)
