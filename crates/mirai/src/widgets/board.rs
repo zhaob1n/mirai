@@ -29,6 +29,8 @@ use crate::widgets::paint::{
 const EDGE_PAD: f32 = 0.6;
 /// Extra band reserved outside the wood for coordinate labels, in cells.
 const COORD_PAD: f32 = 0.55;
+/// Type size of a candidate's figures, in cells: win rate, score lead, visits.
+const FIGURE_SCALES: [f32; 3] = [0.22, 0.19, 0.17];
 
 /// Cached geometry, recomputed in `size_allocate`.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -359,6 +361,14 @@ fn preview_board(
 mod imp {
     use super::*;
 
+    /// The coordinate labels, shaped for one font at one size and board size.
+    pub struct CoordLabels {
+        pub font: pango::FontDescription,
+        pub size: Size,
+        pub columns: Vec<pango::Layout>,
+        pub rows: Vec<pango::Layout>,
+    }
+
     /// Everything the static layer depends on. When this changes it is rebuilt.
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct StaticKey {
@@ -387,6 +397,10 @@ mod imp {
         /// the engine's turn, scoring, a finished game.
         pub play_locked: Cell<bool>,
         pub static_layer: RefCell<Option<(StaticKey, gsk::RenderNode)>>,
+        /// Kept across rebuilds of the static layer: a resize rebuilds it every frame, and
+        /// shaping the labels again for each fractional size — Pango matching a new font
+        /// size through fontconfig, then shaping 38 strings — cost 7 ms of a 160 Hz frame.
+        pub coord_labels: RefCell<Option<CoordLabels>>,
         pub(super) click_hook: RefCell<Option<ClickHook>>,
         pub(super) fit_hook: RefCell<Option<FitHook>>,
         /// [`Layout::fit_width`] of the current allocation.
@@ -519,29 +533,50 @@ mod imp {
                 fill_disc(&s, cx, cy, star_r, &ink);
             }
 
-            // Coordinates.
+            // Coordinates. Whole pixels, so a resize reuses the shaped labels until the size
+            // crosses one; rounding moves the labels by at most half a pixel of type size.
             if coords {
                 let mut fd = obj.pango_context().font_description().unwrap_or_default();
-                fd.set_absolute_size((cell * 0.34) as f64 * pango::SCALE as f64);
+                let px = (cell * 0.34).round().max(1.0);
+                fd.set_absolute_size(f64::from(px) * f64::from(pango::SCALE));
                 let mut fg = obj.color();
                 fg.set_alpha(fg.alpha() * 0.8);
                 let out = cell * (EDGE_PAD + COORD_PAD * 0.5);
 
-                for x in 0..size.w {
-                    let letter = COLUMNS[(x as usize).min(COLUMNS.len() - 1)] as char;
-                    let layout = obj.create_pango_layout(Some(&letter.to_string()));
-                    layout.set_font_description(Some(&fd));
-                    let (cx, _) = l.xy(x, 0);
-                    draw_text(&s, &layout, cx, l.origin_y - out, &fg);
-                    draw_text(&s, &layout, cx, l.origin_y + grid_h + out, &fg);
+                let mut cache = self.coord_labels.borrow_mut();
+                if cache
+                    .as_ref()
+                    .is_none_or(|labels| labels.size != size || labels.font != fd)
+                {
+                    let shaped = |text: &str| {
+                        let layout = obj.create_pango_layout(Some(text));
+                        layout.set_font_description(Some(&fd));
+                        layout
+                    };
+                    *cache = Some(CoordLabels {
+                        columns: (0..size.w)
+                            .map(|x| {
+                                let letter = COLUMNS[(x as usize).min(COLUMNS.len() - 1)];
+                                shaped(&char::from(letter).to_string())
+                            })
+                            .collect(),
+                        rows: (0..size.h)
+                            .map(|y| shaped(&(size.h as u32 - y as u32).to_string()))
+                            .collect(),
+                        font: fd,
+                        size,
+                    });
                 }
-                for y in 0..size.h {
-                    let number = size.h as u32 - y as u32;
-                    let layout = obj.create_pango_layout(Some(&number.to_string()));
-                    layout.set_font_description(Some(&fd));
+                let labels = cache.as_ref().expect("filled above");
+                for (x, layout) in (0..size.w).zip(&labels.columns) {
+                    let (cx, _) = l.xy(x, 0);
+                    draw_text(&s, layout, cx, l.origin_y - out, &fg);
+                    draw_text(&s, layout, cx, l.origin_y + grid_h + out, &fg);
+                }
+                for (y, layout) in (0..size.h).zip(&labels.rows) {
                     let (_, cy) = l.xy(0, y);
-                    draw_text(&s, &layout, l.origin_x - out, cy, &fg);
-                    draw_text(&s, &layout, l.origin_x + grid_w + out, cy, &fg);
+                    draw_text(&s, layout, l.origin_x - out, cy, &fg);
+                    draw_text(&s, layout, l.origin_x + grid_w + out, cy, &fg);
                 }
             }
 
@@ -971,8 +1006,11 @@ mod imp {
             // blob and a candidate that reads better than it clamps there too.
             let pick_utility = report.moves.first().map(|m| m.utility_for(to_play));
             // Figures are pango. A frame that deferred them, or a board of unlabelled
-            // blobs, must not construct a layout it will not draw: build it on first use.
-            let mut figures: Option<(pango::FontDescription, pango::Layout)> = None;
+            // blobs, must not construct a layout it will not draw: build them on first use.
+            // One layout per line, each at its own size: a line is shaped once for both its
+            // measure and its draw. A single layout switched text and font twice per line,
+            // so every figure was shaped twice on every report.
+            let mut figures: Option<[pango::Layout; 3]> = None;
             let mut ringed = false;
 
             for (rank, info) in report.moves.iter().take(max).enumerate() {
@@ -1006,50 +1044,49 @@ mod imp {
                 if !labels {
                     continue;
                 }
-                let (fd, layout) = figures.get_or_insert_with(|| {
+                let figures = figures.get_or_insert_with(|| {
                     let obj = self.obj();
                     let fd = obj.pango_context().font_description().unwrap_or_default();
-                    (fd, obj.create_pango_layout(None))
+                    FIGURE_SCALES.map(|scale| {
+                        let mut fd = fd.clone();
+                        fd.set_absolute_size(f64::from(l.cell * scale) * f64::from(pango::SCALE));
+                        let layout = obj.create_pango_layout(None);
+                        layout.set_font_description(Some(&fd));
+                        layout
+                    })
                 });
 
                 let fg = text_on(over(blob, wood_color(dark)));
-                // Three lines, formatted into stack buffers. A `Vec<(String, f32)>` here
+                // Up to three lines — win rate, score lead, visits — each formatted into a
+                // stack buffer and shaped into its own layout. A `Vec<(String, f32)>` here
                 // allocated once per labelled candidate per snapshot.
-                let mut lines = [StackLabel::default(); 3];
-                let mut scales = [0.0f32; 3];
-                let mut n = 0usize;
-                lines[n].write(|buf| crate::util::write_pct1(buf, info.winrate_for(to_play)));
-                scales[n] = 0.22;
-                n += 1;
-                if l.cell >= 26.0 {
-                    lines[n]
-                        .write(|buf| crate::util::write_signed1(buf, info.score_lead_for(to_play)));
-                    scales[n] = 0.19;
-                    n += 1;
-                }
-                if l.cell >= 34.0 {
-                    lines[n].write(|buf| crate::util::write_si_visits(buf, info.visits));
-                    scales[n] = 0.17;
-                    n += 1;
-                }
-
-                // Measure, then draw, through one layout: the three lines have to be
-                // centred as a block, so the heights are needed before the first glyph.
+                let shown = if l.cell >= 34.0 {
+                    3
+                } else if l.cell >= 26.0 {
+                    2
+                } else {
+                    1
+                };
+                let mut line = StackLabel::default();
                 let mut heights = [0.0f32; 3];
                 let mut total = 0.0f32;
-                for i in 0..n {
-                    fd.set_absolute_size((l.cell * scales[i]) as f64 * pango::SCALE as f64);
-                    layout.set_text(lines[i].as_str());
-                    layout.set_font_description(Some(fd));
-                    let h = layout.pixel_size().1 as f32;
-                    heights[i] = h;
-                    total += h;
+                for (i, layout) in figures.iter().enumerate().take(shown) {
+                    match i {
+                        0 => line
+                            .write(|buf| crate::util::write_pct1(buf, info.winrate_for(to_play))),
+                        1 => line.write(|buf| {
+                            crate::util::write_signed1(buf, info.score_lead_for(to_play))
+                        }),
+                        _ => line.write(|buf| crate::util::write_si_visits(buf, info.visits)),
+                    }
+                    layout.set_text(line.as_str());
+                    heights[i] = layout.pixel_size().1 as f32;
+                    total += heights[i];
                 }
+                // The lines are centred as a block, so every height is needed before the
+                // first glyph is drawn.
                 let mut ty = cy - total * 0.5;
-                for i in 0..n {
-                    fd.set_absolute_size((l.cell * scales[i]) as f64 * pango::SCALE as f64);
-                    layout.set_text(lines[i].as_str());
-                    layout.set_font_description(Some(fd));
+                for (i, layout) in figures.iter().enumerate().take(shown) {
                     draw_text(snapshot, layout, cx, ty + heights[i] * 0.5, &fg);
                     ty += heights[i];
                 }
