@@ -31,17 +31,6 @@ same binary and network; nothing of yours is copied or modified.
 
 Boards from 2×2 to 19×19, matching a stock KataGo build.
 
-### On Windows
-
-Windows support is experimental, and stutter there is expected; the
-[README](../../README.md#requirements) says why. The Windows build, from the
-[releases page](https://github.com/zhaob1n/mirai/releases), is either a zip —
-unpack it anywhere and run `bin\mirai.exe` — or an installer that puts mirai in your Start
-menu and offers it for `.sgf` files, with no administrator rights needed. Use a Windows
-KataGo release (`katago.exe` with its DLLs). For the first-run discovery below, put
-KataGo's folder on `PATH` and networks in `%USERPROFILE%\.katago\models`; otherwise choose
-both in Preferences. `mirai-server` on Windows is untested.
-
 ---
 
 ## 2. First run
@@ -624,10 +613,6 @@ keyboard focus.
 | `~/.config/mirai/server.toml` | `mirai-server`'s settings, on the machine running it |
 
 (`$XDG_CONFIG_HOME` and `$XDG_DATA_HOME` are honoured if set.)
-
-On Windows the settings, including `server.toml`, are in `%APPDATA%\zhaob1n\mirai\config\`,
-and the autosaves, Fox cache and KataGo logs in `%LOCALAPPDATA%\zhaob1n\mirai\data\`.
-Windows has no `0600`: those files are as private as your user profile.
 
 Autosave runs every 30 seconds, and only when there is something worth keeping — a move, a
 setup stone, a mark, an explicit side to play, or a comment; a blank board is never saved.

@@ -27,7 +27,7 @@ mirai 把 KataGo 的计算结果放到一块原生 Linux 棋盘上。每个候�
 - **和 KataGo 对弈**：按计算量、按每手用时，或者配合拟人网络按段位模仿人类棋风。棋盘从 2×2 到 19×19，支持让子、九种规则，以及包干、读秒和费舍尔加秒三种计时。双方停一手后由 KataGo 判断死子，判断错的棋块点一下就能改。也可以不用引擎，自己下双方。
 - **野狐棋谱。** 按昵称或 UID 查找野狐围棋玩家，打开其最近的任意一盘公开对局。
 - **安全的远程引擎。** `mirai-server` 通过 QUIC 把一个或多个 KataGo 共享给局域网里的所有客户端。客户端用令牌认证，并在第一次连接时固定服务器的证书指纹。
-- **原生、流畅。** 基于 GTK 4 和 libadwaita，支持浅色和深色样式，在 Linux 上棋盘由 GTK 的 GPU 渲染器绘制。多个窗口共用一个 KataGo；程序意外退出后，自动保存会把你的棋谱找回来。
+- **原生、流畅。** 基于 GTK 4 和 libadwaita，支持浅色和深色样式，棋盘由 GTK 的 GPU 渲染器绘制。多个窗口共用一个 KataGo；程序意外退出后，自动保存会把你的棋谱找回来。
 - **说你的语言。** 目前支持英文和简体中文，欢迎贡献更多翻译。
 
 ---
@@ -35,13 +35,13 @@ mirai 把 KataGo 的计算结果放到一块原生 Linux 棋盘上。每个候�
 ## 环境要求
 
 - 当前稳定版 Rust（2024 edition），由 `rust-toolchain.toml` 选定，不支持更旧的编译器。
-- GTK 4.22+、libadwaita 1.9+、libsoup 3 和 Blueprint Compiler 0.22+，以及它们的开发包。
+- GTK 4.22+、libadwaita 1.9+ 和 Blueprint Compiler 0.22+，以及它们的开发包。
 - GNU gettext，用于编译翻译。
 - [`just`](https://github.com/casey/just)，用于安装。
 - KataGo 程序和神经网络模型（JSON 分析模式，不是 GTP）。mirai 不会替你下载 KataGo。
 - 如需落子音效，还要安装 GStreamer 的 good 插件（Arch 上为 `gst-plugins-good`，Debian/Ubuntu 上为 `gstreamer1.0-plugins-good`），GTK 通过它播放声音。没有它 mirai 也能运行，只是没有声音。
 
-Arch：`pacman -S gtk4 libadwaita libsoup3 blueprint-compiler gettext just`。Debian/Ubuntu：安装 `libgtk-4-dev`、`libadwaita-1-dev`、`libsoup-3.0-dev`、`blueprint-compiler`、`gettext` 和 `just`；Fedora：安装 `gtk4-devel`、`libadwaita-devel`、`libsoup3-devel`、`blueprint-compiler`、`gettext` 和 `just`。请注意版本：早于 GNOME 50 的发行版自带的 GTK 和 libadwaita 太旧，无法构建 mirai。
+Arch：`pacman -S gtk4 libadwaita blueprint-compiler gettext just`。Debian/Ubuntu：安装 `libgtk-4-dev`、`libadwaita-1-dev`、`blueprint-compiler`、`gettext` 和 `just`；Fedora：安装 `gtk4-devel`、`libadwaita-devel`、`blueprint-compiler`、`gettext` 和 `just`。请注意版本：早于 GNOME 50 的发行版自带的 GTK 和 libadwaita 太旧，无法构建 mirai。
 
 ```
 just build
@@ -50,16 +50,6 @@ sudo just uninstall      # 同上
 ```
 
 这会把 `mirai`、`mirai-server`、桌面文件、元信息、图标和翻译安装到 `/usr/local`；`just prefix=$HOME/.local install` 不需要 root 权限。在 Arch 上，也可以用 [`packaging/aur/`](packaging/aur/) 中的 PKGBUILD 构建 `mirai-git` 和 `mirai-server-git`（尚未发布到 AUR）。`tools/packaging/makepkg-local.sh` 会从当前检出的最新提交而不是 GitHub 构建；如果 cargo 来自 rustup，请加上 `-d`，然后执行 `sudo pacman -U target/archpkg/*.pkg.tar.zst`。
-
-**Windows** 支持尚属实验性质。现成的便携压缩包和按用户安装的安装程序以预发布版（pre-release）形式放在[发布页](https://github.com/zhaob1n/mirai/releases)。它们在 Linux 上交叉编译，在 Fedora 容器里用 podman（或 docker）完成：
-
-```
-tools/packaging/windows-cross.sh
-```
-
-产物是 `target/windows/dist/` 下的压缩包和安装程序；Windows 上如何使用 KataGo 见[指南](docs/user/GUIDE.zh-CN.md#在-windows-上)。第一次运行会构建镜像和所有 crate；之后只重新编译改动过的部分。
-
-在 Windows 上出现卡顿是预期的。GTK 的 Windows 后端远不如它的 Linux 后端成熟：在 Windows 上，它的 GPU 渲染器会在每个窗口周围画出一圈黑框，所以 GTK 改用 CPU 上的 Cairo 绘制，滚动、调整窗口大小和动画都可能卡顿。这在 Windows 上属于预期现象，不是 mirai 的缺陷。
 
 ---
 

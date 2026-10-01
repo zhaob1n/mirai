@@ -12,7 +12,8 @@
 //! translated fragment: a translator must see the whole sentence and may reorder it.
 //! `msgfmt --check` (run by `build.rs`) refuses a translation that drops or renames one.
 
-use std::ffi::{c_char, c_int};
+use std::ffi::{CString, c_char, c_int};
+use std::os::unix::ffi::OsStringExt;
 use std::path::PathBuf;
 
 use mirai_client::play::{Outcome, outcome};
@@ -22,8 +23,7 @@ use mirai_engine::EngineError;
 const DOMAIN: &std::ffi::CStr = c"mirai";
 
 // libintl is part of glibc, so these link with nothing extra; the workspace takes no `libc`
-// dependency (as in `mirai_proto::atomic`).
-#[cfg(unix)]
+// dependency (as in `mirai_proto::atomic`). A port to a C library without libintl links it.
 unsafe extern "C" {
     fn setlocale(category: c_int, locale: *const c_char) -> *mut c_char;
     fn bindtextdomain(domain: *const c_char, dir: *const c_char) -> *mut c_char;
@@ -31,61 +31,23 @@ unsafe extern "C" {
     fn textdomain(domain: *const c_char) -> *mut c_char;
 }
 
-// On Windows these are GNU libintl's, the DLL GLib loads as well, under the names its
-// `libintl.h` gives them. Its `setlocale` is the one a C program gets from that header: it
-// records the locale for gettext as well as for the C runtime. The directory is bound with
-// the wide-character call, since the narrow one takes the ANSI code page and cannot name a
-// profile directory in another script.
-#[cfg(windows)]
-#[link(name = "intl")]
-unsafe extern "C" {
-    #[link_name = "libintl_setlocale"]
-    fn setlocale(category: c_int, locale: *const c_char) -> *mut c_char;
-    #[link_name = "libintl_wbindtextdomain"]
-    fn wbindtextdomain(domain: *const c_char, dir: *const u16) -> *mut u16;
-    #[link_name = "libintl_bind_textdomain_codeset"]
-    fn bind_textdomain_codeset(domain: *const c_char, codeset: *const c_char) -> *mut c_char;
-    #[link_name = "libintl_textdomain"]
-    fn textdomain(domain: *const c_char) -> *mut c_char;
-}
-
 /// `LC_ALL` as glibc and musl number it.
-#[cfg(unix)]
 const LC_ALL: c_int = 6;
-/// `LC_ALL` as the Microsoft C runtime numbers it.
-#[cfg(windows)]
-const LC_ALL: c_int = 0;
 
 /// Adopts the user's locale and binds the catalogue. Call first thing in `main`: GLib decides
 /// once, at the first lookup, whether translating is wanted at all.
 pub fn init() {
+    let dir = CString::new(locale_dir().into_os_string().into_vec())
+        .expect("a filesystem path holds no NUL");
     // SAFETY: every pointer is a NUL-terminated string that outlives the call; libintl copies
     // what it keeps. A locale the C library lacks makes `setlocale` return NULL and leaves
     // the "C" locale, which only means English.
     unsafe {
         setlocale(LC_ALL, c"".as_ptr());
-        bind_catalogue(locale_dir());
+        bindtextdomain(DOMAIN.as_ptr(), dir.as_ptr());
         bind_textdomain_codeset(DOMAIN.as_ptr(), c"UTF-8".as_ptr());
         textdomain(DOMAIN.as_ptr());
     }
-}
-
-#[cfg(unix)]
-fn bind_catalogue(dir: PathBuf) {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStringExt;
-    let dir =
-        CString::new(dir.into_os_string().into_vec()).expect("a filesystem path holds no NUL");
-    // SAFETY: a NUL-terminated string that outlives the call; libintl copies it.
-    unsafe { bindtextdomain(DOMAIN.as_ptr(), dir.as_ptr()) };
-}
-
-#[cfg(windows)]
-fn bind_catalogue(dir: PathBuf) {
-    use std::os::windows::ffi::OsStrExt;
-    let dir: Vec<u16> = dir.as_os_str().encode_wide().chain([0]).collect();
-    // SAFETY: a NUL-terminated string that outlives the call; libintl copies it.
-    unsafe { wbindtextdomain(DOMAIN.as_ptr(), dir.as_ptr()) };
 }
 
 /// `<prefix>/share/locale` beside an installed `<prefix>/bin/mirai`, whatever the prefix, so

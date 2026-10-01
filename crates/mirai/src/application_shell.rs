@@ -125,25 +125,34 @@ impl MiraiApplication {
             .clone()
     }
 
-    /// Routes termination requests into the ordinary quit path, so Ctrl-C, a closed
-    /// terminal or console, and (on Unix) session logout release exactly like closing the
-    /// last window.
+    /// Routes SIGINT, SIGTERM and SIGHUP into the ordinary quit path, so Ctrl-C, a closed
+    /// terminal and session logout release exactly like closing the last window.
     ///
     /// The engine already survives none of these — KataGo leaves when its stdin closes —
     /// but without this the process dies at the default disposition, taking no autosave
     /// deletion, no comment flush and no config save with it.
     fn watch_termination_signals(&self) {
+        use tokio::signal::unix::{SignalKind, signal};
+
         self.runtime_handle().spawn(async move {
-            let mut requests = match TerminationRequests::install() {
-                Ok(requests) => requests,
-                Err(error) => {
-                    tracing::warn!(%error, "could not install termination signal handlers");
+            let (mut interrupt, mut terminate, mut hangup) = match (
+                signal(SignalKind::interrupt()),
+                signal(SignalKind::terminate()),
+                signal(SignalKind::hangup()),
+            ) {
+                (Ok(i), Ok(t), Ok(h)) => (i, t, h),
+                _ => {
+                    tracing::warn!("could not install termination signal handlers");
                     return;
                 }
             };
             let mut asked = false;
             loop {
-                requests.recv().await;
+                tokio::select! {
+                    _ = interrupt.recv() => {}
+                    _ = terminate.recv() => {}
+                    _ = hangup.recv() => {}
+                }
                 if asked {
                     // Asked twice: the orderly path is wedged, so stop being polite.
                     tracing::warn!("second termination signal, exiting immediately");
@@ -161,67 +170,5 @@ impl MiraiApplication {
                 });
             }
         });
-    }
-}
-
-/// SIGINT, SIGTERM and SIGHUP.
-#[cfg(unix)]
-struct TerminationRequests {
-    interrupt: tokio::signal::unix::Signal,
-    terminate: tokio::signal::unix::Signal,
-    hangup: tokio::signal::unix::Signal,
-}
-
-#[cfg(unix)]
-impl TerminationRequests {
-    fn install() -> std::io::Result<Self> {
-        use tokio::signal::unix::{SignalKind, signal};
-        Ok(Self {
-            interrupt: signal(SignalKind::interrupt())?,
-            terminate: signal(SignalKind::terminate())?,
-            hangup: signal(SignalKind::hangup())?,
-        })
-    }
-
-    async fn recv(&mut self) {
-        tokio::select! {
-            _ = self.interrupt.recv() => {}
-            _ = self.terminate.recv() => {}
-            _ = self.hangup.recv() => {}
-        }
-    }
-}
-
-/// Ctrl-C, Ctrl-Break and a closed console window.
-///
-/// Only a console process receives any of them, so this matters for a debug build run
-/// from a terminal; the release build is a GUI-subsystem program with no console. A
-/// logoff or shutdown event is never delivered to an interactive program, so it is not
-/// listened for. For a closed console, Tokio parks the handler thread and Windows allows
-/// the process five seconds to finish quitting.
-#[cfg(windows)]
-struct TerminationRequests {
-    ctrl_c: tokio::signal::windows::CtrlC,
-    ctrl_break: tokio::signal::windows::CtrlBreak,
-    ctrl_close: tokio::signal::windows::CtrlClose,
-}
-
-#[cfg(windows)]
-impl TerminationRequests {
-    fn install() -> std::io::Result<Self> {
-        use tokio::signal::windows::{ctrl_break, ctrl_c, ctrl_close};
-        Ok(Self {
-            ctrl_c: ctrl_c()?,
-            ctrl_break: ctrl_break()?,
-            ctrl_close: ctrl_close()?,
-        })
-    }
-
-    async fn recv(&mut self) {
-        tokio::select! {
-            _ = self.ctrl_c.recv() => {}
-            _ = self.ctrl_break.recv() => {}
-            _ = self.ctrl_close.recv() => {}
-        }
     }
 }

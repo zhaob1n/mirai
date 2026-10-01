@@ -26,7 +26,6 @@ pkgname = mirai-git
 	depends = hicolor-icon-theme
 	depends = libadwaita
 	depends = libgcc
-	depends = libsoup3
 	depends = pango
 	optdepends = katago: local analysis engine (katago-opencl, katago-cuda, ...)
 	provides = mirai

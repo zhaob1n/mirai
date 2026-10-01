@@ -44,7 +44,7 @@ check() {
 
 package_mirai-git() {
   pkgdesc='GTK4/libadwaita Go board for analysis, review and play with KataGo'
-  depends=('glib2' 'glibc' 'graphene' 'gtk4' 'hicolor-icon-theme' 'libadwaita' 'libgcc' 'libsoup3' 'pango')
+  depends=('glib2' 'glibc' 'graphene' 'gtk4' 'hicolor-icon-theme' 'libadwaita' 'libgcc' 'pango')
   optdepends=('katago: local analysis engine (katago-opencl, katago-cuda, ...)')
   provides=('mirai')
   conflicts=('mirai')

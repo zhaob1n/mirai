@@ -59,7 +59,7 @@ Do not modify this section without explicit approval.
 | Draw in a widget, or chase a dropped frame | [`docs/dev/RENDERING.md`](docs/dev/RENDERING.md) — why the custom widgets draw with quads, and the measurements behind it |
 | Candidate colour, or why the list is not monotonic | [`docs/dev/CANDIDATE_COLOUR.md`](docs/dev/CANDIDATE_COLOUR.md) — KataGo's `order` is play-selection value, not the win-rate column; what that does to the ramp |
 | Fox HTTP, or the Fox SGF dialect | [`docs/dev/FOX_KIFU_API_SPEC.md`](docs/dev/FOX_KIFU_API_SPEC.md) |
-| Arch packaging, the experimental Windows build, desktop entry, metainfo | [`docs/dev/PACKAGING.md`](docs/dev/PACKAGING.md) — what to regenerate, how Windows is cross-built and checked under Wine, and why there is no Flatpak |
+| Arch packaging, desktop entry, metainfo | [`docs/dev/PACKAGING.md`](docs/dev/PACKAGING.md) — what to regenerate, and why there is no Flatpak |
 | Add a user-visible string, or translate | [`docs/dev/TRANSLATING.md`](docs/dev/TRANSLATING.md) — gettext conventions, the `po/` workflow, why the GTK-free crates stay English |
 | Touch anything the HarmonyOS client depends on | [`../mirai-ohos/docs/dev/UPSTREAM.md`](../mirai-ohos/docs/dev/UPSTREAM.md) — optional adjacent checkout, not a path in this repository. Present only if `mirai-ohos` is checked out beside this one; that client's ledger of what it reuses from here |
 | Why is it built this way? What already went wrong? | [`docs/archive/RETROSPECTIVE.md`](docs/archive/RETROSPECTIVE.md) — decisions, obstacles, defects found |
@@ -230,8 +230,8 @@ Rust stable, selected by `rust-toolchain.toml`. There is no minimum supported ve
 `rust-version`: mirai tracks the latest stable compiler and the latest release of every
 dependency, so update both freely and never hold one back for an older toolchain. No nightly
 feature is used, and none should be added. Let-chains (`if let Some(x) = a && cond`) are used
-throughout and are expected. GTK 4.22+, libadwaita 1.9+, libsoup 3 and Blueprint Compiler
-0.22+ are required to build `mirai`.
+throughout and are expected. GTK 4.22+, libadwaita 1.9+ and Blueprint Compiler 0.22+ are
+required to build `mirai`.
 
 ### Testing expectations
 

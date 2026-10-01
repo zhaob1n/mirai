@@ -46,8 +46,8 @@ the GPU, and a laptop with none analyses just as well.
   with every client on your network over QUIC. Clients authenticate with a token and pin
   the server's certificate the first time they connect.
 - **Native and quick.** GTK 4 and libadwaita, light and dark styles, a board drawn by GTK's
-  GPU renderer on Linux. Several windows share one KataGo, and autosave brings your record
-  back after a crash.
+  GPU renderer. Several windows share one KataGo, and autosave brings your record back after
+  a crash.
 - **In your language.** English and Simplified Chinese so far; translations are welcome.
 
 ---
@@ -55,8 +55,7 @@ the GPU, and a laptop with none analyses just as well.
 ## Requirements
 
 - The current stable Rust (edition 2024), which `rust-toolchain.toml` selects. No older compiler is supported.
-- GTK 4.22+, libadwaita 1.9+, libsoup 3 and Blueprint Compiler 0.22+ with their development
-  packages.
+- GTK 4.22+, libadwaita 1.9+, and Blueprint Compiler 0.22+ with their development packages.
 - GNU gettext, for the translations.
 - [`just`](https://github.com/casey/just), to install.
 - A KataGo binary and network model (JSON analysis mode, not GTP). mirai does not download KataGo.
@@ -64,10 +63,9 @@ the GPU, and a laptop with none analyses just as well.
   `gstreamer1.0-plugins-good` on Debian/Ubuntu), which GTK plays audio through. Without them
   mirai runs silently.
 
-On Arch: `pacman -S gtk4 libadwaita libsoup3 blueprint-compiler gettext just`. On
-Debian/Ubuntu, install `libgtk-4-dev`, `libadwaita-1-dev`, `libsoup-3.0-dev`,
-`blueprint-compiler`, `gettext` and `just`; on Fedora, `gtk4-devel`, `libadwaita-devel`,
-`libsoup3-devel`, `blueprint-compiler`, `gettext` and `just`. Check
+On Arch: `pacman -S gtk4 libadwaita blueprint-compiler gettext just`. On Debian/Ubuntu,
+install `libgtk-4-dev`, `libadwaita-1-dev`, `blueprint-compiler`, `gettext` and `just`; on
+Fedora, `gtk4-devel`, `libadwaita-devel`, `blueprint-compiler`, `gettext` and `just`. Check
 the versions: a distribution release older than GNOME 50 ships a GTK and libadwaita too old
 to build mirai.
 
@@ -83,23 +81,6 @@ under `/usr/local`; `just prefix=$HOME/.local install` needs no root. On Arch, t
 published yet). `tools/packaging/makepkg-local.sh` builds it from this checkout's last
 commit rather than from GitHub; add `-d` when cargo comes from rustup, then
 `sudo pacman -U target/archpkg/*.pkg.tar.zst`.
-
-**Windows** support is experimental. Ready-made builds, a portable zip and a per-user
-installer, are pre-releases on the [releases page](https://github.com/zhaob1n/mirai/releases).
-They are cross-built on Linux, in a Fedora container, with podman (or docker):
-
-```
-tools/packaging/windows-cross.sh
-```
-
-That leaves the zip and the installer in `target/windows/dist/`; the
-[guide](docs/user/GUIDE.md#on-windows) covers KataGo on Windows. The
-first run builds the image and every crate; later runs rebuild only what changed.
-
-Expect stutter on Windows. GTK's Windows backend is far less mature than its Linux ones:
-its GPU renderers draw a black band around every window there, so GTK draws with Cairo on
-the CPU instead, and scrolling, resizing and animation can hitch. That is expected on
-Windows, not a defect of mirai.
 
 ---
 

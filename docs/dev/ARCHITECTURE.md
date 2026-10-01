@@ -6,7 +6,7 @@ normatively in [`PROTOCOL.md`](PROTOCOL.md); how to prove a change works is
 [`../archive/RETROSPECTIVE.md`](../archive/RETROSPECTIVE.md); the user's view is
 [`../user/GUIDE.md`](../user/GUIDE.md). Candidate colour versus KataGo's `order` is
 [`CANDIDATE_COLOUR.md`](CANDIDATE_COLOUR.md). Fox HTTP and its SGF dialect are
-[`FOX_KIFU_API_SPEC.md`](FOX_KIFU_API_SPEC.md). Arch and Windows packaging is
+[`FOX_KIFU_API_SPEC.md`](FOX_KIFU_API_SPEC.md). Arch packaging is
 [`PACKAGING.md`](PACKAGING.md). Translation is [`TRANSLATING.md`](TRANSLATING.md).
 
 §3 maps tasks to files; paths there are from the repository root. Signatures and field lists
@@ -205,7 +205,6 @@ boundaries are [§1](#1-the-system). User settings and shortcuts are in
 | a score, fingerprint, new-game, or label dialog | `crates/mirai/src/dialogs.rs`, `crates/mirai/src/new_game.rs`, `crates/mirai/src/label_editor.rs` | `show_score_with`, `confirm_fingerprint`, `present` |
 | drive the real GUI, or count frames | `crates/mirai/src/harness.rs`, `crates/mirai/src/render_probe.rs` | [TESTING §5](TESTING.md#5-testing-the-gui) |
 | process lifetime, the runtime, or shutdown | `crates/mirai/src/main.rs`, `crates/mirai/src/application_shell.rs` | `MiraiApplication` |
-| the Windows package, or a library in it that cannot find its files | `packaging/windows/`, `crates/mirai/src/windows_package.rs` | `windows_package::prepare`; [PACKAGING](PACKAGING.md) |
 | the stone click or capture sound | `crates/mirai-client/src/sound.rs` (what sounds, the clips), `crates/mirai/src/sound.rs` (playback) | `stone_sound`, `render`, `StoneSounds::cursor_moved` |
 | whole-game analysis from the window | `crates/mirai/src/batch.rs` | `BatchAnalysis` |
 | mark a string for translation, or word a value the GTK-free crates keep in English | `crates/mirai/src/i18n.rs`, `po/`, `tools/i18n/update-po.sh` | `gettext_f`, `rules_label`, `result_phrase`; [TRANSLATING](TRANSLATING.md) |
@@ -347,10 +346,9 @@ thread.
 - **No waiting synchronously for a subscription.** `finish()` belongs to the probe and server,
   not GUI handlers.
 - **No synced write, directory scan or `PATH` search.** Config save, autosave, opening an
-  SGF file (read and parse), KataGo discovery, the Fox search cache, the TLS trust store
-  Fox's first lookup would load, and crash-leftover scanning run on `spawn_blocking` and
-  return through the weak window. A pasted record is already in memory and is parsed in
-  place. `write_atomic*` syncs the file and directory (50–100 ms on an ordinary
+  SGF file (read and parse), KataGo discovery, the Fox search cache and crash-leftover
+  scanning run on `spawn_blocking` and return through the weak window. A pasted record is
+  already in memory and is parsed in place. `write_atomic*` syncs the file and directory (50–100 ms on an ordinary
   disk). `flush_config` on close and user-initiated Save remain synchronous: a subsequent
   reader must see the former, while moving Save would need autosave's document-token snapshot
   and exit gate to avoid being overtaken by quit.
@@ -685,7 +683,7 @@ projection/cache state; it does not borrow `AppState` or replay the game tree.
 | **INV-8** | `with_ui`, `take_ui`, `shutdown` in `crates/mirai/src/window_shell.rs`; `Drop for Ui` in `crates/mirai/src/window.rs` |
 | **INV-9** | `crates/mirai/src/widgets/` |
 | **INV-10** | `changed`, `resolve_node`, `set_analysis_at` in `crates/mirai/src/app.rs`; the epoch bump is `GameSession::adopt` / `restore` in `crates/mirai-client/src/game/mod.rs` |
-| **INV-11** | `runtime().spawn_blocking` at each I/O site: `AppState::save_config`, autosave and SGF open in `crates/mirai/src/window.rs`, Fox cache and `warm_tls` in `crates/mirai/src/fox.rs`, discovery in `crates/mirai/src/prefs.rs` |
+| **INV-11** | `runtime().spawn_blocking` at each I/O site: `AppState::save_config`, autosave and SGF open in `crates/mirai/src/window.rs`, Fox cache in `crates/mirai/src/fox.rs`, discovery in `crates/mirai/src/prefs.rs` |
 
 ---
 

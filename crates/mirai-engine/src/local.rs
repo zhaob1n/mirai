@@ -131,8 +131,7 @@ impl LocalEngine {
             "starting katago analysis engine"
         );
 
-        let mut command = Command::new(&cfg.katago);
-        command
+        let mut child = Command::new(&cfg.katago)
             .arg("analysis")
             .arg("-model")
             .arg(&cfg.model)
@@ -144,14 +143,11 @@ impl LocalEngine {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        // KataGo is a console program: started from a GUI process it would get a console
-        // window of its own. `CREATE_NO_WINDOW` from the Win32 process creation flags.
-        #[cfg(windows)]
-        command.creation_flags(0x0800_0000);
-        let mut child = command.spawn().map_err(|e| {
-            EngineError::Startup(format!("could not run {}: {e}", cfg.katago.display()))
-        })?;
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| {
+                EngineError::Startup(format!("could not run {}: {e}", cfg.katago.display()))
+            })?;
 
         let (Some(stdin), Some(stdout), Some(stderr)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())

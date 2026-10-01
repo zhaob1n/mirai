@@ -37,8 +37,7 @@ use session::{Host, NamedEngine, Token};
     about = "Headless KataGo host speaking the mirai remote-analysis protocol"
 )]
 struct Args {
-    /// Configuration file (default: $XDG_CONFIG_HOME/mirai/server.toml;
-    /// %APPDATA%\zhaob1n\mirai\config\server.toml on Windows).
+    /// Configuration file (default: $XDG_CONFIG_HOME/mirai/server.toml).
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
 
@@ -449,85 +448,38 @@ async fn start_engines(cfg: &ServerConfig, shutdown: &mut watch::Receiver<bool>)
     Started { named, live }
 }
 
-/// The first termination request starts an orderly shutdown. A second one exits
+/// First SIGINT, SIGTERM or SIGHUP starts an orderly shutdown. A second one exits
 /// immediately, the same way the desktop application does when quit is wedged.
 async fn shutdown_signal() {
-    let mut requests = match TerminationRequests::install() {
-        Ok(requests) => requests,
-        Err(error) => {
-            warn!(%error, "could not install termination signal handlers");
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let (mut interrupt, mut terminate, mut hangup) = match (
+        signal(SignalKind::interrupt()),
+        signal(SignalKind::terminate()),
+        signal(SignalKind::hangup()),
+    ) {
+        (Ok(interrupt), Ok(terminate), Ok(hangup)) => (interrupt, terminate, hangup),
+        _ => {
+            warn!("could not install termination signal handlers");
             std::future::pending::<()>().await;
             return;
         }
     };
-    requests.recv().await;
+    tokio::select! {
+        _ = interrupt.recv() => {}
+        _ = terminate.recv() => {}
+        _ = hangup.recv() => {}
+    }
     tokio::spawn(async move {
-        let code = requests.recv().await;
+        // 128 + the signal number, as a shell reports a process that signal killed.
+        let code = tokio::select! {
+            _ = interrupt.recv() => 128 + 2,
+            _ = terminate.recv() => 128 + 15,
+            _ = hangup.recv() => 128 + 1,
+        };
         warn!("second termination signal, exiting immediately");
         std::process::exit(code);
     });
-}
-
-/// SIGINT, SIGTERM and SIGHUP.
-#[cfg(unix)]
-struct TerminationRequests {
-    interrupt: tokio::signal::unix::Signal,
-    terminate: tokio::signal::unix::Signal,
-    hangup: tokio::signal::unix::Signal,
-}
-
-#[cfg(unix)]
-impl TerminationRequests {
-    fn install() -> std::io::Result<Self> {
-        use tokio::signal::unix::{SignalKind, signal};
-        Ok(Self {
-            interrupt: signal(SignalKind::interrupt())?,
-            terminate: signal(SignalKind::terminate())?,
-            hangup: signal(SignalKind::hangup())?,
-        })
-    }
-
-    /// Waits for the next request, and returns the exit status a shell reports for a
-    /// process that signal killed: 128 + the signal number.
-    async fn recv(&mut self) -> i32 {
-        tokio::select! {
-            _ = self.interrupt.recv() => 128 + 2,
-            _ = self.terminate.recv() => 128 + 15,
-            _ = self.hangup.recv() => 128 + 1,
-        }
-    }
-}
-
-/// Ctrl-C, Ctrl-Break and a closed console window. For a closed console, Tokio parks the
-/// handler thread and Windows allows the process five seconds to finish shutting down.
-#[cfg(windows)]
-struct TerminationRequests {
-    ctrl_c: tokio::signal::windows::CtrlC,
-    ctrl_break: tokio::signal::windows::CtrlBreak,
-    ctrl_close: tokio::signal::windows::CtrlClose,
-}
-
-#[cfg(windows)]
-impl TerminationRequests {
-    fn install() -> std::io::Result<Self> {
-        use tokio::signal::windows::{ctrl_break, ctrl_c, ctrl_close};
-        Ok(Self {
-            ctrl_c: ctrl_c()?,
-            ctrl_break: ctrl_break()?,
-            ctrl_close: ctrl_close()?,
-        })
-    }
-
-    /// Waits for the next request, and returns the exit status Windows gives a process
-    /// that Ctrl-C ended, `STATUS_CONTROL_C_EXIT`.
-    async fn recv(&mut self) -> i32 {
-        tokio::select! {
-            _ = self.ctrl_c.recv() => {}
-            _ = self.ctrl_break.recv() => {}
-            _ = self.ctrl_close.recv() => {}
-        }
-        0xC000_013A_u32 as i32
-    }
 }
 
 /// Subject alternative names for a generated certificate. Clients verify by SHA-256
@@ -569,7 +521,7 @@ fn default_config_path() -> PathBuf {
 /// application uses, in this user's own data directory, never the shared temp directory.
 fn default_log_dir() -> Option<PathBuf> {
     directories::ProjectDirs::from("io.github", "zhaob1n", "mirai")
-        .map(|d| d.data_local_dir().join("katago-logs"))
+        .map(|d| d.data_dir().join("katago-logs"))
 }
 
 fn report_missing_config(path: &std::path::Path) {
