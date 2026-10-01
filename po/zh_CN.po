@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: mirai\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaob1n/mirai/issues\n"
-"POT-Creation-Date: 2026-09-28 10:25+0800\n"
+"POT-Creation-Date: 2026-10-01 12:04+0800\n"
 "PO-Revision-Date: 2026-09-28 06:00+0800\n"
 "Last-Translator: Huang Zhaobin <zhaob1n@foxmail.com>\n"
 "Language-Team: Chinese (China) <i18n-zh@googlegroups.com>\n"
@@ -70,7 +70,7 @@ msgid "{profile}: {message}"
 msgstr "{profile}：{message}"
 
 #: crates/mirai/src/batch.rs:95 crates/mirai/src/dialogs.rs:97
-#: crates/mirai/src/prefs.rs:301 crates/mirai/src/window.rs:1397
+#: crates/mirai/src/prefs.rs:301 crates/mirai/src/window.rs:1464
 #: crates/mirai/src/fox_picker.blp:19 crates/mirai/src/label_editor.blp:20
 #: crates/mirai/src/new_game.blp:21
 msgid "Cancel"
@@ -115,27 +115,27 @@ msgstr[0] "已分析 {positions} 个局面——{blunders} 个问题手"
 msgid "Analysis stopped: {error}"
 msgstr "分析已停止：{error}"
 
-#: crates/mirai/src/config.rs:228
+#: crates/mirai/src/config.rs:229
 #, rust-format
 msgid "i/o error on {path}: {error}"
 msgstr "读写 {path} 时出错：{error}"
 
-#: crates/mirai/src/config.rs:236
+#: crates/mirai/src/config.rs:237
 #, rust-format
 msgid "{path} is not valid TOML: {error}"
 msgstr "{path} 不是有效的 TOML：{error}"
 
-#: crates/mirai/src/config.rs:244
+#: crates/mirai/src/config.rs:245
 #, rust-format
 msgid "could not serialise the configuration: {error}"
 msgstr "无法序列化配置：{error}"
 
-#: crates/mirai/src/config.rs:248
+#: crates/mirai/src/config.rs:249
 msgid "no home directory available for the configuration"
 msgstr "找不到用于保存配置的主目录"
 
 #. Translators: {url} is a server address; {engine} is the remote engine's name.
-#: crates/mirai/src/config.rs:338
+#: crates/mirai/src/config.rs:339
 #, rust-format
 msgid "{url} ({engine})"
 msgstr "{url}（{engine}）"
@@ -149,7 +149,7 @@ msgstr "{width}×{height} · {rules} · 贴目 {komi}"
 msgid "Result"
 msgstr "结果"
 
-#: crates/mirai/src/dialogs.rs:40 crates/mirai/src/window.rs:1971
+#: crates/mirai/src/dialogs.rs:40 crates/mirai/src/window.rs:2038
 msgid "Close"
 msgstr "关闭"
 
@@ -193,227 +193,227 @@ msgstr "无法将分析配置写入 {dir}：{error}"
 msgid "refusing to send the token before the certificate is pinned"
 msgstr "证书固定之前拒绝发送令牌"
 
-#: crates/mirai/src/fox.rs:61
+#: crates/mirai/src/fox.rs:63
 msgid "Enter an exact Fox nickname or numeric UID"
 msgstr "请输入准确的野狐昵称或数字 UID"
 
-#: crates/mirai/src/fox.rs:62
+#: crates/mirai/src/fox.rs:64
 msgid "This player has hidden their game records"
 msgstr "该玩家隐藏了自己的棋谱"
 
-#: crates/mirai/src/fox.rs:66
+#: crates/mirai/src/fox.rs:68
 msgid "Fox returned invalid data: the player UID is missing"
 msgstr "野狐返回了无效数据：缺少玩家 UID"
 
-#: crates/mirai/src/fox.rs:69
+#: crates/mirai/src/fox.rs:71
 #, rust-format
 msgid "Fox returned invalid data: {error}"
 msgstr "野狐返回了无效数据：{error}"
 
-#: crates/mirai/src/fox.rs:71
+#: crates/mirai/src/fox.rs:73
 msgid "Could not reach Fox: request failed"
 msgstr "无法连接野狐：请求失败"
 
-#: crates/mirai/src/fox.rs:73
+#: crates/mirai/src/fox.rs:75
 #, rust-format
 msgid "Could not reach Fox: response was not UTF-8 ({error})"
 msgstr "无法连接野狐：响应不是 UTF-8（{error}）"
 
-#: crates/mirai/src/fox.rs:77
+#: crates/mirai/src/fox.rs:79
 msgid "Could not reach Fox: response was unexpectedly large"
 msgstr "无法连接野狐：响应意外过大"
 
-#: crates/mirai/src/fox.rs:79
+#: crates/mirai/src/fox.rs:81
 msgid "Could not reach Fox: request timed out"
 msgstr "无法连接野狐：请求超时"
 
-#: crates/mirai/src/fox.rs:81
+#: crates/mirai/src/fox.rs:83
 #, rust-format
 msgid "Could not reach Fox: {error}"
 msgstr "无法连接野狐：{error}"
 
-#: crates/mirai/src/fox.rs:263
+#: crates/mirai/src/fox.rs:286
 #, rust-format
 msgid "UID {uid}"
 msgstr "UID {uid}"
 
-#: crates/mirai/src/fox.rs:302 crates/mirai/src/window.rs:1341
+#: crates/mirai/src/fox.rs:325 crates/mirai/src/window.rs:1408
 #, rust-format
 msgid "{moves} move"
 msgid_plural "{moves} moves"
 msgstr[0] "{moves} 手"
 
-#: crates/mirai/src/fox.rs:417 crates/mirai/src/fox_picker.blp:85
+#: crates/mirai/src/fox.rs:440 crates/mirai/src/fox_picker.blp:85
 msgid "Searching Fox"
 msgstr "正在搜索野狐"
 
-#: crates/mirai/src/fox.rs:419
+#: crates/mirai/src/fox.rs:442
 msgid "Looking up the player and their recent games."
 msgstr "正在查找该玩家及其最近的对局。"
 
-#: crates/mirai/src/fox.rs:456
+#: crates/mirai/src/fox.rs:479
 msgid "Couldn’t load games"
 msgstr "无法加载对局"
 
-#: crates/mirai/src/fox.rs:474
+#: crates/mirai/src/fox.rs:497
 msgid "No public games"
 msgstr "没有公开对局"
 
-#: crates/mirai/src/fox.rs:476
+#: crates/mirai/src/fox.rs:499
 msgid "This account has no visible games in Fox's recent-history window."
 msgstr "该账号在野狐的近期记录范围内没有可见的对局。"
 
-#: crates/mirai/src/fox.rs:486
+#: crates/mirai/src/fox.rs:509
 #, rust-format
 msgid "{account} · {count} recent game"
 msgid_plural "{account} · {count} recent games"
 msgstr[0] "{account} · {count} 盘近期对局"
 
-#: crates/mirai/src/fox.rs:537
+#: crates/mirai/src/fox.rs:560
 msgid "Downloading game"
 msgstr "正在下载对局"
 
-#: crates/mirai/src/fox.rs:563
+#: crates/mirai/src/fox.rs:586
 #, rust-format
 msgid "Could not download the game: {error}"
 msgstr "无法下载对局：{error}"
 
-#: crates/mirai/src/i18n.rs:123
+#: crates/mirai/src/i18n.rs:161
 msgctxt "player"
 msgid "Black"
 msgstr "黑方"
 
-#: crates/mirai/src/i18n.rs:124
+#: crates/mirai/src/i18n.rs:162
 msgctxt "player"
 msgid "White"
 msgstr "白方"
 
-#: crates/mirai/src/i18n.rs:130
+#: crates/mirai/src/i18n.rs:168
 msgid "Tromp-Taylor"
 msgstr "Tromp-Taylor 规则"
 
-#: crates/mirai/src/i18n.rs:131
+#: crates/mirai/src/i18n.rs:169
 msgid "Chinese"
 msgstr "中国规则"
 
-#: crates/mirai/src/i18n.rs:132
+#: crates/mirai/src/i18n.rs:170
 msgid "Chinese (OGS)"
 msgstr "中国规则（OGS）"
 
-#: crates/mirai/src/i18n.rs:133
+#: crates/mirai/src/i18n.rs:171
 msgid "Japanese"
 msgstr "日本规则"
 
-#: crates/mirai/src/i18n.rs:134
+#: crates/mirai/src/i18n.rs:172
 msgid "Korean"
 msgstr "韩国规则"
 
-#: crates/mirai/src/i18n.rs:135
+#: crates/mirai/src/i18n.rs:173
 msgid "Stone Scoring"
 msgstr "数子规则"
 
-#: crates/mirai/src/i18n.rs:136
+#: crates/mirai/src/i18n.rs:174
 msgid "AGA"
 msgstr "AGA 规则"
 
 #. Translators: AGA rules with the pass button, a stone handed over for the first
 #. pass.
-#: crates/mirai/src/i18n.rs:139
+#: crates/mirai/src/i18n.rs:177
 msgid "AGA (Button)"
 msgstr "AGA 规则（纽扣）"
 
-#: crates/mirai/src/i18n.rs:140
+#: crates/mirai/src/i18n.rs:178
 msgid "New Zealand"
 msgstr "新西兰规则"
 
-#: crates/mirai/src/i18n.rs:147
+#: crates/mirai/src/i18n.rs:185
 msgid "No result"
 msgstr "无结果"
 
 #. Translators: a drawn game of Go.
-#: crates/mirai/src/i18n.rs:149
+#: crates/mirai/src/i18n.rs:187
 msgid "Jigo — a draw"
 msgstr "和棋"
 
-#: crates/mirai/src/i18n.rs:150
+#: crates/mirai/src/i18n.rs:188
 msgid "Black wins by resignation"
 msgstr "黑中盘胜"
 
-#: crates/mirai/src/i18n.rs:151
+#: crates/mirai/src/i18n.rs:189
 msgid "White wins by resignation"
 msgstr "白中盘胜"
 
-#: crates/mirai/src/i18n.rs:152
+#: crates/mirai/src/i18n.rs:190
 msgid "Black wins on time"
 msgstr "黑超时胜"
 
-#: crates/mirai/src/i18n.rs:153
+#: crates/mirai/src/i18n.rs:191
 msgid "White wins on time"
 msgstr "白超时胜"
 
-#: crates/mirai/src/i18n.rs:154
+#: crates/mirai/src/i18n.rs:192
 msgid "Black wins by forfeit"
 msgstr "黑判胜"
 
-#: crates/mirai/src/i18n.rs:155
+#: crates/mirai/src/i18n.rs:193
 msgid "White wins by forfeit"
 msgstr "白判胜"
 
-#: crates/mirai/src/i18n.rs:158
+#: crates/mirai/src/i18n.rs:196
 #, rust-format
 msgid "Black wins by {margin}"
 msgstr "黑胜 {margin} 目"
 
-#: crates/mirai/src/i18n.rs:162
+#: crates/mirai/src/i18n.rs:200
 #, rust-format
 msgid "White wins by {margin}"
 msgstr "白胜 {margin} 目"
 
-#: crates/mirai/src/i18n.rs:164
+#: crates/mirai/src/i18n.rs:202
 msgid "Black wins"
 msgstr "黑胜"
 
-#: crates/mirai/src/i18n.rs:165
+#: crates/mirai/src/i18n.rs:203
 msgid "White wins"
 msgstr "白胜"
 
-#: crates/mirai/src/i18n.rs:172
+#: crates/mirai/src/i18n.rs:210
 msgid "That point is already occupied"
 msgstr "该点已有棋子"
 
-#: crates/mirai/src/i18n.rs:173
+#: crates/mirai/src/i18n.rs:211
 msgid "That move would be suicide"
 msgstr "此处落子为自杀，不允许"
 
-#: crates/mirai/src/i18n.rs:174
+#: crates/mirai/src/i18n.rs:212
 msgid "That move breaks the ko rule"
 msgstr "这手棋违反打劫规则"
 
-#: crates/mirai/src/i18n.rs:175
+#: crates/mirai/src/i18n.rs:213
 msgid "That point is off the board"
 msgstr "该点不在棋盘上"
 
-#: crates/mirai/src/i18n.rs:185
+#: crates/mirai/src/i18n.rs:223
 #, rust-format
 msgid "engine failed to start: {error}"
 msgstr "引擎启动失败：{error}"
 
-#: crates/mirai/src/i18n.rs:186
+#: crates/mirai/src/i18n.rs:224
 #, rust-format
 msgid "engine process exited: {error}"
 msgstr "引擎进程已退出：{error}"
 
-#: crates/mirai/src/i18n.rs:187
+#: crates/mirai/src/i18n.rs:225
 #, rust-format
 msgid "query rejected: {error}"
 msgstr "查询被拒绝：{error}"
 
-#: crates/mirai/src/i18n.rs:189
+#: crates/mirai/src/i18n.rs:227
 #, rust-format
 msgid "disconnected from remote engine: {error}"
 msgstr "与远程引擎的连接已断开：{error}"
 
-#: crates/mirai/src/i18n.rs:191
+#: crates/mirai/src/i18n.rs:229
 #, rust-format
 msgid "protocol error: {error}"
 msgstr "协议错误：{error}"
@@ -427,70 +427,70 @@ msgctxt "size"
 msgid "Custom"
 msgstr "自定义"
 
-#: crates/mirai/src/new_game.rs:154
+#: crates/mirai/src/new_game.rs:159
 msgid "The human-like model imitates a rank instead of searching"
 msgstr "拟人模型模仿某一段位的下法，而不是搜索"
 
-#: crates/mirai/src/new_game.rs:156
+#: crates/mirai/src/new_game.rs:161
 msgid "This engine has no human-like model loaded"
 msgstr "此引擎没有加载拟人模型"
 
-#: crates/mirai/src/new_game.rs:313
+#: crates/mirai/src/new_game.rs:318
 msgid "Play both sides on this device"
 msgstr "在本机上下双方"
 
-#: crates/mirai/src/new_game.rs:315 crates/mirai/src/new_game.blp:63
+#: crates/mirai/src/new_game.rs:320 crates/mirai/src/new_game.blp:63
 msgid "The engine takes the other colour"
 msgstr "引擎执另一方"
 
 #. Translators: no handicap stones.
-#: crates/mirai/src/new_game.rs:439
+#: crates/mirai/src/new_game.rs:458
 msgctxt "handicap"
 msgid "None"
 msgstr "无"
 
-#: crates/mirai/src/new_game.rs:443
+#: crates/mirai/src/new_game.rs:462
 #, rust-format
 msgid "{n} stone"
 msgid_plural "{n} stones"
 msgstr[0] "{n} 子"
 
-#: crates/mirai/src/new_game.rs:456
+#: crates/mirai/src/new_game.rs:475
 msgid "Both (no engine)"
 msgstr "双方（无引擎）"
 
 #. Translators: no time limit.
-#: crates/mirai/src/new_game.rs:463
+#: crates/mirai/src/new_game.rs:482
 msgctxt "time-control"
 msgid "None"
 msgstr "无"
 
 #. Translators: one clock and no overtime.
-#: crates/mirai/src/new_game.rs:465
+#: crates/mirai/src/new_game.rs:484
 msgctxt "time-control"
 msgid "Absolute"
 msgstr "包干计时"
 
 #. Translators: Japanese overtime, a fixed number of periods.
-#: crates/mirai/src/new_game.rs:467
+#: crates/mirai/src/new_game.rs:486
 msgid "Byo-yomi"
 msgstr "读秒"
 
 #. Translators: seconds added after every move.
-#: crates/mirai/src/new_game.rs:469
+#: crates/mirai/src/new_game.rs:488
 msgid "Fischer increment"
 msgstr "费舍尔加秒"
 
-#: crates/mirai/src/new_game.rs:475 crates/mirai/src/prefs.rs:1932
+#: crates/mirai/src/new_game.rs:494 crates/mirai/src/prefs.rs:1932
 msgctxt "strength"
 msgid "Visits"
 msgstr "计算量"
 
-#: crates/mirai/src/new_game.rs:476 crates/mirai/src/prefs.rs:1933
+#: crates/mirai/src/new_game.rs:495 crates/mirai/src/prefs.rs:1933
 msgid "Time per move"
 msgstr "每手时限"
 
-#: crates/mirai/src/new_game.rs:477 crates/mirai/src/new_game.rs:540
+#: crates/mirai/src/new_game.rs:496 crates/mirai/src/new_game.rs:565
 #: crates/mirai/src/prefs.rs:1934
 msgid "Human-like"
 msgstr "拟人"
@@ -605,64 +605,64 @@ msgstr "你"
 msgid "{result} — click a group to mark it dead"
 msgstr "{result}——点击棋块可标记死活"
 
-#: crates/mirai/src/play.rs:287
+#: crates/mirai/src/play.rs:292
 msgid "No engine is running — start one in Preferences"
 msgstr "没有正在运行的引擎——请在首选项中启动一个"
 
-#: crates/mirai/src/play.rs:315
+#: crates/mirai/src/play.rs:322
 #, rust-format
 msgid "Thinking… {visits} visit"
 msgid_plural "Thinking… {visits} visits"
 msgstr[0] "思考中… 计算量 {visits}"
 
-#: crates/mirai/src/play.rs:345
+#: crates/mirai/src/play.rs:366 crates/mirai/src/play.rs:447
 msgid "The engine ended the search without a move"
 msgstr "引擎结束了搜索，但没有给出着手"
 
-#: crates/mirai/src/play.rs:472
+#: crates/mirai/src/play.rs:527
 msgid "Counting…"
 msgstr "正在数子…"
 
-#: crates/mirai/src/play.rs:559
+#: crates/mirai/src/play.rs:619
 msgid "Whole-game analysis is not available from here"
 msgstr "此处无法进行全盘分析"
 
-#: crates/mirai/src/play.rs:578
+#: crates/mirai/src/play.rs:638
 msgid "Both players passed."
 msgstr "双方连续停一手。"
 
-#: crates/mirai/src/play.rs:579
+#: crates/mirai/src/play.rs:639
 msgid "Black resigned."
 msgstr "黑方认输。"
 
-#: crates/mirai/src/play.rs:580
+#: crates/mirai/src/play.rs:640
 msgid "White resigned."
 msgstr "白方认输。"
 
-#: crates/mirai/src/play.rs:581
+#: crates/mirai/src/play.rs:641
 msgid "Black lost on time."
 msgstr "黑方超时负。"
 
-#: crates/mirai/src/play.rs:582
+#: crates/mirai/src/play.rs:642
 msgid "White lost on time."
 msgstr "白方超时负。"
 
-#: crates/mirai/src/play.rs:595
+#: crates/mirai/src/play.rs:655
 #, rust-format
 msgid "Count on the board: {result} ({black} — {white}, estimated)"
 msgstr "盘面计数：{result}（{black} — {white}，估算）"
 
-#: crates/mirai/src/play.rs:605
+#: crates/mirai/src/play.rs:665
 #, rust-format
 msgid "Count on the board: {result} ({black} — {white})"
 msgstr "盘面计数：{result}（{black} — {white}）"
 
-#: crates/mirai/src/play.rs:615
+#: crates/mirai/src/play.rs:675
 #, rust-format
 msgid "Black {black} — White {white} (estimated)"
 msgstr "黑 {black} — 白 {white}（估算）"
 
-#: crates/mirai/src/play.rs:620 crates/mirai/src/window.rs:1956
+#: crates/mirai/src/play.rs:680 crates/mirai/src/window.rs:2023
 #, rust-format
 msgid "Black {black} — White {white}"
 msgstr "黑 {black} — 白 {white}"
@@ -1146,11 +1146,11 @@ msgstr "静音"
 msgid "General settings restored"
 msgstr "已恢复常规设置"
 
-#: crates/mirai/src/widgets/tree.rs:380 crates/mirai/src/window.rs:2026
+#: crates/mirai/src/widgets/tree.rs:401 crates/mirai/src/window.rs:2093
 msgid "Set as Main Line"
 msgstr "设为主线"
 
-#: crates/mirai/src/widgets/tree.rs:388 crates/mirai/src/window.rs:2025
+#: crates/mirai/src/widgets/tree.rs:409 crates/mirai/src/window.rs:2092
 msgid "Delete Branch"
 msgstr "删除分支"
 
@@ -1158,432 +1158,436 @@ msgstr "删除分支"
 msgid "Black win rate (solid) and Black score lead (dashed) over the main line"
 msgstr "主线上黑方的胜率（实线）和目差（虚线）"
 
-#: crates/mirai/src/window.rs:294 crates/mirai/src/window.rs:2005
+#: crates/mirai/src/window.rs:307 crates/mirai/src/window.rs:2072
 #: crates/mirai/src/preferences.blp:38
 msgid "Analysis"
 msgstr "分析"
 
-#: crates/mirai/src/window.rs:303
+#: crates/mirai/src/window.rs:316
 msgid "Moves"
 msgstr "棋谱树"
 
 #. Translators: the sidebar tab for the note on this position, not the verb.
-#: crates/mirai/src/window.rs:312
+#: crates/mirai/src/window.rs:325
 msgctxt "noun"
 msgid "Comment"
 msgstr "注释"
 
-#: crates/mirai/src/window.rs:320
-msgid "Stop Live Analysis (Space)"
-msgstr "停止实时分析（Space）"
-
-#: crates/mirai/src/window.rs:323 crates/mirai/src/window.blp:69
-msgid "Start Live Analysis (Space)"
-msgstr "开始实时分析（Space）"
-
-#: crates/mirai/src/window.rs:342 crates/mirai/src/window.blp:91
+#: crates/mirai/src/window.rs:352 crates/mirai/src/window.blp:91
 msgid "Hide Sidebar (F9)"
 msgstr "隐藏侧边栏（F9）"
 
-#: crates/mirai/src/window.rs:344
+#: crates/mirai/src/window.rs:354
 msgid "Show Sidebar (F9)"
 msgstr "显示侧边栏（F9）"
 
-#: crates/mirai/src/window.rs:691
+#: crates/mirai/src/window.rs:694
 msgid "Play — Black to Play"
 msgstr "落子——黑方行棋"
 
-#: crates/mirai/src/window.rs:693
+#: crates/mirai/src/window.rs:696
 msgid ""
 "Play — Black to Play; Left-click to Play, Right-click to Take Back and "
 "Delete the Current Branch"
 msgstr "落子——黑方行棋；左键落子，右键悔棋并删除当前分支"
 
-#: crates/mirai/src/window.rs:698
+#: crates/mirai/src/window.rs:701
 msgid "Play — White to Play"
 msgstr "落子——白方行棋"
 
-#: crates/mirai/src/window.rs:700
+#: crates/mirai/src/window.rs:703
 msgid ""
 "Play — White to Play; Left-click to Play, Right-click to Take Back and "
 "Delete the Current Branch"
 msgstr "落子——白方行棋；左键落子，右键悔棋并删除当前分支"
 
 #. Translators: {engine} is the analysis engine's name or status.
-#: crates/mirai/src/window.rs:923
+#: crates/mirai/src/window.rs:935
 #, rust-format
 msgid "Analysis Engine — {engine}"
 msgstr "分析引擎——{engine}"
 
-#: crates/mirai/src/window.rs:936
+#: crates/mirai/src/window.rs:948
 #, rust-format
 msgid "Move {index} of {upper}"
 msgstr "第 {index} 手，共 {upper} 手"
 
-#: crates/mirai/src/window.rs:944
+#: crates/mirai/src/window.rs:956
 #, rust-format
 msgid "{index} / {upper} · B"
 msgstr "{index} / {upper} · 黑"
 
-#: crates/mirai/src/window.rs:951
+#: crates/mirai/src/window.rs:963
 #, rust-format
 msgid "{index} / {upper} · W"
 msgstr "{index} / {upper} · 白"
 
-#: crates/mirai/src/window.rs:959
+#: crates/mirai/src/window.rs:971
 #, rust-format
 msgid "Move {index} of {upper} · Black to play"
 msgstr "第 {index} 手，共 {upper} 手 · 黑方行棋"
 
-#: crates/mirai/src/window.rs:963
+#: crates/mirai/src/window.rs:975
 #, rust-format
 msgid "Move {index} of {upper} · White to play"
 msgstr "第 {index} 手，共 {upper} 手 · 白方行棋"
 
-#: crates/mirai/src/window.rs:980
+#: crates/mirai/src/window.rs:992
 #, rust-format
 msgid "● {time}"
 msgstr "● {time}"
 
-#: crates/mirai/src/window.rs:983
+#: crates/mirai/src/window.rs:995
 #, rust-format
 msgid "○ {time}"
 msgstr "○ {time}"
 
-#: crates/mirai/src/window.rs:1021
+#: crates/mirai/src/window.rs:1040
 #, rust-format
 msgid "{black} vs {white}"
 msgstr "{black} vs {white}"
 
-#: crates/mirai/src/window.rs:1022
+#: crates/mirai/src/window.rs:1041
 #, rust-format
 msgid "? vs {white}"
 msgstr "? vs {white}"
 
-#: crates/mirai/src/window.rs:1023
+#: crates/mirai/src/window.rs:1042
 #, rust-format
 msgid "{black} vs ?"
 msgstr "{black} vs ?"
 
-#: crates/mirai/src/window.rs:1024
+#: crates/mirai/src/window.rs:1043
 msgid "? vs ?"
 msgstr "? vs ?"
 
-#: crates/mirai/src/window.rs:1047 crates/mirai/src/window.blp:16
+#: crates/mirai/src/window.rs:1066 crates/mirai/src/window.blp:16
 msgid "Untitled"
 msgstr "未命名"
 
 #. Translators: {name} is the record name. The bullet marks unsaved changes.
-#: crates/mirai/src/window.rs:1050
+#: crates/mirai/src/window.rs:1069
 #, rust-format
 msgid "{name} •"
 msgstr "{name} •"
 
 #. Translators: {name} is the record name. mirai is the application name; do not translate it.
-#: crates/mirai/src/window.rs:1057
+#: crates/mirai/src/window.rs:1076
 #, rust-format
 msgid "{name} — mirai"
 msgstr "{name} — mirai"
 
-#: crates/mirai/src/window.rs:1160
+#: crates/mirai/src/window.rs:1123
+msgid "Live analysis needs an engine — choose or add one in the engine menu"
+msgstr "实时分析需要引擎——请在引擎菜单中选择或添加一个"
+
+#: crates/mirai/src/window.rs:1125
+msgid "Stop Live Analysis (Space)"
+msgstr "停止实时分析（Space）"
+
+#: crates/mirai/src/window.rs:1127 crates/mirai/src/window.blp:69
+msgid "Start Live Analysis (Space)"
+msgstr "开始实时分析（Space）"
+
+#: crates/mirai/src/window.rs:1227
 msgid "SGF game records"
 msgstr "SGF 棋谱"
 
-#: crates/mirai/src/window.rs:1241 crates/mirai/src/window.rs:1247
+#: crates/mirai/src/window.rs:1308 crates/mirai/src/window.rs:1314
 #, rust-format
 msgid "Could not open {file}: {error}"
 msgstr "无法打开 {file}：{error}"
 
-#: crates/mirai/src/window.rs:1262
+#: crates/mirai/src/window.rs:1329
 msgid "The record changed while that file was opening, so it was not loaded"
 msgstr "打开该文件期间棋谱已被修改，因此未载入"
 
-#: crates/mirai/src/window.rs:1291
+#: crates/mirai/src/window.rs:1358
 msgid "That file holds no game records"
 msgstr "该文件中没有棋谱"
 
-#: crates/mirai/src/window.rs:1303
+#: crates/mirai/src/window.rs:1370
 #, rust-format
 msgid "Opened {file} ({moves} move)"
 msgid_plural "Opened {file} ({moves} moves)"
 msgstr[0] "已打开 {file}（{moves} 手）"
 
-#: crates/mirai/src/window.rs:1309
+#: crates/mirai/src/window.rs:1376
 #, rust-format
 msgid "Restored {moves} move — use Save As to keep it"
 msgid_plural "Restored {moves} moves — use Save As to keep them"
 msgstr[0] "已恢复 {moves} 手——请用“另存为”保存"
 
-#: crates/mirai/src/window.rs:1331
+#: crates/mirai/src/window.rs:1398
 #, rust-format
 msgid "{name} ({rank})"
 msgstr "{name}（{rank}）"
 
-#: crates/mirai/src/window.rs:1388
+#: crates/mirai/src/window.rs:1455
 msgid "Games in file"
 msgstr "文件中的对局"
 
-#: crates/mirai/src/window.rs:1390
+#: crates/mirai/src/window.rs:1457
 #, rust-format
 msgid "{file} holds {count} game record."
 msgid_plural "{file} holds {count} game records."
 msgstr[0] "{file} 中有 {count} 份棋谱。"
 
-#: crates/mirai/src/window.rs:1398 crates/mirai/src/window.rs:2033
+#: crates/mirai/src/window.rs:1465 crates/mirai/src/window.rs:2100
 msgctxt "verb"
 msgid "Open"
 msgstr "打开"
 
-#: crates/mirai/src/window.rs:1428
+#: crates/mirai/src/window.rs:1495
 msgid "Open SGF"
 msgstr "打开 SGF"
 
-#: crates/mirai/src/window.rs:1439 crates/mirai/src/window.rs:1545
+#: crates/mirai/src/window.rs:1506 crates/mirai/src/window.rs:1612
 msgid "That location is not a local file"
 msgstr "该位置不是本地文件"
 
-#: crates/mirai/src/window.rs:1446
+#: crates/mirai/src/window.rs:1513
 #, rust-format
 msgid "Could not open: {error}"
 msgstr "无法打开：{error}"
 
-#: crates/mirai/src/window.rs:1471
+#: crates/mirai/src/window.rs:1538
 #, rust-format
 msgid "Downloaded {game} ({moves} move)"
 msgid_plural "Downloaded {game} ({moves} moves)"
 msgstr[0] "已下载 {game}（{moves} 手）"
 
-#: crates/mirai/src/window.rs:1503
+#: crates/mirai/src/window.rs:1570
 #, rust-format
 msgid "Saved {file}"
 msgstr "已保存 {file}"
 
-#: crates/mirai/src/window.rs:1506
+#: crates/mirai/src/window.rs:1573
 #, rust-format
 msgid "Could not save {file}: {error}"
 msgstr "无法保存 {file}：{error}"
 
-#: crates/mirai/src/window.rs:1527
+#: crates/mirai/src/window.rs:1594
 msgid "Save SGF"
 msgstr "保存 SGF"
 
-#: crates/mirai/src/window.rs:1552
+#: crates/mirai/src/window.rs:1619
 #, rust-format
 msgid "Could not save: {error}"
 msgstr "无法保存：{error}"
 
-#: crates/mirai/src/window.rs:1856
+#: crates/mirai/src/window.rs:1923
 msgid "Restore the Last Game?"
 msgstr "恢复上次的棋谱？"
 
-#: crates/mirai/src/window.rs:1859
+#: crates/mirai/src/window.rs:1926
 msgid ""
 "mirai did not shut down cleanly. An autosaved copy of the game record you "
 "were looking at is available."
 msgstr "mirai 未能正常退出。你当时查看的棋谱有一份自动保存的副本。"
 
-#: crates/mirai/src/window.rs:1862
+#: crates/mirai/src/window.rs:1929
 msgid "Discard"
 msgstr "丢弃"
 
-#: crates/mirai/src/window.rs:1863
+#: crates/mirai/src/window.rs:1930
 msgid "Restore"
 msgstr "恢复"
 
-#: crates/mirai/src/window.rs:1884
+#: crates/mirai/src/window.rs:1951
 msgid "No engine to estimate the score with"
 msgstr "没有可用于形势判断的引擎"
 
-#: crates/mirai/src/window.rs:1897
+#: crates/mirai/src/window.rs:1964
 msgid "Estimating the score…"
 msgstr "正在进行形势判断…"
 
-#: crates/mirai/src/window.rs:1929
+#: crates/mirai/src/window.rs:1996
 msgid "The engine returned no estimate"
 msgstr "引擎没有返回判断结果"
 
 #. Translators: {result} is an SGF result such as B+3.5, filled in as written.
-#: crates/mirai/src/window.rs:1949
+#: crates/mirai/src/window.rs:2016
 #, rust-format
 msgid "{result} (estimated)"
 msgstr "{result}（估算）"
 
-#: crates/mirai/src/window.rs:1964
+#: crates/mirai/src/window.rs:2031
 #, rust-format
 msgid "KataGo lead for Black after {visits} visit: {lead}"
 msgid_plural "KataGo lead for Black after {visits} visits: {lead}"
 msgstr[0] "KataGo 黑方目差（计算量 {visits}）：{lead}"
 
-#: crates/mirai/src/window.rs:1970
+#: crates/mirai/src/window.rs:2037
 msgid "Score estimate"
 msgstr "形势判断"
 
-#: crates/mirai/src/window.rs:1992
+#: crates/mirai/src/window.rs:2059
 msgid "Navigation"
 msgstr "导航"
 
-#: crates/mirai/src/window.rs:1994 crates/mirai/src/window.blp:338
+#: crates/mirai/src/window.rs:2061 crates/mirai/src/window.blp:338
 msgid "First Move"
 msgstr "第一手"
 
-#: crates/mirai/src/window.rs:1995 crates/mirai/src/window.blp:368
+#: crates/mirai/src/window.rs:2062 crates/mirai/src/window.blp:368
 msgid "Last Move"
 msgstr "最后一手"
 
-#: crates/mirai/src/window.rs:1996 crates/mirai/src/window.blp:348
+#: crates/mirai/src/window.rs:2063 crates/mirai/src/window.blp:348
 msgid "Previous Move"
 msgstr "上一手"
 
-#: crates/mirai/src/window.rs:1997 crates/mirai/src/window.blp:358
+#: crates/mirai/src/window.rs:2064 crates/mirai/src/window.blp:358
 msgid "Next Move"
 msgstr "下一手"
 
-#: crates/mirai/src/window.rs:1998
+#: crates/mirai/src/window.rs:2065
 msgid "Back Ten Moves"
 msgstr "后退十手"
 
-#: crates/mirai/src/window.rs:1999
+#: crates/mirai/src/window.rs:2066
 msgid "Forward Ten Moves"
 msgstr "前进十手"
 
-#: crates/mirai/src/window.rs:2000 crates/mirai/src/window.blp:385
+#: crates/mirai/src/window.rs:2067 crates/mirai/src/window.blp:385
 msgid "Previous Variation"
 msgstr "上一个变化"
 
-#: crates/mirai/src/window.rs:2001 crates/mirai/src/window.blp:395
+#: crates/mirai/src/window.rs:2068 crates/mirai/src/window.blp:395
 msgid "Next Variation"
 msgstr "下一个变化"
 
-#: crates/mirai/src/window.rs:2007 crates/mirai/src/preferences.blp:42
+#: crates/mirai/src/window.rs:2074 crates/mirai/src/preferences.blp:42
 #: crates/mirai/src/window.blp:72
 msgid "Live Analysis"
 msgstr "实时分析"
 
-#: crates/mirai/src/window.rs:2008
+#: crates/mirai/src/window.rs:2075
 msgid "Analyse Whole Game"
 msgstr "全盘分析"
 
-#: crates/mirai/src/window.rs:2009
+#: crates/mirai/src/window.rs:2076
 msgid "Estimate Score"
 msgstr "形势判断"
 
-#: crates/mirai/src/window.rs:2010
+#: crates/mirai/src/window.rs:2077
 msgid "Ownership Overlay"
 msgstr "地盘图"
 
-#: crates/mirai/src/window.rs:2011
+#: crates/mirai/src/window.rs:2078
 msgid "Policy Overlay"
 msgstr "策略图"
 
-#: crates/mirai/src/window.rs:2012 crates/mirai/src/preferences.blp:162
+#: crates/mirai/src/window.rs:2079 crates/mirai/src/preferences.blp:162
 msgid "Coordinates"
 msgstr "坐标"
 
-#: crates/mirai/src/window.rs:2013 crates/mirai/src/preferences.blp:167
+#: crates/mirai/src/window.rs:2080 crates/mirai/src/preferences.blp:167
 msgid "Move Numbers"
 msgstr "手数"
 
-#: crates/mirai/src/window.rs:2014 crates/mirai/src/window.blp:94
+#: crates/mirai/src/window.rs:2081 crates/mirai/src/window.blp:94
 msgid "Sidebar"
 msgstr "侧边栏"
 
-#: crates/mirai/src/window.rs:2015
+#: crates/mirai/src/window.rs:2082
 msgid "Win-Rate Graph"
 msgstr "胜率图"
 
-#: crates/mirai/src/window.rs:2019
+#: crates/mirai/src/window.rs:2086
 msgid "Game"
 msgstr "对局"
 
-#: crates/mirai/src/window.rs:2021 crates/mirai/src/new_game.blp:8
+#: crates/mirai/src/window.rs:2088 crates/mirai/src/new_game.blp:8
 #: crates/mirai/src/new_game.blp:33
 msgid "New Game"
 msgstr "新对局"
 
-#: crates/mirai/src/window.rs:2022 crates/mirai/src/window.blp:482
+#: crates/mirai/src/window.rs:2089 crates/mirai/src/window.blp:482
 msgctxt "verb"
 msgid "Pass"
 msgstr "停一手"
 
-#: crates/mirai/src/window.rs:2023
+#: crates/mirai/src/window.rs:2090
 msgid "Undo Last Edit"
 msgstr "撤销上一次编辑"
 
-#: crates/mirai/src/window.rs:2024 crates/mirai/src/window.blp:152
+#: crates/mirai/src/window.rs:2091 crates/mirai/src/window.blp:152
 msgid "Redo"
 msgstr "重做"
 
-#: crates/mirai/src/window.rs:2027 crates/mirai/src/window.blp:170
+#: crates/mirai/src/window.rs:2094 crates/mirai/src/window.blp:170
 msgid "Switch Side to Play"
 msgstr "切换行棋方"
 
-#: crates/mirai/src/window.rs:2031
+#: crates/mirai/src/window.rs:2098
 msgctxt "noun"
 msgid "File"
 msgstr "文件"
 
-#: crates/mirai/src/window.rs:2034 crates/mirai/src/fox_picker.blp:7
+#: crates/mirai/src/window.rs:2101 crates/mirai/src/fox_picker.blp:7
 #: crates/mirai/src/window.blp:28
 msgid "Download from Fox"
 msgstr "从野狐下载"
 
-#: crates/mirai/src/window.rs:2035
+#: crates/mirai/src/window.rs:2102
 msgid "Clear Board"
 msgstr "清空棋盘"
 
-#: crates/mirai/src/window.rs:2036
+#: crates/mirai/src/window.rs:2103
 msgid "Save"
 msgstr "保存"
 
-#: crates/mirai/src/window.rs:2037
+#: crates/mirai/src/window.rs:2104
 msgid "Save As"
 msgstr "另存为"
 
-#: crates/mirai/src/window.rs:2038
+#: crates/mirai/src/window.rs:2105
 msgid "Copy SGF"
 msgstr "复制 SGF"
 
-#: crates/mirai/src/window.rs:2039
+#: crates/mirai/src/window.rs:2106
 msgid "Paste SGF"
 msgstr "粘贴 SGF"
 
 #. Translators: put your names here, one per line, in place of "translator-credits".
-#: crates/mirai/src/window.rs:2052
+#: crates/mirai/src/window.rs:2119
 msgid "translator-credits"
 msgstr "Huang Zhaobin <zhaob1n@foxmail.com>"
 
-#: crates/mirai/src/window.rs:2053
+#: crates/mirai/src/window.rs:2120
 msgid "A KataGo analysis and playing board for GNOME."
 msgstr "用于 GNOME 的 KataGo 围棋分析与对弈棋盘。"
 
-#: crates/mirai/src/window.rs:2072
+#: crates/mirai/src/window.rs:2139
 msgid "The root node cannot be deleted"
 msgstr "不能删除根节点"
 
-#: crates/mirai/src/window.rs:2486
+#: crates/mirai/src/window.rs:2668
 msgid "Game record copied"
 msgstr "已复制棋谱"
 
-#: crates/mirai/src/window.rs:2488
+#: crates/mirai/src/window.rs:2670
 msgid "No display to copy through"
 msgstr "没有可用于复制的显示设备"
 
-#: crates/mirai/src/window.rs:2505
+#: crates/mirai/src/window.rs:2687
 msgid "The clipboard holds no text"
 msgstr "剪贴板中没有文本"
 
-#: crates/mirai/src/window.rs:2512 crates/mirai/src/window.rs:2537
+#: crates/mirai/src/window.rs:2694 crates/mirai/src/window.rs:2719
 #, rust-format
 msgid "Clipboard: {error}"
 msgstr "剪贴板：{error}"
 
-#: crates/mirai/src/window.rs:2527
+#: crates/mirai/src/window.rs:2709
 #, rust-format
 msgid "Pasted a game of {moves} move"
 msgid_plural "Pasted a game of {moves} moves"
 msgstr[0] "已粘贴一局 {moves} 手的棋谱"
 
-#: crates/mirai/src/window.rs:2535
+#: crates/mirai/src/window.rs:2717
 msgid "The clipboard holds no game record"
 msgstr "剪贴板中没有棋谱"
 

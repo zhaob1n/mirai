@@ -57,7 +57,9 @@ from the model chooser in Preferences.
 
 If no KataGo or network is found, the Analysis page shows **No Engine Configured** with a
 **Preferences** button; Preferences does not open by itself. The board and navigation still
-work, and stored analysis remains visible without a live engine.
+work, and stored analysis remains visible without a live engine. Live analysis, whole-game
+analysis and score estimation stay greyed out until an engine is starting or running; live
+analysis may be switched on while one starts, and the others wait until it is ready.
 
 ### Adding a local engine
 
