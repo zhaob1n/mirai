@@ -631,7 +631,11 @@ the clean-window autosave file. `take_ui` runs before callbacks can re-enter:
 Transient futures may own GTK objects only for a bounded lifetime. `CalibrationRun`
 ties its signal handler, task, controls and engine restoration to completion or
 cancellation. Signal closures must not strongly capture an owner of their emitter;
-dialogs connecting to `AppState` disconnect their `SignalHandlerId` on close.
+dialogs connecting to `AppState` disconnect their `SignalHandlerId` when they go. A dialog
+built per open goes on close. Preferences, New Game and the Fox picker are built once per
+window and kept in its `Ui` — building them was most of what opening them cost
+([RENDERING §8](RENDERING.md#8-dialogs-lists-and-a-160-hz-budget)) — so they go on
+`destroy`, with the window, and reset or reload their rows at each presentation.
 
 ### More than one window
 

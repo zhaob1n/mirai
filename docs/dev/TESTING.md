@@ -703,7 +703,8 @@ Run §1; choose evidence for the surface changed:
 | Engine query or decode | Diff local `probe` `[final]` against raw KataGo on the identical query (§4) |
 | Remote engine or server | Compare both probe modes and check subscription/cancellation (§6) |
 | Drawn output | Inspect a harness PNG; use recipe (b) for point, ownership or policy changes |
-| Per-frame drawing | Measure `MIRAI_FRAMES=1` with a finished search during a sidebar fold; use `tools/perf/frame-stats.py` and [`RENDERING.md` §§6–8](RENDERING.md) |
+| Per-frame drawing | Measure `MIRAI_FRAMES=1` with a finished search during a sidebar fold; use `tools/perf/frame-stats.py` and [`RENDERING.md` §§6–9](RENDERING.md) |
+| Opening or closing a dialog, or anything that should hold 144 Hz | `tools/perf/ui-survey.sh` on the fast output: `over` per step, and `action:<name>` for work between frames ([`RENDERING.md` §8](RENDERING.md#8-dialogs-lists-and-a-160-hz-budget)) |
 | Signals, properties, capture or teardown | Recipe (e): exit 0, no autosave or orphaned KataGo |
 | New action | Drive `action:` and confirm `ok`, not `MISSING` |
 | User-visible text | `tools/i18n/update-po.sh`, translate the new messages, and look at the window with `LANGUAGE=zh_CN` ([`TRANSLATING.md`](TRANSLATING.md)) |

@@ -249,7 +249,61 @@ searching, folds missed 2–7 % of frames, with no layout over 5 ms — the
 idle baseline. A steady, unanimated view had missed 22 % before the fix:
 any new report-rate list or readout must avoid per-report widget churn.
 
-## 8. Keeping it
+## 8. Dialogs, lists, and a 160 Hz budget
+
+The goal moved from 60 Hz to at least 144 Hz: 6.9 ms a frame, 6.25 ms on the 160 Hz
+output. Measured with `ui-survey.sh` on a 3840×2160@160 Hz output at scale 1.5 unless
+noted; release with assertions, no engine.
+
+| surface | before | after |
+|---|---|---|
+| Fox picker, 200 records, reopen | a 116–133 ms frame (60 Hz output) | action ~1 ms, layout 1–2.5 ms |
+| Fox picker, first open | layout 98–223 ms | 13 ms with Latin names; CJK below |
+| Preferences | 38–130 ms action, every open | first open unchanged; then 2–9 ms |
+| New Game | 21–55 ms action, every open | first open unchanged; then 2.6 ms |
+| editor reveal (board resize) | board 7.4 ms a frame, 11 frames over | 0.13 ms, 0 over |
+| live analysis, candidate figures | 0.75 ms a report | 0.26 ms |
+
+**A list view keeps 200 rows.** `GtkListView` keeps `GTK_LIST_VIEW_MAX_LIST_ITEMS`
+(200) rows alive around its anchor whatever its height (`gtklistview.c`), so a list of
+Fox's 200 records was 200 bound, measured, styled rows. A one-column `GtkGridView` keeps
+`GTK_GRID_VIEW_MAX_VISIBLE_ROWS` (30) plus three. Both are *inert* while unrooted: they
+drop their factory, and rebind every live row synchronously when presented again. The
+picker therefore empties its store before each presentation and refills it four rows a
+frame (`fox_picker.rs`).
+
+**`adw_dialog_present` measures the whole dialog, synchronously** — every page of
+Preferences, every row's text. Building the template and that measure took 38–130 ms
+per open; a dialog kept for the window and presented again costs 2–9 ms. Preferences,
+New Game and the Fox picker are kept and reset or reloaded on each presentation.
+Setting a spin row to the value it shows still formats and relays it out, so reloads
+compare first.
+
+**A resize re-shaped the coordinates every frame.** The static layer is rebuilt at each
+new allocation, and each fractional font size meant Pango matching a font through
+fontconfig and shaping 38 strings: 7 ms a frame. Coordinates are now set in whole
+pixels and kept shaped across rebuilds. Candidate figures went through one layout whose
+text and font were switched twice per line, so every figure was shaped twice per report;
+one layout per line shapes it once.
+
+What remains is GTK's or libadwaita's:
+
+- **Dialog animations, 5–15 ms a frame.** libadwaita's floating sheet animates its scale
+  from 0.8 (`adw-floating-sheet.c`), and GSK keys glyphs by scale, so every frame of an
+  open or close re-rasterises the dialog's text. A text-heavy dialog costs more; the
+  picker's CJK records most (up to 30 ms closing at 160 Hz).
+- **The first CJK text in a process**, 20–110 ms: font fallback and loading. With an
+  English UI, the picker's records are usually that text.
+- **A Preferences page's first visit**, 30–40 ms of layout: wrapped labels are shaped
+  again at their allocated width.
+- **Row churn in the candidate list.** Stepping during live analysis empties the list
+  until the first report and refills it: `GtkColumnView` destroys and rebuilds its rows,
+  2–7 ms of the navigation. Avoiding it means keeping blank rows on screen between a
+  move and its first report.
+- **A report relays out the window**: label text changes queue a resize up to the
+  toplevel, 1–2 ms a report; GSK then renders ~3 ms.
+
+## 9. Keeping it
 
 - Use `paint.rs` primitives; keep unavoidable paths' bounds and segment
   counts small, then measure them with `MIRAI_FRAMES=1`.
