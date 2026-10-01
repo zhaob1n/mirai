@@ -7,7 +7,7 @@ Outside docs/archive, also refuse a source line number (`window.rs:1453`, `#L12`
 next edit moves it and nothing notices. Cite a symbol or a section instead.
 
 Run from any directory: python tools/docs/check-links.py
-An adjacent mirai-hmos checkout is optional and reported, never required.
+An adjacent mirai-ohos checkout is optional and reported, never required.
 """
 
 from collections import Counter
@@ -80,7 +80,7 @@ def main():
         file_part, _, fragment = unquote(link).partition("#")
         target = (source.parent / file_part).resolve() if file_part else source
         location = f"{source.relative_to(ROOT)}:{line}"
-        if target.is_relative_to(ROOT.parent / "mirai-ohos") or target.is_relative_to(ROOT.parent / "mirai-hmos"):
+        if target.is_relative_to(ROOT.parent / "mirai-ohos"):
             adjacent.append(f"{location}: optional adjacent repo: {link}")
         elif not target.exists():
             errors.append(f"{location}: missing file: {link}")
