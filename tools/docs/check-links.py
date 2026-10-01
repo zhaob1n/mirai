@@ -80,7 +80,7 @@ def main():
         file_part, _, fragment = unquote(link).partition("#")
         target = (source.parent / file_part).resolve() if file_part else source
         location = f"{source.relative_to(ROOT)}:{line}"
-        if target.is_relative_to(ROOT.parent / "mirai-hmos"):
+        if target.is_relative_to(ROOT.parent / "mirai-ohos") or target.is_relative_to(ROOT.parent / "mirai-hmos"):
             adjacent.append(f"{location}: optional adjacent repo: {link}")
         elif not target.exists():
             errors.append(f"{location}: missing file: {link}")

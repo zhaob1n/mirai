@@ -61,7 +61,7 @@ Do not modify this section without explicit approval.
 | Fox HTTP, or the Fox SGF dialect | [`docs/dev/FOX_KIFU_API_SPEC.md`](docs/dev/FOX_KIFU_API_SPEC.md) |
 | Arch packaging, the experimental Windows build, desktop entry, metainfo | [`docs/dev/PACKAGING.md`](docs/dev/PACKAGING.md) — what to regenerate, how Windows is cross-built and checked under Wine, and why there is no Flatpak |
 | Add a user-visible string, or translate | [`docs/dev/TRANSLATING.md`](docs/dev/TRANSLATING.md) — gettext conventions, the `po/` workflow, why the GTK-free crates stay English |
-| Touch anything the HarmonyOS client depends on | [`../mirai-hmos/docs/dev/UPSTREAM.md`](../mirai-hmos/docs/dev/UPSTREAM.md) — optional adjacent checkout, not a path in this repository. Present only if `mirai-hmos` is checked out beside this one; that client's ledger of what it reuses from here |
+| Touch anything the HarmonyOS client depends on | [`../mirai-ohos/docs/dev/UPSTREAM.md`](../mirai-ohos/docs/dev/UPSTREAM.md) — optional adjacent checkout, not a path in this repository. Present only if `mirai-ohos` is checked out beside this one; that client's ledger of what it reuses from here |
 | Why is it built this way? What already went wrong? | [`docs/archive/RETROSPECTIVE.md`](docs/archive/RETROSPECTIVE.md) — decisions, obstacles, defects found |
 | What was originally specified, before any code | [`docs/archive/PLAN.md`](docs/archive/PLAN.md) — historical; the code, not the plan, is authoritative |
 | What does the application do, from a user's seat | [`docs/user/GUIDE.md`](docs/user/GUIDE.md); `GUIDE.zh-CN.md` beside it is the Simplified Chinese translation — change both |

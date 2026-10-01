@@ -28,7 +28,7 @@ workspace suite with the lockfile — the checks every commit owes.
 
 For documentation edits, run `python tools/docs/check-links.py`. It checks local
 files and heading anchors, and refuses a source file cited with a line number: cite a symbol
-or a section, which survives the next edit. The optional adjacent `mirai-hmos` link is
+or a section, which survives the next edit. The optional adjacent `mirai-ohos` link is
 reported separately. For Rust, run `cargo fmt --all --check`; for Blueprint, run
 `blueprint-compiler lint crates/mirai/src/{window,preferences,new_game,fox_picker,label_editor,profile_editor}.blp crates/mirai/src/panels/analysis.blp`.
 Avoid `cargo clippy --fix`: it rewrites files you have not reviewed.
