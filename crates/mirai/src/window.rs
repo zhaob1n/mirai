@@ -181,6 +181,8 @@ impl Ui {
 
     /// Whether `win.<name>` would run if activated; `None` when there is no such action.
     /// Activating a disabled action is accepted and silently ignored, so the harness asks.
+    /// The harness is its only caller, so debug builds only.
+    #[cfg(debug_assertions)]
     pub(crate) fn win_action_enabled(&self, name: &str) -> Option<bool> {
         let group = &self.win_actions;
         group
