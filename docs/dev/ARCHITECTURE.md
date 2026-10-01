@@ -346,9 +346,10 @@ thread.
 - **No waiting synchronously for a subscription.** `finish()` belongs to the probe and server,
   not GUI handlers.
 - **No synced write, directory scan or `PATH` search.** Config save, autosave, opening an
-  SGF file (read and parse), KataGo discovery, the Fox search cache and crash-leftover
-  scanning run on `spawn_blocking` and return through the weak window. A pasted record is
-  already in memory and is parsed in place. `write_atomic*` syncs the file and directory (50–100 ms on an ordinary
+  SGF file (read and parse), KataGo discovery, the Fox search cache, the TLS trust store
+  Fox's first lookup would load, and crash-leftover scanning run on `spawn_blocking` and
+  return through the weak window. A pasted record is already in memory and is parsed in
+  place. `write_atomic*` syncs the file and directory (50–100 ms on an ordinary
   disk). `flush_config` on close and user-initiated Save remain synchronous: a subsequent
   reader must see the former, while moving Save would need autosave's document-token snapshot
   and exit gate to avoid being overtaken by quit.
@@ -683,7 +684,7 @@ projection/cache state; it does not borrow `AppState` or replay the game tree.
 | **INV-8** | `with_ui`, `take_ui`, `shutdown` in `crates/mirai/src/window_shell.rs`; `Drop for Ui` in `crates/mirai/src/window.rs` |
 | **INV-9** | `crates/mirai/src/widgets/` |
 | **INV-10** | `changed`, `resolve_node`, `set_analysis_at` in `crates/mirai/src/app.rs`; the epoch bump is `GameSession::adopt` / `restore` in `crates/mirai-client/src/game/mod.rs` |
-| **INV-11** | `runtime().spawn_blocking` at each I/O site: `AppState::save_config`, autosave and SGF open in `crates/mirai/src/window.rs`, Fox cache in `crates/mirai/src/fox.rs`, discovery in `crates/mirai/src/prefs.rs` |
+| **INV-11** | `runtime().spawn_blocking` at each I/O site: `AppState::save_config`, autosave and SGF open in `crates/mirai/src/window.rs`, Fox cache and `warm_tls` in `crates/mirai/src/fox.rs`, discovery in `crates/mirai/src/prefs.rs` |
 
 ---
 
