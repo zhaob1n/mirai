@@ -26,13 +26,19 @@ board in 90–120 ms (8–11 fps). Both exposed the same rendering cost.
 
 The in-app instrument, [`render_probe.rs`](../../crates/mirai/src/render_probe.rs),
 logs frame cadence (`frame-dt`) and GTK update, layout and paint phases
-(`frame-phases`). `Timer` measures the drawing passes. It is disabled in release
-builds. [`frame-stats.py`](../../tools/perf/frame-stats.py) aggregates those
-logs. [`dense-board.py`](../../tools/perf/dense-board.py) produces the 285-stone
+(`frame-phases`). `Timer` measures the drawing passes, and every window action's
+synchronous cost (`action:<name>`), which runs between frames where no phase sees it. The
+probes need debug assertions, not an unoptimised build:
+[`ui-survey.sh`](../../tools/perf/ui-survey.sh) builds `target/perf` (release, assertions
+on) and drives each surface — dialogs, the Fox picker, the main window, live analysis —
+through the harness. [`frame-stats.py`](../../tools/perf/frame-stats.py) aggregates the
+logs and judges each frame against the output's refresh period. [`dense-board.py`](../../tools/perf/dense-board.py) produces the 285-stone
 worst case; [`numbered-game.py`](../../tools/perf/numbered-game.py) exercises
 190 numbered moves, which setup stones cannot test. `MIRAI_NO_BOARD`,
 `MIRAI_NO_GRAPH`, `MIRAI_NO_LABEL_DEFER`, `MIRAI_SPIN` and `MIRAI_DUMP_NODE`
-are available for ablation and render-node capture in debug builds.
+are available for ablation and render-node capture in debug builds. For a stack,
+`MIRAI_WRAP="perf record --call-graph dwarf -o p.data --"` profiles the same survey run;
+Arch's GTK has frame pointers, but unwinding through it from Rust needs DWARF.
 
 Measurements in §§3–5 used no engine, a ~1486×1634 window on a
 6016×3384@60 Hz output at scale 2. Reset persisted `[ui]` toggles between

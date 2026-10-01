@@ -63,6 +63,7 @@ fn frames() -> bool {
 ///
 /// `let _t = render_probe::Timer::new("build-static");` times the rest of the scope.
 pub struct Timer {
+    prefix: &'static str,
     label: &'static str,
     start: Instant,
 }
@@ -70,7 +71,19 @@ pub struct Timer {
 impl Timer {
     pub fn new(label: &'static str) -> Option<Self> {
         frames().then(|| Self {
+            prefix: "",
             label,
+            start: Instant::now(),
+        })
+    }
+
+    /// Times a window action's activation, printed as `action:<name> <milliseconds>`.
+    /// That work runs between frames, so no frame phase shows it; only the next
+    /// `frame-dt` does, without saying why.
+    pub fn action(name: &'static str) -> Option<Self> {
+        frames().then(|| Self {
+            prefix: "action:",
+            label: name,
             start: Instant::now(),
         })
     }
@@ -79,7 +92,8 @@ impl Timer {
 impl Drop for Timer {
     fn drop(&mut self) {
         eprintln!(
-            "{} {:.3}",
+            "{}{} {:.3}",
+            self.prefix,
             self.label,
             self.start.elapsed().as_secs_f64() * 1000.0
         );

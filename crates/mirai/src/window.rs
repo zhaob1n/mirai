@@ -2451,10 +2451,15 @@ fn sync_graph(ui: &Ui, window: &MiraiWindow) {
 fn install_actions(window: &MiraiWindow, ui: &Ui) {
     let group = ui.win_actions.clone();
     let weak = ui.weak_window();
-    let add = |name: &str, f: UiAction| {
+    // Each activation is timed under `MIRAI_FRAMES`: an action's synchronous work runs
+    // between frames, where the frame clock's phases cannot see it.
+    let add = |name: &'static str, f: UiAction| {
         let action = gio::SimpleAction::new(name, None);
         let weak = weak.clone();
-        action.connect_activate(move |_, _| with_window_ui(&weak, |ui| f(ui)));
+        action.connect_activate(move |_, _| {
+            let _t = crate::render_probe::Timer::action(name);
+            with_window_ui(&weak, |ui| f(ui));
+        });
         group.add_action(&action);
     };
 
@@ -2472,10 +2477,13 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
     // binding of its own. State follows the source of truth — `AppState`, the split view or
     // the revealer — rather than a copy kept here, so a change made by an accelerator, a
     // button or the menu shows up in all of them.
-    let toggle = |name: &str, initial: bool, flip: UiAction| {
+    let toggle = |name: &'static str, initial: bool, flip: UiAction| {
         let action = gio::SimpleAction::new_stateful(name, None, &initial.to_variant());
         let weak = weak.clone();
-        action.connect_activate(move |_, _| with_window_ui(&weak, |ui| flip(ui)));
+        action.connect_activate(move |_, _| {
+            let _t = crate::render_probe::Timer::action(name);
+            with_window_ui(&weak, |ui| flip(ui));
+        });
         group.add_action(&action);
         action
     };

@@ -12,7 +12,8 @@ candidate-colour ramp is [`CANDIDATE_COLOUR.md`](CANDIDATE_COLOUR.md).
 Wayland root grabs are black. Use the in-process harness (§5) for screenshots;
 `shot:` proves what is drawn, not frame time. For per-frame changes or observed
 stutter, measure with `MIRAI_FRAMES=1` and `tools/perf/` as in
-[`RENDERING.md`](RENDERING.md).
+[`RENDERING.md`](RENDERING.md); `tools/perf/ui-survey.sh` runs every surface through the
+harness and prints frames over the display's budget, step by step.
 
 ## 1. Quick reference
 
