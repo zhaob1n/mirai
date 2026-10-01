@@ -178,6 +178,15 @@ impl Ui {
     fn weak_window(&self) -> glib::WeakRef<MiraiWindow> {
         self.window.clone()
     }
+
+    /// Whether `win.<name>` would run if activated; `None` when there is no such action.
+    /// Activating a disabled action is accepted and silently ignored, so the harness asks.
+    pub(crate) fn win_action_enabled(&self, name: &str) -> Option<bool> {
+        let group = &self.win_actions;
+        group
+            .has_action(name)
+            .then(|| group.is_action_enabled(name))
+    }
 }
 
 impl Drop for Ui {

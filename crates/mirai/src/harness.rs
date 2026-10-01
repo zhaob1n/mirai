@@ -223,14 +223,11 @@ pub fn install(app: &adw::Application) {
                     );
                 }
                 Step::Action(name, arg) => {
-                    let done = activate(&app, &name, arg.as_deref());
-                    if !done {
+                    let outcome = activate(&app, &name, arg.as_deref());
+                    if outcome != "ok" {
                         mark_failed();
                     }
-                    eprintln!(
-                        "harness: action {name} -> {}",
-                        if done { "ok" } else { "MISSING" }
-                    );
+                    eprintln!("harness: action {name} -> {outcome}");
                     // Let the action's effects reach the frame clock.
                     glib::timeout_future(Duration::from_millis(120)).await;
                 }
@@ -450,22 +447,38 @@ fn find_label(widget: &gtk::Widget, needle: &str) -> bool {
     false
 }
 
-/// Activates `prefix.name` on the active window (or on the application for `app.*`).
+/// Activates `prefix.name` on the active window (or on the application for `app.*`), and
+/// says how it went: `ok`, `MISSING`, or `DISABLED` for an action that exists but is off —
+/// GTK accepts that activation and drops it, which would otherwise log `ok`.
 ///
 /// `WidgetExt::activate_action` resolves the prefix through the widget's action muxer, so
 /// this reaches exactly the same handler the keyboard accelerator would.
-fn activate(app: &adw::Application, full: &str, arg: Option<&str>) -> bool {
+fn activate(app: &adw::Application, full: &str, arg: Option<&str>) -> &'static str {
     let param = arg.map(|a| a.to_variant());
     if let Some(name) = full.strip_prefix("app.") {
         if app.has_action(name) {
+            if !app.is_action_enabled(name) {
+                return "DISABLED";
+            }
             app.activate_action(name, param.as_ref());
-            return true;
+            return "ok";
         }
-        return false;
+        return "MISSING";
     }
-    match app.active_window() {
-        Some(w) => w.activate_action(full, param.as_ref()).is_ok(),
-        None => false,
+    let Some(window) = app.active_window() else {
+        return "MISSING";
+    };
+    let enabled = full.strip_prefix("win.").and_then(|name| {
+        window
+            .downcast_ref::<crate::window_shell::MiraiWindow>()?
+            .with_ui(|ui| ui.win_action_enabled(name))?
+    });
+    if enabled == Some(false) {
+        return "DISABLED";
+    }
+    match window.activate_action(full, param.as_ref()) {
+        Ok(()) => "ok",
+        Err(_) => "MISSING",
     }
 }
 

@@ -221,7 +221,9 @@ Successful scripts exit 0. Window layout is mapped in
 [`ARCHITECTURE.md` §7](ARCHITECTURE.md#7-gui-architecture).
 
 Action names are whatever `window::install_actions` registers. A typo logs
-`MISSING`. The recipes below name the actions they need. `win.open` and
+`MISSING`; an action that exists but is disabled logs `DISABLED` and fails the
+script, since GTK would accept the activation and drop it.
+The recipes below name the actions they need. `win.open` and
 `win.save-as` open file choosers the harness cannot fill — pass the SGF on the
 command line.
 
