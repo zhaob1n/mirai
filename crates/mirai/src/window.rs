@@ -141,6 +141,11 @@ pub struct Ui {
     /// This window's Fox picker, built the first time it is asked for. One per
     /// window: libadwaita refuses to present one dialog in two windows at once.
     fox_picker: RefCell<Option<crate::fox_picker::FoxPickerDialog>>,
+    /// This window's Preferences, built the first time it is opened and kept: see
+    /// [`crate::prefs::Preferences`].
+    preferences: RefCell<Option<crate::prefs::Preferences>>,
+    /// This window's New Game dialog, kept like the two above.
+    new_game: RefCell<Option<crate::new_game::NewGameDialog>>,
     comment_node: Cell<Option<NodeRef>>,
     sounds: StoneSounds,
     scale_guard: Cell<bool>,
@@ -399,6 +404,8 @@ pub fn present(
         resign_button,
         analysis_stack,
         fox_picker: RefCell::new(None),
+        preferences: RefCell::new(None),
+        new_game: RefCell::new(None),
         comment_node: Cell::new(None),
         sounds: StoneSounds::new(&state),
         scale_guard: Cell::new(false),
@@ -2741,7 +2748,7 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
         Box::new(|ui| {
             let Some(window) = ui.window() else { return };
             let weak = ui.weak_window();
-            crate::new_game::present(&window, &ui.state, move |setup| {
+            crate::new_game::present(&window, &ui.new_game, &ui.state, move |setup| {
                 with_window_ui(&weak, |ui| {
                     supersede_open(ui);
                     ui.batch.cancel();
@@ -2756,7 +2763,7 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
         "preferences",
         Box::new(|ui| {
             if let Some(window) = ui.window() {
-                crate::prefs::present(&window, &ui.state);
+                crate::prefs::present(&window, &ui.preferences, &ui.state);
             }
         }),
     );

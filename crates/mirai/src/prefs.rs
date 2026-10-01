@@ -74,17 +74,65 @@ impl CalibrationRun {
     }
 }
 
-/// Builds, wires and presents the preferences dialog.
-pub fn present(parent: &impl IsA<gtk::Widget>, state: &AppState) {
+/// Puts a page's settings back into its rows. Each runs before every presentation, since
+/// the config can change while the dialog is closed: the header's engine menu switches the
+/// active profile, and New Game saves the rules and strength it started with.
+type Reload = Box<dyn Fn()>;
+
+/// One window's preferences dialog, built the first time it is asked for and kept for the
+/// window's life.
+///
+/// Building it is nearly all that opening it costs: the template's few hundred widgets,
+/// then the measure `adw_dialog_present` makes of all four pages, took 38–130 ms of the GTK
+/// thread on every open. Presenting the built dialog again takes 2–9 ms.
+pub struct Preferences {
+    dialog: PreferencesDialog,
+    reload: [Reload; 4],
+    /// Presented and not yet closing.
+    shown: Rc<Cell<bool>>,
+}
+
+/// Presents `slot`'s preferences dialog over `parent`, building it on first use.
+pub fn present(
+    parent: &impl IsA<gtk::Widget>,
+    slot: &RefCell<Option<Preferences>>,
+    state: &AppState,
+) {
+    let mut slot = slot.borrow_mut();
+    let prefs = slot.get_or_insert_with(|| build(state));
+    // Already up: presenting again would be a no-op, but the reload would rewrite the rows
+    // under the user and the pop below would close the editor they are in.
+    if prefs.shown.get() {
+        return;
+    }
+    // A profile editor left open is not where Preferences opens.
+    while prefs.dialog.pop_subpage() {}
+    for reload in &prefs.reload {
+        reload();
+    }
+    prefs.shown.set(true);
+    prefs.dialog.present(Some(parent));
+}
+
+fn build(state: &AppState) -> Preferences {
     let dialog = PreferencesDialog::new();
     let widgets = dialog.widgets();
-
-    connect_engines(&dialog, &widgets, state);
-    connect_analysis(&dialog, &widgets, state);
-    connect_play(&dialog, &widgets, state);
-    connect_general(&dialog, &widgets, state);
-
-    dialog.present(Some(parent));
+    let reload = [
+        connect_engines(&dialog, &widgets, state),
+        connect_analysis(&dialog, &widgets, state),
+        connect_play(&dialog, &widgets, state),
+        connect_general(&dialog, &widgets, state),
+    ];
+    let shown = Rc::new(Cell::new(false));
+    dialog.connect_closed({
+        let shown = shown.clone();
+        move |_| shown.set(false)
+    });
+    Preferences {
+        dialog,
+        reload,
+        shown,
+    }
 }
 
 /// The empty-state page shown on first run when no engine profile exists.
@@ -144,7 +192,11 @@ pub fn engine_menu_model(state: &AppState) -> gio::Menu {
 
 // -- Engines ----------------------------------------------------------------------------
 
-fn connect_engines(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state: &AppState) {
+fn connect_engines(
+    dialog: &PreferencesDialog,
+    widgets: &PreferencesWidgets,
+    state: &AppState,
+) -> Reload {
     let local_state = state.clone();
     widgets.add_local_button.connect_activated(clone!(
         #[weak]
@@ -167,7 +219,21 @@ fn connect_engines(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, sta
         }
     ));
 
-    refresh_profiles(&widgets.profiles_group, dialog.upcast_ref(), state);
+    let group = widgets.profiles_group.clone();
+    let dialog = dialog.clone();
+    let state = state.clone();
+    // What the rows were last built from: a reopen rebuilds them only if it moved.
+    let shown: RefCell<Option<(Vec<EngineProfile>, Option<String>)>> = RefCell::default();
+    Box::new(move || {
+        let now = {
+            let cfg = state.config();
+            (cfg.engine_profiles.clone(), cfg.active_engine.clone())
+        };
+        if shown.borrow().as_ref() != Some(&now) {
+            refresh_profiles(&group, dialog.upcast_ref(), &state);
+            *shown.borrow_mut() = Some(now);
+        }
+    })
 }
 
 /// Rebuilds the profile list in place. Called after every mutation.
@@ -1420,15 +1486,22 @@ fn remote_editor(
     // The check in flight: re-testing replaces it, and leaving the editor drops it —
     // Back and Save pop the subpage without closing the dialog, so its `hidden` counts as
     // well as the dialog's `closed`. Either aborts the glib future, and with it the network
-    // task through `AbortOnDrop`, so no Trust prompt outlives the editor that asked.
+    // task through `AbortOnDrop`, so no Trust prompt outlives the editor that asked. The
+    // dialog outlives its editors, so the `closed` handler goes when the editor does.
     let testing = Rc::new(TestSlot::default());
-    dialog.connect_closed({
+    let closed = Cell::new(Some(dialog.connect_closed({
         let testing = testing.clone();
         move |_| testing.abort()
-    });
+    })));
     editor.page.connect_hidden({
         let testing = testing.clone();
-        move |_| testing.abort()
+        let dialog = dialog.downgrade();
+        move |_| {
+            testing.abort();
+            if let (Some(dialog), Some(id)) = (dialog.upgrade(), closed.take()) {
+                dialog.disconnect(id);
+            }
+        }
     });
     let test_state = state.clone();
     let test_pin = pin.clone();
@@ -1716,7 +1789,11 @@ impl Drop for AnalysisRestart {
     }
 }
 
-fn connect_analysis(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state: &AppState) {
+fn connect_analysis(
+    dialog: &PreferencesDialog,
+    widgets: &PreferencesWidgets,
+    state: &AppState,
+) -> Reload {
     // Loading a whole page back into its rows must not be mistaken for the user editing
     // them: the value handlers persist, and a half-loaded page would be persisted too.
     let syncing = Rc::new(Cell::new(false));
@@ -1755,8 +1832,6 @@ fn connect_analysis(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, st
         (text.eq_ignore_ascii_case("all") || text.eq_ignore_ascii_case(&pgettext("limit", "All")))
             .then_some(Ok(0.0))
     });
-
-    load_analysis(widgets, state, &syncing);
 
     let restart = Rc::new(AnalysisRestart {
         source: Cell::new(None),
@@ -1858,6 +1933,10 @@ fn connect_analysis(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, st
         dialog,
         move |_| reset_analysis(&dialog, &reset_state, &reset_syncing)
     ));
+
+    let dialog = dialog.clone();
+    let state = state.clone();
+    Box::new(move || load_analysis(&dialog.widgets(), &state, &syncing))
 }
 
 /// Pushes `config.analysis` into the preference rows.
@@ -1867,23 +1946,35 @@ fn connect_analysis(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, st
 fn load_analysis(widgets: &PreferencesWidgets, state: &AppState, syncing: &Cell<bool>) {
     let settings = state.config().analysis.clone();
     syncing.set(true);
-    widgets
-        .analysis_visits_row
-        .set_value(settings.live_max_visits as f64);
-    widgets
-        .analysis_interval_row
-        .set_value(settings.report_interval_ms as f64);
-    widgets
-        .analysis_suggestions_row
-        .set_value(settings.max_suggestions as f64);
-    widgets
-        .analysis_batch_visits_row
-        .set_value(settings.batch_visits as f64);
+    set_spin(
+        &widgets.analysis_visits_row,
+        settings.live_max_visits as f64,
+    );
+    set_spin(
+        &widgets.analysis_interval_row,
+        settings.report_interval_ms as f64,
+    );
+    set_spin(
+        &widgets.analysis_suggestions_row,
+        settings.max_suggestions as f64,
+    );
+    set_spin(
+        &widgets.analysis_batch_visits_row,
+        settings.batch_visits as f64,
+    );
     widgets
         .analysis_auto_open_row
         .set_active(settings.auto_analyse_on_open);
     widgets.save_analysis_row.set_active(settings.save_in_sgf);
     syncing.set(false);
+}
+
+/// Sets a spin row unless it already shows `value`. Setting an equal value is not free:
+/// the row formats its text again and queues a relayout, on every reopen.
+fn set_spin(row: &adw::SpinRow, value: f64) {
+    if row.value() != value {
+        row.set_value(value);
+    }
 }
 
 fn apply_analysis(
@@ -1926,7 +2017,11 @@ fn undo_toast(title: &str) -> adw::Toast {
 
 // -- Play -------------------------------------------------------------------------------
 
-fn connect_play(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state: &AppState) {
+fn connect_play(
+    dialog: &PreferencesDialog,
+    widgets: &PreferencesWidgets,
+    state: &AppState,
+) -> Reload {
     let syncing = Rc::new(Cell::new(false));
 
     let visits = pgettext("strength", "Visits");
@@ -1955,8 +2050,6 @@ fn connect_play(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state:
     widgets
         .play_rules_row
         .set_model(Some(&gtk::StringList::new(&label_refs)));
-
-    load_play(widgets, state, &syncing);
 
     // The mode and its three value rows all describe one setting, so they share a handler.
     let on_strength: Rc<dyn Fn()> = {
@@ -2043,6 +2136,10 @@ fn connect_play(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state:
         dialog,
         move |_| reset_play(&dialog, &reset_state, &reset_syncing)
     ));
+
+    let dialog = dialog.clone();
+    let state = state.clone();
+    Box::new(move || load_play(&dialog.widgets(), &state, &syncing))
 }
 
 /// Only the row the selected strength mode uses is shown.
@@ -2074,36 +2171,36 @@ fn store_strength(widgets: &PreferencesWidgets, state: &AppState) {
 /// sensible value.
 fn load_play(widgets: &PreferencesWidgets, state: &AppState, syncing: &Cell<bool>) {
     let play = state.config().play.clone();
-    syncing.set(true);
-    widgets
-        .play_visits_row
-        .set_value(f64::from(DEFAULT_VISITS_PER_MOVE));
-    widgets.play_seconds_row.set_value(DEFAULT_SECONDS_PER_MOVE);
-    widgets
-        .play_human_row
-        .set_text(crate::play::DEFAULT_HUMAN_PROFILE);
-    let selected = match &play.strength {
-        StrengthSetting::Visits { visits } => {
-            widgets.play_visits_row.set_value(*visits as f64);
-            0
-        }
-        StrengthSetting::Time { time_ms } => {
-            widgets.play_seconds_row.set_value(*time_ms as f64 / 1000.0);
-            1
-        }
-        StrengthSetting::Human { profile } => {
-            widgets.play_human_row.set_text(profile);
-            2
-        }
+    let (visits, seconds, human, selected) = match &play.strength {
+        StrengthSetting::Visits { visits } => (
+            *visits as f64,
+            DEFAULT_SECONDS_PER_MOVE,
+            crate::play::DEFAULT_HUMAN_PROFILE,
+            0,
+        ),
+        StrengthSetting::Time { time_ms } => (
+            f64::from(DEFAULT_VISITS_PER_MOVE),
+            *time_ms as f64 / 1000.0,
+            crate::play::DEFAULT_HUMAN_PROFILE,
+            1,
+        ),
+        StrengthSetting::Human { profile } => (
+            f64::from(DEFAULT_VISITS_PER_MOVE),
+            DEFAULT_SECONDS_PER_MOVE,
+            profile.as_str(),
+            2,
+        ),
     };
+    syncing.set(true);
+    set_spin(&widgets.play_visits_row, visits);
+    set_spin(&widgets.play_seconds_row, seconds);
+    if widgets.play_human_row.text() != human {
+        widgets.play_human_row.set_text(human);
+    }
     widgets.play_strength_kind_row.set_selected(selected);
-    widgets
-        .play_temperature_row
-        .set_value(play.temperature as f64);
-    widgets
-        .play_threshold_row
-        .set_value(play.resign_threshold as f64);
-    widgets.play_streak_row.set_value(play.resign_streak as f64);
+    set_spin(&widgets.play_temperature_row, play.temperature as f64);
+    set_spin(&widgets.play_threshold_row, play.resign_threshold as f64);
+    set_spin(&widgets.play_streak_row, play.resign_streak as f64);
     widgets.play_rules_row.set_selected(
         RuleSet::ALL
             .iter()
@@ -2142,7 +2239,11 @@ fn reset_play(dialog: &PreferencesDialog, state: &AppState, syncing: &Rc<Cell<bo
 
 // -- General ----------------------------------------------------------------------------
 
-fn connect_general(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, state: &AppState) {
+fn connect_general(
+    dialog: &PreferencesDialog,
+    widgets: &PreferencesWidgets,
+    state: &AppState,
+) -> Reload {
     bind_switch(&widgets.show_coordinates_row, state, "show-coordinates");
     bind_switch(&widgets.show_move_numbers_row, state, "show-move-numbers");
 
@@ -2170,8 +2271,7 @@ fn connect_general(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, sta
         overlay_state.save_config();
     });
 
-    // These live on AppState, which outlives the dialog. Connecting again every time
-    // Preferences opens used to leave the previous handlers in place for the window's life.
+    // These live on AppState; they are taken back when the dialog goes, with its window.
     let ownership_id = state.connect_ownership_overlay_notify(clone!(
         #[weak]
         dialog,
@@ -2188,7 +2288,7 @@ fn connect_general(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, sta
     ));
     let watched = state.clone();
     let ids = RefCell::new(Some((ownership_id, policy_id)));
-    dialog.connect_closed(move |_| {
+    dialog.connect_destroy(move |_| {
         if let Some((ownership, policy)) = ids.borrow_mut().take() {
             watched.disconnect(ownership);
             watched.disconnect(policy);
@@ -2204,7 +2304,6 @@ fn connect_general(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, sta
         0 => gettext("Muted"),
         volume => format!("{volume}%"),
     });
-    scale.set_value(f64::from(state.config().ui.stone_volume));
     let sound_state = state.clone();
     scale.connect_value_changed(move |scale| {
         set_stone_volume(&sound_state, scale.value().round() as u8);
@@ -2216,6 +2315,12 @@ fn connect_general(dialog: &PreferencesDialog, widgets: &PreferencesWidgets, sta
         dialog,
         move |_| reset_ui(&dialog, &reset_state)
     ));
+
+    // The switches are bound and the overlay row follows AppState; the volume is only
+    // ever written, so it is the one value this page has to reload.
+    let scale = scale.clone();
+    let state = state.clone();
+    Box::new(move || scale.set_value(f64::from(state.config().ui.stone_volume)))
 }
 
 fn overlay_index(ownership: bool, policy: bool) -> u32 {

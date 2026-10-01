@@ -141,7 +141,9 @@ only the window: no signal or action closure holds a strong reference to an obje
 directly or through the widget tree, the emitter it is connected to (a dialog's button closure
 holding the dialog; an action closure holding a widget whose handler holds the action). Use
 `#[weak]` or go through `with_ui`. A handler that something shorter-lived (a dialog) connects on
-something longer-lived (`AppState`) is disconnected when the shorter-lived owner closes.
+something longer-lived (`AppState`) is disconnected when the shorter-lived owner goes: when it
+closes, or — for the dialogs a window keeps (Preferences, New Game, the Fox picker) — when it
+is destroyed with the window's `Ui`.
 
 **INV-9 — rendering.** Board, win-rate graph and move tree are custom `gtk::Widget` subclasses
 drawn with `gsk` in `snapshot()`. No `GtkDrawingArea`, no cairo. Tree-derived projections,
