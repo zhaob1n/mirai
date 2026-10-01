@@ -221,7 +221,11 @@ Successful scripts exit 0. Window layout is mapped in
 [`ARCHITECTURE.md` §7](ARCHITECTURE.md#7-gui-architecture).
 
 Action names are whatever `window::install_actions` registers. A typo logs
-`MISSING`. The recipes below name the actions they need. `win.open` and
+`MISSING`; an action that exists but is disabled logs `DISABLED` and fails the
+script, since GTK would accept the activation and drop it. The engine actions
+are disabled without an engine: `win.toggle-analysis` until one is starting,
+`win.analyse-game` and `win.score` until it is ready.
+The recipes below name the actions they need. `win.open` and
 `win.save-as` open file choosers the harness cannot fill — pass the SGF on the
 command line.
 
@@ -457,8 +461,8 @@ strength. Expect a White reply to Black's pass in the first PNG; Undo returns
 to the human's turn. `win.score` opens the ownership-based result dialog.
 
 `press:Start Game` logging `NOT FOUND` means the dialog was not up yet — raise
-the preceding `wait:`. A toast that there is no engine to estimate with means
-KataGo never came up; check the log directory (§7).
+the preceding `wait:`. `win.score` logging `DISABLED` means KataGo was not
+ready yet, or never came up; check the log directory (§7).
 
 **(d) Whole-game analysis.** `win.analyse-game` is `BatchAnalysis::start`. Each
 node is analysed to `analysis.batch_visits` (100 by default), with twice

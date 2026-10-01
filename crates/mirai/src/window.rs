@@ -21,7 +21,7 @@ use mirai_client::dead_from_ownership;
 use mirai_core::{Color, GameInfo, GameTree, MarkKind, NodeId, Point, sgf};
 use mirai_engine::{Report, SubEvent, Want};
 
-use crate::app::{AppState, Change, EditorTool, NodeRef};
+use crate::app::{AppState, Change, EditorTool, EngineState, NodeRef};
 use crate::batch::BatchAnalysis;
 use crate::config::Config;
 use crate::i18n::{gettext, gettext_f, ngettext_f, pgettext};
@@ -178,6 +178,15 @@ impl Ui {
     fn weak_window(&self) -> glib::WeakRef<MiraiWindow> {
         self.window.clone()
     }
+
+    /// Whether `win.<name>` would run if activated; `None` when there is no such action.
+    /// Activating a disabled action is accepted and silently ignored, so the harness asks.
+    pub(crate) fn win_action_enabled(&self, name: &str) -> Option<bool> {
+        let group = &self.win_actions;
+        group
+            .has_action(name)
+            .then(|| group.is_action_enabled(name))
+    }
 }
 
 impl Drop for Ui {
@@ -318,15 +327,12 @@ pub fn present(
     );
 
     // `win.toggle-analysis` drives the button's `active`; this only follows it.
-    window.live_toggle().connect_active_notify(|button| {
-        if button.is_active() {
-            button.set_icon_name("media-playback-stop-symbolic");
-            button.set_tooltip_text(Some(&gettext("Stop Live Analysis (Space)")));
-        } else {
-            button.set_icon_name("media-playback-start-symbolic");
-            button.set_tooltip_text(Some(&gettext("Start Live Analysis (Space)")));
-        }
-    });
+    {
+        let weak = window.downgrade();
+        window
+            .live_toggle()
+            .connect_active_notify(move |_| with_window_ui(&weak, sync_live_toggle));
+    }
 
     let engine_menu = window.engine_menu();
     let engine_content = window.engine_content();
@@ -602,6 +608,7 @@ fn handle_change(ui: &Ui, change: Change) {
         Change::StoneVolume => ui.sounds.volume_changed(&ui.state),
         Change::Engine => {
             refresh_engine_menu(ui);
+            update_engine_actions(ui);
             update_analysis_page(ui);
             ui.analysis.refresh();
             update_subtitle(ui);
@@ -1072,6 +1079,54 @@ fn update_title(ui: &Ui) {
 
 fn update_subtitle(ui: &Ui) {
     ui.title.set_subtitle(&ui.state.status());
+}
+
+/// Offers the engine's actions only while there is an engine to run them. Live analysis may
+/// be asked for while one starts — it begins once the net loads — but with none configured,
+/// none chosen, or the chosen one failed, a press would do nothing and say nothing. The
+/// header button, the Analysis menu and the shortcuts follow the actions; the toggle's
+/// tooltip says where to get an engine. A live-analysis request already on stays on, so
+/// the engine the user picks next resumes it.
+fn update_engine_actions(ui: &Ui) {
+    let (live, ready) = match ui.state.engine_state() {
+        EngineState::Ready { .. } => (true, true),
+        EngineState::Starting { .. } => (true, false),
+        EngineState::None | EngineState::Failed { .. } => (false, false),
+    };
+    for (name, enabled) in [
+        ("toggle-analysis", live),
+        ("analyse-game", ready),
+        ("score", ready),
+    ] {
+        if let Some(action) = win_simple(ui, name) {
+            action.set_enabled(enabled);
+        }
+    }
+    sync_live_toggle(ui);
+}
+
+/// The header's live toggle: its icon follows the action's state, its tooltip says what a
+/// press does or, with no engine to analyse with, why it cannot.
+fn sync_live_toggle(ui: &Ui) {
+    let Some(window) = ui.window() else {
+        return;
+    };
+    let button = window.live_toggle();
+    let available = win_simple(ui, "toggle-analysis").is_some_and(|a| a.is_enabled());
+    let active = button.is_active();
+    button.set_icon_name(if active {
+        "media-playback-stop-symbolic"
+    } else {
+        "media-playback-start-symbolic"
+    });
+    let tooltip = if !available {
+        gettext("Live analysis needs an engine — choose or add one in the engine menu")
+    } else if active {
+        gettext("Stop Live Analysis (Space)")
+    } else {
+        gettext("Start Live Analysis (Space)")
+    };
+    button.set_tooltip_text(Some(&tooltip));
 }
 
 fn update_analysis_page(ui: &Ui) {
@@ -2783,6 +2838,7 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
     }
     window.add_controller(view_shortcuts());
     update_editor_actions(ui);
+    update_engine_actions(ui);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
