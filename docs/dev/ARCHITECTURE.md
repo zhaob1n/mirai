@@ -186,7 +186,7 @@ boundaries are [§1](#1-the-system). User settings and shortcuts are in
 | trust a remote certificate before analysis | `crates/mirai-client/src/session.rs` | `Session` |
 | choose an AI move, resign, or advance a clock | `crates/mirai-client/src/play.rs`, `crates/mirai/src/play.rs` | `select_move_index`, `resign_check`, `PlayController` |
 | Fox HTTP, or Fox's SGF dialect | `crates/mirai-client/src/fox.rs` | `lookup_user`, `list_games`, `fetch_sgf`, `normalize_fox_sgf`; [Fox spec](FOX_KIFU_API_SPEC.md) |
-| the Fox picker | `crates/mirai/src/fox.rs`, `crates/mirai/src/fox_picker.blp` | `present` |
+| the Fox picker | `crates/mirai/src/fox.rs`, `crates/mirai/src/fox_picker.rs`, `crates/mirai/src/fox_picker.blp` | `present`, `FoxPickerDialog::refill` |
 | the headless server, or `server.toml` | `crates/mirai-server/src/main.rs`, `crates/mirai-server/src/session.rs`, `crates/mirai-server/src/config.rs`, `crates/mirai-server/server.example.toml` | `run`, `serve`, `ServerConfig::load` |
 | per-window state, or which `Change` fires | `crates/mirai/src/app.rs`, `crates/mirai/src/window.rs` | `AppState`, `Change`, `handle_change` |
 | share one KataGo across windows | `crates/mirai/src/engines.rs` | `EnginePool::acquire` |

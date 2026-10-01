@@ -390,12 +390,15 @@ impl FoxPickerDialog {
                 // to be dropped here rather than by disposal.
                 dialog.abort_task();
                 dialog.set_busy(false);
+                dialog.set_shown(false);
             }
         ));
         dialog
     }
 
-    /// Puts the dialog back into a state fit to be shown again.
+    /// Puts the dialog back into a state fit to be shown again. Runs before presenting,
+    /// while the list is unrooted: emptying it there is what spares the presentation from
+    /// rebinding every row (`fox_picker` module docs).
     fn prepare_to_show(&self) {
         self.abort_task();
         self.set_busy(false);
@@ -404,6 +407,7 @@ impl FoxPickerDialog {
         if self.has_games() {
             widgets.stack.set_visible_child(&widgets.results_page);
         }
+        self.refill();
         self.refresh_actions();
     }
 
@@ -513,7 +517,7 @@ impl FoxPickerDialog {
         );
         widgets.result_label.set_label(&heading);
         let rows: Vec<FoxRow> = found.rows.iter().map(list_row).collect();
-        self.replace_games(found.rows, &rows);
+        self.replace_games(found.rows, rows);
         widgets.stack.set_visible_child(&widgets.results_page);
         self.refresh_actions();
     }
@@ -617,7 +621,7 @@ fn warm_tls(runtime: &tokio::runtime::Handle) {
 ///
 /// One picker per window: libadwaita refuses to present the same dialog in two
 /// windows at once, and several mirai windows are normal. Keeping it also keeps
-/// its record list, so opening it again costs nothing.
+/// its record list, so opening it again needs no lookup and no file read.
 pub(crate) fn present(
     parent: &impl IsA<gtk::Widget>,
     slot: &std::cell::RefCell<Option<FoxPickerDialog>>,
@@ -628,14 +632,18 @@ pub(crate) fn present(
         .borrow_mut()
         .get_or_insert_with(FoxPickerDialog::wired)
         .clone();
+    // Ctrl+Shift+O reaches the window even with the picker up. Preparing it again would
+    // abort the search in flight and empty the list under the user.
+    if dialog.is_shown() {
+        return;
+    }
     warm_tls(&runtime);
     dialog.set_runtime(runtime);
     dialog.install_handler(on_open);
     dialog.prepare_to_show();
+    dialog.set_shown(true);
     dialog.present(Some(parent));
-    // Populate only once the dialog has a viewport. A list view whose rows have
-    // never been measured tracks its whole model, so filling it beforehand
-    // builds every row widget inside the layout pass that shows the dialog.
+    // The records arrive after the dialog is mapped, and fill it a few rows per frame.
     if !dialog.has_games() {
         dialog.restore_last_search();
     }

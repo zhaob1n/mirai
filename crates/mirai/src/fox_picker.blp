@@ -108,12 +108,12 @@ template $MiraiFoxPickerDialog: Adw.Dialog {
             hscrollbar-policy: never;
             vexpand: true;
 
-            child: Gtk.ListView result_list {
+            child: Gtk.GridView result_list {
+              max-columns: 1;
               single-click-activate: false;
 
               styles [
                 "card",
-                "separators",
               ]
             };
           }
