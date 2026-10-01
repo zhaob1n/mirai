@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -19,6 +20,14 @@ use crate::i18n;
 use crate::play::{GameSetup, Strength};
 
 const SIZE_CHOICES: [u8; 3] = [9, 13, 19];
+// Where the clock rows start: 20 minutes, then five 30-second periods or 10 seconds a move.
+const MAIN_MINUTES: f64 = 20.0;
+const PERIODS: f64 = 5.0;
+const PERIOD_SECONDS: f64 = 30.0;
+const INCREMENT_SECONDS: f64 = 10.0;
+
+/// What Start Game hands the window: set again at each presentation.
+type StartHandler = Rc<dyn Fn(GameSetup)>;
 
 mod imp {
     use super::*;
@@ -30,6 +39,8 @@ mod imp {
         pub cancel_button: TemplateChild<gtk::Button>,
         #[template_child]
         pub start_button: TemplateChild<gtk::Button>,
+        #[template_child]
+        pub page: TemplateChild<adw::PreferencesPage>,
         #[template_child]
         pub size_row: TemplateChild<adw::ComboRow>,
         #[template_child]
@@ -66,6 +77,12 @@ mod imp {
         pub profile_row: TemplateChild<adw::EntryRow>,
         pub syncing: Cell<bool>,
         pub coerced_strength: Cell<bool>,
+        /// Whether the strength row was built for an engine with a human-like model.
+        pub human_model: Cell<bool>,
+        /// Presented and not yet closing.
+        pub shown: Cell<bool>,
+        pub state: glib::WeakRef<AppState>,
+        pub on_start: RefCell<Option<StartHandler>>,
     }
 
     #[glib::object_subclass]
@@ -84,7 +101,11 @@ mod imp {
         }
     }
 
-    impl ObjectImpl for NewGameDialog {}
+    impl ObjectImpl for NewGameDialog {
+        fn dispose(&self) {
+            self.on_start.take();
+        }
+    }
     impl WidgetImpl for NewGameDialog {}
     impl AdwDialogImpl for NewGameDialog {}
 }
@@ -97,35 +118,31 @@ glib::wrapper! {
 }
 
 impl NewGameDialog {
-    fn new(play: &PlaySettings, has_human_model: bool) -> Self {
+    fn new(has_human_model: bool) -> Self {
         let dialog: Self = glib::Object::new();
-        dialog.configure(play, has_human_model);
+        dialog.build(has_human_model);
         dialog.connect_dynamic_rows();
+        dialog.connect_buttons();
         dialog
     }
 
-    fn configure(&self, play: &PlaySettings, has_human_model: bool) {
+    /// What a reopen keeps: the choices each row offers, the spin ranges and steps, and
+    /// whether Human-like is on offer.
+    fn build(&self, has_human_model: bool) {
         let imp = self.imp();
+        imp.human_model.set(has_human_model);
 
         let custom = i18n::pgettext("size", "Custom");
         set_items(
             &imp.size_row,
             &["9 × 9", "13 × 13", "19 × 19", custom.as_str()],
         );
-        imp.size_row.set_selected(2);
         configure_spin(&imp.custom_size_row, 2.0, 19.0, 1.0, 0, 19.0);
 
         let handicap = handicap_labels();
         set_owned(&imp.handicap_row, &handicap);
 
-        configure_spin(
-            &imp.komi_row,
-            -150.0,
-            150.0,
-            0.5,
-            1,
-            play.rules.default_komi() as f64,
-        );
+        configure_spin(&imp.komi_row, -150.0, 150.0, 0.5, 1, 0.0);
         // KataGo accepts only an integer or half-integer komi. Snap arrow clicks
         // and focus-out to that grid; `setup` still rounds a value that has not
         // been committed yet.
@@ -138,22 +155,15 @@ impl NewGameDialog {
             .map(i18n::rules_label)
             .collect();
         set_owned(&imp.rules_row, &labels);
-        imp.rules_row.set_selected(
-            RuleSet::ALL
-                .iter()
-                .position(|rules| *rules == play.rules)
-                .unwrap_or(1) as u32,
-        );
-        self.refresh_handicap();
 
         let colours = colour_labels();
         set_owned(&imp.colour_row, &colours);
         let times = time_labels();
         set_owned(&imp.time_row, &times);
-        configure_spin(&imp.main_time_row, 0.0, 600.0, 1.0, 0, 20.0);
-        configure_spin(&imp.periods_row, 1.0, 25.0, 1.0, 0, 5.0);
-        configure_spin(&imp.period_seconds_row, 1.0, 600.0, 5.0, 0, 30.0);
-        configure_spin(&imp.increment_row, 0.0, 600.0, 1.0, 0, 10.0);
+        configure_spin(&imp.main_time_row, 0.0, 600.0, 1.0, 0, MAIN_MINUTES);
+        configure_spin(&imp.periods_row, 1.0, 25.0, 1.0, 0, PERIODS);
+        configure_spin(&imp.period_seconds_row, 1.0, 600.0, 5.0, 0, PERIOD_SECONDS);
+        configure_spin(&imp.increment_row, 0.0, 600.0, 1.0, 0, INCREMENT_SECONDS);
 
         let strength_description = if has_human_model {
             i18n::gettext("The human-like model imitates a rank instead of searching")
@@ -181,25 +191,106 @@ impl NewGameDialog {
             1,
             DEFAULT_SECONDS_PER_MOVE,
         );
-        imp.profile_row.set_text(crate::play::DEFAULT_HUMAN_PROFILE);
+    }
 
-        let saved_mode = match &play.strength {
-            StrengthSetting::Visits { visits } => {
-                imp.visits_row.set_value(*visits as f64);
-                0
-            }
-            StrengthSetting::Time { time_ms } => {
-                imp.seconds_row.set_value(*time_ms as f64 / 1000.0);
-                1
-            }
-            StrengthSetting::Human { profile } => {
-                imp.profile_row.set_text(profile);
-                u32::from(has_human_model) * 2
-            }
+    /// Puts every row where a new game starts: board, handicap, colour and clock at their
+    /// defaults, rules and strength as last saved. Rows already there are left alone, since
+    /// setting a spin row's value again formats its text and relays it out.
+    fn reset(&self, play: &PlaySettings) {
+        let imp = self.imp();
+        let has_human_model = imp.human_model.get();
+        imp.size_row.set_selected(2);
+        set_spin(&imp.custom_size_row, 19.0);
+        imp.handicap_row.set_selected(0);
+        imp.rules_row.set_selected(
+            RuleSet::ALL
+                .iter()
+                .position(|rules| *rules == play.rules)
+                .unwrap_or(1) as u32,
+        );
+        // Changed rules re-derive the komi through `sync_komi`; unchanged ones would leave
+        // a komi edited last time.
+        set_spin(&imp.komi_row, play.rules.default_komi() as f64);
+        imp.colour_row.set_selected(0);
+        imp.time_row.set_selected(0);
+        set_spin(&imp.main_time_row, MAIN_MINUTES);
+        set_spin(&imp.periods_row, PERIODS);
+        set_spin(&imp.period_seconds_row, PERIOD_SECONDS);
+        set_spin(&imp.increment_row, INCREMENT_SECONDS);
+
+        let (visits, seconds, profile, saved_mode) = match &play.strength {
+            StrengthSetting::Visits { visits } => (
+                *visits as f64,
+                DEFAULT_SECONDS_PER_MOVE,
+                crate::play::DEFAULT_HUMAN_PROFILE,
+                0,
+            ),
+            StrengthSetting::Time { time_ms } => (
+                f64::from(DEFAULT_VISITS_PER_MOVE),
+                *time_ms as f64 / 1000.0,
+                crate::play::DEFAULT_HUMAN_PROFILE,
+                1,
+            ),
+            StrengthSetting::Human { profile } => (
+                f64::from(DEFAULT_VISITS_PER_MOVE),
+                DEFAULT_SECONDS_PER_MOVE,
+                profile.as_str(),
+                u32::from(has_human_model) * 2,
+            ),
         };
+        set_spin(&imp.visits_row, visits);
+        set_spin(&imp.seconds_row, seconds);
+        if imp.profile_row.text() != profile {
+            imp.profile_row.set_text(profile);
+        }
+        imp.strength_row.set_selected(saved_mode);
+        // Last: the strength handlers above clear it.
         imp.coerced_strength
             .set(matches!(play.strength, StrengthSetting::Human { .. }) && !has_human_model);
-        imp.strength_row.set_selected(saved_mode);
+
+        self.refresh_handicap();
+        self.refresh_time(imp.time_row.selected());
+        self.refresh_strength(imp.strength_row.selected());
+        self.refresh_players();
+        imp.page.scroll_to_top();
+    }
+
+    fn connect_buttons(&self) {
+        let imp = self.imp();
+        imp.cancel_button.connect_clicked(clone!(
+            #[weak(rename_to = dialog)]
+            self,
+            move |_| {
+                dialog.close();
+            }
+        ));
+        imp.start_button.connect_clicked(clone!(
+            #[weak(rename_to = dialog)]
+            self,
+            move |_| {
+                let imp = dialog.imp();
+                let Some(state) = imp.state.upgrade() else {
+                    return;
+                };
+                let setup = dialog.setup();
+                {
+                    let mut config = state.config_mut();
+                    config.play.rules = setup.rules;
+                    config.play.strength = strength_to_save(
+                        &config.play.strength,
+                        &setup.strength,
+                        imp.coerced_strength.get(),
+                    );
+                }
+                state.save_config();
+                dialog.close();
+                let on_start = imp.on_start.borrow().clone();
+                if let Some(on_start) = on_start {
+                    on_start(setup);
+                }
+            }
+        ));
+        self.connect_closed(|dialog| dialog.imp().shown.set(false));
     }
 
     fn connect_dynamic_rows(&self) {
@@ -384,45 +475,41 @@ impl NewGameDialog {
     }
 }
 
+/// Presents `slot`'s New Game dialog over `parent`, building it on first use.
+///
+/// The dialog is kept for the window's life: building its template and presenting it
+/// cost 20–55 ms of the GTK thread on every open, presenting a built one a few. Each
+/// presentation resets it to where a new game starts, as a fresh one would be.
 pub fn present(
     parent: &impl IsA<gtk::Widget>,
+    slot: &RefCell<Option<NewGameDialog>>,
     state: &AppState,
     on_start: impl Fn(GameSetup) + 'static,
 ) {
     let play = state.config().play.clone();
     let has_human_model = state.engine_desc().is_some_and(|desc| desc.has_human_model);
-    let dialog = NewGameDialog::new(&play, has_human_model);
-
-    dialog.imp().cancel_button.connect_clicked(clone!(
-        #[weak]
-        dialog,
-        move |_| {
-            dialog.close();
+    let dialog = {
+        let mut slot = slot.borrow_mut();
+        // Already up: resetting would throw away what the user is choosing.
+        if slot.as_ref().is_some_and(|dialog| dialog.imp().shown.get()) {
+            return;
         }
-    ));
-
-    dialog.imp().start_button.connect_clicked(clone!(
-        #[weak]
-        dialog,
-        #[weak]
-        state,
-        move |_| {
-            let setup = dialog.setup();
-            {
-                let mut config = state.config_mut();
-                config.play.rules = setup.rules;
-                config.play.strength = strength_to_save(
-                    &config.play.strength,
-                    &setup.strength,
-                    dialog.imp().coerced_strength.get(),
-                );
-            }
-            state.save_config();
-            dialog.close();
-            on_start(setup);
+        // Greying out Human-like replaces the strength row's factories, which cannot be
+        // handed back; a dialog built for the other engine is built again.
+        if slot
+            .as_ref()
+            .is_some_and(|dialog| dialog.imp().human_model.get() != has_human_model)
+        {
+            *slot = None;
         }
-    ));
-
+        slot.get_or_insert_with(|| NewGameDialog::new(has_human_model))
+            .clone()
+    };
+    let imp = dialog.imp();
+    imp.state.set(Some(state));
+    imp.on_start.replace(Some(Rc::new(on_start)));
+    dialog.reset(&play);
+    imp.shown.set(true);
     dialog.present(Some(parent));
 }
 
@@ -501,6 +588,14 @@ fn strength_labels() -> Vec<String> {
 /// otherwise be written into the record and silently become 7.5 in analysis.
 fn komi_points(value: f64) -> f32 {
     ((value * 2.0).round() / 2.0) as f32
+}
+
+/// Sets a spin row unless it already shows `value`: setting an equal one formats the
+/// row's text again and relays it out.
+fn set_spin(row: &adw::SpinRow, value: f64) {
+    if row.value() != value {
+        row.set_value(value);
+    }
 }
 
 fn configure_spin(row: &adw::SpinRow, min: f64, max: f64, step: f64, digits: u32, value: f64) {

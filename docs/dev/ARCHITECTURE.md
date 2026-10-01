@@ -186,7 +186,7 @@ boundaries are [§1](#1-the-system). User settings and shortcuts are in
 | trust a remote certificate before analysis | `crates/mirai-client/src/session.rs` | `Session` |
 | choose an AI move, resign, or advance a clock | `crates/mirai-client/src/play.rs`, `crates/mirai/src/play.rs` | `select_move_index`, `resign_check`, `PlayController` |
 | Fox HTTP, or Fox's SGF dialect | `crates/mirai-client/src/fox.rs` | `lookup_user`, `list_games`, `fetch_sgf`, `normalize_fox_sgf`; [Fox spec](FOX_KIFU_API_SPEC.md) |
-| the Fox picker | `crates/mirai/src/fox.rs`, `crates/mirai/src/fox_picker.blp` | `present` |
+| the Fox picker | `crates/mirai/src/fox.rs`, `crates/mirai/src/fox_picker.rs`, `crates/mirai/src/fox_picker.blp` | `present`, `FoxPickerDialog::refill` |
 | the headless server, or `server.toml` | `crates/mirai-server/src/main.rs`, `crates/mirai-server/src/session.rs`, `crates/mirai-server/src/config.rs`, `crates/mirai-server/server.example.toml` | `run`, `serve`, `ServerConfig::load` |
 | per-window state, or which `Change` fires | `crates/mirai/src/app.rs`, `crates/mirai/src/window.rs` | `AppState`, `Change`, `handle_change` |
 | share one KataGo across windows | `crates/mirai/src/engines.rs` | `EnginePool::acquire` |
@@ -631,7 +631,11 @@ the clean-window autosave file. `take_ui` runs before callbacks can re-enter:
 Transient futures may own GTK objects only for a bounded lifetime. `CalibrationRun`
 ties its signal handler, task, controls and engine restoration to completion or
 cancellation. Signal closures must not strongly capture an owner of their emitter;
-dialogs connecting to `AppState` disconnect their `SignalHandlerId` on close.
+dialogs connecting to `AppState` disconnect their `SignalHandlerId` when they go. A dialog
+built per open goes on close. Preferences, New Game and the Fox picker are built once per
+window and kept in its `Ui` — building them was most of what opening them cost
+([RENDERING §8](RENDERING.md#8-dialogs-lists-and-a-160-hz-budget)) — so they go on
+`destroy`, with the window, and reset or reload their rows at each presentation.
 
 ### More than one window
 

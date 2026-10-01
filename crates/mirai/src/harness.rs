@@ -19,7 +19,7 @@
 //! `fill:<entry placeholder>=<text>`, `size:<w>x<h>`, `shot:<path.png>`,
 //! `shot:<path.png>=<widget id>`,
 //! `board:<primary|secondary|hover>:<GTP>` enters the board's production hit-test path.
-//! `close-window`, `quit`.
+//! `close-dialog`, `close-window`, `quit`.
 //!
 //! Label steps match the text on screen, which follows the locale: an English script
 //! needs `LANGUAGE=en`, or needles written in the language the process runs. A step
@@ -69,6 +69,9 @@ enum Step {
     /// Write a PNG of the whole window, or of the one widget whose Blueprint id is given —
     /// a 300x100 strip of the list you changed instead of a 1500x1600 window.
     Shot(String, Option<String>),
+    /// Close the dialog presented over the active window, through `adw::Dialog::close`: the
+    /// path its close button and Escape take.
+    CloseDialog,
     CloseWindow,
     Quit,
 }
@@ -96,6 +99,7 @@ fn parse(script: &str) -> Vec<Step> {
                     Some((path, region)) => Step::Shot(path.to_string(), Some(region.to_string())),
                     None => Step::Shot(rest.to_string(), None),
                 }),
+                "close-dialog" => Some(Step::CloseDialog),
                 "close-window" => Some(Step::CloseWindow),
                 "quit" => Some(Step::Quit),
                 "press" => Some(Step::Press(rest.to_string())),
@@ -389,6 +393,21 @@ pub fn install(app: &adw::Application) {
                             eprintln!("harness: screenshot failed: {e}")
                         }
                     }
+                }
+                Step::CloseDialog => {
+                    let dialog = app
+                        .active_window()
+                        .and_downcast::<adw::ApplicationWindow>()
+                        .and_then(|window| window.visible_dialog());
+                    let done = dialog.is_some_and(|dialog| dialog.close());
+                    if !done {
+                        mark_failed();
+                    }
+                    eprintln!(
+                        "harness: close-dialog -> {}",
+                        if done { "ok" } else { "NO DIALOG" }
+                    );
+                    glib::timeout_future(Duration::from_millis(250)).await;
                 }
                 Step::CloseWindow => {
                     let done = app.active_window().is_some_and(|window| {
@@ -1018,9 +1037,9 @@ mod tests {
     #[test]
     fn script_parsing_covers_every_step_kind() {
         let steps = parse(
-            "wait:250, wait-status:Ready, action:win.toggle-analysis, action:win.set-engine=local, page:Analysis, select:Model=2, set:Suggestions Shown=0, fill:Exact nickname=柯洁, shot:/tmp/x.png, shot:/tmp/y.png=blunder_expander, stack:Moves, close-window, quit",
+            "wait:250, wait-status:Ready, action:win.toggle-analysis, action:win.set-engine=local, page:Analysis, select:Model=2, set:Suggestions Shown=0, fill:Exact nickname=柯洁, shot:/tmp/x.png, shot:/tmp/y.png=blunder_expander, stack:Moves, close-dialog, close-window, quit",
         );
-        assert_eq!(steps.len(), 13);
+        assert_eq!(steps.len(), 14);
         assert!(matches!(steps[0], Step::Wait(250)));
         assert!(matches!(&steps[1], Step::WaitStatus(text) if text == "Ready"));
         match &steps[2] {
@@ -1047,8 +1066,9 @@ mod tests {
             matches!(&steps[9], Step::Shot(p, Some(region)) if p == "/tmp/y.png" && region == "blunder_expander")
         );
         assert!(matches!(&steps[10], Step::Stack(title) if title == "Moves"));
-        assert!(matches!(steps[11], Step::CloseWindow));
-        assert!(matches!(steps[12], Step::Quit));
+        assert!(matches!(steps[11], Step::CloseDialog));
+        assert!(matches!(steps[12], Step::CloseWindow));
+        assert!(matches!(steps[13], Step::Quit));
     }
 
     /// A typo must fail the script. Silently dropping it once let a broken script

@@ -12,7 +12,8 @@ candidate-colour ramp is [`CANDIDATE_COLOUR.md`](CANDIDATE_COLOUR.md).
 Wayland root grabs are black. Use the in-process harness (§5) for screenshots;
 `shot:` proves what is drawn, not frame time. For per-frame changes or observed
 stutter, measure with `MIRAI_FRAMES=1` and `tools/perf/` as in
-[`RENDERING.md`](RENDERING.md).
+[`RENDERING.md`](RENDERING.md); `tools/perf/ui-survey.sh` runs every surface through the
+harness and prints frames over the display's budget, step by step.
 
 ## 1. Quick reference
 
@@ -301,6 +302,7 @@ Traps:
 | `divider:<px>` | Move the board/graph divider so the graph is that tall, through the `set_position` a drag ends in; the paned clamps it at the graph's minimum (80 once laid out). `NOT LAID OUT` while the graph is hidden or unallocated | 250 ms |
 | `scroll:<px>` | Scroll the first mapped `ScrolledWindow` that has room to scroll by that many pixels through its vertical adjustment, where the wheel and scrollbar end. Clamped to the range. `NOTHING TO SCROLL` when none is mapped or the content fits | 250 ms |
 | `size:<w>x<h>` | Ask for that window size with `set_default_size` (a floating window on niri honours it), then log what it got: `size 902x900 -> 902x900 collapsed=true sidebar=false board=902x603 side=603`. Sweep a width across the sidebar fold and `side` must not change | 500 ms |
+| `close-dialog` | Close the dialog presented over the active window through `adw::Dialog::close`, as its close button and Escape do; `NO DIALOG` when none is up | 250 ms |
 | `close-window` | Close only the active window through its normal shutdown path | 250 ms |
 | `quit` | `app.quit()`, ending the script | — |
 
@@ -318,6 +320,7 @@ harness: wait-status "Ready" -> ok          # TIMEOUT = the text never became vi
 harness: action win.next10 -> ok            # MISSING = no such window action
 harness: page "Analysis" -> ok              # NOT FOUND = dialog not up, or no such page
 harness: set "Maximum Visits"=2000 -> ok    # NOT FOUND = row hidden or title wrong
+harness: close-dialog -> ok                 # NO DIALOG = nothing presented
 harness: close-window -> ok                 # NO WINDOW = none remained
 harness: wrote /tmp/mirai-a.png             # or: harness: screenshot failed: <reason>
 harness: quitting
@@ -700,7 +703,8 @@ Run §1; choose evidence for the surface changed:
 | Engine query or decode | Diff local `probe` `[final]` against raw KataGo on the identical query (§4) |
 | Remote engine or server | Compare both probe modes and check subscription/cancellation (§6) |
 | Drawn output | Inspect a harness PNG; use recipe (b) for point, ownership or policy changes |
-| Per-frame drawing | Measure `MIRAI_FRAMES=1` with a finished search during a sidebar fold; use `tools/perf/frame-stats.py` and [`RENDERING.md` §§6–8](RENDERING.md) |
+| Per-frame drawing | Measure `MIRAI_FRAMES=1` with a finished search during a sidebar fold; use `tools/perf/frame-stats.py` and [`RENDERING.md` §§6–9](RENDERING.md) |
+| Opening or closing a dialog, or anything that should hold 144 Hz | `tools/perf/ui-survey.sh` on the fast output: `over` per step, and `action:<name>` for work between frames ([`RENDERING.md` §8](RENDERING.md#8-dialogs-lists-and-a-160-hz-budget)) |
 | Signals, properties, capture or teardown | Recipe (e): exit 0, no autosave or orphaned KataGo |
 | New action | Drive `action:` and confirm `ok`, not `MISSING` |
 | User-visible text | `tools/i18n/update-po.sh`, translate the new messages, and look at the window with `LANGUAGE=zh_CN` ([`TRANSLATING.md`](TRANSLATING.md)) |
