@@ -120,13 +120,18 @@ template $MiraiFoxPickerDialog: Adw.Dialog {
 
         Gtk.Box results_page {
           orientation: vertical;
-          margin-start: 18;
-          margin-end: 18;
+          // The list's own margins sit inside its scroller, where the card's shadow is drawn:
+          // a scroller clips at its edges, and the boxed-list shadow reaches 8 px above the
+          // card, 10 px to each side and 12 px below. The rest is inset to keep the edges
+          // and the gaps where they were.
+          margin-start: 8;
+          margin-end: 8;
           margin-bottom: 18;
 
           Gtk.Box {
             spacing: 6;
-            margin-bottom: 8;
+            margin-start: 10;
+            margin-end: 10;
 
             Gtk.Label result_label {
               label: _("Recent Games");
@@ -170,6 +175,10 @@ template $MiraiFoxPickerDialog: Adw.Dialog {
               selection-mode: single;
               activate-on-single-click: false;
               valign: start;
+              margin-start: 10;
+              margin-end: 10;
+              margin-top: 8;
+              margin-bottom: 12;
 
               styles [
                 "boxed-list",
@@ -178,7 +187,8 @@ template $MiraiFoxPickerDialog: Adw.Dialog {
           }
 
           Gtk.CenterBox pager {
-            margin-top: 12;
+            margin-start: 10;
+            margin-end: 10;
 
             [start]
             Gtk.Button newer_button {
