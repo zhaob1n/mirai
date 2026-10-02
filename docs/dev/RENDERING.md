@@ -331,22 +331,23 @@ step takes 17–45 ms at idle, 9–30 ms with a Chinese interface, whose own tex
 part of it. Laying out a sample with the window's own context alone, as first tried,
 covered one style and saved nothing measurable.
 
-What remains is GTK's or libadwaita's:
+What remains:
 
-- **Dialog animations, 5–15 ms a frame.** libadwaita's floating sheet animates its scale
-  from 0.8 (`adw-floating-sheet.c`). GSK's GPU renderer lifts a 2D scale out of the
-  transform and rasterises glyphs at that exact scale (`gskgpunodeprocessor.c`), keying
-  its glyph cache by it (`gskgpucachedglyph.c`), so every frame of an open or close
-  rasterises every glyph again on the CPU. A text-heavy dialog costs more; the picker's
-  CJK records most, up to 45 ms closing at 160 Hz. Only giving the animation up avoids
-  it: reduced motion, which is display-wide, or a bottom sheet.
-- **A Preferences page's first visit**, 4–6 ms of layout: wrapped labels are shaped at
-  their allocated width, and `AdwViewStack` allocates only the visible page.
+- **Dialog animations re-rasterise their text.** libadwaita's floating sheet animates its
+  scale from 0.8 (`adw-floating-sheet.c`). GSK's GPU renderer lifts that scale and
+  translation out of the modelview into the pass's scale, and rasterises glyphs at that
+  exact scale, keying its glyph cache by it (`gskgpunodeprocessor.c`,
+  `gskgpucachedglyph.c`). GTK 4.24 rounds the scale to a power of two only when the
+  modelview keeps a rotation, skew or projection (`<= GSK_FINE_TRANSFORM_CATEGORY_2D`),
+  not when it was lifted. Every frame of an open or close rasterises every glyph again:
+  31–37 ms closing the picker, on 4.22 and 4.24 alike. Rounding the lifted scale as well
+  in `add_glyph_node`, keeping its subpixel positions, takes it to 6–7 ms and the other
+  dialogs into budget; the patch is GTK's to take. Within the app, only giving the
+  animation up avoids it.
+- **One frame on a first visit**: a Preferences page, New Game or About, 8–17 ms of
+  their first layout with the clock floor.
 - **A report relays out the window**: label text changes queue a resize up to the
-  toplevel (`gtkwidget.c`), 1–2 ms a report; GSK then renders 3–8 ms. That is the GTK
-  thread's own time, not a wait on the GPU KataGo shares: profiled through steady live
-  analysis, a third of the thread is `gsk_renderer_render`, much of it radv recording
-  commands and glyphs being rasterised.
+  toplevel (`gtkwidget.c`), and no container stops it.
 
 ## 9. Keeping it
 
