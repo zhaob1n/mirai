@@ -8,6 +8,7 @@ mod batch;
 mod config;
 mod dialogs;
 mod engines;
+mod font_warmup;
 mod fox;
 mod fox_picker;
 #[cfg(debug_assertions)]

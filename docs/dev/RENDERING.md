@@ -257,12 +257,12 @@ any new report-rate list or readout must avoid per-report widget churn.
 The goal moved from 60 Hz to at least 144 Hz: 6.9 ms a frame, 6.25 ms on the 160 Hz
 output. Measured with `ui-survey.sh` on a 3840×2160@160 Hz output at scale 1.5 unless
 noted; release with assertions, no engine but for live analysis. GTK 4.22 for the first
-rows; the clock floor below on GTK 4.24.
+rows; the clock floor and the font warm-up below on GTK 4.24.
 
 | surface | before | after |
 |---|---|---|
 | Fox picker, 200 records, reopen | a 116–133 ms frame (60 Hz output) | action 1–5 ms, layout 1–8 ms |
-| Fox picker, first open, English UI | layout 98–223 ms | 33–140 ms; first CJK text below |
+| Fox picker, first open, English UI | layout 98–223 ms | 20–39 ms with fonts loaded at idle, 50–54 ms without |
 | Fox picker, page turn | — | layout 1.2–6 ms a frame over 3 frames |
 | Preferences | 38–130 ms action, every open | first open unchanged; then 2–9 ms |
 | New Game | 21–55 ms action, every open | first open unchanged; then 2.6 ms |
@@ -320,6 +320,17 @@ asleep the thread costs nothing. 256 halved the frames over budget, 512 took the
 third, 768 gained little more. A driver that ramps by itself (intel_pstate with HWP,
 amd-pstate active) is unaffected. `MIRAI_NO_CLOCK_FLOOR=1` measures without it.
 
+**The first CJK text loaded its fonts inside a frame.** Pango builds a fallback fontset
+per font description the first time a string needs one: fontconfig sorts the installed
+fonts for it, and the CJK face is opened and shaped with. With an English interface the
+picker's first records paid that for four text styles at once, 60–130 ms of layout.
+Pango's font map belongs to its thread, so `font_warmup.rs` lays out a CJK sample on the
+GTK thread itself, one style at a time — body, bold, `smaller`, `.caption` — from 2 s
+after start, at low priority, and only once no window has painted for 50 ms. Each
+step takes 17–45 ms at idle, 9–30 ms with a Chinese interface, whose own text has done
+part of it. Laying out a sample with the window's own context alone, as first tried,
+covered one style and saved nothing measurable.
+
 What remains is GTK's or libadwaita's:
 
 - **Dialog animations, 5–15 ms a frame.** libadwaita's floating sheet animates its scale
@@ -329,10 +340,6 @@ What remains is GTK's or libadwaita's:
   rasterises every glyph again on the CPU. A text-heavy dialog costs more; the picker's
   CJK records most, up to 45 ms closing at 160 Hz. Only giving the animation up avoids
   it: reduced motion, which is display-wide, or a bottom sheet.
-- **The first CJK text in a process**, 20–110 ms: font fallback, loading, and every glyph
-  shaped and rasterised for the first time. Laying out CJK text on the GTK thread at
-  startup took 15–26 ms and did not measurably shorten the picker's first open: the cost
-  follows the glyphs first shown, which a page of ten keeps down.
 - **A Preferences page's first visit**, 4–6 ms of layout: wrapped labels are shaped at
   their allocated width, and `AdwViewStack` allocates only the visible page.
 - **A report relays out the window**: label text changes queue a resize up to the
