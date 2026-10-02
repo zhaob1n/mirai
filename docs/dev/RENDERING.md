@@ -253,7 +253,7 @@ any new report-rate list or readout must avoid per-report widget churn.
 
 The goal moved from 60 Hz to at least 144 Hz: 6.9 ms a frame, 6.25 ms on the 160 Hz
 output. Measured with `ui-survey.sh` on a 3840×2160@160 Hz output at scale 1.5 unless
-noted; release with assertions, no engine.
+noted; release with assertions, no engine but for live analysis.
 
 | surface | before | after |
 |---|---|---|
@@ -263,6 +263,7 @@ noted; release with assertions, no engine.
 | New Game | 21–55 ms action, every open | first open unchanged; then 2.6 ms |
 | editor reveal (board resize) | board 7.4 ms a frame, 11 frames over | 0.13 ms, 0 over |
 | live analysis, candidate figures | 0.75 ms a report | 0.26 ms |
+| live analysis, 8 steps forward | 73–75 candidate rows built; panel refresh p90 2.1–4.7 ms, max 5.1–6.6 | 2–3 rows; p90 1.2–1.4 ms, max 1.9–2.6 |
 
 **A list view keeps 200 rows.** `GtkListView` keeps `GTK_LIST_VIEW_MAX_LIST_ITEMS`
 (200) rows alive around its anchor whatever its height (`gtklistview.c`), so a list of
@@ -286,6 +287,16 @@ pixels and kept shaped across rebuilds. Candidate figures went through one layou
 text and font were switched twice per line, so every figure was shaped twice per report;
 one layout per line shapes it once.
 
+**The candidate list rebuilt its rows on every step.** Under live analysis a step
+emptied the store until the position's first report, which refilled it a few moves a
+report. `GtkColumnView` destroys the row of each object that leaves its model and builds
+one for each that arrives, synchronously inside `items-changed`, so the panel's refresh
+between frames carried the churn. A row the report has no move for is now blanked
+instead: its labels hidden, its widgets kept. Not activatable, it loses the class the
+stylesheet keys on to drop its cells' padding, so it has no height, and it sorts last.
+The list looks as it did; only a lowered suggestion limit removes rows. `MIRAI_FRAMES`
+counts rows built (`candidate-row`) and times the refresh (`candidates`).
+
 What remains is GTK's or libadwaita's:
 
 - **Dialog animations, 5–15 ms a frame.** libadwaita's floating sheet animates its scale
@@ -296,10 +307,6 @@ What remains is GTK's or libadwaita's:
   English UI, the picker's records are usually that text.
 - **A Preferences page's first visit**, 30–40 ms of layout: wrapped labels are shaped
   again at their allocated width.
-- **Row churn in the candidate list.** Stepping during live analysis empties the list
-  until the first report and refills it: `GtkColumnView` destroys and rebuilds its rows,
-  2–7 ms of the navigation. Avoiding it means keeping blank rows on screen between a
-  move and its first report.
 - **A report relays out the window**: label text changes queue a resize up to the
   toplevel, 1–2 ms a report; GSK then renders ~3 ms.
 

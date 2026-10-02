@@ -63,3 +63,10 @@
   padding-right: 4px;
 }
 
+/* A blank candidate row (not activatable: `row_factory` in panels/analysis.rs) hides its
+   labels and keeps its widgets; without the cells' padding it has no height at all. */
+.mirai-candidates > listview > row:not(.activatable) > cell {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+

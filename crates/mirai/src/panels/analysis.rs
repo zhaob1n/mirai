@@ -3,10 +3,10 @@
 //! The Analysis sidebar page: a one-line search status, the candidate list and the blunder list.
 //! Step 10 / Step 12.
 //!
-//! Candidate objects are updated in place at report rate; expression bindings preserve row
-//! hover and PV selection without replacing the model. `Change::Cursor` clears that
-//! selection, as it clears the board's pin: the row is about to name a different
-//! position's candidate.
+//! Candidate objects are updated in place at report rate, and a row a report has no move
+//! for is blanked rather than removed; expression bindings preserve row hover and PV
+//! selection without replacing the model. `Change::Cursor` clears that selection, as it
+//! clears the board's pin: the row is about to name a different position's candidate.
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
@@ -60,6 +60,10 @@ mod candidate_imp {
         /// search behind it is not enough for the loss to mean anything.
         #[property(get, set)]
         pub grade: Cell<u32>,
+        /// Whether the row shows a candidate. A row the current report has no move for is
+        /// kept blank rather than removed: see [`super::AnalysisPanel::refresh`].
+        #[property(get, set)]
+        pub filled: Cell<bool>,
 
         /// Not a GObject property: the plain point behind `mv`.
         pub point: Cell<u16>,
@@ -165,6 +169,11 @@ impl Row {
         }
         object.imp().point.set(self.point.0);
         object.imp().pv_first.set(self.pv_first.0);
+        // Last: a blank row's cells re-format on this one notify, already from the new
+        // numbers, rather than once per number from the move it showed before.
+        if !object.filled() {
+            object.set_filled(true);
+        }
     }
 }
 
@@ -322,8 +331,21 @@ impl AnalysisPanel {
         let store = gio::ListStore::new::<CandidateObject>();
         // The user's sort sits between the store and the selection, so the store stays in
         // KataGo's `order` and everything that indexes into the engine's move list still can.
-        // With no column selected the sort model is a pass-through and the list is `order`.
-        let sorted = gtk::SortListModel::new(Some(store.clone()), columns.sorter());
+        // Blank rows sort last under any column, so moving the focus through the moves never
+        // crosses one. They are only ever the store's tail, so with no column selected the
+        // stable sort leaves the list in `order`.
+        let filled_first = gtk::NumericSorter::new(Some(gtk::PropertyExpression::new(
+            CandidateObject::static_type(),
+            None::<gtk::Expression>,
+            "filled",
+        )));
+        filled_first.set_sort_order(gtk::SortType::Descending);
+        let sorter = gtk::MultiSorter::new();
+        sorter.append(filled_first);
+        if let Some(columns) = columns.sorter() {
+            sorter.append(columns);
+        }
+        let sorted = gtk::SortListModel::new(Some(store.clone()), Some(sorter));
         let selection = gtk::SingleSelection::builder()
             .model(&sorted)
             .autoselect(false)
@@ -331,6 +353,7 @@ impl AnalysisPanel {
             .build();
         selection.set_selected(gtk::INVALID_LIST_POSITION);
         columns.set_model(Some(&selection));
+        columns.set_row_factory(Some(&row_factory()));
         let rank_column = rank_column();
         columns.append_column(&rank_column);
         // The move itself is the one column with nothing to rank by, so its header is inert.
@@ -414,7 +437,8 @@ impl AnalysisPanel {
         ));
 
         // Selecting a row pins the PV preview; activating it plays the move. The model is
-        // never replaced, so a selection change is always the user's.
+        // never replaced, so the selection changes only by the user's hand or when `refresh`
+        // blanks the selected row.
         selection.connect_selected_notify(clone!(
             #[weak(rename_to = panel)]
             self,
@@ -427,7 +451,11 @@ impl AnalysisPanel {
             selection,
             move |_, position| {
                 // The position is the view's, which is the sorted one.
-                let Some(row) = selection.item(position).and_downcast::<CandidateObject>() else {
+                let Some(row) = selection
+                    .item(position)
+                    .and_downcast::<CandidateObject>()
+                    .filter(CandidateObject::filled)
+                else {
                     return;
                 };
                 panel.play(row.pv_first());
@@ -496,6 +524,9 @@ impl AnalysisPanel {
     // -- refreshing ---------------------------------------------------------------------
 
     pub(crate) fn refresh(&self) {
+        // Between frames, at report rate: rows the view creates or destroys are created and
+        // destroyed in here, synchronously, inside the store's `items-changed`.
+        let _t = crate::render_probe::Timer::new("candidates");
         let state = self.state();
         let size = state.tree().info.size;
         let to_play = state.to_play();
@@ -659,29 +690,45 @@ impl AnalysisPanel {
             }
         }
 
-        // Update the rows in place. `GtkColumnView` re-creates every row widget when the model
-        // hands it different objects, which costs a full list re-layout — measured at 7–17 ms
-        // per report, ten times a second, and it is also what made a hovered row flicker. The
-        // objects therefore live as long as the list is that long: only the tail moves.
+        // Update the rows in place. `GtkColumnView` creates a row widget for every object the
+        // model gains and destroys one for every object it loses, and either costs a list
+        // re-layout — replacing the model per report measured 7–17 ms, ten times a second,
+        // and made a hovered row flicker. So the objects outlive the moves they show, and a
+        // row this report has no move for is blanked rather than removed: stepping through a
+        // game under live analysis empties the list until the first report and refills it a
+        // few moves a report, and that used to destroy and re-create the rows each time. A
+        // blank row takes no space on screen ([`row_factory`]); only a lowered suggestion
+        // limit drops rows.
         let store = &inner.store;
         let had = store.n_items() as usize;
-        for (i, row) in rows.iter().take(had).enumerate() {
+        let keep = had.min(limit);
+        if keep < had {
+            store.splice(keep as u32, (had - keep) as u32, &[] as &[CandidateObject]);
+        }
+        for i in 0..keep {
             let object = store
                 .item(i as u32)
                 .and_downcast::<CandidateObject>()
                 .expect("the candidate store holds only CandidateObjects");
-            row.apply(&object, size);
+            match rows.get(i) {
+                Some(row) => row.apply(&object, size),
+                None if object.filled() => object.set_filled(false),
+                None => {}
+            }
         }
-        if rows.len() > had {
+        if rows.len() > keep {
             let extra: Vec<CandidateObject> =
-                rows[had..].iter().map(|r| r.to_object(size)).collect();
+                rows[keep..].iter().map(|r| r.to_object(size)).collect();
             store.extend_from_slice(&extra);
-        } else if rows.len() < had {
-            store.splice(
-                rows.len() as u32,
-                (had - rows.len()) as u32,
-                &[] as &[CandidateObject],
-            );
+        }
+        // A blank row must not stay selected: the PV it pins is the move it no longer shows.
+        let selection = &inner.selection;
+        if selection
+            .selected_item()
+            .and_downcast::<CandidateObject>()
+            .is_some_and(|row| !row.filled())
+        {
+            selection.set_selected(gtk::INVALID_LIST_POSITION);
         }
         self.resort();
         self.sync_pv();
@@ -922,7 +969,8 @@ impl Default for Col {
 /// nothing else. Formatting from a `bind` handler instead would only be re-run when the model
 /// handed the view a different object — which is what used to force a splice per report, and a
 /// splice re-creates every row widget: a full re-layout of the list, and the row under the
-/// pointer loses its hover for a frame, ten times a second.
+/// pointer loses its hover for a frame, ten times a second. A blank row hides the label
+/// (see [`row_factory`]).
 fn column<T>(col: Col, text: impl Fn(T) -> String + 'static) -> gtk::ColumnViewColumn
 where
     T: for<'a> glib::value::FromValue<'a> + 'static,
@@ -947,8 +995,8 @@ where
             .build();
         item.set_child(Some(&label));
         let text = text.clone();
-        gtk::ListItem::this_expression("item")
-            .chain_property::<CandidateObject>(property)
+        let row = gtk::ListItem::this_expression("item");
+        row.chain_property::<CandidateObject>(property)
             .chain_closure_with_callback(move |values| {
                 let value = values[1]
                     .get::<T>()
@@ -956,6 +1004,8 @@ where
                 text(value)
             })
             .bind(&label, "label", Some(item));
+        row.chain_property::<CandidateObject>("filled")
+            .bind(&label, "visible", Some(item));
     });
     let this = gtk::ColumnViewColumn::builder()
         .title(col.title)
@@ -989,12 +1039,16 @@ where
 /// Two bindings on two properties of the same label. `css-classes` is an ordinary widget
 /// property, so the class that carries the colour rides the `notify::grade` GTK already watches —
 /// no bind/unbind bookkeeping, and nothing to forget when a row is recycled onto another move.
+/// A blank row hides the label, pill and all.
 fn rank_column() -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(|_, item| {
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
+        // One per row widget the view creates, so `frame-stats.py` counts them per step: a
+        // list that only updates in place creates none after its first report.
+        crate::render_probe::trace("candidate-row", 0.0);
         let label = gtk::Label::builder()
             .width_chars(2)
             .single_line_mode(true)
@@ -1020,6 +1074,8 @@ fn rank_column() -> gtk::ColumnViewColumn {
                 ])
             })
             .bind(&label, "css-classes", Some(item));
+        this.chain_property::<CandidateObject>("filled")
+            .bind(&label, "visible", Some(item));
     });
     let this = gtk::ColumnViewColumn::builder()
         .title(i18n::pgettext("column", "#"))
@@ -1035,6 +1091,27 @@ fn rank_column() -> gtk::ColumnViewColumn {
     );
     this.set_sorter(Some(&gtk::NumericSorter::new(Some(expr))));
     this
+}
+
+/// Rows that a blank candidate leaves unselectable, inactivatable and unfocusable, so a click
+/// or a key where it sits does nothing. Not being activatable drops the row's `.activatable`
+/// class, which is what takes it out of the theme's hover highlight and what the stylesheet
+/// keys on to fold a blank row to no height: its labels are hidden, and that leaves only the
+/// cells' padding. A blank row therefore looks like no row at all — the list shows as many
+/// moves as the report has, as it did when rows were removed — and lengthens no scroll.
+fn row_factory() -> gtk::SignalListItemFactory {
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_setup(|_, row| {
+        let Some(row) = row.downcast_ref::<gtk::ColumnViewRow>() else {
+            return;
+        };
+        let filled =
+            gtk::ColumnViewRow::this_expression("item").chain_property::<CandidateObject>("filled");
+        for property in ["selectable", "activatable", "focusable"] {
+            filled.bind(row, property, Some(row));
+        }
+    });
+    factory
 }
 
 #[cfg(test)]
