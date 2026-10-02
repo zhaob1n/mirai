@@ -200,10 +200,15 @@ trip.
 **Downloading from Fox.** Click the main **Download from Fox** half of the split button,
 or press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>.
 Enter an exact Fox nickname or numeric UID. The list shows at most the latest 200 public
-records, which is the service's fixed history window; players who hide their records are not
-bypassed. A successful search is cached: opening the dialog again restores the last query and
-its list. A click only selects a row. Double-click, Enter on the list, or **Open Game**
-downloads and loads that row. Enter in the search box searches; it does not open a game.
+records, which is the service's fixed history window, ten to a page; the arrows under it turn
+to newer and older games. Players who hide their records are not bypassed. Every search is
+kept with its games: searching for the same name again answers at once with what Fox sent
+then, and the refresh button beside the list asks Fox again. With the search box empty, or
+while you type, the dialog lists your recent searches; pick one to see its games, or remove it
+with its trash button. A saved search still shows its games when Fox cannot be reached, and
+opening the dialog again restores the last search and page. A click only selects a row.
+Double-click, Enter on the list, or **Open Game** downloads and loads that row. Enter in the
+search box searches; it does not open a game.
 Fox's dialect — quarter-point Chinese komi, and handicap stones written as a run of opening
 nodes — is normalised on import. The result has no local backing file: it is named after its
 players, `柯洁 vs 申真谞 •`, and **Save** therefore asks where to store it.
@@ -608,7 +613,7 @@ keyboard focus.
 |---|---|
 | `~/.config/mirai/config.toml` | settings and engine profiles, remote tokens included, so it is written readable by you alone (`0600`, in a `0700` directory when mirai creates it) |
 | `~/.local/share/mirai/autosave-*.sgf` | the record each open window is looking at, one file per window |
-| `~/.local/share/mirai/fox-last-search.json` | last Fox search query and game list, restored the next time the download dialog opens |
+| `~/.local/share/mirai/fox-searches.json` | your last 20 Fox searches with their game lists, shown again without asking Fox when you search for the same name |
 | `~/.local/share/mirai/katago-logs/` | KataGo's own logs, one file per engine start, and the generated `katago-analysis-*.cfg`; also `mirai-server`'s, for an `[[engine]]` without `log_dir`. Created private; a directory for generated configs is refused if another user owns it or can write to it, or to a directory on the way to it (a sticky one such as `/tmp` excepted) |
 | `~/.config/mirai/server.toml` | `mirai-server`'s settings, on the machine running it |
 
@@ -620,8 +625,8 @@ Closing a window **deletes** its autosave, so a file still there on the next sta
 crash left behind, and that is what mirai offers to restore. The autosave is not your file:
 restoring it does not make it the target of a plain Save. KataGo's logs accumulate and can be
 deleted at any time, as can the generated analysis config — mirai writes it again whenever
-its contents would change. The Fox search cache can be deleted; the next lookup writes it
-again. Nothing else is written; your own KataGo installation, model and any analysis config
+its contents would change. The saved Fox searches can be deleted; the next lookup starts the
+list again. Nothing else is written; your own KataGo installation, model and any analysis config
 you supplied are never modified.
 
 ---

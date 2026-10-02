@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! The GTK half of Fox Go lookup: a libsoup transport, the last-search cache, and the
-//! picker dialog.
+//! The GTK half of Fox Go lookup: a libsoup transport, the saved searches, and the picker
+//! dialog.
 //!
 //! The endpoints, the reply shapes and the SGF dialect live in [`mirai_client::fox`], which
 //! the HarmonyOS client uses as well. This file does not reimplement any of them — it cannot
@@ -9,7 +9,7 @@
 //! composes the URL builders with the pure parsers instead.
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 use adw::prelude::*;
@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use soup::prelude::*;
 
 use crate::config::Config;
-use crate::fox_picker::{FoxPickerDialog, FoxRow};
+use crate::fox_picker::{FoxPickerDialog, RecentText, RecordText};
 use crate::i18n;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(25);
@@ -85,11 +85,77 @@ fn fox_error_message(error: &FoxError) -> String {
     }
 }
 
+/// Searches kept, most recent first: room for the players someone follows.
+const SAVED_SEARCHES: usize = 20;
+
+/// One search Fox answered, kept so that asking it again needs no lookup.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct LastSearch {
+struct SavedSearch {
+    /// What was typed, trimmed: the key the search is found again by.
     query: String,
+    /// The player as Fox names them, or "UID" and the number.
     account: String,
+    /// When Fox answered, in seconds since the Unix epoch.
+    saved: i64,
     rows: Vec<FoxGame>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+struct SearchHistory {
+    /// Most recent first, at most [`SAVED_SEARCHES`], one per query.
+    searches: Vec<SavedSearch>,
+}
+
+/// A change to the history, kept as a value so one made before the file has been read can
+/// be applied again on top of what it holds.
+#[derive(Clone, Debug)]
+enum HistoryOp {
+    /// Puts a search first, replacing an older one for the same query.
+    Remember(SavedSearch),
+    /// Moves the search for a query first.
+    Touch(String),
+    Forget(String),
+}
+
+impl SearchHistory {
+    fn find(&self, query: &str) -> Option<&SavedSearch> {
+        self.searches.iter().find(|search| search.query == query)
+    }
+
+    fn position(&self, query: &str) -> Option<usize> {
+        self.searches
+            .iter()
+            .position(|search| search.query == query)
+    }
+
+    /// Applies `op`; false if it changed nothing.
+    fn apply(&mut self, op: &HistoryOp) -> bool {
+        match op {
+            HistoryOp::Remember(search) => {
+                if let Some(i) = self.position(&search.query) {
+                    self.searches.remove(i);
+                }
+                self.searches.insert(0, search.clone());
+                self.searches.truncate(SAVED_SEARCHES);
+                true
+            }
+            HistoryOp::Touch(query) => match self.position(query) {
+                Some(0) | None => false,
+                Some(i) => {
+                    let search = self.searches.remove(i);
+                    self.searches.insert(0, search);
+                    true
+                }
+            },
+            HistoryOp::Forget(query) => match self.position(query) {
+                Some(i) => {
+                    self.searches.remove(i);
+                    true
+                }
+                None => false,
+            },
+        }
+    }
 }
 
 struct Games {
@@ -102,94 +168,143 @@ pub(crate) struct DownloadedGame {
     pub(crate) label: String,
 }
 
-fn last_search_path() -> Option<PathBuf> {
+fn history_path() -> Option<PathBuf> {
     Config::data_dir()
         .ok()
-        .map(|dir| dir.join("fox-last-search.json"))
+        .map(|dir| dir.join("fox-searches.json"))
 }
 
-struct SearchCache {
-    /// False until the file has been read, or a search has been stored. The static starts
-    /// cold so the first time the picker opens does not `read_to_string` on the GTK thread.
+/// The history every window's picker shares.
+struct HistoryCache {
+    /// False until the file has been read. The static starts cold so that no picker reads
+    /// it on the GTK thread; it is never held across file I/O, so the GTK thread never
+    /// waits on a disk either (INV-11).
     loaded: bool,
-    value: Option<LastSearch>,
+    /// Bumped on every change, so a picker knows when its rows are stale.
+    revision: u64,
+    value: Arc<SearchHistory>,
+    /// Changes made before the file was read, to apply on top of it: what one changes is
+    /// not known until then. `value` holds nothing meanwhile.
+    pending: Vec<HistoryOp>,
 }
 
-static LAST_SEARCH: Mutex<SearchCache> = Mutex::new(SearchCache {
-    loaded: false,
-    value: None,
+static HISTORY: LazyLock<Mutex<HistoryCache>> = LazyLock::new(|| {
+    Mutex::new(HistoryCache {
+        loaded: false,
+        revision: 0,
+        value: Arc::default(),
+        pending: Vec::new(),
+    })
 });
 
-/// Serialises cache writes. A later search must not be overwritten by an earlier write
-/// that finishes second; the writer re-reads the cache under this lock.
+/// Serialises history writes. A later change must not be overwritten by an earlier write
+/// that finishes second; the writer takes the history under this lock.
 static WRITE_GATE: Mutex<()> = Mutex::new(());
 
-fn cache_lock() -> std::sync::MutexGuard<'static, SearchCache> {
-    LAST_SEARCH
+fn history_lock() -> std::sync::MutexGuard<'static, HistoryCache> {
+    HISTORY
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn load_last_search() -> Option<LastSearch> {
-    last_search_path().and_then(|path| read_last_search(&path))
-}
-
-fn read_last_search(path: &Path) -> Option<LastSearch> {
+fn read_history(path: &Path) -> Option<SearchHistory> {
     let text = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&text).ok()
 }
 
-fn write_last_search(path: &Path, search: &LastSearch) -> Result<(), String> {
+fn write_history(path: &Path, history: &SearchHistory) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
     }
-    let text = serde_json::to_string(search).map_err(|error| error.to_string())?;
+    let text = serde_json::to_string(history).map_err(|error| error.to_string())?;
     mirai_proto::atomic::write_atomic(path, text.as_bytes()).map_err(|error| error.to_string())
 }
 
-fn cached_search() -> Option<LastSearch> {
-    cache_lock().value.clone()
+/// The history as it stands, and its revision; `None` until the file has been read.
+fn history() -> Option<(u64, Arc<SearchHistory>)> {
+    let cache = history_lock();
+    cache
+        .loaded
+        .then(|| (cache.revision, Arc::clone(&cache.value)))
 }
 
-/// Reads the cache file once, unless a search was stored while the read was in flight.
-fn load_cache_if_cold() -> Option<LastSearch> {
-    if cache_lock().loaded {
-        return cached_search();
+/// Reads the file once, on the blocking pool, and applies any change made meanwhile.
+fn load_history() {
+    if history_lock().loaded {
+        return;
     }
-    let loaded = load_last_search();
-    let mut cache = cache_lock();
-    if !cache.loaded {
-        cache.loaded = true;
-        cache.value = loaded;
-    }
-    cache.value.clone()
-}
-
-fn store_cached(search: LastSearch) {
-    let mut cache = cache_lock();
-    cache.loaded = true;
-    cache.value = Some(search);
-}
-
-/// Updates the in-memory cache immediately and writes the file on the runtime's blocking
-/// pool. The write syncs the file and its directory; doing that before the result list
-/// appears dropped the frame that showed the search.
-fn remember_search(search: LastSearch, runtime: &tokio::runtime::Handle) {
-    store_cached(search);
-    runtime.spawn_blocking(|| {
-        let _gate = WRITE_GATE
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let Some(search) = cached_search() else {
+    let mut read = history_path()
+        .and_then(|path| read_history(&path))
+        .unwrap_or_default();
+    let changed = {
+        let mut cache = history_lock();
+        if cache.loaded {
             return;
-        };
-        let Some(path) = last_search_path() else {
-            return;
-        };
-        if let Err(error) = write_last_search(&path, &search) {
-            tracing::warn!(%error, "could not cache the Fox search");
         }
-    });
+        let changed = std::mem::take(&mut cache.pending)
+            .iter()
+            .fold(false, |changed, op| read.apply(op) | changed);
+        cache.value = Arc::new(read);
+        cache.loaded = true;
+        cache.revision += 1;
+        changed
+    };
+    if changed {
+        write_history_now();
+    }
+}
+
+/// Writes the history as it now stands. Blocking: syncs the file and its directory.
+fn write_history_now() {
+    let _gate = WRITE_GATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some((_, history)) = history() else {
+        return;
+    };
+    let Some(path) = history_path() else {
+        return;
+    };
+    if let Err(error) = write_history(&path, &history) {
+        tracing::warn!(%error, "could not save the Fox searches");
+    }
+}
+
+/// Changes the history in memory at once and writes it on the runtime's blocking pool,
+/// where syncing the file costs no frame. Before the file has been read the change waits
+/// in `pending`, and [`load_history`] applies and writes it.
+fn change_history(op: HistoryOp, runtime: &tokio::runtime::Handle) {
+    {
+        let mut cache = history_lock();
+        if !cache.loaded {
+            cache.pending.push(op);
+            return;
+        }
+        if !Arc::make_mut(&mut cache.value).apply(&op) {
+            return;
+        }
+        cache.revision += 1;
+    }
+    runtime.spawn_blocking(write_history_now);
+}
+
+/// The search saved for `query`, if the history is loaded and holds one.
+fn saved_search(query: &str) -> Option<SavedSearch> {
+    history()?.1.find(query).cloned()
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs() as i64)
+}
+
+/// When a search was saved, in local time, as Fox writes its own dates.
+fn saved_time(saved: i64) -> String {
+    glib::DateTime::from_unix_local(saved)
+        .and_then(|time| time.format("%Y-%m-%d %H:%M"))
+        .map(String::from)
+        .unwrap_or_default()
 }
 
 /// Fetches `url` as text, retrying a few times with a growing pause.
@@ -312,9 +427,9 @@ async fn fetch_game(game: &FoxGame) -> Result<DownloadedGame, FoxError> {
     })
 }
 
-/// How one record reads in the list. Plain text: the labels bound to it do not parse markup,
-/// so a nickname with `<` in it is not a problem.
-fn list_row(game: &FoxGame) -> FoxRow {
+/// How one record reads in the list. Plain text: the rows do not parse markup, so a nickname
+/// with `<` in it is not a problem.
+fn record_text(game: &FoxGame) -> RecordText {
     let mut details = Vec::with_capacity(5);
     if !game.date.is_empty() {
         details.push(fox::display_text(&game.date));
@@ -336,7 +451,29 @@ fn list_row(game: &FoxGame) -> FoxRow {
     if !game.title.is_empty() {
         details.push(fox::display_text(&game.title));
     }
-    FoxRow::new(&game.matchup(), &details.join(" · "))
+    RecordText {
+        title: game.matchup(),
+        subtitle: details.join(" · "),
+    }
+}
+
+/// How a saved search reads in the recent list.
+fn recent_text(search: &SavedSearch) -> RecentText {
+    let count = search.rows.len();
+    RecentText {
+        query: search.query.clone(),
+        title: fox::display_text(&search.account),
+        // Translators: {time} is when Fox sent the games, such as 2026-07-29 22:57.
+        subtitle: i18n::ngettext_f(
+            "{count} game · saved {time}",
+            "{count} games · saved {time}",
+            count as u64,
+            &[
+                ("count", &count.to_string()),
+                ("time", &saved_time(search.saved)),
+            ],
+        ),
+    }
 }
 
 impl FoxPickerDialog {
@@ -355,7 +492,7 @@ impl FoxPickerDialog {
         widgets.entry.connect_search_changed(clone!(
             #[weak]
             dialog,
-            move |_| dialog.refresh_actions()
+            move |_| dialog.show_idle_page()
         ));
         widgets.entry.connect_activate(clone!(
             #[weak]
@@ -370,18 +507,71 @@ impl FoxPickerDialog {
         widgets.open_button.connect_clicked(clone!(
             #[weak]
             dialog,
-            move |_| dialog.start_download()
+            move |_| {
+                if let Some(game) = dialog.selected_game() {
+                    dialog.start_download(game);
+                }
+            }
         ));
         dialog.connect_selection_changed(clone!(
             #[weak]
             dialog,
             move || dialog.refresh_actions()
         ));
-        widgets.result_list.connect_activate(clone!(
+        widgets.result_list.connect_row_activated(clone!(
             #[weak]
             dialog,
-            move |_, _| dialog.start_download()
+            move |_, row| {
+                if let Some(game) = usize::try_from(row.index())
+                    .ok()
+                    .and_then(|slot| dialog.game_at(slot))
+                {
+                    dialog.start_download(game);
+                }
+            }
         ));
+        widgets.newer_button.connect_clicked(clone!(
+            #[weak]
+            dialog,
+            move |_| dialog.turn_page(false)
+        ));
+        widgets.older_button.connect_clicked(clone!(
+            #[weak]
+            dialog,
+            move |_| dialog.turn_page(true)
+        ));
+        widgets.refresh_button.connect_clicked(clone!(
+            #[weak]
+            dialog,
+            move |_| dialog.fetch_search(dialog.shown_query())
+        ));
+        widgets.recent_list.connect_row_activated(clone!(
+            #[weak]
+            dialog,
+            move |_, row| {
+                if let Some(query) = usize::try_from(row.index())
+                    .ok()
+                    .and_then(|index| dialog.recent_query(index))
+                {
+                    dialog.open_saved(&query);
+                }
+            }
+        ));
+        // The recent rows' buttons name the search they forget as the action's target, so
+        // a row refilled with another search needs no handler of its own.
+        let forget = gio::SimpleAction::new("forget", Some(glib::VariantTy::STRING));
+        forget.connect_activate(clone!(
+            #[weak]
+            dialog,
+            move |_, query| {
+                if let Some(query) = query.and_then(|query| query.str()) {
+                    dialog.forget(query);
+                }
+            }
+        ));
+        let actions = gio::SimpleActionGroup::new();
+        actions.add_action(&forget);
+        dialog.insert_action_group("picker", Some(&actions));
         dialog.connect_closed(clone!(
             #[weak]
             dialog,
@@ -396,32 +586,31 @@ impl FoxPickerDialog {
         dialog
     }
 
-    /// Puts the dialog back into a state fit to be shown again. Runs before presenting,
-    /// while the list is unrooted: emptying it there is what spares the presentation from
-    /// rebinding every row (`fox_picker` module docs).
+    /// Puts the dialog back into a state fit to be shown again: whatever was loading is
+    /// dropped, the page it shows is the one its entry asks for, and its rows come back
+    /// once it is on screen (`fox_picker` module docs).
     fn prepare_to_show(&self) {
         self.abort_task();
         self.set_busy(false);
-        let widgets = self.widgets();
-        widgets.banner.set_revealed(false);
-        if self.has_games() {
-            widgets.stack.set_visible_child(&widgets.results_page);
-        }
+        self.widgets().banner.set_revealed(false);
         self.refill();
-        self.refresh_actions();
+        self.show_idle_page();
     }
 
     fn refresh_actions(&self) {
         let widgets = self.widgets();
         let idle = !self.is_busy();
+        let results = widgets.stack.visible_child().as_ref()
+            == Some(widgets.results_page.upcast_ref::<gtk::Widget>());
         widgets.entry.set_sensitive(idle);
         widgets
             .search_button
             .set_sensitive(idle && !widgets.entry.text().trim().is_empty());
         widgets.result_list.set_sensitive(idle);
+        widgets.refresh_button.set_sensitive(idle);
         widgets
             .open_button
-            .set_sensitive(idle && self.has_selection());
+            .set_sensitive(idle && results && self.has_selection());
     }
 
     fn set_busy(&self, busy: bool) {
@@ -429,15 +618,115 @@ impl FoxPickerDialog {
         self.refresh_actions();
     }
 
-    fn start_search(&self) {
+    /// Shows what the dialog holds for the entry's text while nothing loads: the records
+    /// found for it, a failure reported for it, the saved searches it matches — every one
+    /// when it is empty — or, failing all of those, how to search.
+    fn show_idle_page(&self) {
         if self.is_busy() {
             return;
         }
         let widgets = self.widgets();
-        let query = widgets.entry.text().trim().to_string();
-        if query.is_empty() {
+        let text = widgets.entry.text();
+        let text = text.trim();
+        if self.has_games() && text == self.shown_query() {
+            widgets.stack.set_visible_child(&widgets.results_page);
+        } else if !text.is_empty() && text == self.status_query() {
+            widgets.stack.set_visible_child(&widgets.status_page);
+        } else {
+            self.sync_recent();
+            if self.filter_recent(text) > 0 {
+                widgets.stack.set_visible_child(&widgets.recent_page);
+            } else {
+                // The status page stops reporting on the query it held.
+                self.set_status_query(String::new());
+                self.show_status(
+                    "system-search-symbolic",
+                    &i18n::gettext("Find a Fox Player"),
+                    &i18n::gettext(
+                        "Enter an exact nickname or UID to browse their recent public games.",
+                    ),
+                );
+            }
+        }
+        self.refresh_actions();
+    }
+
+    fn show_status(&self, icon: &str, title: &str, description: &str) {
+        let widgets = self.widgets();
+        widgets.status_page.set_icon_name(Some(icon));
+        widgets.status_page.set_title(title);
+        widgets.status_page.set_description(Some(description));
+        widgets.stack.set_visible_child(&widgets.status_page);
+        self.refresh_actions();
+    }
+
+    /// Brings the recent rows up to the history, if it has changed since they were filled.
+    fn sync_recent(&self) {
+        let Some((revision, history)) = history() else {
+            return;
+        };
+        if self.recent_revision() != Some(revision) {
+            self.set_recent(revision, history.searches.iter().map(recent_text).collect());
+        }
+    }
+
+    fn turn_page(&self, older: bool) {
+        let page = self.page();
+        self.show_page(if older {
+            page + 1
+        } else {
+            page.saturating_sub(1)
+        });
+        self.refresh_actions();
+    }
+
+    /// Searches for the entry's text. A search made before answers at once, with the
+    /// records Fox sent then; the results' refresh button is what asks Fox again.
+    fn start_search(&self) {
+        if self.is_busy() {
             return;
         }
+        let query = self.widgets().entry.text().trim().to_string();
+        match saved_search(&query) {
+            Some(saved) => self.open_saved_search(saved),
+            None => self.fetch_search(query),
+        }
+    }
+
+    /// Shows the saved search for `query`, picked from the recent list. Another window's
+    /// picker may have forgotten it since the list was filled; then the list catches up.
+    fn open_saved(&self, query: &str) {
+        match saved_search(query) {
+            Some(saved) => self.open_saved_search(saved),
+            None => self.show_idle_page(),
+        }
+    }
+
+    fn open_saved_search(&self, saved: SavedSearch) {
+        change_history(HistoryOp::Touch(saved.query.clone()), self.runtime());
+        self.widgets().banner.set_revealed(false);
+        self.show_saved(saved);
+    }
+
+    /// Forgets the saved search for `query`, and the records this dialog holds for it:
+    /// typing the query again must ask Fox, not show what was just forgotten.
+    fn forget(&self, query: &str) {
+        change_history(HistoryOp::Forget(query.to_string()), self.runtime());
+        if self.shown_query() == query {
+            self.clear_games();
+        }
+        if self.status_query() == query {
+            self.set_status_query(String::new());
+        }
+        self.show_idle_page();
+    }
+
+    /// Asks Fox for `query`'s records.
+    fn fetch_search(&self, query: String) {
+        if self.is_busy() || query.is_empty() {
+            return;
+        }
+        let widgets = self.widgets();
         widgets.banner.set_revealed(false);
         widgets
             .loading_page
@@ -449,8 +738,15 @@ impl FoxPickerDialog {
         self.set_busy(true);
 
         let weak = self.downgrade();
+        let runtime = self.runtime().clone();
         let task = glib::spawn_future_local(async move {
             let result = search_games(&query).await;
+            // A failed lookup falls back to the saved search, so the history must have
+            // been read by then; a search made the moment the picker first opened may
+            // have outrun the read.
+            if result.is_err() && history().is_none() {
+                let _ = runtime.spawn_blocking(load_history).await;
+            }
             if let Some(dialog) = weak.upgrade() {
                 dialog.finish_search(query, result);
             }
@@ -462,52 +758,71 @@ impl FoxPickerDialog {
         self.set_busy(false);
         match result {
             Ok(found) => {
-                remember_search(
-                    LastSearch {
-                        query,
-                        account: found.account.clone(),
-                        rows: found.rows.clone(),
-                    },
-                    self.runtime(),
-                );
-                self.show_search(found);
+                let saved = SavedSearch {
+                    query,
+                    account: found.account,
+                    saved: unix_now(),
+                    rows: found.rows,
+                };
+                // An account with no public games takes no place in the history, and one
+                // that has lost them all loses its old records: only asking Fox again can
+                // tell whether it has some yet.
+                let op = if saved.rows.is_empty() {
+                    HistoryOp::Forget(saved.query.clone())
+                } else {
+                    HistoryOp::Remember(saved.clone())
+                };
+                change_history(op, self.runtime());
+                self.show_saved(saved);
             }
-            Err(error) => {
-                self.clear_games();
-                let widgets = self.widgets();
-                widgets
-                    .status_page
-                    .set_icon_name(Some("dialog-warning-symbolic"));
-                widgets
-                    .status_page
-                    .set_title(&i18n::gettext("Couldn’t load games"));
-                widgets
-                    .status_page
-                    .set_description(Some(&fox_error_message(&error)));
-                widgets.stack.set_visible_child(&widgets.status_page);
-            }
+            // Offline, a search made before still shows what Fox sent then.
+            Err(error) => match saved_search(&query) {
+                Some(saved) => {
+                    let time = saved_time(saved.saved);
+                    self.show_saved(saved);
+                    let widgets = self.widgets();
+                    // Translators: {error} is why Fox could not be asked; {time} is when
+                    // the games shown were saved, such as 2026-07-29 22:57.
+                    widgets.banner.set_title(&i18n::gettext_f(
+                        "{error}. Showing the games saved {time}.",
+                        &[("error", &fox_error_message(&error)), ("time", &time)],
+                    ));
+                    widgets.banner.set_revealed(true);
+                }
+                None => {
+                    self.clear_games();
+                    self.set_status_query(query);
+                    self.show_status(
+                        "dialog-warning-symbolic",
+                        &i18n::gettext("Couldn’t load games"),
+                        &fox_error_message(&error),
+                    );
+                }
+            },
         }
     }
 
-    fn show_search(&self, found: Games) {
+    /// Shows a search's records from the first page, and puts its query in the entry. The
+    /// records go in first, so the entry's change finds them its own.
+    fn show_saved(&self, saved: SavedSearch) {
         let widgets = self.widgets();
-        if found.rows.is_empty() {
+        if saved.rows.is_empty() {
             self.clear_games();
-            widgets
-                .status_page
-                .set_icon_name(Some("edit-find-symbolic"));
-            widgets
-                .status_page
-                .set_title(&i18n::gettext("No public games"));
-            widgets.status_page.set_description(Some(&i18n::gettext(
-                "This account has no visible games in Fox's recent-history window.",
-            )));
-            widgets.stack.set_visible_child(&widgets.status_page);
+            self.set_status_query(saved.query.clone());
+            if widgets.entry.text().trim() != saved.query {
+                widgets.entry.set_text(&saved.query);
+            }
+            self.show_status(
+                "edit-find-symbolic",
+                &i18n::gettext("No public games"),
+                &i18n::gettext("This account has no visible games in Fox's recent-history window."),
+            );
             return;
         }
+        self.set_status_query(String::new());
 
-        let count = found.rows.len() as u64;
-        let account = fox::display_text(&found.account);
+        let count = saved.rows.len() as u64;
+        let account = fox::display_text(&saved.account);
         // Translators: {account} is a player name, or "UID" and a number.
         let heading = i18n::ngettext_f(
             "{account} · {count} recent game",
@@ -516,48 +831,59 @@ impl FoxPickerDialog {
             &[("account", &account), ("count", &count.to_string())],
         );
         widgets.result_label.set_label(&heading);
-        let rows: Vec<FoxRow> = found.rows.iter().map(list_row).collect();
-        self.replace_games(found.rows, rows);
+        // Translators: {time} is when Fox sent these games, such as 2026-07-29 22:57.
+        widgets.saved_label.set_label(&i18n::gettext_f(
+            "Saved {time}",
+            &[("time", &saved_time(saved.saved))],
+        ));
+        let texts: Vec<RecordText> = saved.rows.iter().map(record_text).collect();
+        self.replace_games(saved.query.clone(), saved.rows, texts);
+        if widgets.entry.text().trim() != saved.query {
+            widgets.entry.set_text(&saved.query);
+        }
         widgets.stack.set_visible_child(&widgets.results_page);
         self.refresh_actions();
     }
 
-    fn restore_last_search(&self) {
-        // The file read used to run inside the `LazyLock`, on the frame that first
-        // opened the picker. The list fills when the blocking pool finishes.
+    /// Reads the saved searches if no picker has yet — on the blocking pool — then shows
+    /// the most recent one if the dialog has nothing else to show. The wait is not the
+    /// dialog's task: a search started meanwhile must not cancel it.
+    fn restore_history(&self) {
+        if history().is_some() {
+            self.history_ready();
+            return;
+        }
         let weak = self.downgrade();
-        let job = self.runtime().spawn_blocking(load_cache_if_cold);
-        let task = glib::spawn_future_local(async move {
-            let Ok(last) = job.await else {
-                return;
-            };
-            let Some(last) = last else {
-                return;
-            };
-            let Some(dialog) = weak.upgrade() else {
-                return;
-            };
-            if dialog.has_games() || dialog.is_busy() {
-                return;
+        let job = self.runtime().spawn_blocking(load_history);
+        glib::spawn_future_local(async move {
+            if job.await.is_ok()
+                && let Some(dialog) = weak.upgrade()
+            {
+                dialog.history_ready();
             }
-            dialog.widgets().entry.set_text(&last.query);
-            dialog.show_search(Games {
-                account: last.account,
-                rows: last.rows,
-            });
         });
-        self.replace_task(task);
     }
 
-    fn start_download(&self) {
+    fn history_ready(&self) {
+        if self.is_busy() || !self.is_shown() {
+            return;
+        }
+        if !self.has_games()
+            && self.widgets().entry.text().trim().is_empty()
+            && let Some((_, history)) = history()
+            && let Some(last) = history.searches.first()
+        {
+            self.show_saved(last.clone());
+            return;
+        }
+        self.show_idle_page();
+    }
+
+    fn start_download(&self, game: FoxGame) {
         if self.is_busy() {
             return;
         }
         let widgets = self.widgets();
-        let Some(game) = self.selected_game() else {
-            return;
-        };
-
         widgets.banner.set_revealed(false);
         widgets
             .loading_page
@@ -583,9 +909,9 @@ impl FoxPickerDialog {
                 self.close();
             }
             Err(error) => {
-                self.set_busy(false);
                 let widgets = self.widgets();
                 widgets.stack.set_visible_child(&widgets.results_page);
+                self.set_busy(false);
                 widgets.banner.set_title(&i18n::gettext_f(
                     "Could not download the game: {error}",
                     &[("error", &fox_error_message(&error))],
@@ -621,7 +947,7 @@ fn warm_tls(runtime: &tokio::runtime::Handle) {
 ///
 /// One picker per window: libadwaita refuses to present the same dialog in two
 /// windows at once, and several mirai windows are normal. Keeping it also keeps
-/// its record list, so opening it again needs no lookup and no file read.
+/// its records and its page, so opening it again needs no lookup and no file read.
 pub(crate) fn present(
     parent: &impl IsA<gtk::Widget>,
     slot: &std::cell::RefCell<Option<FoxPickerDialog>>,
@@ -633,7 +959,7 @@ pub(crate) fn present(
         .get_or_insert_with(FoxPickerDialog::wired)
         .clone();
     // Ctrl+Shift+O reaches the window even with the picker up. Preparing it again would
-    // abort the search in flight and empty the list under the user.
+    // abort the search in flight.
     if dialog.is_shown() {
         return;
     }
@@ -643,10 +969,8 @@ pub(crate) fn present(
     dialog.prepare_to_show();
     dialog.set_shown(true);
     dialog.present(Some(parent));
-    // The records arrive after the dialog is mapped, and fill it a few rows per frame.
-    if !dialog.has_games() {
-        dialog.restore_last_search();
-    }
+    // The first picker of the process reads the saved searches once it is on screen.
+    dialog.restore_history();
     dialog.widgets().entry.grab_focus();
 }
 
@@ -675,36 +999,80 @@ mod tests {
     }
 
     #[test]
-    fn a_list_row_reads_as_one_line_of_plain_text() {
-        let row = list_row(&row());
-        assert_eq!(row.title(), "柯洁 (6d) vs 申真谞 (6d)");
+    fn a_record_reads_as_one_line_of_plain_text() {
+        let text = record_text(&row());
+        assert_eq!(text.title, "柯洁 (6d) vs 申真谞 (6d)");
         assert_eq!(
-            row.subtitle(),
+            text.subtitle,
             "2024-01-01 12:00:00 · 19×19 · 241 moves · B+0.75"
         );
     }
 
+    fn search(query: &str, saved: i64) -> SavedSearch {
+        SavedSearch {
+            query: query.into(),
+            account: query.into(),
+            saved,
+            rows: vec![row()],
+        }
+    }
+
+    fn queries(history: &SearchHistory) -> Vec<&str> {
+        history.searches.iter().map(|s| s.query.as_str()).collect()
+    }
+
     #[test]
-    fn last_search_round_trips_through_json() {
-        // Reopening the picker must not require another Fox lookup: the last successful
-        // query and its rows are written to a cache file and read back as-is.
+    fn the_history_keeps_one_search_per_query_most_recent_first() {
+        let mut history = SearchHistory::default();
+        assert!(history.apply(&HistoryOp::Remember(search("柯洁", 1))));
+        assert!(history.apply(&HistoryOp::Remember(search("申真谞", 2))));
+        // Asking again replaces the older answer and moves it first.
+        assert!(history.apply(&HistoryOp::Remember(search("柯洁", 3))));
+        assert_eq!(queries(&history), ["柯洁", "申真谞"]);
+        assert_eq!(history.find("柯洁").map(|s| s.saved), Some(3));
+
+        // Opening a saved search moves it first; one already first changes nothing.
+        assert!(history.apply(&HistoryOp::Touch("申真谞".into())));
+        assert_eq!(queries(&history), ["申真谞", "柯洁"]);
+        assert!(!history.apply(&HistoryOp::Touch("申真谞".into())));
+        assert!(!history.apply(&HistoryOp::Touch("党毅飞".into())));
+
+        assert!(history.apply(&HistoryOp::Forget("申真谞".into())));
+        assert!(!history.apply(&HistoryOp::Forget("申真谞".into())));
+        assert_eq!(queries(&history), ["柯洁"]);
+    }
+
+    #[test]
+    fn the_history_drops_its_oldest_search_past_the_limit() {
+        let mut history = SearchHistory::default();
+        for i in 0..=SAVED_SEARCHES {
+            history.apply(&HistoryOp::Remember(search(&i.to_string(), i as i64)));
+        }
+        assert_eq!(history.searches.len(), SAVED_SEARCHES);
+        assert_eq!(history.searches[0].query, SAVED_SEARCHES.to_string());
+        assert!(history.find("0").is_none(), "the oldest search goes");
+        assert!(history.find("1").is_some());
+    }
+
+    #[test]
+    fn the_history_round_trips_through_json() {
+        // Asking for a saved search again must not need Fox: the history and its records
+        // are written to a file and read back as-is.
         let dir = std::env::temp_dir().join(format!("mirai-fox-search-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("fox-last-search.json");
-        let search = LastSearch {
-            query: "柯洁".into(),
-            account: "柯洁".into(),
-            rows: vec![row()],
-        };
-        write_last_search(&path, &search).expect("write cache");
-        assert_eq!(read_last_search(&path).as_ref(), Some(&search));
+        let path = dir.join("fox-searches.json");
+        let mut history = SearchHistory::default();
+        history.apply(&HistoryOp::Remember(search("柯洁", 1_785_337_045)));
+        history.apply(&HistoryOp::Remember(search("6757425", 1_785_337_046)));
+        write_history(&path, &history).expect("write the history");
+        assert_eq!(read_history(&path).as_ref(), Some(&history));
 
         std::fs::write(&path, "not json").unwrap();
         assert_eq!(
-            read_last_search(&path),
+            read_history(&path),
             None,
-            "a corrupt cache must be ignored, not fatal"
+            "a corrupt history must be ignored, not fatal"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

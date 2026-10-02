@@ -186,7 +186,7 @@ boundaries are [§1](#1-the-system). User settings and shortcuts are in
 | trust a remote certificate before analysis | `crates/mirai-client/src/session.rs` | `Session` |
 | choose an AI move, resign, or advance a clock | `crates/mirai-client/src/play.rs`, `crates/mirai/src/play.rs` | `select_move_index`, `resign_check`, `PlayController` |
 | Fox HTTP, or Fox's SGF dialect | `crates/mirai-client/src/fox.rs` | `lookup_user`, `list_games`, `fetch_sgf`, `normalize_fox_sgf`; [Fox spec](FOX_KIFU_API_SPEC.md) |
-| the Fox picker | `crates/mirai/src/fox.rs`, `crates/mirai/src/fox_picker.rs`, `crates/mirai/src/fox_picker.blp` | `present`, `FoxPickerDialog::refill` |
+| the Fox picker | `crates/mirai/src/fox.rs`, `crates/mirai/src/fox_picker.rs`, `crates/mirai/src/fox_picker.blp` | `present`, `FoxPickerDialog::show_page`, `SearchHistory` |
 | the headless server, or `server.toml` | `crates/mirai-server/src/main.rs`, `crates/mirai-server/src/session.rs`, `crates/mirai-server/src/config.rs`, `crates/mirai-server/server.example.toml` | `run`, `serve`, `ServerConfig::load` |
 | per-window state, or which `Change` fires | `crates/mirai/src/app.rs`, `crates/mirai/src/window.rs` | `AppState`, `Change`, `handle_change` |
 | share one KataGo across windows | `crates/mirai/src/engines.rs` | `EnginePool::acquire` |
@@ -346,7 +346,7 @@ thread.
 - **No waiting synchronously for a subscription.** `finish()` belongs to the probe and server,
   not GUI handlers.
 - **No synced write, directory scan or `PATH` search.** Config save, autosave, opening an
-  SGF file (read and parse), KataGo discovery, the Fox search cache, the TLS trust store
+  SGF file (read and parse), KataGo discovery, the saved Fox searches, the TLS trust store
   Fox's first lookup would load, and crash-leftover scanning run on `spawn_blocking` and
   return through the weak window. A pasted record is already in memory and is parsed in
   place. `write_atomic*` syncs the file and directory (50–100 ms on an ordinary
@@ -688,7 +688,7 @@ projection/cache state; it does not borrow `AppState` or replay the game tree.
 | **INV-8** | `with_ui`, `take_ui`, `shutdown` in `crates/mirai/src/window_shell.rs`; `Drop for Ui` in `crates/mirai/src/window.rs` |
 | **INV-9** | `crates/mirai/src/widgets/` |
 | **INV-10** | `changed`, `resolve_node`, `set_analysis_at` in `crates/mirai/src/app.rs`; the epoch bump is `GameSession::adopt` / `restore` in `crates/mirai-client/src/game/mod.rs` |
-| **INV-11** | `runtime().spawn_blocking` at each I/O site: `AppState::save_config`, autosave and SGF open in `crates/mirai/src/window.rs`, Fox cache and `warm_tls` in `crates/mirai/src/fox.rs`, discovery in `crates/mirai/src/prefs.rs` |
+| **INV-11** | `runtime().spawn_blocking` at each I/O site: `AppState::save_config`, autosave and SGF open in `crates/mirai/src/window.rs`, Fox search history and `warm_tls` in `crates/mirai/src/fox.rs`, discovery in `crates/mirai/src/prefs.rs` |
 
 ---
 

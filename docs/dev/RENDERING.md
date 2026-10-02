@@ -257,8 +257,9 @@ noted; release with assertions, no engine but for live analysis.
 
 | surface | before | after |
 |---|---|---|
-| Fox picker, 200 records, reopen | a 116–133 ms frame (60 Hz output) | action ~1 ms, layout 1–2.5 ms |
-| Fox picker, first open | layout 98–223 ms | 13 ms with Latin names; CJK below |
+| Fox picker, 200 records, reopen | a 116–133 ms frame (60 Hz output) | action 1–5 ms, layout 1–8 ms |
+| Fox picker, first open, English UI | layout 98–223 ms | 33–75 ms; first CJK text below |
+| Fox picker, page turn | — | layout 1.2–6 ms a frame over 3 frames |
 | Preferences | 38–130 ms action, every open | first open unchanged; then 2–9 ms |
 | New Game | 21–55 ms action, every open | first open unchanged; then 2.6 ms |
 | editor reveal (board resize) | board 7.4 ms a frame, 11 frames over | 0.13 ms, 0 over |
@@ -270,8 +271,11 @@ noted; release with assertions, no engine but for live analysis.
 Fox's 200 records was 200 bound, measured, styled rows. A one-column `GtkGridView` keeps
 `GTK_GRID_VIEW_MAX_VISIBLE_ROWS` (30) plus three. Both are *inert* while unrooted: they
 drop their factory, and rebind every live row synchronously when presented again. The
-picker therefore empties its store before each presentation and refills it four rows a
-frame (`fox_picker.rs`).
+picker shows ten records a page instead, in a boxed list whose rows are built once and
+refilled in place (`fox_picker.rs`). Ten rows of CJK names still take 7–8 ms to shape
+and measure, so a page fills four rows a frame, and the dialog is presented with its
+rows hidden — a dialog put back on screen shapes all its text again — to refill them the
+same way once it is mapped.
 
 **`adw_dialog_present` measures the whole dialog, synchronously** — every page of
 Preferences, every row's text. Building the template and that measure took 38–130 ms
@@ -300,15 +304,23 @@ counts rows built (`candidate-row`) and times the refresh (`candidates`).
 What remains is GTK's or libadwaita's:
 
 - **Dialog animations, 5–15 ms a frame.** libadwaita's floating sheet animates its scale
-  from 0.8 (`adw-floating-sheet.c`), and GSK keys glyphs by scale, so every frame of an
-  open or close re-rasterises the dialog's text. A text-heavy dialog costs more; the
-  picker's CJK records most (up to 30 ms closing at 160 Hz).
-- **The first CJK text in a process**, 20–110 ms: font fallback and loading. With an
-  English UI, the picker's records are usually that text.
-- **A Preferences page's first visit**, 30–40 ms of layout: wrapped labels are shaped
-  again at their allocated width.
+  from 0.8 (`adw-floating-sheet.c`). GSK's GPU renderer lifts a 2D scale out of the
+  transform and rasterises glyphs at that exact scale (`gskgpunodeprocessor.c`), keying
+  its glyph cache by it (`gskgpucachedglyph.c`), so every frame of an open or close
+  rasterises every glyph again on the CPU. A text-heavy dialog costs more; the picker's
+  CJK records most, up to 45 ms closing at 160 Hz. Only giving the animation up avoids
+  it: reduced motion, which is display-wide, or a bottom sheet.
+- **The first CJK text in a process**, 20–110 ms: font fallback, loading, and every glyph
+  shaped and rasterised for the first time. Laying out CJK text on the GTK thread at
+  startup took 15–26 ms and did not measurably shorten the picker's first open: the cost
+  follows the glyphs first shown, which a page of ten keeps down.
+- **A Preferences page's first visit**, 4–6 ms of layout: wrapped labels are shaped at
+  their allocated width, and `AdwViewStack` allocates only the visible page.
 - **A report relays out the window**: label text changes queue a resize up to the
-  toplevel, 1–2 ms a report; GSK then renders ~3 ms.
+  toplevel (`gtkwidget.c`), 1–2 ms a report; GSK then renders 3–8 ms. That is the GTK
+  thread's own time, not a wait on the GPU KataGo shares: profiled through steady live
+  analysis, a third of the thread is `gsk_renderer_render`, much of it radv recording
+  commands and glyphs being rasterised.
 
 ## 9. Keeping it
 
@@ -321,3 +333,5 @@ What remains is GTK's or libadwaita's:
 - Measure drawing with the search **finished**: report-driven layouts during
   search mask changes to `snapshot()` (§7). The [testing guide](TESTING.md)
   has the GUI verification recipes.
+- On a machine whose CPU clocks down when idle (`schedutil`), the same step measures
+  1–6 ms from one run to the next; compare several runs, not one step.
