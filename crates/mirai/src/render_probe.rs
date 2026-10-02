@@ -26,6 +26,8 @@
 //!                    instead of resizing it
 //! MIRAI_NO_LABEL_DEFER=1
 //!                    paint the board's text on every frame, however the allocation moved
+//! MIRAI_NO_CLOCK_FLOOR=1
+//!                    leave the GTK thread without its utilization clamp (`ui_thread`)
 //! MIRAI_NO_BOARD=1   take BoardView out of the paned
 //! MIRAI_NO_GRAPH=1   take WinrateGraph out of the paned
 //! MIRAI_SPIN=1       redraw an unchanging scene every frame
@@ -117,6 +119,14 @@ pub fn trace(label: &'static str, value: f32) {
 pub fn label_defer() -> bool {
     static OFF: LazyLock<bool> = LazyLock::new(|| flag("MIRAI_NO_LABEL_DEFER"));
     !(cfg!(debug_assertions) && *OFF)
+}
+
+/// Whether to leave the GTK thread without its utilization clamp.
+///
+/// `MIRAI_NO_CLOCK_FLOOR=1` is the ablation that measures what the clamp is worth on a
+/// schedutil machine (`RENDERING.md` §8).
+pub fn no_clock_floor() -> bool {
+    cfg!(debug_assertions) && flag("MIRAI_NO_CLOCK_FLOOR")
 }
 
 /// Attaches the frame-clock probes and applies the window-level ablations.

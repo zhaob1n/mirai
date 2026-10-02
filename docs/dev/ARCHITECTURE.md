@@ -205,6 +205,7 @@ boundaries are [§1](#1-the-system). User settings and shortcuts are in
 | a score, fingerprint, new-game, or label dialog | `crates/mirai/src/dialogs.rs`, `crates/mirai/src/new_game.rs`, `crates/mirai/src/label_editor.rs` | `show_score_with`, `confirm_fingerprint`, `present` |
 | drive the real GUI, or count frames | `crates/mirai/src/harness.rs`, `crates/mirai/src/render_probe.rs` | [TESTING §5](TESTING.md#5-testing-the-gui) |
 | process lifetime, the runtime, or shutdown | `crates/mirai/src/main.rs`, `crates/mirai/src/application_shell.rs` | `MiraiApplication` |
+| the GTK thread's clock floor | `crates/mirai/src/ui_thread.rs` | `request_clock_floor`; [RENDERING §8](RENDERING.md#8-dialogs-lists-and-a-160-hz-budget) |
 | the stone click or capture sound | `crates/mirai-client/src/sound.rs` (what sounds, the clips), `crates/mirai/src/sound.rs` (playback) | `stone_sound`, `render`, `StoneSounds::cursor_moved` |
 | whole-game analysis from the window | `crates/mirai/src/batch.rs` | `BatchAnalysis` |
 | mark a string for translation, or word a value the GTK-free crates keep in English | `crates/mirai/src/i18n.rs`, `po/`, `tools/i18n/update-po.sh` | `gettext_f`, `rules_label`, `result_phrase`; [TRANSLATING](TRANSLATING.md) |

@@ -256,7 +256,8 @@ any new report-rate list or readout must avoid per-report widget churn.
 
 The goal moved from 60 Hz to at least 144 Hz: 6.9 ms a frame, 6.25 ms on the 160 Hz
 output. Measured with `ui-survey.sh` on a 3840×2160@160 Hz output at scale 1.5 unless
-noted; release with assertions, no engine but for live analysis.
+noted; release with assertions, no engine but for live analysis. GTK 4.22 for the first
+rows; the clock floor below on GTK 4.24.
 
 | surface | before | after |
 |---|---|---|
@@ -268,6 +269,8 @@ noted; release with assertions, no engine but for live analysis.
 | editor reveal (board resize) | board 7.4 ms a frame, 11 frames over | 0.13 ms, 0 over |
 | live analysis, candidate figures | 0.75 ms a report | 0.26 ms |
 | live analysis, 8 steps forward | 73–75 candidate rows built; panel refresh p90 2.1–4.7 ms, max 5.1–6.6 | 2–3 rows; p90 1.2–1.4 ms, max 1.9–2.6 |
+| frames over budget, dialogs / Fox picker / main window | 4.2 % / 3.3–5.8 % / 2.1–3.1 %; p99 12.6–21.7 ms | 1.2 % / 1.3 % / 1.8 %; p99 7.5–12 ms |
+| frames over budget, live analysis survey | 25–29 % | 3.2 % |
 
 **A list view keeps 200 rows.** `GtkListView` keeps `GTK_LIST_VIEW_MAX_LIST_ITEMS`
 (200) rows alive around its anchor whatever its height (`gtklistview.c`), so a list of
@@ -304,6 +307,19 @@ stylesheet keys on to drop its cells' padding, so it has no height, and it sorts
 The list looks as it did; only a lowered suggestion limit removes rows. `MIRAI_FRAMES`
 counts rows built (`candidate-row`) and times the refresh (`candidates`).
 
+**The CPU ran at its lowest clock.** On a machine whose kernel picks frequencies from
+load — here intel_pstate in passive mode (`intel_pstate=no_hwp`) under schedutil — the
+GTK thread looks idle: it works a millisecond or two a frame and sleeps the rest. Its
+slow frames were on-CPU for their whole length, on P-cores at 0.65–0.97 GHz of 4.9: an
+animation frame of 4 Mcycles, under a millisecond at full clock, took 5 ms; a
+Preferences page's first visit, 34 Mcycles, took 45 ms. `frame-profile.py` shows it as
+few cycles at under 1 GHz, not as more work. `ui_thread.rs` gives the GTK thread a
+utilization clamp (`uclamp.min` 512 of 1024), which schedutil reads as half busy while
+the thread runs; it needs no privilege, the thread's children do not inherit it, and
+asleep the thread costs nothing. 256 halved the frames over budget, 512 took them to a
+third, 768 gained little more. A driver that ramps by itself (intel_pstate with HWP,
+amd-pstate active) is unaffected. `MIRAI_NO_CLOCK_FLOOR=1` measures without it.
+
 What remains is GTK's or libadwaita's:
 
 - **Dialog animations, 5–15 ms a frame.** libadwaita's floating sheet animates its scale
@@ -336,5 +352,6 @@ What remains is GTK's or libadwaita's:
 - Measure drawing with the search **finished**: report-driven layouts during
   search mask changes to `snapshot()` (§7). The [testing guide](TESTING.md)
   has the GUI verification recipes.
-- On a machine whose CPU clocks down when idle (`schedutil`), the same step measures
-  1–6 ms from one run to the next; compare several runs, not one step.
+- Before blaming a slow frame on its work, read its clock in `frame-profile.py`: on a
+  schedutil machine the same step varies severalfold with the frequency it ran at.
+  Compare several runs, and `MIRAI_NO_CLOCK_FLOOR=1` against the default.
