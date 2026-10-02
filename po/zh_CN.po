@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: mirai\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaob1n/mirai/issues\n"
-"POT-Creation-Date: 2026-10-02 08:03+0800\n"
+"POT-Creation-Date: 2026-10-02 10:19+0800\n"
 "PO-Revision-Date: 2026-09-28 06:00+0800\n"
 "Last-Translator: Huang Zhaobin <zhaob1n@foxmail.com>\n"
 "Language-Team: Chinese (China) <i18n-zh@googlegroups.com>\n"
@@ -71,8 +71,7 @@ msgstr "{profile}：{message}"
 
 #: crates/mirai/src/batch.rs:95 crates/mirai/src/dialogs.rs:97
 #: crates/mirai/src/prefs.rs:367 crates/mirai/src/window.rs:1473
-#: crates/mirai/src/fox_picker.blp:19 crates/mirai/src/label_editor.blp:20
-#: crates/mirai/src/new_game.blp:21
+#: crates/mirai/src/label_editor.blp:20 crates/mirai/src/new_game.blp:21
 msgid "Cancel"
 msgstr "取消"
 
@@ -193,12 +192,12 @@ msgstr "无法将分析配置写入 {dir}：{error}"
 msgid "refusing to send the token before the certificate is pinned"
 msgstr "证书固定之前拒绝发送令牌"
 
-#: crates/mirai/src/fox_picker.rs:323
+#: crates/mirai/src/fox_picker.rs:321
 #, rust-format
 msgid "{first}–{last} of {count}"
 msgstr "第 {first}–{last} 盘，共 {count} 盘"
 
-#: crates/mirai/src/fox_picker.rs:490
+#: crates/mirai/src/fox_picker.rs:484
 msgid "Remove From History"
 msgstr "从历史记录中移除"
 
@@ -258,19 +257,19 @@ msgid "{count} game · saved {time}"
 msgid_plural "{count} games · saved {time}"
 msgstr[0] "{count} 盘对局 · 保存于 {time}"
 
-#: crates/mirai/src/fox.rs:642 crates/mirai/src/fox_picker.blp:80
+#: crates/mirai/src/fox.rs:621 crates/mirai/src/fox_picker.blp:67
 msgid "Find a Fox Player"
 msgstr "查找野狐玩家"
 
-#: crates/mirai/src/fox.rs:644 crates/mirai/src/fox_picker.blp:81
+#: crates/mirai/src/fox.rs:623 crates/mirai/src/fox_picker.blp:68
 msgid "Enter an exact nickname or UID to browse their recent public games."
 msgstr "输入准确的昵称或 UID，浏览其最近的公开对局。"
 
-#: crates/mirai/src/fox.rs:721 crates/mirai/src/fox_picker.blp:85
+#: crates/mirai/src/fox.rs:710 crates/mirai/src/fox_picker.blp:72
 msgid "Searching Fox"
 msgstr "正在搜索野狐"
 
-#: crates/mirai/src/fox.rs:723
+#: crates/mirai/src/fox.rs:712
 msgid "Looking up the player and their recent games."
 msgstr "正在查找该玩家及其最近的对局。"
 
@@ -297,16 +296,16 @@ msgid "{account} · {count} recent game"
 msgid_plural "{account} · {count} recent games"
 msgstr[0] "{account} · {count} 盘近期对局"
 
-#: crates/mirai/src/fox.rs:813
+#: crates/mirai/src/fox.rs:816
 #, rust-format
 msgid "Saved {time}"
 msgstr "保存于 {time}"
 
-#: crates/mirai/src/fox.rs:867
+#: crates/mirai/src/fox.rs:870
 msgid "Downloading game"
 msgstr "正在下载对局"
 
-#: crates/mirai/src/fox.rs:893
+#: crates/mirai/src/fox.rs:896
 #, rust-format
 msgid "Could not download the game: {error}"
 msgstr "无法下载对局：{error}"
@@ -1624,48 +1623,44 @@ msgstr[0] "已粘贴一局 {moves} 手的棋谱"
 msgid "The clipboard holds no game record"
 msgstr "剪贴板中没有棋谱"
 
-#: crates/mirai/src/fox_picker.blp:24
-msgid "Open Game"
-msgstr "打开棋谱"
-
-#: crates/mirai/src/fox_picker.blp:44
+#: crates/mirai/src/fox_picker.blp:31
 msgid "Exact Fox nickname or numeric UID"
 msgstr "准确的野狐昵称或数字 UID"
 
-#: crates/mirai/src/fox_picker.blp:49
+#: crates/mirai/src/fox_picker.blp:36
 msgctxt "verb"
 msgid "Search"
 msgstr "搜索"
 
-#: crates/mirai/src/fox_picker.blp:55
+#: crates/mirai/src/fox_picker.blp:42
 msgid "Public records only · Fox exposes at most the latest 200 games"
 msgstr "仅限公开棋谱 · 野狐最多提供最近 200 盘"
 
-#: crates/mirai/src/fox_picker.blp:70
+#: crates/mirai/src/fox_picker.blp:57
 msgid "Fox request failed"
 msgstr "野狐请求失败"
 
-#: crates/mirai/src/fox_picker.blp:86
+#: crates/mirai/src/fox_picker.blp:73
 msgid "This may take a few seconds."
 msgstr "这可能需要几秒钟。"
 
-#: crates/mirai/src/fox_picker.blp:102
+#: crates/mirai/src/fox_picker.blp:81 crates/mirai/src/fox_picker.blp:84
 msgid "Recent Searches"
 msgstr "最近搜索"
 
-#: crates/mirai/src/fox_picker.blp:132
+#: crates/mirai/src/fox_picker.blp:91 crates/mirai/src/fox_picker.blp:94
 msgid "Recent Games"
 msgstr "最近对局"
 
-#: crates/mirai/src/fox_picker.blp:153
+#: crates/mirai/src/fox_picker.blp:98
 msgid "Search Fox Again"
 msgstr "重新搜索野狐"
 
-#: crates/mirai/src/fox_picker.blp:186
+#: crates/mirai/src/fox_picker.blp:120
 msgid "Newer Games"
 msgstr "较新的对局"
 
-#: crates/mirai/src/fox_picker.blp:203
+#: crates/mirai/src/fox_picker.blp:137
 msgid "Older Games"
 msgstr "较早的对局"
 
@@ -2272,3 +2267,6 @@ msgstr "SGF 编辑，以及从野狐下载的棋谱"
 #: data/io.github.zhaob1n.Mirai.metainfo.xml.in:24
 msgid "mirai does not include KataGo or a network; supply your own."
 msgstr "mirai 不附带 KataGo 或神经网络，请自行准备。"
+
+#~ msgid "Open Game"
+#~ msgstr "打开棋谱"

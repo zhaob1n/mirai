@@ -482,13 +482,6 @@ impl FoxPickerDialog {
         let widgets = dialog.widgets();
         widgets.stack.set_visible_child(&widgets.status_page);
 
-        widgets.cancel_button.connect_clicked(clone!(
-            #[weak]
-            dialog,
-            move |_| {
-                dialog.close();
-            }
-        ));
         widgets.entry.connect_search_changed(clone!(
             #[weak]
             dialog,
@@ -503,32 +496,6 @@ impl FoxPickerDialog {
             #[weak]
             dialog,
             move |_| dialog.start_search()
-        ));
-        widgets.open_button.connect_clicked(clone!(
-            #[weak]
-            dialog,
-            move |_| {
-                if let Some(game) = dialog.selected_game() {
-                    dialog.start_download(game);
-                }
-            }
-        ));
-        dialog.connect_selection_changed(clone!(
-            #[weak]
-            dialog,
-            move || dialog.refresh_actions()
-        ));
-        widgets.result_list.connect_row_activated(clone!(
-            #[weak]
-            dialog,
-            move |_, row| {
-                if let Some(game) = usize::try_from(row.index())
-                    .ok()
-                    .and_then(|slot| dialog.game_at(slot))
-                {
-                    dialog.start_download(game);
-                }
-            }
         ));
         widgets.newer_button.connect_clicked(clone!(
             #[weak]
@@ -545,20 +512,32 @@ impl FoxPickerDialog {
             dialog,
             move |_| dialog.fetch_search(dialog.shown_query())
         ));
-        widgets.recent_list.connect_row_activated(clone!(
+        // Rows and their buttons name what they act on as their action's target — the row of
+        // the page, the saved search — so a row refilled with another record or search needs
+        // no handler of its own.
+        let open_record = gio::SimpleAction::new("open-record", Some(glib::VariantTy::UINT32));
+        open_record.connect_activate(clone!(
             #[weak]
             dialog,
-            move |_, row| {
-                if let Some(query) = usize::try_from(row.index())
-                    .ok()
-                    .and_then(|index| dialog.recent_query(index))
+            move |_, slot| {
+                if let Some(game) = slot
+                    .and_then(|slot| slot.get::<u32>())
+                    .and_then(|slot| dialog.game_at(slot as usize))
                 {
-                    dialog.open_saved(&query);
+                    dialog.start_download(game);
                 }
             }
         ));
-        // The recent rows' buttons name the search they forget as the action's target, so
-        // a row refilled with another search needs no handler of its own.
+        let open_saved = gio::SimpleAction::new("open-saved", Some(glib::VariantTy::STRING));
+        open_saved.connect_activate(clone!(
+            #[weak]
+            dialog,
+            move |_, query| {
+                if let Some(query) = query.and_then(|query| query.str()) {
+                    dialog.open_saved(query);
+                }
+            }
+        ));
         let forget = gio::SimpleAction::new("forget", Some(glib::VariantTy::STRING));
         forget.connect_activate(clone!(
             #[weak]
@@ -570,6 +549,8 @@ impl FoxPickerDialog {
             }
         ));
         let actions = gio::SimpleActionGroup::new();
+        actions.add_action(&open_record);
+        actions.add_action(&open_saved);
         actions.add_action(&forget);
         dialog.insert_action_group("picker", Some(&actions));
         dialog.connect_closed(clone!(
@@ -600,20 +581,19 @@ impl FoxPickerDialog {
     fn refresh_actions(&self) {
         let widgets = self.widgets();
         let idle = !self.is_busy();
-        let results = widgets.stack.visible_child().as_ref()
-            == Some(widgets.results_page.upcast_ref::<gtk::Widget>());
-        widgets.entry.set_sensitive(idle);
+        // Read-only rather than insensitive while busy: an insensitive entry gives up the
+        // focus, and GTK moves it on — possibly to a record, where Enter opens a game.
+        widgets.entry.set_editable(idle);
         widgets
             .search_button
             .set_sensitive(idle && !widgets.entry.text().trim().is_empty());
-        widgets.result_list.set_sensitive(idle);
         widgets.refresh_button.set_sensitive(idle);
-        widgets
-            .open_button
-            .set_sensitive(idle && results && self.has_selection());
     }
 
     fn set_busy(&self, busy: bool) {
+        if busy {
+            self.set_busy_text(self.widgets().entry.text().to_string());
+        }
         self.set_busy_flag(busy);
         self.refresh_actions();
     }
@@ -623,6 +603,13 @@ impl FoxPickerDialog {
     /// when it is empty — or, failing all of those, how to search.
     fn show_idle_page(&self) {
         if self.is_busy() {
+            // Only the clear icon gets past a read-only entry; what is loading is still
+            // what it read.
+            let entry = self.widgets().entry;
+            let text = self.busy_text();
+            if entry.text() != text {
+                entry.set_text(&text);
+            }
             return;
         }
         let widgets = self.widgets();
@@ -830,12 +817,15 @@ impl FoxPickerDialog {
             count,
             &[("account", &account), ("count", &count.to_string())],
         );
-        widgets.result_label.set_label(&heading);
+        // The group's title and description are markup; a nickname is plain text.
+        widgets
+            .result_group
+            .set_title(&glib::markup_escape_text(&heading));
         // Translators: {time} is when Fox sent these games, such as 2026-07-29 22:57.
-        widgets.saved_label.set_label(&i18n::gettext_f(
+        widgets.result_group.set_description(Some(&i18n::gettext_f(
             "Saved {time}",
             &[("time", &saved_time(saved.saved))],
-        ));
+        )));
         let texts: Vec<RecordText> = saved.rows.iter().map(record_text).collect();
         self.replace_games(saved.query.clone(), saved.rows, texts);
         if widgets.entry.text().trim() != saved.query {

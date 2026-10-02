@@ -206,9 +206,8 @@ kept with its games: searching for the same name again answers at once with what
 then, and the refresh button beside the list asks Fox again. With the search box empty, or
 while you type, the dialog lists your recent searches; pick one to see its games, or remove it
 with its trash button. A saved search still shows its games when Fox cannot be reached, and
-opening the dialog again restores the last search and page. A click only selects a row.
-Double-click, Enter on the list, or **Open Game** downloads and loads that row. Enter in the
-search box searches; it does not open a game.
+opening the dialog again restores the last search and page. Click a game, or press Enter on
+it, to download and open it; Enter in the search box searches.
 Fox's dialect — quarter-point Chinese komi, and handicap stones written as a run of opening
 nodes — is normalised on import. The result has no local backing file: it is named after its
 players, `柯洁 vs 申真谞 •`, and **Save** therefore asks where to store it.

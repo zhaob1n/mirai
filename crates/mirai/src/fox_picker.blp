@@ -5,65 +5,55 @@ using Adw 1;
 
 template $MiraiFoxPickerDialog: Adw.Dialog {
   title: _("Download from Fox");
-  content-width: 720;
+  content-width: 640;
   content-height: 860;
 
-  child: Adw.ToolbarView {
+  child: Adw.ToolbarView toolbar {
+    // Down until a page of records with another to turn to is on screen: sync_pager.
+    reveal-bottom-bars: false;
+
     [top]
-    Adw.HeaderBar {
-      show-start-title-buttons: false;
-      show-end-title-buttons: false;
-
-      [start]
-      Gtk.Button cancel_button {
-        label: _("Cancel");
-      }
-
-      [end]
-      Gtk.Button open_button {
-        label: _("Open Game");
-        sensitive: false;
-
-        styles [
-          "suggested-action",
-        ]
-      }
-    }
+    Adw.HeaderBar {}
 
     content: Gtk.Box {
       orientation: vertical;
 
-      Gtk.Box {
-        orientation: horizontal;
-        spacing: 8;
-        margin-start: 18;
-        margin-end: 18;
-        margin-top: 18;
+      // Clamped and inset as an AdwPreferencesPage clamps and insets its groups, so the
+      // search lines up with the records under it.
+      Adw.Clamp {
+        child: Gtk.Box {
+          orientation: vertical;
+          margin-start: 12;
+          margin-end: 12;
+          margin-top: 12;
 
-        Gtk.SearchEntry entry {
-          placeholder-text: _("Exact Fox nickname or numeric UID");
-          hexpand: true;
-        }
+          Gtk.Box {
+            spacing: 8;
 
-        Gtk.Button search_button {
-          label: C_("verb", "Search");
-          sensitive: false;
-        }
-      }
+            Gtk.SearchEntry entry {
+              placeholder-text: _("Exact Fox nickname or numeric UID");
+              hexpand: true;
+            }
 
-      Gtk.Label {
-        label: _("Public records only · Fox exposes at most the latest 200 games");
-        xalign: 0;
-        wrap: true;
-        margin-start: 18;
-        margin-end: 18;
-        margin-top: 6;
-        margin-bottom: 12;
+            Gtk.Button search_button {
+              label: C_("verb", "Search");
+              sensitive: false;
+            }
+          }
 
-        styles [
-          "dim-label",
-          "caption",
-        ]
+          Gtk.Label {
+            label: _("Public records only · Fox exposes at most the latest 200 games");
+            xalign: 0;
+            wrap: true;
+            margin-top: 6;
+            margin-bottom: 6;
+
+            styles [
+              "dim-label",
+              "caption",
+            ]
+          }
+        };
       }
 
       Adw.Banner banner {
@@ -88,72 +78,25 @@ template $MiraiFoxPickerDialog: Adw.Dialog {
           paintable: Adw.SpinnerPaintable {};
         }
 
-        // Searches already made, answered from the saved records without asking Fox.
-        Gtk.ScrolledWindow recent_page {
-          hscrollbar-policy: never;
+        // Searches already made, answered from the saved records without asking Fox. The
+        // rows are added as the history needs them.
+        Adw.PreferencesPage recent_page {
+          title: _("Recent Searches");
 
-          child: Gtk.Box {
-            orientation: vertical;
-            margin-start: 18;
-            margin-end: 18;
-            margin-bottom: 18;
-
-            Gtk.Label {
-              label: _("Recent Searches");
-              xalign: 0;
-              margin-bottom: 8;
-
-              styles [
-                "heading",
-              ]
-            }
-
-            Gtk.ListBox recent_list {
-              selection-mode: none;
-
-              styles [
-                "boxed-list",
-              ]
-            }
-          };
+          Adw.PreferencesGroup recent_group {
+            title: _("Recent Searches");
+          }
         }
 
-        Gtk.Box results_page {
-          orientation: vertical;
-          // The list's own margins sit inside its scroller, where the card's shadow is drawn:
-          // a scroller clips at its edges, and the boxed-list shadow reaches 8 px above the
-          // card, 10 px to each side and 12 px below. The rest is inset to keep the edges
-          // and the gaps where they were.
-          margin-start: 8;
-          margin-end: 8;
-          margin-bottom: 18;
+        // Ten records a page. The rows are built once and refilled in place: a page turn
+        // changes their text and nothing else.
+        Adw.PreferencesPage results_page {
+          title: _("Recent Games");
 
-          Gtk.Box {
-            spacing: 6;
-            margin-start: 10;
-            margin-end: 10;
+          Adw.PreferencesGroup result_group {
+            title: _("Recent Games");
 
-            Gtk.Label result_label {
-              label: _("Recent Games");
-              xalign: 0;
-              hexpand: true;
-              ellipsize: end;
-
-              styles [
-                "heading",
-              ]
-            }
-
-            Gtk.Label saved_label {
-              xalign: 1;
-
-              styles [
-                "dim-label",
-                "caption",
-              ]
-            }
-
-            Gtk.Button refresh_button {
+            header-suffix: Gtk.Button refresh_button {
               icon-name: "view-refresh-symbolic";
               tooltip-text: _("Search Fox Again");
               valign: center;
@@ -161,60 +104,41 @@ template $MiraiFoxPickerDialog: Adw.Dialog {
               styles [
                 "flat",
               ]
-            }
-          }
-
-          // Ten records a page. The rows are built once and refilled in place: a page turn
-          // changes their text and nothing else.
-          Gtk.ScrolledWindow result_scroll {
-            hscrollbar-policy: never;
-            propagate-natural-height: true;
-            vexpand: true;
-
-            child: Gtk.ListBox result_list {
-              selection-mode: single;
-              activate-on-single-click: false;
-              valign: start;
-              margin-start: 10;
-              margin-end: 10;
-              margin-top: 8;
-              margin-bottom: 12;
-
-              styles [
-                "boxed-list",
-              ]
             };
-          }
-
-          Gtk.CenterBox pager {
-            margin-start: 10;
-            margin-end: 10;
-
-            [start]
-            Gtk.Button newer_button {
-              icon-name: "go-previous-symbolic";
-              tooltip-text: _("Newer Games");
-            }
-
-            [center]
-            Gtk.Label page_label {
-              // Which records are on screen: a live region, so a page turn is announced.
-              accessible-role: status;
-
-              styles [
-                "dim-label",
-                "numeric",
-              ]
-            }
-
-            [end]
-            Gtk.Button older_button {
-              icon-name: "go-next-symbolic";
-              tooltip-text: _("Older Games");
-            }
           }
         }
       }
     };
+
+    // Revealed with the records, when there is more than one page of them.
+    [bottom]
+    Gtk.CenterBox pager {
+      styles [
+        "toolbar",
+      ]
+
+      [start]
+      Gtk.Button newer_button {
+        icon-name: "go-previous-symbolic";
+        tooltip-text: _("Newer Games");
+      }
+
+      [center]
+      Gtk.Label page_label {
+        // Which records are on screen: a live region, so a page turn is announced.
+        accessible-role: status;
+
+        styles [
+          "dim-label",
+          "numeric",
+        ]
+      }
+
+      [end]
+      Gtk.Button older_button {
+        icon-name: "go-next-symbolic";
+        tooltip-text: _("Older Games");
+      }
+    }
   };
 }

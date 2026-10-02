@@ -2,11 +2,12 @@
 // Copyright (C) 2026 Huang Zhaobin
 //! The download dialog's fixed hierarchy, and the pages of records it shows.
 //!
-//! Fox answers with up to 200 records. The dialog shows them [`PAGE`] at a time in a boxed
-//! list whose rows are built once, with the dialog, and refilled in place. A list view
-//! cannot do as well: `GtkListView` keeps 200 rows alive whatever its height, and any list
-//! view drops its rows while unrooted and rebinds them all, synchronously, when presented
-//! again (`docs/dev/RENDERING.md` §8). A page of ten is also what a reader scans anyway.
+//! Fox answers with up to 200 records. The dialog shows them [`PAGE`] at a time, as rows of
+//! an `AdwPreferencesGroup` that are built once, with the dialog, and refilled in place; a
+//! row opens its record when activated, through the `picker.open-record` action. A list
+//! view cannot do as well: `GtkListView` keeps 200 rows alive whatever its height, and any
+//! list view drops its rows while unrooted and rebinds them all, synchronously, when
+//! presented again (`docs/dev/RENDERING.md` §8). A page of ten is also what a reader scans.
 //!
 //! Ten rows of CJK names still take 7–8 ms to shape and measure, more than a 144 Hz frame.
 //! A page therefore changes [`ROWS_PER_FRAME`] rows a frame, and the dialog is presented
@@ -64,9 +65,7 @@ mod imp {
     #[template(file = "src/fox_picker.blp")]
     pub struct FoxPickerDialog {
         #[template_child]
-        pub cancel_button: TemplateChild<gtk::Button>,
-        #[template_child]
-        pub open_button: TemplateChild<gtk::Button>,
+        pub toolbar: TemplateChild<adw::ToolbarView>,
         #[template_child]
         pub entry: TemplateChild<gtk::SearchEntry>,
         #[template_child]
@@ -80,21 +79,15 @@ mod imp {
         #[template_child]
         pub loading_page: TemplateChild<adw::StatusPage>,
         #[template_child]
-        pub recent_page: TemplateChild<gtk::ScrolledWindow>,
+        pub recent_page: TemplateChild<adw::PreferencesPage>,
         #[template_child]
-        pub recent_list: TemplateChild<gtk::ListBox>,
+        pub recent_group: TemplateChild<adw::PreferencesGroup>,
         #[template_child]
-        pub results_page: TemplateChild<gtk::Box>,
+        pub results_page: TemplateChild<adw::PreferencesPage>,
         #[template_child]
-        pub result_label: TemplateChild<gtk::Label>,
-        #[template_child]
-        pub saved_label: TemplateChild<gtk::Label>,
+        pub result_group: TemplateChild<adw::PreferencesGroup>,
         #[template_child]
         pub refresh_button: TemplateChild<gtk::Button>,
-        #[template_child]
-        pub result_scroll: TemplateChild<gtk::ScrolledWindow>,
-        #[template_child]
-        pub result_list: TemplateChild<gtk::ListBox>,
         #[template_child]
         pub pager: TemplateChild<gtk::CenterBox>,
         #[template_child]
@@ -103,7 +96,7 @@ mod imp {
         pub page_label: TemplateChild<gtk::Label>,
         #[template_child]
         pub older_button: TemplateChild<gtk::Button>,
-        /// The [`PAGE`] rows of `result_list`, in order.
+        /// The [`PAGE`] rows of `result_group`, in order.
         pub(super) slots: OnceCell<Vec<adw::ActionRow>>,
         /// The record each row shows. Rows a page turn has yet to refill still show the
         /// last page's, for a frame or two, and a click there must open what it shows.
@@ -124,7 +117,7 @@ mod imp {
         /// The application runtime: the saved searches are read and written on its blocking
         /// pool (INV-11).
         pub(super) runtime: OnceCell<tokio::runtime::Handle>,
-        /// Rows of `recent_list`, built as the history first needs them and refilled in
+        /// Rows of `recent_group`, built as the history first needs them and refilled in
         /// place, with the search each one shows.
         pub(super) recent: RefCell<Vec<(adw::ActionRow, gtk::Button, RecentText)>>,
         /// The searches the recent list is to show, most recent first.
@@ -140,6 +133,9 @@ mod imp {
         /// The query the status page reports on — a failure, or an account with no public
         /// games — kept on screen while the entry still reads it.
         pub(super) status_query: RefCell<String>,
+        /// What the entry read when a request began. The entry is read-only meanwhile, but
+        /// its clear icon still empties it; the text is put back.
+        pub(super) busy_text: RefCell<String>,
     }
 
     #[glib::object_subclass]
@@ -167,6 +163,13 @@ mod imp {
                 spinner.set_widget(Some(self.loading_page.upcast_ref::<gtk::Widget>()));
             }
             self.obj().build_slots();
+            // The pager is the toolbar's bottom bar, up only with a page of records to turn.
+            let weak = self.obj().downgrade();
+            self.stack.connect_visible_child_notify(move |_| {
+                if let Some(dialog) = weak.upgrade() {
+                    dialog.sync_pager();
+                }
+            });
         }
 
         fn dispose(&self) {
@@ -193,11 +196,11 @@ impl FoxPickerDialog {
     }
 
     /// Builds the page's rows, hidden until a page fills them. Called once, from
-    /// `constructed`.
+    /// `constructed`. Row `i` activates `picker.open-record` with `i`.
     fn build_slots(&self) {
         let imp = self.imp();
         let slots: Vec<adw::ActionRow> = (0..PAGE)
-            .map(|_| {
+            .map(|i| {
                 let row = adw::ActionRow::builder()
                     .activatable(true)
                     // Nicknames are plain text; one with `<` in it is not markup.
@@ -206,7 +209,11 @@ impl FoxPickerDialog {
                     .subtitle_lines(1)
                     .visible(false)
                     .build();
-                imp.result_list.append(&row);
+                // The target first: an action that takes a parameter refuses a row that
+                // names it without one, with a warning.
+                row.set_action_target_value(Some(&(i as u32).to_variant()));
+                row.set_action_name(Some("picker.open-record"));
+                imp.result_group.add(&row);
                 row
             })
             .collect();
@@ -217,8 +224,6 @@ impl FoxPickerDialog {
     pub fn widgets(&self) -> FoxPickerWidgets {
         let imp = self.imp();
         FoxPickerWidgets {
-            cancel_button: imp.cancel_button.get(),
-            open_button: imp.open_button.get(),
             entry: imp.entry.get(),
             search_button: imp.search_button.get(),
             banner: imp.banner.get(),
@@ -226,12 +231,9 @@ impl FoxPickerDialog {
             status_page: imp.status_page.get(),
             loading_page: imp.loading_page.get(),
             recent_page: imp.recent_page.get(),
-            recent_list: imp.recent_list.get(),
             results_page: imp.results_page.get(),
-            result_label: imp.result_label.get(),
-            saved_label: imp.saved_label.get(),
+            result_group: imp.result_group.get(),
             refresh_button: imp.refresh_button.get(),
-            result_list: imp.result_list.get(),
             newer_button: imp.newer_button.get(),
             older_button: imp.older_button.get(),
         }
@@ -273,8 +275,8 @@ impl FoxPickerDialog {
         self.replace_games(String::new(), Vec::new(), Vec::new());
     }
 
-    /// Installs `games`, the records `query` found, with `texts` how they read; shows the
-    /// first page with its first record selected.
+    /// Installs `games`, the records `query` found, with `texts` how they read, and shows
+    /// the first page.
     pub(crate) fn replace_games(
         &self,
         query: String,
@@ -301,8 +303,8 @@ impl FoxPickerDialog {
         self.imp().page.get()
     }
 
-    /// Shows page `page` with its first record selected, and says where it is. The first
-    /// rows change at once, the rest over the next frames.
+    /// Shows page `page` and says where it is. The first rows change at once, the rest over
+    /// the next frames.
     pub(crate) fn show_page(&self, page: usize) {
         let imp = self.imp();
         let pages = self.page_count();
@@ -310,14 +312,9 @@ impl FoxPickerDialog {
         imp.page.set(page);
         imp.next_slot.set(0);
         self.fill_rows();
-        let count = imp.texts.borrow().len();
-        match self.slots().first().filter(|_| count > 0) {
-            Some(row) => imp.result_list.select_row(Some(row)),
-            None => imp.result_list.unselect_all(),
-        }
         self.feed();
 
-        imp.pager.set_visible(pages > 1);
+        let count = imp.texts.borrow().len();
         imp.newer_button.set_sensitive(page > 0);
         imp.older_button.set_sensitive(page + 1 < pages);
         let first = page * PAGE;
@@ -331,18 +328,30 @@ impl FoxPickerDialog {
                 ("count", &count.to_string()),
             ],
         ));
+        self.sync_pager();
         // A page shorter than the window may still be scrolled down from the last one.
-        imp.result_scroll.vadjustment().set_value(0.0);
+        imp.results_page.scroll_to_top();
     }
 
-    /// Hides the rows, to come back a few a frame once the dialog is on screen. Called
-    /// before each presentation, while hiding them costs nothing; the selection stays.
+    /// Reveals the pager while the records are on screen and there is a page to turn to.
+    fn sync_pager(&self) {
+        let imp = self.imp();
+        let results = imp.stack.visible_child().as_ref()
+            == Some(imp.results_page.upcast_ref::<gtk::Widget>());
+        imp.toolbar
+            .set_reveal_bottom_bars(results && self.page_count() > 1);
+    }
+
+    /// Hides the rows, to come back a few a frame once the dialog is on screen, and the
+    /// pager with them until a page shows. Called before each presentation, while hiding
+    /// them costs nothing.
     pub(crate) fn refill(&self) {
         for row in self.slots() {
             row.set_visible(false);
         }
         self.imp().next_slot.set(0);
         self.feed();
+        self.sync_pager();
     }
 
     /// Fills the page's next [`ROWS_PER_FRAME`] rows; false once all are filled.
@@ -394,19 +403,9 @@ impl FoxPickerDialog {
         imp.feed.replace(Some(id));
     }
 
-    /// The record behind the selected row, if any is selected.
-    pub(crate) fn selected_game(&self) -> Option<crate::fox::FoxGame> {
-        let index = self.imp().result_list.selected_row()?.index();
-        self.game_at(usize::try_from(index).ok()?)
-    }
-
     /// The record row `slot` shows.
     pub(crate) fn game_at(&self, slot: usize) -> Option<crate::fox::FoxGame> {
         self.imp().slot_games.borrow().get(slot).cloned().flatten()
-    }
-
-    pub(crate) fn has_selection(&self) -> bool {
-        self.imp().result_list.selected_row().is_some()
     }
 
     pub(crate) fn has_games(&self) -> bool {
@@ -417,12 +416,6 @@ impl FoxPickerDialog {
         if let Some(task) = self.imp().task.take() {
             task.abort();
         }
-    }
-
-    pub(crate) fn connect_selection_changed(&self, f: impl Fn() + 'static) {
-        self.imp()
-            .result_list
-            .connect_selected_rows_changed(move |_| f());
     }
 
     pub(crate) fn replace_task(&self, task: glib::JoinHandle<()>) {
@@ -445,8 +438,8 @@ impl FoxPickerDialog {
     /// Shows `entries` as the recent searches. Rows already built are refilled at once, so
     /// none goes on showing a search that has moved or gone; the rows the list has never
     /// needed are built [`ROWS_PER_FRAME`] a frame, as building one costs more than
-    /// refilling it. Each row's button forgets its search through the dialog's
-    /// `picker.forget` action.
+    /// refilling it. A row opens its search through the dialog's `picker.open-saved`
+    /// action, and its button forgets it through `picker.forget`.
     pub(crate) fn set_recent(&self, revision: u64, entries: Vec<RecentText>) {
         let imp = self.imp();
         let built = imp.recent.borrow().len();
@@ -497,19 +490,24 @@ impl FoxPickerDialog {
                     .valign(gtk::Align::Center)
                     .css_classes(["flat"])
                     .build();
-                // The target first: an action that takes a string refuses a button that
+                // The targets first: an action that takes a string refuses a widget that
                 // names it without one, with a warning.
-                forget.set_action_target_value(Some(&entry.query.to_variant()));
+                let query = entry.query.to_variant();
+                row.set_action_target_value(Some(&query));
+                row.set_action_name(Some("picker.open-saved"));
+                forget.set_action_target_value(Some(&query));
                 forget.set_action_name(Some("picker.forget"));
                 row.add_suffix(&forget);
-                imp.recent_list.append(&row);
+                imp.recent_group.add(&row);
                 recent.push((row, forget, RecentText::default()));
             }
             let (row, forget, shown) = &mut recent[i];
             if shown != entry {
                 row.set_title(&entry.title);
                 row.set_subtitle(&entry.subtitle);
-                forget.set_action_target_value(Some(&entry.query.to_variant()));
+                let query = entry.query.to_variant();
+                row.set_action_target_value(Some(&query));
+                forget.set_action_target_value(Some(&query));
                 *shown = entry.clone();
             }
             row.set_visible(entry.matches(&needle));
@@ -535,22 +533,20 @@ impl FoxPickerDialog {
         count
     }
 
-    /// The search behind row `index` of the recent list.
-    pub(crate) fn recent_query(&self, index: usize) -> Option<String> {
-        let imp = self.imp();
-        let recent = imp.recent.borrow();
-        recent
-            .get(index)
-            .filter(|_| index < imp.recent_entries.borrow().len())
-            .map(|(_, _, shown)| shown.query.clone())
-    }
-
     pub(crate) fn status_query(&self) -> String {
         self.imp().status_query.borrow().clone()
     }
 
     pub(crate) fn set_status_query(&self, query: String) {
         self.imp().status_query.replace(query);
+    }
+
+    pub(crate) fn busy_text(&self) -> String {
+        self.imp().busy_text.borrow().clone()
+    }
+
+    pub(crate) fn set_busy_text(&self, text: String) {
+        self.imp().busy_text.replace(text);
     }
 }
 
@@ -561,21 +557,16 @@ impl Default for FoxPickerDialog {
 }
 
 pub struct FoxPickerWidgets {
-    pub cancel_button: gtk::Button,
-    pub open_button: gtk::Button,
     pub entry: gtk::SearchEntry,
     pub search_button: gtk::Button,
     pub banner: adw::Banner,
     pub stack: adw::ViewStack,
     pub status_page: adw::StatusPage,
     pub loading_page: adw::StatusPage,
-    pub recent_page: gtk::ScrolledWindow,
-    pub recent_list: gtk::ListBox,
-    pub results_page: gtk::Box,
-    pub result_label: gtk::Label,
-    pub saved_label: gtk::Label,
+    pub recent_page: adw::PreferencesPage,
+    pub results_page: adw::PreferencesPage,
+    pub result_group: adw::PreferencesGroup,
     pub refresh_button: gtk::Button,
-    pub result_list: gtk::ListBox,
     pub newer_button: gtk::Button,
     pub older_button: gtk::Button,
 }
