@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use soup::prelude::*;
 
 use crate::config::Config;
-use crate::fox_picker::{FoxPickerDialog, FoxRow};
+use crate::fox_picker::{FoxPickerDialog, RecordText};
 use crate::i18n;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(25);
@@ -312,9 +312,9 @@ async fn fetch_game(game: &FoxGame) -> Result<DownloadedGame, FoxError> {
     })
 }
 
-/// How one record reads in the list. Plain text: the labels bound to it do not parse markup,
-/// so a nickname with `<` in it is not a problem.
-fn list_row(game: &FoxGame) -> FoxRow {
+/// How one record reads in the list. Plain text: the rows do not parse markup, so a nickname
+/// with `<` in it is not a problem.
+fn record_text(game: &FoxGame) -> RecordText {
     let mut details = Vec::with_capacity(5);
     if !game.date.is_empty() {
         details.push(fox::display_text(&game.date));
@@ -336,7 +336,10 @@ fn list_row(game: &FoxGame) -> FoxRow {
     if !game.title.is_empty() {
         details.push(fox::display_text(&game.title));
     }
-    FoxRow::new(&game.matchup(), &details.join(" · "))
+    RecordText {
+        title: game.matchup(),
+        subtitle: details.join(" · "),
+    }
 }
 
 impl FoxPickerDialog {
@@ -370,17 +373,38 @@ impl FoxPickerDialog {
         widgets.open_button.connect_clicked(clone!(
             #[weak]
             dialog,
-            move |_| dialog.start_download()
+            move |_| {
+                if let Some(game) = dialog.selected_game() {
+                    dialog.start_download(game);
+                }
+            }
         ));
         dialog.connect_selection_changed(clone!(
             #[weak]
             dialog,
             move || dialog.refresh_actions()
         ));
-        widgets.result_list.connect_activate(clone!(
+        widgets.result_list.connect_row_activated(clone!(
             #[weak]
             dialog,
-            move |_, _| dialog.start_download()
+            move |_, row| {
+                if let Some(game) = usize::try_from(row.index())
+                    .ok()
+                    .and_then(|slot| dialog.game_at(slot))
+                {
+                    dialog.start_download(game);
+                }
+            }
+        ));
+        widgets.newer_button.connect_clicked(clone!(
+            #[weak]
+            dialog,
+            move |_| dialog.turn_page(false)
+        ));
+        widgets.older_button.connect_clicked(clone!(
+            #[weak]
+            dialog,
+            move |_| dialog.turn_page(true)
         ));
         dialog.connect_closed(clone!(
             #[weak]
@@ -396,9 +420,8 @@ impl FoxPickerDialog {
         dialog
     }
 
-    /// Puts the dialog back into a state fit to be shown again. Runs before presenting,
-    /// while the list is unrooted: emptying it there is what spares the presentation from
-    /// rebinding every row (`fox_picker` module docs).
+    /// Puts the dialog back into a state fit to be shown again: whatever was loading is
+    /// dropped, and its rows come back once it is on screen (`fox_picker` module docs).
     fn prepare_to_show(&self) {
         self.abort_task();
         self.set_busy(false);
@@ -426,6 +449,16 @@ impl FoxPickerDialog {
 
     fn set_busy(&self, busy: bool) {
         self.set_busy_flag(busy);
+        self.refresh_actions();
+    }
+
+    fn turn_page(&self, older: bool) {
+        let page = self.page();
+        self.show_page(if older {
+            page + 1
+        } else {
+            page.saturating_sub(1)
+        });
         self.refresh_actions();
     }
 
@@ -516,8 +549,8 @@ impl FoxPickerDialog {
             &[("account", &account), ("count", &count.to_string())],
         );
         widgets.result_label.set_label(&heading);
-        let rows: Vec<FoxRow> = found.rows.iter().map(list_row).collect();
-        self.replace_games(found.rows, rows);
+        let texts: Vec<RecordText> = found.rows.iter().map(record_text).collect();
+        self.replace_games(found.rows, texts);
         widgets.stack.set_visible_child(&widgets.results_page);
         self.refresh_actions();
     }
@@ -549,15 +582,11 @@ impl FoxPickerDialog {
         self.replace_task(task);
     }
 
-    fn start_download(&self) {
+    fn start_download(&self, game: FoxGame) {
         if self.is_busy() {
             return;
         }
         let widgets = self.widgets();
-        let Some(game) = self.selected_game() else {
-            return;
-        };
-
         widgets.banner.set_revealed(false);
         widgets
             .loading_page
@@ -583,9 +612,9 @@ impl FoxPickerDialog {
                 self.close();
             }
             Err(error) => {
-                self.set_busy(false);
                 let widgets = self.widgets();
                 widgets.stack.set_visible_child(&widgets.results_page);
+                self.set_busy(false);
                 widgets.banner.set_title(&i18n::gettext_f(
                     "Could not download the game: {error}",
                     &[("error", &fox_error_message(&error))],
@@ -675,11 +704,11 @@ mod tests {
     }
 
     #[test]
-    fn a_list_row_reads_as_one_line_of_plain_text() {
-        let row = list_row(&row());
-        assert_eq!(row.title(), "柯洁 (6d) vs 申真谞 (6d)");
+    fn a_record_reads_as_one_line_of_plain_text() {
+        let text = record_text(&row());
+        assert_eq!(text.title, "柯洁 (6d) vs 申真谞 (6d)");
         assert_eq!(
-            row.subtitle(),
+            text.subtitle,
             "2024-01-01 12:00:00 · 19×19 · 241 moves · B+0.75"
         );
     }

@@ -6,7 +6,7 @@ using Adw 1;
 template $MiraiFoxPickerDialog: Adw.Dialog {
   title: _("Download from Fox");
   content-width: 720;
-  content-height: 680;
+  content-height: 860;
 
   child: Adw.ToolbarView {
     [top]
@@ -104,18 +104,49 @@ template $MiraiFoxPickerDialog: Adw.Dialog {
             ]
           }
 
-          Gtk.ScrolledWindow {
+          // Ten records a page. The rows are built once and refilled in place: a page turn
+          // changes their text and nothing else.
+          Gtk.ScrolledWindow result_scroll {
             hscrollbar-policy: never;
+            propagate-natural-height: true;
             vexpand: true;
 
-            child: Gtk.GridView result_list {
-              max-columns: 1;
-              single-click-activate: false;
+            child: Gtk.ListBox result_list {
+              selection-mode: single;
+              activate-on-single-click: false;
+              valign: start;
 
               styles [
-                "card",
+                "boxed-list",
               ]
             };
+          }
+
+          Gtk.CenterBox pager {
+            margin-top: 12;
+
+            [start]
+            Gtk.Button newer_button {
+              icon-name: "go-previous-symbolic";
+              tooltip-text: _("Newer Games");
+            }
+
+            [center]
+            Gtk.Label page_label {
+              // Which records are on screen: a live region, so a page turn is announced.
+              accessible-role: status;
+
+              styles [
+                "dim-label",
+                "numeric",
+              ]
+            }
+
+            [end]
+            Gtk.Button older_button {
+              icon-name: "go-next-symbolic";
+              tooltip-text: _("Older Games");
+            }
           }
         }
       }

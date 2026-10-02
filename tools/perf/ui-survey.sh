@@ -17,8 +17,9 @@
 # Override with MIRAI_BIN. Logs go to ${MIRAI_SURVEY_OUT:-/tmp/mirai-survey}/<scenario>.log.
 # MIRAI_WRAP prefixes the command — `MIRAI_WRAP="perf record -g -o /tmp/p.data --"` profiles
 # the same run (build with RUSTFLAGS="-C force-frame-pointers=yes" for whole stacks).
-# Scenarios whose steps match on-screen labels run with LANGUAGE=en; `fox` matches none, so
-# it keeps your locale, whose UI text has already loaded the fonts its CJK records need.
+# Every scenario runs with LANGUAGE=en, as its steps match on-screen labels; for `fox` that
+# also makes the records the first CJK text the process draws, as for anyone with a
+# Latin-script interface.
 #
 # The window opens on the focused output, and its refresh rate is the budget: the stats
 # print the period they judged against. Keep the window on screen — niri throttles frame
@@ -63,7 +64,8 @@ declare -A script
 script[dialogs]="wait:3000,$(open_close win.preferences 2)\
 action:win.preferences,wait:1000,page:Analysis,wait:600,page:Play,wait:600,page:General,wait:600,page:Engines,wait:600,close-dialog,wait:800,\
 $(open_close win.new-game 2)$(open_close win.about 2)quit"
-script[fox]="wait:3000,$(open_close win.download-fox 4)quit"
+script[fox]="wait:3000,$(open_close win.download-fox 2)action:win.download-fox,wait:1000,\
+$(repeat 'press:Older Games,wait:500,' 3)press:Newer Games,wait:500,close-dialog,wait:800,quit"
 script[main]="wait:3000,\
 action:win.toggle-sidebar,wait:700,action:win.toggle-sidebar,wait:700,\
 action:win.toggle-graph,wait:700,action:win.toggle-graph,wait:700,\
@@ -110,9 +112,7 @@ for name in "${scenarios[@]}"; do
     fi
     [[ $name != fox ]] || fox_cache "$scratch/data/mirai/fox-last-search.json"
     log=$out/$name.log
-    language=en
-    [[ $name != fox ]] || language=${LANGUAGE:-}
-    LANGUAGE=$language XDG_CONFIG_HOME="$scratch/config" XDG_DATA_HOME="$scratch/data" \
+    LANGUAGE=en XDG_CONFIG_HOME="$scratch/config" XDG_DATA_HOME="$scratch/data" \
         MIRAI_FRAMES=1 RUST_LOG=warn MIRAI_HARNESS="${script[$name]}" \
         ${MIRAI_WRAP:-} "$bin" "$sgf" 2>"$log" || echo "($name: a harness step failed; see $log)" >&2
     rm -rf "$scratch"

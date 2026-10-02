@@ -200,9 +200,10 @@ trip.
 **Downloading from Fox.** Click the main **Download from Fox** half of the split button,
 or press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>.
 Enter an exact Fox nickname or numeric UID. The list shows at most the latest 200 public
-records, which is the service's fixed history window; players who hide their records are not
-bypassed. A successful search is cached: opening the dialog again restores the last query and
-its list. A click only selects a row. Double-click, Enter on the list, or **Open Game**
+records, which is the service's fixed history window, ten to a page; the arrows under it turn
+to newer and older games. Players who hide their records are not bypassed. A successful search
+is cached: opening the dialog again restores the last query, its list and the page. A click
+only selects a row. Double-click, Enter on the list, or **Open Game**
 downloads and loads that row. Enter in the search box searches; it does not open a game.
 Fox's dialect — quarter-point Chinese komi, and handicap stones written as a run of opening
 nodes — is normalised on import. The result has no local backing file: it is named after its
