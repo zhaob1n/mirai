@@ -8,6 +8,7 @@ mod batch;
 mod config;
 mod dialogs;
 mod engines;
+mod font_warmup;
 mod fox;
 mod fox_picker;
 #[cfg(debug_assertions)]
@@ -23,6 +24,7 @@ mod prefs;
 mod profile_editor;
 mod render_probe;
 mod sound;
+mod ui_thread;
 mod util;
 mod widgets;
 mod window;
@@ -43,6 +45,10 @@ fn main() -> glib::ExitCode {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+    // Before the runtime and GTK start threads: none of them is to inherit it.
+    if !render_probe::no_clock_floor() {
+        ui_thread::request_clock_floor();
+    }
 
     gio::resources_register_include!("mirai.gresource")
         .expect("the compiled resource bundle should be embedded");

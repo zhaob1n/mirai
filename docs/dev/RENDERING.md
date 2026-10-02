@@ -37,8 +37,11 @@ worst case; [`numbered-game.py`](../../tools/perf/numbered-game.py) exercises
 190 numbered moves, which setup stones cannot test. `MIRAI_NO_BOARD`,
 `MIRAI_NO_GRAPH`, `MIRAI_NO_LABEL_DEFER`, `MIRAI_SPIN` and `MIRAI_DUMP_NODE`
 are available for ablation and render-node capture in debug builds. For a stack,
-`MIRAI_WRAP="perf record --call-graph dwarf -o p.data --"` profiles the same survey run;
-Arch's GTK has frame pointers, but unwinding through it from Rust needs DWARF.
+`MIRAI_WRAP` prefixes the survey's command with `perf record`; with
+`-k CLOCK_MONOTONIC`, [`frame-profile.py`](../../tools/perf/frame-profile.py) cuts the
+profile at each frame's `at=` and says, per slow frame, how long the GTK thread was on a
+CPU and at what clock, or where one frame's time went. Unwind with frame pointers: Arch's
+libraries have them, and GTK's widget recursion runs deeper than a DWARF stack copy.
 
 Measurements in §§3–5 used no engine, a ~1486×1634 window on a
 6016×3384@60 Hz output at scale 2. Reset persisted `[ui]` toggles between
@@ -253,18 +256,21 @@ any new report-rate list or readout must avoid per-report widget churn.
 
 The goal moved from 60 Hz to at least 144 Hz: 6.9 ms a frame, 6.25 ms on the 160 Hz
 output. Measured with `ui-survey.sh` on a 3840×2160@160 Hz output at scale 1.5 unless
-noted; release with assertions, no engine but for live analysis.
+noted; release with assertions, no engine but for live analysis. GTK 4.22 for the first
+rows; the clock floor and the font warm-up below on GTK 4.24.
 
 | surface | before | after |
 |---|---|---|
 | Fox picker, 200 records, reopen | a 116–133 ms frame (60 Hz output) | action 1–5 ms, layout 1–8 ms |
-| Fox picker, first open, English UI | layout 98–223 ms | 33–140 ms; first CJK text below |
+| Fox picker, first open, English UI | layout 98–223 ms | 20–39 ms with fonts loaded at idle, 50–54 ms without |
 | Fox picker, page turn | — | layout 1.2–6 ms a frame over 3 frames |
 | Preferences | 38–130 ms action, every open | first open unchanged; then 2–9 ms |
 | New Game | 21–55 ms action, every open | first open unchanged; then 2.6 ms |
 | editor reveal (board resize) | board 7.4 ms a frame, 11 frames over | 0.13 ms, 0 over |
 | live analysis, candidate figures | 0.75 ms a report | 0.26 ms |
 | live analysis, 8 steps forward | 73–75 candidate rows built; panel refresh p90 2.1–4.7 ms, max 5.1–6.6 | 2–3 rows; p90 1.2–1.4 ms, max 1.9–2.6 |
+| frames over budget, dialogs / Fox picker / main window | 4.2 % / 3.3–5.8 % / 2.1–3.1 %; p99 12.6–21.7 ms | 1.2 % / 1.3 % / 1.8 %; p99 7.5–12 ms |
+| frames over budget, live analysis survey | 25–29 % | 3.2 % |
 
 **A list view keeps 200 rows.** `GtkListView` keeps `GTK_LIST_VIEW_MAX_LIST_ITEMS`
 (200) rows alive around its anchor whatever its height (`gtklistview.c`), so a list of
@@ -301,26 +307,47 @@ stylesheet keys on to drop its cells' padding, so it has no height, and it sorts
 The list looks as it did; only a lowered suggestion limit removes rows. `MIRAI_FRAMES`
 counts rows built (`candidate-row`) and times the refresh (`candidates`).
 
-What remains is GTK's or libadwaita's:
+**The CPU ran at its lowest clock.** On a machine whose kernel picks frequencies from
+load — here intel_pstate in passive mode (`intel_pstate=no_hwp`) under schedutil — the
+GTK thread looks idle: it works a millisecond or two a frame and sleeps the rest. Its
+slow frames were on-CPU for their whole length, on P-cores at 0.65–0.97 GHz of 4.9: an
+animation frame of 4 Mcycles, under a millisecond at full clock, took 5 ms; a
+Preferences page's first visit, 34 Mcycles, took 45 ms. `frame-profile.py` shows it as
+few cycles at under 1 GHz, not as more work. `ui_thread.rs` gives the GTK thread a
+utilization clamp (`uclamp.min` 512 of 1024), which schedutil reads as half busy while
+the thread runs; it needs no privilege, the thread's children do not inherit it, and
+asleep the thread costs nothing. 256 halved the frames over budget, 512 took them to a
+third, 768 gained little more. A driver that ramps by itself (intel_pstate with HWP,
+amd-pstate active) is unaffected. `MIRAI_NO_CLOCK_FLOOR=1` measures without it.
 
-- **Dialog animations, 5–15 ms a frame.** libadwaita's floating sheet animates its scale
-  from 0.8 (`adw-floating-sheet.c`). GSK's GPU renderer lifts a 2D scale out of the
-  transform and rasterises glyphs at that exact scale (`gskgpunodeprocessor.c`), keying
-  its glyph cache by it (`gskgpucachedglyph.c`), so every frame of an open or close
-  rasterises every glyph again on the CPU. A text-heavy dialog costs more; the picker's
-  CJK records most, up to 45 ms closing at 160 Hz. Only giving the animation up avoids
-  it: reduced motion, which is display-wide, or a bottom sheet.
-- **The first CJK text in a process**, 20–110 ms: font fallback, loading, and every glyph
-  shaped and rasterised for the first time. Laying out CJK text on the GTK thread at
-  startup took 15–26 ms and did not measurably shorten the picker's first open: the cost
-  follows the glyphs first shown, which a page of ten keeps down.
-- **A Preferences page's first visit**, 4–6 ms of layout: wrapped labels are shaped at
-  their allocated width, and `AdwViewStack` allocates only the visible page.
+**The first CJK text loaded its fonts inside a frame.** Pango builds a fallback fontset
+per font description the first time a string needs one: fontconfig sorts the installed
+fonts for it, and the CJK face is opened and shaped with. With an English interface the
+picker's first records paid that for four text styles at once, 60–130 ms of layout.
+Pango's font map belongs to its thread, so `font_warmup.rs` lays out a CJK sample on the
+GTK thread itself, one style at a time — body, bold, `smaller`, `.caption` — from 2 s
+after start, at low priority, and only once no window has painted for 50 ms. Each
+step takes 17–45 ms at idle, 9–30 ms with a Chinese interface, whose own text has done
+part of it. Laying out a sample with the window's own context alone, as first tried,
+covered one style and saved nothing measurable.
+
+What remains:
+
+- **Dialog animations re-rasterise their text.** libadwaita's floating sheet animates its
+  scale from 0.8 (`adw-floating-sheet.c`). GSK's GPU renderer lifts that scale and
+  translation out of the modelview into the pass's scale, and rasterises glyphs at that
+  exact scale, keying its glyph cache by it (`gskgpunodeprocessor.c`,
+  `gskgpucachedglyph.c`). GTK 4.24 rounds the scale to a power of two only when the
+  modelview keeps a rotation, skew or projection (`<= GSK_FINE_TRANSFORM_CATEGORY_2D`),
+  not when it was lifted. Every frame of an open or close rasterises every glyph again:
+  31–37 ms closing the picker, on 4.22 and 4.24 alike. Rounding the lifted scale as well
+  in `add_glyph_node`, keeping its subpixel positions, takes it to 6–7 ms and the other
+  dialogs into budget; the patch is GTK's to take. Within the app, only giving the
+  animation up avoids it.
+- **One frame on a first visit**: a Preferences page, New Game or About, 8–17 ms of
+  their first layout with the clock floor.
 - **A report relays out the window**: label text changes queue a resize up to the
-  toplevel (`gtkwidget.c`), 1–2 ms a report; GSK then renders 3–8 ms. That is the GTK
-  thread's own time, not a wait on the GPU KataGo shares: profiled through steady live
-  analysis, a third of the thread is `gsk_renderer_render`, much of it radv recording
-  commands and glyphs being rasterised.
+  toplevel (`gtkwidget.c`), and no container stops it.
 
 ## 9. Keeping it
 
@@ -333,5 +360,6 @@ What remains is GTK's or libadwaita's:
 - Measure drawing with the search **finished**: report-driven layouts during
   search mask changes to `snapshot()` (§7). The [testing guide](TESTING.md)
   has the GUI verification recipes.
-- On a machine whose CPU clocks down when idle (`schedutil`), the same step measures
-  1–6 ms from one run to the next; compare several runs, not one step.
+- Before blaming a slow frame on its work, read its clock in `frame-profile.py`: on a
+  schedutil machine the same step varies severalfold with the frequency it ran at.
+  Compare several runs, and `MIRAI_NO_CLOCK_FLOOR=1` against the default.
