@@ -258,7 +258,7 @@ noted; release with assertions, no engine but for live analysis.
 | surface | before | after |
 |---|---|---|
 | Fox picker, 200 records, reopen | a 116–133 ms frame (60 Hz output) | action 1–5 ms, layout 1–8 ms |
-| Fox picker, first open, English UI | layout 98–223 ms | 33–75 ms; first CJK text below |
+| Fox picker, first open, English UI | layout 98–223 ms | 33–140 ms; first CJK text below |
 | Fox picker, page turn | — | layout 1.2–6 ms a frame over 3 frames |
 | Preferences | 38–130 ms action, every open | first open unchanged; then 2–9 ms |
 | New Game | 21–55 ms action, every open | first open unchanged; then 2.6 ms |
