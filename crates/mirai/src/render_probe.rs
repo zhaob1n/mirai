@@ -10,7 +10,9 @@
 //!    means a 60 Hz frame was hit and `50.00` means two were missed.
 //! 2. *Which phase costs the time?* `frame-phases` splits one frame into GTK's phases:
 //!    `update` ticks animations, `layout` measures and allocates, `paint` snapshots the
-//!    widget tree and hands the resulting render node to GSK.
+//!    widget tree and hands the resulting render node to GSK. Its `at=` is when the frame
+//!    began, for cutting a `perf` profile per frame (`tools/perf/frame-profile.py`), which
+//!    also says whether a slow frame did more work or did it at a lower clock.
 //! 3. *Which part of the scene costs it?* [`Timer`] brackets one drawing pass, and the
 //!    `MIRAI_NO_*` flags take a whole widget out.
 //!
@@ -197,7 +199,15 @@ pub fn install(window: &crate::window_shell::MiraiWindow) {
                 .windows(2)
                 .map(|w| format!("{}={:.2}", w[1].0, (w[1].1 - w[0].1).as_secs_f64() * 1000.0))
                 .collect();
-            eprintln!("frame-phases total={total:.2} {}", detail.join(" "));
+            // When the frame began on CLOCK_MONOTONIC, the clock `perf record -k
+            // CLOCK_MONOTONIC` stamps samples with: tools/perf/frame-profile.py cuts a
+            // profile at it, frame by frame.
+            let since = (Instant::now() - first.1).as_micros() as i64;
+            let at = (glib::monotonic_time() - since) as f64 / 1e6;
+            eprintln!(
+                "frame-phases total={total:.2} {} at={at:.6}",
+                detail.join(" ")
+            );
         }
         spans.clear();
         None

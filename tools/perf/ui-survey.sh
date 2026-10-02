@@ -15,8 +15,9 @@
 # The binary is an optimised build that keeps debug assertions, because the harness and the
 # frame probes are compiled only with them: target/perf/release/mirai, built on first use.
 # Override with MIRAI_BIN. Logs go to ${MIRAI_SURVEY_OUT:-/tmp/mirai-survey}/<scenario>.log.
-# MIRAI_WRAP prefixes the command — `MIRAI_WRAP="perf record -g -o /tmp/p.data --"` profiles
-# the same run (build with RUSTFLAGS="-C force-frame-pointers=yes" for whole stacks).
+# MIRAI_WRAP prefixes the command — `MIRAI_WRAP="perf record -k CLOCK_MONOTONIC
+# --call-graph fp -e cycles/period=2000000/ -e task-clock/period=200000/ -o /tmp/p.data --"`
+# profiles the same run, and tools/perf/frame-profile.py reads it frame by frame.
 # Every scenario runs with LANGUAGE=en, as its steps match on-screen labels; for `fox` that
 # also makes the records the first CJK text the process draws, as for anyone with a
 # Latin-script interface.

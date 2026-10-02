@@ -37,8 +37,11 @@ worst case; [`numbered-game.py`](../../tools/perf/numbered-game.py) exercises
 190 numbered moves, which setup stones cannot test. `MIRAI_NO_BOARD`,
 `MIRAI_NO_GRAPH`, `MIRAI_NO_LABEL_DEFER`, `MIRAI_SPIN` and `MIRAI_DUMP_NODE`
 are available for ablation and render-node capture in debug builds. For a stack,
-`MIRAI_WRAP="perf record --call-graph dwarf -o p.data --"` profiles the same survey run;
-Arch's GTK has frame pointers, but unwinding through it from Rust needs DWARF.
+`MIRAI_WRAP` prefixes the survey's command with `perf record`; with
+`-k CLOCK_MONOTONIC`, [`frame-profile.py`](../../tools/perf/frame-profile.py) cuts the
+profile at each frame's `at=` and says, per slow frame, how long the GTK thread was on a
+CPU and at what clock, or where one frame's time went. Unwind with frame pointers: Arch's
+libraries have them, and GTK's widget recursion runs deeper than a DWARF stack copy.
 
 Measurements in §§3–5 used no engine, a ~1486×1634 window on a
 6016×3384@60 Hz output at scale 2. Reset persisted `[ui]` toggles between
