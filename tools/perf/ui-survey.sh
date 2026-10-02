@@ -65,7 +65,9 @@ script[dialogs]="wait:3000,$(open_close win.preferences 2)\
 action:win.preferences,wait:1000,page:Analysis,wait:600,page:Play,wait:600,page:General,wait:600,page:Engines,wait:600,close-dialog,wait:800,\
 $(open_close win.new-game 2)$(open_close win.about 2)quit"
 script[fox]="wait:3000,$(open_close win.download-fox 2)action:win.download-fox,wait:1000,\
-$(repeat 'press:Older Games,wait:500,' 3)press:Newer Games,wait:500,close-dialog,wait:800,quit"
+$(repeat 'press:Older Games,wait:500,' 3)press:Newer Games,wait:500,\
+fill:Exact Fox nickname=,wait:700,fill:Exact Fox nickname=申,wait:700,press:申真谞,wait:800,\
+close-dialog,wait:800,quit"
 script[main]="wait:3000,\
 action:win.toggle-sidebar,wait:700,action:win.toggle-sidebar,wait:700,\
 action:win.toggle-graph,wait:700,action:win.toggle-graph,wait:700,\
@@ -79,22 +81,28 @@ script[analysis]="wait:8000,action:win.next10,wait:300,action:win.toggle-analysi
 $(repeat 'action:win.next,wait:500,' 8)action:win.next10,wait:1500,\
 $(repeat 'action:win.prev,wait:500,' 4)action:win.toggle-analysis,wait:1000,quit"
 
-fox_cache() { # <path>: 200 records in the shape Fox answers with, CJK names and titles
+fox_cache() { # <path>: saved searches in the shape Fox answers with, CJK names and titles
     python3 - "$1" <<'EOF'
 import json, sys
 names = ["柯洁", "申真谞", "党毅飞", "朴廷桓", "芈昱廷", "一力辽", "Shin Jinseo", "辜梓豪"]
-rows = []
-for i in range(200):
-    rows.append({
-        "chessid": str(1785337045010001403 - i), "blacknick": names[i % 8],
-        "blackenname": "", "whitenick": names[(i * 3 + 1) % 8], "whiteenname": "",
+def rows(count, seed):
+    return [{
+        "chessid": str(1785337045010001403 - i - seed * 1000), "blacknick": names[(i + seed) % 8],
+        "blackenname": "", "whitenick": names[(i * 3 + 1 + seed) % 8], "whiteenname": "",
         "blackdan": 108, "whitedan": 100 + i % 9, "blackocc": 2, "whiteocc": 2,
         "winner": 1 + i % 2, "point": -1 if i % 3 else 75, "movenum": 120 + i % 180,
         "boardsize": 19, "starttime": f"2026-07-{1 + i % 28:02d} 22:{i % 60:02d}:25",
         "title": "第6届中国围棋王中王争霸赛总决赛" if i % 4 == 0 else "",
-    })
-json.dump({"query": "柯洁", "account": "柯洁", "rows": rows}, open(sys.argv[1], "w"),
-          ensure_ascii=False)
+    } for i in range(count)]
+searches = [
+    {"query": "柯洁", "account": "柯洁", "saved": 1785337045, "rows": rows(200, 0)},
+    {"query": "申真谞", "account": "申真谞", "saved": 1785250645, "rows": rows(37, 1)},
+    {"query": "6757425", "account": "UID 6757425", "saved": 1785164245, "rows": rows(8, 2)},
+]
+# A full history: the recent list at its longest.
+searches += [{"query": f"{names[i % 8]}{i}", "account": f"{names[i % 8]}{i}",
+              "saved": 1785000000 - i * 3600, "rows": rows(60, i)} for i in range(3, 20)]
+json.dump({"searches": searches}, open(sys.argv[1], "w"), ensure_ascii=False)
 EOF
 }
 
@@ -110,7 +118,7 @@ for name in "${scenarios[@]}"; do
         [[ $name != analysis ]] || { echo "analysis needs --engine" >&2; exit 2; }
         printf 'engine_profile = []\n' > "$scratch/config/mirai/config.toml"
     fi
-    [[ $name != fox ]] || fox_cache "$scratch/data/mirai/fox-last-search.json"
+    [[ $name != fox ]] || fox_cache "$scratch/data/mirai/fox-searches.json"
     log=$out/$name.log
     LANGUAGE=en XDG_CONFIG_HOME="$scratch/config" XDG_DATA_HOME="$scratch/data" \
         MIRAI_FRAMES=1 RUST_LOG=warn MIRAI_HARNESS="${script[$name]}" \

@@ -88,20 +88,75 @@ template $MiraiFoxPickerDialog: Adw.Dialog {
           paintable: Adw.SpinnerPaintable {};
         }
 
+        // Searches already made, answered from the saved records without asking Fox.
+        Gtk.ScrolledWindow recent_page {
+          hscrollbar-policy: never;
+
+          child: Gtk.Box {
+            orientation: vertical;
+            margin-start: 18;
+            margin-end: 18;
+            margin-bottom: 18;
+
+            Gtk.Label {
+              label: _("Recent Searches");
+              xalign: 0;
+              margin-bottom: 8;
+
+              styles [
+                "heading",
+              ]
+            }
+
+            Gtk.ListBox recent_list {
+              selection-mode: none;
+
+              styles [
+                "boxed-list",
+              ]
+            }
+          };
+        }
+
         Gtk.Box results_page {
           orientation: vertical;
           margin-start: 18;
           margin-end: 18;
           margin-bottom: 18;
 
-          Gtk.Label result_label {
-            label: _("Recent Games");
-            xalign: 0;
+          Gtk.Box {
+            spacing: 6;
             margin-bottom: 8;
 
-            styles [
-              "heading",
-            ]
+            Gtk.Label result_label {
+              label: _("Recent Games");
+              xalign: 0;
+              hexpand: true;
+              ellipsize: end;
+
+              styles [
+                "heading",
+              ]
+            }
+
+            Gtk.Label saved_label {
+              xalign: 1;
+
+              styles [
+                "dim-label",
+                "caption",
+              ]
+            }
+
+            Gtk.Button refresh_button {
+              icon-name: "view-refresh-symbolic";
+              tooltip-text: _("Search Fox Again");
+              valign: center;
+
+              styles [
+                "flat",
+              ]
+            }
           }
 
           // Ten records a page. The rows are built once and refilled in place: a page turn
