@@ -9,8 +9,10 @@
 
 One block is printed per harness step, because the interesting frames are the ones that
 follow an action. The refresh period is the shortest frame interval the run produced at
-least ten times: an animating window ticks at the output's rate, while an idle one may fall
-back to a 60 Hz timer even on a 160 Hz output, so the median would misjudge a fast display.
+least ten times and in at least one interval in fifty: an animating window ticks at the
+output's rate, while an idle one may fall back to a 60 Hz timer even on a 160 Hz output, so
+the median would misjudge a fast display; and a frame that catches up after a late one
+follows it within a millisecond or two, often enough in a long run to pass for a rate.
 Columns:
 
     n            frames the clock produced in that block
@@ -109,7 +111,8 @@ def refresh_period(dts):
     counts = {}
     for dt in dts:
         counts[round(dt * 4) / 4] = counts.get(round(dt * 4) / 4, 0) + 1
-    frequent = [dt for dt, n in counts.items() if n >= 10 and dt > 1]
+    need = max(10, len(dts) // 50)
+    frequent = [dt for dt, n in counts.items() if n >= need and dt > 1]
     return min(frequent) if frequent else statistics.median(dts)
 
 
