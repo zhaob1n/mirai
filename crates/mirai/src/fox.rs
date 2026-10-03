@@ -657,16 +657,6 @@ impl FoxPickerDialog {
         }
     }
 
-    fn turn_page(&self, older: bool) {
-        let page = self.page();
-        self.show_page(if older {
-            page + 1
-        } else {
-            page.saturating_sub(1)
-        });
-        self.refresh_actions();
-    }
-
     /// Searches for the entry's text. A search made before answers at once, with the
     /// records Fox sent then; the results' refresh button is what asks Fox again.
     fn start_search(&self) {

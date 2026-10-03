@@ -50,6 +50,7 @@ Blueprint templates use `_("…")` and `C_("context", "…")`.
 | values in it | `gettext_f("Could not open: {error}", &[("error", &e.to_string())])` |
 | a count | `ngettext_f("{n} move", "{n} moves", n as u64, &[("n", &n.to_string())])` |
 | a short, ambiguous word | `pgettext("verb", "Pass")` |
+| an ambiguous string with values | `pgettext_f("records", "{first}–{last} of {count}", &[…])` |
 | a note for translators | `// Translators: …` on the line above (`/* Translators: … */` in Blueprint) |
 
 - Pass the literal straight to the function: `xgettext` extracts nothing else. It also skips

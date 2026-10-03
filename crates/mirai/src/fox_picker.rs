@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! The download dialog's fixed hierarchy, and the pages of records it shows.
+//! The download dialog's fixed hierarchy, and the pages of records and searches it shows.
 //!
 //! Fox answers with up to 200 records. The dialog shows them [`PAGE`] at a time, as rows of
 //! an `AdwPreferencesGroup` that are built once, with the dialog, and refilled in place; a
@@ -8,6 +8,8 @@
 //! view cannot do as well: `GtkListView` keeps 200 rows alive whatever its height, and any
 //! list view drops its rows while unrooted and rebinds them all, synchronously, when
 //! presented again (`docs/dev/RENDERING.md` §8). A page of ten is also what a reader scans.
+//! The recent searches are paged the same way, so neither list needs the dialog scrolled,
+//! and the toolbar's one pager turns whichever of them is on screen.
 //!
 //! Ten rows of CJK names still take 7–8 ms to shape and measure, more than a 144 Hz frame.
 //! A page therefore changes [`ROWS_PER_FRAME`] rows a frame, and the dialog is presented
@@ -24,7 +26,7 @@ use crate::i18n;
 
 type OpenHandler = Box<dyn Fn(crate::fox::DownloadedGame)>;
 
-/// Records a page shows.
+/// Records, or recent searches, a page shows.
 pub(crate) const PAGE: usize = 10;
 /// Rows filled per frame. A row of CJK names costs up to a millisecond to shape and
 /// measure; four keep a page inside a 144 Hz frame.
@@ -117,15 +119,21 @@ mod imp {
         /// The application runtime: the saved searches are read and written on its blocking
         /// pool (INV-11).
         pub(super) runtime: OnceCell<tokio::runtime::Handle>,
-        /// Rows of `recent_group`, built as the history first needs them and refilled in
-        /// place, with the search each one shows.
+        /// Rows of `recent_group`, at most [`PAGE`], built as the history first needs them
+        /// and refilled in place, with the search each one shows. Like the records' rows,
+        /// one a page turn has yet to refill still shows, and acts on, the last page's.
         pub(super) recent: RefCell<Vec<(adw::ActionRow, gtk::Button, RecentText)>>,
-        /// The searches the recent list is to show, most recent first.
+        /// Every saved search, most recent first.
         pub(super) recent_entries: RefCell<Vec<RecentText>>,
-        /// The next of `recent_entries` to put in a row; its length once all are.
-        pub(super) next_recent: Cell<usize>,
         /// What the recent list is filtered by, lowercase.
         pub(super) recent_needle: RefCell<String>,
+        /// The indices in `recent_entries` of the searches the filter keeps: what the
+        /// recent list pages through.
+        pub(super) recent_matches: RefCell<Vec<usize>>,
+        /// The recent page on screen, from 0, most recent first.
+        pub(super) recent_page_index: Cell<usize>,
+        /// The next row of the recent page to fill; [`PAGE`] once all are.
+        pub(super) next_recent: Cell<usize>,
         /// The history revision `recent_entries` holds.
         pub(super) recent_revision: Cell<Option<u64>>,
         /// The query whose records the results page holds.
@@ -297,61 +305,98 @@ impl FoxPickerDialog {
         self.imp().shown_query.borrow().clone()
     }
 
-    pub(crate) fn page_count(&self) -> usize {
+    fn page_count(&self) -> usize {
         self.imp().texts.borrow().len().div_ceil(PAGE)
     }
 
-    pub(crate) fn page(&self) -> usize {
-        self.imp().page.get()
-    }
-
-    /// Shows page `page` and says where it is. The first rows change at once, the rest over
-    /// the next frames.
-    pub(crate) fn show_page(&self, page: usize) {
+    /// Shows page `page` of the records. The first rows change at once, the rest over the
+    /// next frames.
+    fn show_page(&self, page: usize) {
         let imp = self.imp();
-        let pages = self.page_count();
-        let page = page.min(pages.saturating_sub(1));
+        let page = page.min(self.page_count().saturating_sub(1));
         imp.page.set(page);
         imp.next_slot.set(0);
         self.fill_rows();
         self.feed();
-
-        let count = imp.texts.borrow().len();
-        imp.newer_button.set_sensitive(page > 0);
-        imp.older_button.set_sensitive(page + 1 < pages);
-        let first = page * PAGE;
-        let last = (first + PAGE).min(count);
-        // Translators: which records of how many the page shows, such as "11–20 of 200".
-        imp.page_label.set_label(&i18n::gettext_f(
-            "{first}–{last} of {count}",
-            &[
-                ("first", &(first + 1).to_string()),
-                ("last", &last.to_string()),
-                ("count", &count.to_string()),
-            ],
-        ));
         self.sync_pager();
         // A page shorter than the window may still be scrolled down from the last one.
         imp.results_page.scroll_to_top();
     }
 
-    /// Reveals the pager while the records are on screen and there is a page to turn to.
+    /// Turns the page of whichever list is on screen, toward the older entries or the newer.
+    pub(crate) fn turn_page(&self, older: bool) {
+        let imp = self.imp();
+        let turn = |page: usize| {
+            if older {
+                page + 1
+            } else {
+                page.saturating_sub(1)
+            }
+        };
+        if self.showing(imp.recent_page.upcast_ref()) {
+            self.show_recent_page(turn(imp.recent_page_index.get()));
+        } else {
+            self.show_page(turn(imp.page.get()));
+        }
+    }
+
+    fn showing(&self, page: &gtk::Widget) -> bool {
+        self.imp().stack.visible_child().as_ref() == Some(page)
+    }
+
+    /// Reveals the pager while the records or the recent searches are on screen and there is
+    /// a page of them to turn to, and says where it is.
     fn sync_pager(&self) {
         let imp = self.imp();
-        let results = imp.stack.visible_child().as_ref()
-            == Some(imp.results_page.upcast_ref::<gtk::Widget>());
-        imp.toolbar
-            .set_reveal_bottom_bars(results && self.page_count() > 1);
+        let records = self.showing(imp.results_page.upcast_ref());
+        let (page, count) = if records {
+            (imp.page.get(), imp.texts.borrow().len())
+        } else if self.showing(imp.recent_page.upcast_ref()) {
+            (
+                imp.recent_page_index.get(),
+                imp.recent_matches.borrow().len(),
+            )
+        } else {
+            imp.toolbar.set_reveal_bottom_bars(false);
+            return;
+        };
+        let pages = count.div_ceil(PAGE);
+        imp.newer_button.set_sensitive(page > 0);
+        imp.older_button.set_sensitive(page + 1 < pages);
+        let first = page * PAGE;
+        let (first, last, count) = (
+            (first + 1).to_string(),
+            (first + PAGE).min(count).to_string(),
+            count.to_string(),
+        );
+        let args = [("first", &*first), ("last", &*last), ("count", &*count)];
+        // One message per list, so a language that counts with a measure word can use each
+        // list's own.
+        let range = if records {
+            // Translators: which records of how many the page shows, such as "11–20 of 200".
+            i18n::pgettext_f("records", "{first}–{last} of {count}", &args)
+        } else {
+            // Translators: which saved searches of how many the page shows, such as
+            // "11–20 of 20".
+            i18n::pgettext_f("searches", "{first}–{last} of {count}", &args)
+        };
+        imp.page_label.set_label(&range);
+        imp.toolbar.set_reveal_bottom_bars(pages > 1);
     }
 
     /// Hides the rows, to come back a few a frame once the dialog is on screen, and the
     /// pager with them until a page shows. Called before each presentation, while hiding
     /// them costs nothing.
     pub(crate) fn refill(&self) {
+        let imp = self.imp();
         for row in self.slots() {
             row.set_visible(false);
         }
-        self.imp().next_slot.set(0);
+        for (row, _, _) in imp.recent.borrow().iter() {
+            row.set_visible(false);
+        }
+        imp.next_slot.set(0);
+        imp.next_recent.set(0);
         self.feed();
         self.sync_pager();
     }
@@ -388,8 +433,7 @@ impl FoxPickerDialog {
     /// clock — so not before it is mapped.
     fn feed(&self) {
         let imp = self.imp();
-        let pending =
-            imp.next_slot.get() < PAGE || imp.next_recent.get() < imp.recent_entries.borrow().len();
+        let pending = imp.next_slot.get() < PAGE || imp.next_recent.get() < PAGE;
         if imp.feed.borrow().is_some() || !pending {
             return;
         }
@@ -437,49 +481,76 @@ impl FoxPickerDialog {
         self.imp().recent_revision.get()
     }
 
-    /// Shows `entries` as the recent searches. Rows already built are refilled at once, so
-    /// none goes on showing a search that has moved or gone; the rows the list has never
-    /// needed are built [`ROWS_PER_FRAME`] a frame, as building one costs more than
-    /// refilling it. A row opens its search through the dialog's `picker.open-saved`
-    /// action, and its button forgets it through `picker.forget`.
+    /// Shows `entries` as the recent searches, from the page already on screen if it still
+    /// has some. A row opens its search through the dialog's `picker.open-saved` action, and
+    /// its button forgets it through `picker.forget`.
     pub(crate) fn set_recent(&self, revision: u64, entries: Vec<RecentText>) {
         let imp = self.imp();
-        let built = imp.recent.borrow().len();
-        for (row, _, _) in imp.recent.borrow().iter().skip(entries.len()) {
-            row.set_visible(false);
-        }
-        let refill = built.min(entries.len());
         imp.recent_entries.replace(entries);
         imp.recent_revision.set(Some(revision));
-        self.put_recent(0, refill);
-        imp.next_recent.set(refill);
+        self.match_recent();
+        self.show_recent_page(imp.recent_page_index.get());
+    }
+
+    /// Finds again the searches the needle keeps.
+    fn match_recent(&self) {
+        let imp = self.imp();
+        let needle = imp.recent_needle.borrow();
+        let matches = imp
+            .recent_entries
+            .borrow()
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.matches(&needle))
+            .map(|(i, _)| i)
+            .collect();
+        imp.recent_matches.replace(matches);
+    }
+
+    /// Shows page `page` of the recent searches the filter keeps. The first rows change at
+    /// once, the rest over the next frames.
+    fn show_recent_page(&self, page: usize) {
+        let imp = self.imp();
+        let pages = imp.recent_matches.borrow().len().div_ceil(PAGE);
+        imp.recent_page_index.set(page.min(pages.saturating_sub(1)));
+        imp.next_recent.set(0);
         self.fill_recent();
         self.feed();
+        self.sync_pager();
+        imp.recent_page.scroll_to_top();
     }
 
-    /// Builds the next [`ROWS_PER_FRAME`] recent rows; false once all are built.
+    /// Fills the recent page's next [`ROWS_PER_FRAME`] rows; false once all are filled.
     fn fill_recent(&self) -> bool {
         let imp = self.imp();
-        let len = imp.recent_entries.borrow().len();
         let from = imp.next_recent.get();
-        if from >= len {
+        if from >= PAGE {
             return false;
         }
-        let to = (from + ROWS_PER_FRAME).min(len);
+        let to = (from + ROWS_PER_FRAME).min(PAGE);
         self.put_recent(from, to);
         imp.next_recent.set(to);
-        to < len
+        to < PAGE
     }
 
-    /// Puts searches `from..to` in their rows, building the rows that do not exist yet,
-    /// and shows those the filter keeps.
+    /// Puts the recent page's searches in rows `from..to`, building the rows that do not
+    /// exist yet, and hides the rows the page has no search for.
     fn put_recent(&self, from: usize, to: usize) {
         let imp = self.imp();
         let entries = imp.recent_entries.borrow();
-        let needle = imp.recent_needle.borrow();
+        let matches = imp.recent_matches.borrow();
+        let first = imp.recent_page_index.get() * PAGE;
         let mut recent = imp.recent.borrow_mut();
-        for (i, entry) in entries.iter().enumerate().take(to).skip(from) {
-            if recent.len() <= i {
+        for i in from..to {
+            let Some(entry) = matches.get(first + i).map(|&m| &entries[m]) else {
+                if let Some((row, _, _)) = recent.get(i) {
+                    row.set_visible(false);
+                }
+                continue;
+            };
+            // A page fills its rows in order from the first, so the row a search needs is
+            // at most the next one to build.
+            if recent.len() == i {
                 let row = adw::ActionRow::builder()
                     .activatable(true)
                     .use_markup(false)
@@ -512,27 +583,21 @@ impl FoxPickerDialog {
                 forget.set_action_target_value(Some(&query));
                 *shown = entry.clone();
             }
-            row.set_visible(entry.matches(&needle));
+            row.set_visible(true);
         }
     }
 
-    /// Shows the recent searches that `text` matches, and says how many there are —
-    /// counting those not yet in a row.
+    /// Filters the recent searches by `text`, from their first page if that changes what
+    /// the filter keeps, and says how many it keeps.
     pub(crate) fn filter_recent(&self, text: &str) -> usize {
         let imp = self.imp();
         let needle = text.trim().to_lowercase();
-        let filled = imp.next_recent.get();
-        for (row, _, shown) in imp.recent.borrow().iter().take(filled) {
-            row.set_visible(shown.matches(&needle));
+        if *imp.recent_needle.borrow() != needle {
+            imp.recent_needle.replace(needle);
+            self.match_recent();
+            self.show_recent_page(0);
         }
-        let count = imp
-            .recent_entries
-            .borrow()
-            .iter()
-            .filter(|entry| entry.matches(&needle))
-            .count();
-        imp.recent_needle.replace(needle);
-        count
+        imp.recent_matches.borrow().len()
     }
 
     pub(crate) fn status_query(&self) -> String {

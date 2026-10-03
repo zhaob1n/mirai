@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: mirai\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaob1n/mirai/issues\n"
-"POT-Creation-Date: 2026-10-03 16:58+0800\n"
+"POT-Creation-Date: 2026-10-03 17:00+0800\n"
 "PO-Revision-Date: 2026-09-28 06:00+0800\n"
 "Last-Translator: Huang Zhaobin <zhaob1n@foxmail.com>\n"
 "Language-Team: Chinese (China) <i18n-zh@googlegroups.com>\n"
@@ -186,10 +186,20 @@ msgstr "无法将分析配置写入 {dir}：{error}"
 msgid "refusing to send the token before the certificate is pinned"
 msgstr "证书固定之前拒绝发送令牌"
 
+#. Translators: which records of how many the page shows, such as "11–20 of 200".
 #: crates/mirai/src/fox_picker.rs
 #, rust-format
+msgctxt "records"
 msgid "{first}–{last} of {count}"
 msgstr "第 {first}–{last} 盘，共 {count} 盘"
+
+#. Translators: which saved searches of how many the page shows, such as
+#. "11–20 of 20".
+#: crates/mirai/src/fox_picker.rs
+#, rust-format
+msgctxt "searches"
+msgid "{first}–{last} of {count}"
+msgstr "第 {first}–{last} 条，共 {count} 条"
 
 #: crates/mirai/src/fox_picker.rs
 msgid "Remove From History"
@@ -1601,12 +1611,12 @@ msgid "Search Fox Again"
 msgstr "重新搜索野狐"
 
 #: crates/mirai/src/fox_picker.blp
-msgid "Newer Games"
-msgstr "较新的对局"
+msgid "Previous Page"
+msgstr "上一页"
 
 #: crates/mirai/src/fox_picker.blp
-msgid "Older Games"
-msgstr "较早的对局"
+msgid "Next Page"
+msgstr "下一页"
 
 #. Translators: a text mark on an intersection.
 #: crates/mirai/src/label_editor.blp

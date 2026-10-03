@@ -23,7 +23,7 @@ blp=$(find crates/mirai/src -name '*.blp' | sort)
 set -- --package-name=mirai --msgid-bugs-address=https://github.com/zhaob1n/mirai/issues \
     --from-code=UTF-8 --add-comments=Translators: --add-location=file --no-wrap -o "$pot"
 # shellcheck disable=SC2086 # the file lists are space-free paths
-xgettext "$@" -L Rust -k -kgettext -kpgettext:1c,2 -kgettext_f -kngettext_f:1,2 \
+xgettext "$@" -L Rust -k -kgettext -kpgettext:1c,2 -kgettext_f -kpgettext_f:1c,2 -kngettext_f:1,2 \
     $rust
 # Blueprint's `_("…")` and `C_("context", "…")` lex as C, as blueprint-compiler documents.
 # shellcheck disable=SC2086

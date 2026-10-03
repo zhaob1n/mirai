@@ -9,7 +9,8 @@ template $MiraiFoxPickerDialog: Adw.Dialog {
   content-height: 860;
 
   child: Adw.ToolbarView toolbar {
-    // Down until a page of records with another to turn to is on screen: sync_pager.
+    // Down until a page of records or searches with another to turn to is on screen:
+    // sync_pager.
     reveal-bottom-bars: false;
 
     [top]
@@ -78,8 +79,8 @@ template $MiraiFoxPickerDialog: Adw.Dialog {
           paintable: Adw.SpinnerPaintable {};
         }
 
-        // Searches already made, answered from the saved records without asking Fox. The
-        // rows are added as the history needs them.
+        // Searches already made, answered from the saved records without asking Fox. Ten a
+        // page, like the records; the rows are added as the history needs them.
         Adw.PreferencesPage recent_page {
           title: _("Recent Searches");
 
@@ -110,7 +111,8 @@ template $MiraiFoxPickerDialog: Adw.Dialog {
       }
     };
 
-    // Revealed with the records, when there is more than one page of them.
+    // Revealed with the records or the recent searches, when there is more than one page of
+    // them.
     [bottom]
     Gtk.CenterBox pager {
       styles [
@@ -120,12 +122,12 @@ template $MiraiFoxPickerDialog: Adw.Dialog {
       [start]
       Gtk.Button newer_button {
         icon-name: "go-previous-symbolic";
-        tooltip-text: _("Newer Games");
+        tooltip-text: _("Previous Page");
       }
 
       [center]
       Gtk.Label page_label {
-        // Which records are on screen: a live region, so a page turn is announced.
+        // Which entries are on screen: a live region, so a page turn is announced.
         accessible-role: status;
 
         styles [
@@ -137,7 +139,7 @@ template $MiraiFoxPickerDialog: Adw.Dialog {
       [end]
       Gtk.Button older_button {
         icon-name: "go-next-symbolic";
-        tooltip-text: _("Older Games");
+        tooltip-text: _("Next Page");
       }
     }
   };

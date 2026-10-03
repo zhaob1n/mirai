@@ -66,7 +66,7 @@ script[dialogs]="wait:3000,$(open_close win.preferences 2)\
 action:win.preferences,wait:1000,page:Analysis,wait:600,page:Play,wait:600,page:General,wait:600,page:Engines,wait:600,close-dialog,wait:800,\
 $(open_close win.new-game 2)$(open_close win.about 2)quit"
 script[fox]="wait:3000,$(open_close win.download-fox 2)action:win.download-fox,wait:1000,\
-$(repeat 'press:Older Games,wait:500,' 3)press:Newer Games,wait:500,\
+$(repeat 'press:Next Page,wait:500,' 3)press:Previous Page,wait:500,\
 fill:Exact Fox nickname=,wait:700,fill:Exact Fox nickname=申,wait:700,press:申真谞,wait:800,\
 close-dialog,wait:800,quit"
 script[main]="wait:3000,\

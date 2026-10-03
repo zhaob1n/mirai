@@ -76,6 +76,11 @@ pub fn gettext_f(msgid: &str, args: &[(&str, &str)]) -> String {
     fill(&glib::dgettext(None, msgid), args)
 }
 
+/// [`pgettext`] with placeholders, as [`gettext_f`].
+pub fn pgettext_f(context: &str, msgid: &str, args: &[(&str, &str)]) -> String {
+    fill(&glib::dpgettext2(None, context, msgid), args)
+}
+
 /// `ngettext` with placeholders, as [`gettext_f`]: the count appears as one of them, and `n`
 /// chooses the plural form.
 pub fn ngettext_f(msgid: &str, msgid_plural: &str, n: u64, args: &[(&str, &str)]) -> String {

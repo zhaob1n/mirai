@@ -204,10 +204,10 @@ records, which is the service's fixed history window, ten to a page; the arrows 
 to newer and older games. Players who hide their records are not bypassed. Every search is
 kept with its games: searching for the same name again answers at once with what Fox sent
 then, and the refresh button beside the list asks Fox again. With the search box empty, or
-while you type, the dialog lists your recent searches; pick one to see its games, or remove it
-with its trash button. A saved search still shows its games when Fox cannot be reached, and
-opening the dialog again restores the last search and page. Click a game, or press Enter on
-it, to download and open it; Enter in the search box searches.
+while you type, the dialog lists your recent searches, ten to a page like the games; pick one
+to see its games, or remove it with its trash button. A saved search still shows its games
+when Fox cannot be reached, and opening the dialog again restores the last search and page.
+Click a game, or press Enter on it, to download and open it; Enter in the search box searches.
 Fox's dialect — quarter-point Chinese komi, and handicap stones written as a run of opening
 nodes — is normalised on import. The result has no local backing file: it is named after its
 players, `柯洁 vs 申真谞 •`, and **Save** therefore asks where to store it.
