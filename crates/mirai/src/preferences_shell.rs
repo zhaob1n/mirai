@@ -91,7 +91,9 @@ glib::wrapper! {
 
 impl PreferencesDialog {
     pub fn new() -> Self {
-        glib::Object::new()
+        let dialog = glib::Object::new();
+        crate::widgets::sheet_texture::install(&dialog);
+        dialog
     }
 
     pub fn widgets(&self) -> PreferencesWidgets {

@@ -5,6 +5,7 @@
 
 pub mod board;
 pub mod paint;
+pub mod sheet_texture;
 pub mod tree;
 pub mod winrate;
 

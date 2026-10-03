@@ -2129,6 +2129,7 @@ fn show_about(ui: &Ui) {
         .translator_credits(gettext("translator-credits"))
         .comments(gettext("A KataGo analysis and playing board for GNOME."))
         .build();
+    crate::widgets::sheet_texture::install(&about);
     about.present(ui.window().as_ref());
 }
 

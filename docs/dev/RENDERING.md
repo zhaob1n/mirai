@@ -257,7 +257,8 @@ any new report-rate list or readout must avoid per-report widget churn.
 The goal moved from 60 Hz to at least 144 Hz: 6.9 ms a frame, 6.25 ms on the 160 Hz
 output. Measured with `ui-survey.sh` on a 3840×2160@160 Hz output at scale 1.5 unless
 noted; release with assertions, no engine but for live analysis. GTK 4.22 for the first
-rows; the clock floor and the font warm-up below on GTK 4.24.
+rows; the clock floor and the font warm-up below on GTK 4.24; the sheet texture on stock
+GTK 4.24.0, with intel_pstate active (HWP).
 
 | surface | before | after |
 |---|---|---|
@@ -271,6 +272,7 @@ rows; the clock floor and the font warm-up below on GTK 4.24.
 | live analysis, 8 steps forward | 73–75 candidate rows built; panel refresh p90 2.1–4.7 ms, max 5.1–6.6 | 2–3 rows; p90 1.2–1.4 ms, max 1.9–2.6 |
 | frames over budget, dialogs / Fox picker / main window | 4.2 % / 3.3–5.8 % / 2.1–3.1 %; p99 12.6–21.7 ms | 1.2 % / 1.3 % / 1.8 %; p99 7.5–12 ms |
 | frames over budget, live analysis survey | 25–29 % | 3.2 % |
+| frames over budget opening and closing, dialogs / Fox picker | 2.5–3.0 % / 9.7–11 % | 0.6–1.0 % / 1.6–2.6 % |
 
 **A list view keeps 200 rows.** `GtkListView` keeps `GTK_LIST_VIEW_MAX_LIST_ITEMS`
 (200) rows alive around its anchor whatever its height (`gtklistview.c`), so a list of
@@ -331,19 +333,29 @@ step takes 17–45 ms at idle, 9–30 ms with a Chinese interface, whose own tex
 part of it. Laying out a sample with the window's own context alone, as first tried,
 covered one style and saved nothing measurable.
 
+**Dialog animations re-rasterised their text.** libadwaita's floating sheet animates its
+scale from 0.8 (`adw-floating-sheet.c`). GSK's GPU renderer lifts that scale and
+translation out of the modelview into the pass's scale, and rasterises glyphs at that
+exact scale, keying its glyph cache by it (`gskgpunodeprocessor.c`,
+`gskgpucachedglyph.c`). GTK 4.24 rounds the scale to a power of two only when the
+modelview keeps a rotation, skew or projection (`<= GSK_FINE_TRANSFORM_CATEGORY_2D`),
+not when it was lifted, so every frame of an open or close rasterised every glyph again:
+31–37 ms closing the picker. Rounding the lifted scale too, in `add_glyph_node`, took that
+to 6–7 ms ([GTK #8440](https://gitlab.gnome.org/GNOME/gtk/-/work_items/8440)), but text
+whose glyphs are rasterised ahead of drawing cannot follow a continuous scale without
+missing that cache. `widgets/sheet_texture.rs` does what Ptyxis does for its tab overview
+([libadwaita #756](https://gitlab.gnome.org/GNOME/libadwaita/-/issues/756)): while the
+sheet scales, the dialog's content is drawn from a texture rendered at the surface's own
+scale, whose glyphs are cached: 1.3 ms a render at the median, 4.3 ms at p99. An opening
+dialog renders it again when its content changes, as what it shows is what the user is
+about to read; overlay scrollbars fading in and focus transitions change it nearly every
+frame. A closing one keeps the texture it began with. A close begins at rest, and its
+first frame may still be at rest, so the watch redraws each frame until the sheet shrinks:
+otherwise the paint that first scales reuses the live render node, 18 ms of glyphs.
+`MIRAI_NO_SHEET_TEXTURE=1` draws dialogs live.
+
 What remains:
 
-- **Dialog animations re-rasterise their text.** libadwaita's floating sheet animates its
-  scale from 0.8 (`adw-floating-sheet.c`). GSK's GPU renderer lifts that scale and
-  translation out of the modelview into the pass's scale, and rasterises glyphs at that
-  exact scale, keying its glyph cache by it (`gskgpunodeprocessor.c`,
-  `gskgpucachedglyph.c`). GTK 4.24 rounds the scale to a power of two only when the
-  modelview keeps a rotation, skew or projection (`<= GSK_FINE_TRANSFORM_CATEGORY_2D`),
-  not when it was lifted. Every frame of an open or close rasterises every glyph again:
-  31–37 ms closing the picker, on 4.22 and 4.24 alike. Rounding the lifted scale as well
-  in `add_glyph_node`, keeping its subpixel positions, takes it to 6–7 ms and the other
-  dialogs into budget; the patch is GTK's to take. Within the app, only giving the
-  animation up avoids it.
 - **One frame on a first visit**: a Preferences page, New Game or About, 8–17 ms of
   their first layout with the clock floor.
 - **A report relays out the window**: label text changes queue a resize up to the
@@ -363,3 +375,5 @@ What remains:
 - Before blaming a slow frame on its work, read its clock in `frame-profile.py`: on a
   schedutil machine the same step varies severalfold with the frequency it ran at.
   Compare several runs, and `MIRAI_NO_CLOCK_FLOOR=1` against the default.
+- A dialog with more than a few lines of text goes through `sheet_texture::install`,
+  which also takes libadwaita's own dialogs, as their content is `AdwDialog:child`.

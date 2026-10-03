@@ -123,6 +123,7 @@ impl NewGameDialog {
         dialog.build(has_human_model);
         dialog.connect_dynamic_rows();
         dialog.connect_buttons();
+        crate::widgets::sheet_texture::install(&dialog);
         dialog
     }
 

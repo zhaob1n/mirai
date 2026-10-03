@@ -28,6 +28,8 @@
 //!                    paint the board's text on every frame, however the allocation moved
 //! MIRAI_NO_CLOCK_FLOOR=1
 //!                    leave the GTK thread without its utilization clamp (`ui_thread`)
+//! MIRAI_NO_SHEET_TEXTURE=1
+//!                    draw dialogs live while their sheet scales (`widgets::sheet_texture`)
 //! MIRAI_NO_BOARD=1   take BoardView out of the paned
 //! MIRAI_NO_GRAPH=1   take WinrateGraph out of the paned
 //! MIRAI_SPIN=1       redraw an unchanging scene every frame
@@ -127,6 +129,14 @@ pub fn label_defer() -> bool {
 /// schedutil machine (`RENDERING.md` §8).
 pub fn no_clock_floor() -> bool {
     cfg!(debug_assertions) && flag("MIRAI_NO_CLOCK_FLOOR")
+}
+
+/// Whether dialogs draw their content live through the sheet's scale animation.
+///
+/// `MIRAI_NO_SHEET_TEXTURE=1` is the ablation that measures what the texture is worth
+/// (`RENDERING.md` §8).
+pub fn no_sheet_texture() -> bool {
+    cfg!(debug_assertions) && flag("MIRAI_NO_SHEET_TEXTURE")
 }
 
 /// Attaches the frame-clock probes and applies the window-level ablations.

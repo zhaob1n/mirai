@@ -192,7 +192,9 @@ glib::wrapper! {
 
 impl FoxPickerDialog {
     pub fn new() -> Self {
-        glib::Object::new()
+        let dialog = glib::Object::new();
+        crate::widgets::sheet_texture::install(&dialog);
+        dialog
     }
 
     /// Builds the page's rows, hidden until a page fills them. Called once, from
