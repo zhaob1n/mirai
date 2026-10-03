@@ -12,12 +12,13 @@
 //! An opening dialog renders the texture again every frame. What it shows is what the user
 //! is about to read, and its content changes as it opens: scrollbars fade in, the Fox picker
 //! fills its rows. Each frame's texture is laid on the surface's pixels where that frame
-//! puts it, so the frame the spring comes to rest on looks as live text does. A texture
-//! under a scale is resampled all the same: the text of the spring's last frames, within a
-//! few tenths of a percent of scale 1, is a little softer than live text, and sharpens as
-//! libadwaita snaps the spring to rest. A closing dialog keeps the texture it began with.
-//! Its scrollbars and focus rings still fade as it goes, and rendering them again cost a
-//! millisecond or more a frame for nothing.
+//! puts it, and once the spring is in its tail — back from its overshoot, with what scale
+//! remains moving the dialog's edges by under [`TAIL_PX`] — it is drawn at scale 1 about
+//! the dialog's centre. Resampled under a scale of 0.998, text is softer than live text,
+//! and it sharpened only as libadwaita snapped the spring to rest: a pop just as the motion
+//! ended. A closing dialog keeps the texture it began with. Its scrollbars and focus rings
+//! still fade as it goes, and rendering them again cost a millisecond or more a frame for
+//! nothing.
 //!
 //! The sheet reports neither the start of an animation nor its end, but the transform the
 //! content is drawn under shows both, and a tick callback follows it while it may move. An
@@ -35,6 +36,12 @@ use gtk::{gdk, glib, graphene};
 
 /// Frames a close may take to start shrinking before the sheet is taken not to scale.
 const SETTLE: u8 = 3;
+/// Device pixels the scale left in an open may move the dialog's edges by, once the spring
+/// has turned back from its overshoot, for its texture to be drawn at scale 1. The content
+/// is then off the sheet by that much at most, and less as the spring settles: libadwaita's
+/// undershoot is under a tenth of its overshoot. Latched on the way up, a dialog would ride
+/// the overshoot, 1.7 % of its size, off the sheet.
+const TAIL_PX: f32 = 3.0;
 
 /// How far a close has got.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -47,6 +54,17 @@ enum Close {
     Running,
 }
 
+/// How far an open's spring has got.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Open {
+    #[default]
+    Rising,
+    /// Past the peak of its overshoot, heading back to scale 1.
+    Turned,
+    /// Near enough to rest to be drawn at scale 1, as it is until rest.
+    Tail,
+}
+
 mod imp {
     use super::*;
 
@@ -57,6 +75,10 @@ mod imp {
         pub(super) textured: Cell<bool>,
         /// The texture a close draws throughout, with its bounds.
         pub(super) frozen: RefCell<Option<(gdk::Texture, graphene::Rect)>>,
+        /// The sheet's scale at the last snapshot, 0 before the first.
+        pub(super) scale: Cell<f32>,
+        /// How far an open has got.
+        pub(super) open: Cell<Open>,
         /// Follows the sheet's scale while it may be animating.
         pub(super) watch: RefCell<Option<gtk::TickCallbackId>>,
     }
@@ -85,22 +107,36 @@ mod imp {
             if let Some(watch) = self.watch.take() {
                 watch.remove();
             }
-            self.close.set(Close::No);
-            self.frozen.take();
+            self.rest();
             self.textured.set(false);
             self.parent_unmap();
         }
 
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
-            let drawn = if self.scaled() { self.texture() } else { None };
+            let drawn = self.sheet_scale().and_then(|scale| {
+                let tail = self.in_tail(scale);
+                self.texture(tail)
+                    .map(|texture| (texture, tail.then_some(scale)))
+            });
             self.textured.set(drawn.is_some());
-            match drawn {
-                Some((texture, bounds)) => {
+            let Some(((texture, bounds), tail)) = drawn else {
+                self.parent_snapshot(snapshot);
+                return;
+            };
+            match tail {
+                Some(scale) => {
+                    let obj = self.obj();
+                    let (x, y) = (obj.width() as f32 / 2.0, obj.height() as f32 / 2.0);
+                    snapshot.save();
+                    snapshot.translate(&graphene::Point::new(x, y));
+                    snapshot.scale(1.0 / scale, 1.0 / scale);
+                    snapshot.translate(&graphene::Point::new(-x, -y));
                     snapshot.append_texture(&texture, &bounds);
-                    self.watch();
+                    snapshot.restore();
                 }
-                None => self.parent_snapshot(snapshot),
+                None => snapshot.append_texture(&texture, &bounds),
             }
+            self.watch();
         }
     }
 
@@ -110,37 +146,66 @@ mod imp {
             self.watch();
         }
 
-        /// Whether the widget is drawn under a scale. Exact: at rest the sheet's transform
-        /// is translations only, and its scale is a product of ones.
-        fn scaled(&self) -> bool {
+        /// The scale the widget is drawn under, unless that is 1. Exact: at rest the
+        /// sheet's transform is translations only, and its scale is a product of ones.
+        fn sheet_scale(&self) -> Option<f32> {
             let obj = self.obj();
-            obj.root()
-                .and_then(|root| obj.compute_transform(&root))
-                .is_some_and(|m| m.value(0, 0) != 1.0 || m.value(1, 1) != 1.0)
+            let m = obj.root().and_then(|root| obj.compute_transform(&root))?;
+            (m.value(0, 0) != 1.0 || m.value(1, 1) != 1.0).then(|| m.value(0, 0))
         }
 
-        fn texture(&self) -> Option<(gdk::Texture, graphene::Rect)> {
+        fn device_scale(&self) -> Option<f64> {
+            Some(self.obj().native()?.surface()?.scale())
+        }
+
+        /// Whether an open, now at `scale`, is in its tail.
+        fn in_tail(&self, scale: f32) -> bool {
+            let last = self.scale.replace(scale);
+            if self.close.get() != Close::No {
+                return false;
+            }
+            match self.open.get() {
+                Open::Rising if last > 1.0 && scale < last => self.open.set(Open::Turned),
+                Open::Turned => {
+                    let obj = self.obj();
+                    let reach = obj.width().max(obj.height()) as f32 / 2.0
+                        * self.device_scale().unwrap_or(1.0) as f32;
+                    if (scale - 1.0).abs() * reach < TAIL_PX {
+                        self.open.set(Open::Tail);
+                    }
+                }
+                _ => {}
+            }
+            self.open.get() == Open::Tail
+        }
+
+        fn texture(&self, tail: bool) -> Option<(gdk::Texture, graphene::Rect)> {
             if self.close.get() == Close::No {
-                return self.render();
+                return self.render(tail);
             }
             self.close.set(Close::Running);
             if self.frozen.borrow().is_none() {
-                let rendered = self.render();
+                let rendered = self.render(false);
                 self.frozen.replace(rendered);
             }
             self.frozen.borrow().clone()
         }
 
-        /// Where the widget's origin falls inside a device pixel, under the transform it is
-        /// drawn with this frame.
-        fn phase(&self) -> Option<(f32, f32)> {
+        /// Where the widget's origin falls inside a device pixel this frame: under the
+        /// sheet's transform, or, in an open's tail, at scale 1 about the widget's centre.
+        fn phase(&self, tail: bool) -> Option<(f32, f32)> {
             let obj = self.obj();
             let native = obj.native()?;
-            let scale = native.surface()?.scale();
+            let scale = self.device_scale()?;
             let (dx, dy) = native.surface_transform();
-            let at = obj.compute_point(&native, &graphene::Point::zero())?;
-            let x = (f64::from(at.x()) + dx) * scale;
-            let y = (f64::from(at.y()) + dy) * scale;
+            let anchor = if tail {
+                graphene::Point::new(obj.width() as f32 / 2.0, obj.height() as f32 / 2.0)
+            } else {
+                graphene::Point::zero()
+            };
+            let at = obj.compute_point(&native, &anchor)?;
+            let x = (f64::from(at.x()) + dx - f64::from(anchor.x())) * scale;
+            let y = (f64::from(at.y()) + dy - f64::from(anchor.y())) * scale;
             Some(((x - x.floor()) as f32, (y - y.floor()) as f32))
         }
 
@@ -149,14 +214,13 @@ mod imp {
         /// snaps each glyph's baseline to a whole pixel of whatever it renders to, so a
         /// texture rendered from a pixel corner and drawn half a pixel off put its text 0.3
         /// px high and blurred, and the text jumped when the dialog went back to live.
-        fn render(&self) -> Option<(gdk::Texture, graphene::Rect)> {
+        fn render(&self, tail: bool) -> Option<(gdk::Texture, graphene::Rect)> {
             let _t = crate::render_probe::Timer::new("sheet-texture");
             let obj = self.obj();
-            let native = obj.native()?;
-            let renderer = native.renderer()?;
-            let scale = native.surface()?.scale() as f32;
+            let renderer = obj.native()?.renderer()?;
+            let scale = self.device_scale()? as f32;
             let child = obj.first_child()?;
-            let (x, y) = self.phase()?;
+            let (x, y) = self.phase(tail)?;
             let shot = gtk::Snapshot::new();
             shot.translate(&graphene::Point::new(x, y));
             shot.scale(scale, scale);
@@ -195,7 +259,7 @@ mod imp {
                 self.obj().queue_draw();
                 return glib::ControlFlow::Continue;
             }
-            let scaled = self.scaled();
+            let scaled = self.sheet_scale().is_some();
             if scaled != self.textured.get() || (scaled && self.close.get() == Close::No) {
                 self.obj().queue_draw();
             }
@@ -204,10 +268,16 @@ mod imp {
             }
             // At rest: an open has ended, a close was taken back by a new present, or the
             // sheet does not scale at all.
-            self.close.set(Close::No);
-            self.frozen.take();
+            self.rest();
             self.watch.take();
             glib::ControlFlow::Break
+        }
+
+        fn rest(&self) {
+            self.close.set(Close::No);
+            self.frozen.take();
+            self.scale.set(0.0);
+            self.open.set(Open::Rising);
         }
     }
 }
