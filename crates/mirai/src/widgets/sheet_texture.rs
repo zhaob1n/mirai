@@ -9,9 +9,13 @@
 //! surface's own scale, whose glyphs are cached, and hands GSK that texture to scale
 //! instead. Ptyxis does the same for its tab overview.
 //!
-//! An opening dialog is rendered again whenever its content changes, as what it shows is
-//! what the user is about to read. GTK calls `snapshot()` only then: scaling the sheet
-//! redraws the sheet, not its content. A closing dialog keeps the texture it began with.
+//! An opening dialog renders the texture again every frame. What it shows is what the user
+//! is about to read, and its content changes as it opens: scrollbars fade in, the Fox picker
+//! fills its rows. Each frame's texture is laid on the surface's pixels where that frame
+//! puts it, so the frame the spring comes to rest on looks as live text does. A texture
+//! under a scale is resampled all the same: the text of the spring's last frames, within a
+//! few tenths of a percent of scale 1, is a little softer than live text, and sharpens as
+//! libadwaita snaps the spring to rest. A closing dialog keeps the texture it began with.
 //! Its scrollbars and focus rings still fade as it goes, and rendering them again cost a
 //! millisecond or more a frame for nothing.
 //!
@@ -127,8 +131,24 @@ mod imp {
             self.frozen.borrow().clone()
         }
 
-        /// The child rendered at the surface's scale, and the rectangle that maps its
-        /// pixels one to one onto the surface at rest.
+        /// Where the widget's origin falls inside a device pixel, under the transform it is
+        /// drawn with this frame.
+        fn phase(&self) -> Option<(f32, f32)> {
+            let obj = self.obj();
+            let native = obj.native()?;
+            let scale = native.surface()?.scale();
+            let (dx, dy) = native.surface_transform();
+            let at = obj.compute_point(&native, &graphene::Point::zero())?;
+            let x = (f64::from(at.x()) + dx) * scale;
+            let y = (f64::from(at.y()) + dy) * scale;
+            Some(((x - x.floor()) as f32, (y - y.floor()) as f32))
+        }
+
+        /// The child rendered at the surface's scale, and the rectangle that lays its pixels
+        /// on the surface's. The render is offset by the widget's [`phase`](Self::phase): GSK
+        /// snaps each glyph's baseline to a whole pixel of whatever it renders to, so a
+        /// texture rendered from a pixel corner and drawn half a pixel off put its text 0.3
+        /// px high and blurred, and the text jumped when the dialog went back to live.
         fn render(&self) -> Option<(gdk::Texture, graphene::Rect)> {
             let _t = crate::render_probe::Timer::new("sheet-texture");
             let obj = self.obj();
@@ -136,15 +156,17 @@ mod imp {
             let renderer = native.renderer()?;
             let scale = native.surface()?.scale() as f32;
             let child = obj.first_child()?;
+            let (x, y) = self.phase()?;
             let shot = gtk::Snapshot::new();
+            shot.translate(&graphene::Point::new(x, y));
             shot.scale(scale, scale);
             obj.snapshot_child(&child, &shot);
             let node = shot.to_node()?;
-            let width = (obj.width() as f32 * scale).ceil();
-            let height = (obj.height() as f32 * scale).ceil();
+            let width = (obj.width() as f32 * scale + x).ceil();
+            let height = (obj.height() as f32 * scale + y).ceil();
             let texture =
                 renderer.render_texture(&node, Some(&graphene::Rect::new(0.0, 0.0, width, height)));
-            let bounds = graphene::Rect::new(0.0, 0.0, width / scale, height / scale);
+            let bounds = graphene::Rect::new(-x / scale, -y / scale, width / scale, height / scale);
             Some((texture, bounds))
         }
 
@@ -158,6 +180,11 @@ mod imp {
 
         /// One frame of the watch. It runs before layout, so the transform it reads is the
         /// last frame's: a change shows here a frame late and is drawn on the next.
+        ///
+        /// An open redraws every frame, so each frame's texture is rendered after that
+        /// frame's layout, at its [`phase`](Self::phase): the sheet moves the content by a
+        /// fraction of a pixel a frame, and the texture of the frame the spring comes to rest
+        /// on must already lie on the surface's pixels.
         fn follow(&self) -> glib::ControlFlow {
             if let Close::Starting(frames) = self.close.get()
                 && frames < SETTLE
@@ -169,7 +196,7 @@ mod imp {
                 return glib::ControlFlow::Continue;
             }
             let scaled = self.scaled();
-            if scaled != self.textured.get() {
+            if scaled != self.textured.get() || (scaled && self.close.get() == Close::No) {
                 self.obj().queue_draw();
             }
             if scaled {

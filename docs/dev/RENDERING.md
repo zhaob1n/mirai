@@ -347,12 +347,18 @@ missing that cache. `widgets/sheet_texture.rs` does what Ptyxis does for its tab
 ([libadwaita #756](https://gitlab.gnome.org/GNOME/libadwaita/-/issues/756)): while the
 sheet scales, the dialog's content is drawn from a texture rendered at the surface's own
 scale, whose glyphs are cached: 1.3 ms a render at the median, 4.3 ms at p99. An opening
-dialog renders it again when its content changes, as what it shows is what the user is
-about to read; overlay scrollbars fading in and focus transitions change it nearly every
-frame. A closing one keeps the texture it began with. A close begins at rest, and its
-first frame may still be at rest, so the watch redraws each frame until the sheet shrinks:
-otherwise the paint that first scales reuses the live render node, 18 ms of glyphs.
-`MIRAI_NO_SHEET_TEXTURE=1` draws dialogs live.
+dialog renders it every frame, after that frame's layout, offset by where the widget's
+origin falls inside a device pixel. GSK snaps each glyph's baseline to a whole pixel of
+what it renders to, so a texture rendered from a pixel corner but drawn half a pixel off
+put its text 0.3 px high and blurred until the dialog went live, a jump as the animation
+ended; aligned, the texture at rest matches live text (no level off by more than 15 of
+255, against 126). Resampling stays: the spring's last frames, within a few tenths of a
+percent of scale 1, are a little softer than live text and sharpen as libadwaita snaps
+the spring to rest. A closing dialog keeps the texture it began with; its scrollbars and
+focus rings still fade, and rendering them again was a millisecond or more a frame for
+nothing. A close begins at rest, and its first frame may still be at rest, so the watch
+redraws each frame until the sheet shrinks: otherwise the paint that first scales reuses
+the live render node, 18 ms of glyphs. `MIRAI_NO_SHEET_TEXTURE=1` draws dialogs live.
 
 What remains:
 
