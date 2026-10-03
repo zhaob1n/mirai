@@ -19,7 +19,7 @@
       <li>Live analysis with candidate moves, win rate, score lead and ownership</li>
       <li>Game review with a win-rate graph and a move tree</li>
       <li>Games against KataGo</li>
-      <li>SGF editing, and game records downloaded from Fox</li>
+      <li>SGF editing, and game records downloaded from Fox, eWeiqi and Yike</li>
     </ul>
     <p>mirai does not include KataGo or a network; supply your own.</p>
   </description>

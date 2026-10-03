@@ -3,23 +3,14 @@
 //! Fox (foxwq) kifu lookup: the endpoints, the reply shapes, and the two things Fox's SGF
 //! needs before mirai can open it.
 //!
-//! HTTP is not here. A frontend that can satisfy [`Fetch`] — a `Send` future — gets the
-//! async wrappers; one that cannot (GIO's futures are `!Send`) composes the [`user_url`] /
-//! [`parse_user`] pairs against its own transport. Either way there is one description of
-//! the protocol.
+//! HTTP is not here: [`crate::kifu`] runs the lookup over a frontend's transport and turns
+//! Fox's rows into its [`Record`]. This module is what Fox's half of that looks like
+//! ([`FOX_KIFU_API_SPEC.md`](../../../docs/dev/FOX_KIFU_API_SPEC.md)).
 
 use mirai_core::{Color, GameTree, Node, NodeId, Point, sgf};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-const UA: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
-
-pub fn user_agent() -> &'static str {
-    UA
-}
-
-pub trait Fetch {
-    fn get(&self, url: &str) -> impl Future<Output = Result<String, String>> + Send;
-}
+use crate::kifu::{Record, Source, display_text, urlencoding};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FoxUser {
@@ -28,12 +19,9 @@ pub struct FoxUser {
     pub hidden: bool,
 }
 
-/// One row of a player's game list, as Fox sends it.
-///
-/// The field names are Fox's; the Rust names are not. Both frontends deserialise this from
-/// the API, and the desktop also writes it back out as its last-search cache, so the two
-/// must agree byte for byte — which they do because there is only one type.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// One row of a player's game list, as Fox sends it. The field names are Fox's; the Rust
+/// names are not.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct FoxGame {
     #[serde(rename = "chessid", default)]
     pub chess_id: String,
@@ -73,29 +61,26 @@ const fn default_board_size() -> u8 {
 }
 
 impl FoxGame {
-    /// Nickname, falling back to the English name, then to the colour.
-    pub fn black(&self) -> &str {
-        player_name(&self.black_nick, &self.black_en_name, "Black")
-    }
-
-    pub fn white(&self) -> &str {
-        player_name(&self.white_nick, &self.white_en_name, "White")
-    }
-
-    /// `"柯洁 (P9) vs 党毅飞 (P8)"` — how the record names itself in a list or a title.
-    pub fn matchup(&self) -> String {
-        format!(
-            "{} ({}) vs {} ({})",
-            display_text(self.black()),
-            rank(self.black_dan, self.black_occ),
-            display_text(self.white()),
-            rank(self.white_dan, self.white_occ)
-        )
+    /// The row as every server's records read: names, Fox's rank and result codes decoded.
+    pub fn record(&self) -> Record {
+        Record {
+            source: Source::Fox,
+            id: self.chess_id.clone(),
+            black: player_name(&self.black_nick, &self.black_en_name).to_string(),
+            black_rank: rank(self.black_dan, self.black_occ),
+            white: player_name(&self.white_nick, &self.white_en_name).to_string(),
+            white_rank: rank(self.white_dan, self.white_occ),
+            result: self.result(),
+            moves: Some(self.moves),
+            board_size: Some(self.board_size),
+            date: self.date.clone(),
+            event: self.title.clone(),
+        }
     }
 
     /// SGF result text: `"B+3.5"`, `"W+R"`, `"B+"` for an unrecorded margin, or empty when
     /// Fox reported no winner.
-    pub fn result(&self) -> String {
+    fn result(&self) -> String {
         let colour = match self.winner {
             1 => "B",
             2 => "W",
@@ -110,13 +95,12 @@ impl FoxGame {
     }
 }
 
-fn player_name<'a>(nickname: &'a str, english: &'a str, fallback: &'a str) -> &'a str {
-    if !nickname.is_empty() {
-        nickname
-    } else if !english.is_empty() {
+/// The nickname, or the English name when Fox sent none.
+fn player_name<'a>(nickname: &'a str, english: &'a str) -> &'a str {
+    if nickname.is_empty() {
         english
     } else {
-        fallback
+        nickname
     }
 }
 
@@ -150,15 +134,6 @@ pub fn hundredths(value: u32) -> String {
     }
 }
 
-/// Replaces control characters, which Fox does put in nicknames and titles, so a label
-/// cannot be made to do something a label should not.
-pub fn display_text(value: &str) -> String {
-    value
-        .chars()
-        .map(|c| if c.is_control() { '\u{fffd}' } else { c })
-        .collect()
-}
-
 // -- endpoints ----------------------------------------------------------------------------
 
 pub fn user_url(nickname: &str) -> String {
@@ -180,23 +155,6 @@ pub fn sgf_url(chess_id: &str) -> String {
         "https://h5.foxwq.com/yehuDiamond/chessbook_local/YHWQFetchChess?chessid={}",
         urlencoding(chess_id)
     )
-}
-
-/// Percent-encode a nickname without pulling in a crate.
-pub fn urlencoding(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.as_bytes() {
-        match *b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(*b as char)
-            }
-            _ => {
-                use std::fmt::Write as _;
-                let _ = write!(out, "%{b:02X}");
-            }
-        }
-    }
-    out
 }
 
 // -- replies ------------------------------------------------------------------------------
@@ -265,26 +223,6 @@ pub fn sgf_field(body: &str) -> Result<String, String> {
         .filter(|text| !text.trim().is_empty())
         .map(str::to_string)
         .ok_or_else(|| "fox response has no SGF".to_string())
-}
-
-/// The `chess` field of a `YHWQFetchChess` reply, with the dialect normalised.
-pub fn parse_sgf_body(body: &str) -> Result<String, String> {
-    sgf_field(body).map(|raw| normalize_fox_sgf(&raw))
-}
-
-pub async fn lookup_user<F: Fetch>(fetch: &F, nickname: &str) -> Result<FoxUser, String> {
-    let body = fetch.get(&user_url(nickname)).await?;
-    parse_user(&body, nickname)
-}
-
-pub async fn list_games<F: Fetch>(fetch: &F, uid: &str) -> Result<Vec<FoxGame>, String> {
-    let body = fetch.get(&games_url(uid)).await?;
-    parse_games(&body)
-}
-
-pub async fn fetch_sgf<F: Fetch>(fetch: &F, chess_id: &str) -> Result<String, String> {
-    let body = fetch.get(&sgf_url(chess_id)).await?;
-    parse_sgf_body(&body)
 }
 
 // -- the SGF dialect ------------------------------------------------------------------------
@@ -710,30 +648,30 @@ mod tests {
             date: "2026-01-01".to_string(),
             title: String::new(),
         };
-        assert_eq!(row.black(), "kejie");
-        assert_eq!(row.white(), "党毅飞");
-        assert_eq!(row.matchup(), "kejie (P9) vs 党毅飞 (P8)");
-        assert_eq!(row.result(), "B+3.5");
+        let record = row.record();
+        assert_eq!(record.black, "kejie");
+        assert_eq!(record.white, "党毅飞");
+        assert_eq!(record.matchup(), "kejie (P9) vs 党毅飞 (P8)");
+        assert_eq!(record.result, "B+3.5");
     }
 
-    /// The API reply and the desktop's cache file are the same shape, so a cached row
-    /// reopens as the row it was.
     #[test]
-    fn a_game_row_round_trips_through_foxs_own_field_names() {
+    fn a_game_list_reads_foxs_own_field_names() {
         let body = r#"{"result":0,"chesslist":[
             {"chessid":"abc","blacknick":"A","whitenick":"B","movenum":42,"winner":2,"point":-1},
             {"chessid":"","blacknick":"skip"}
         ]}"#;
         let rows = parse_games(body).expect("game list");
         assert_eq!(rows.len(), 1, "rows without a chessid are dropped");
-        assert_eq!(rows[0].chess_id, "abc");
-        assert_eq!(rows[0].moves, 42);
-        assert_eq!(rows[0].board_size, 19, "a missing boardsize defaults to 19");
-        assert_eq!(rows[0].result(), "W+R");
-
-        let json = serde_json::to_string(&rows[0]).expect("cache write");
-        let back: FoxGame = serde_json::from_str(&json).expect("cache read");
-        assert_eq!(back, rows[0]);
+        let record = rows[0].record();
+        assert_eq!(record.id, "abc");
+        assert_eq!(record.moves, Some(42));
+        assert_eq!(
+            record.board_size,
+            Some(19),
+            "a missing boardsize defaults to 19"
+        );
+        assert_eq!(record.result, "W+R");
     }
 
     #[test]

@@ -5,8 +5,9 @@ normatively in [`PROTOCOL.md`](PROTOCOL.md); how to prove a change works is
 [`TESTING.md`](TESTING.md); why the design is what it is, with the history, is
 [`../archive/RETROSPECTIVE.md`](../archive/RETROSPECTIVE.md); the user's view is
 [`../user/GUIDE.md`](../user/GUIDE.md). Candidate colour versus KataGo's `order` is
-[`CANDIDATE_COLOUR.md`](CANDIDATE_COLOUR.md). Fox HTTP and its SGF dialect are
-[`FOX_KIFU_API_SPEC.md`](FOX_KIFU_API_SPEC.md). Arch packaging is
+[`CANDIDATE_COLOUR.md`](CANDIDATE_COLOUR.md). Each record server's HTTP and SGF dialect are
+[`FOX_KIFU_API_SPEC.md`](FOX_KIFU_API_SPEC.md), [`EWEIQI_KIFU_API_SPEC.md`](EWEIQI_KIFU_API_SPEC.md)
+and [`YIKE_KIFU_API_SPEC.md`](YIKE_KIFU_API_SPEC.md). Arch packaging is
 [`PACKAGING.md`](PACKAGING.md). Translation is [`TRANSLATING.md`](TRANSLATING.md).
 
 §3 maps tasks to files; paths there are from the repository root. Signatures and field lists
@@ -51,7 +52,7 @@ flowchart TB
 | `mirai-core` | geometry, rulesets, legality, superko, scoring, game tree, SGF, time control | — | any workspace crate; GTK; tokio; anything doing real I/O |
 | `mirai-proto` | MRP value types, messages, frame codec, QUIC transport, SHA-256 for cert pins | `mirai-core` | `mirai-engine`, `mirai`, serde_json, **anything KataGo-specific** |
 | `mirai-engine` | the `Engine` trait and its two implementations; KataGo query building and response decoding | `mirai-core`, `mirai-proto` | GTK/glib/adw, `mirai`, `mirai-server` |
-| `mirai-client` | shared application layer: analysis requests, sweep planning, play, Fox, TOFU session, stone sounds | `mirai-core`, `mirai-engine` (`remote` feature) | GTK/glib/adw, `mirai`, `mirai-server`, KataGo JSON |
+| `mirai-client` | shared application layer: analysis requests, sweep planning, play, record search on Fox, eWeiqi and Yike, TOFU session, stone sounds | `mirai-core`, `mirai-engine` (`remote` feature) | GTK/glib/adw, `mirai`, `mirai-server`, KataGo JSON |
 | `mirai-server` | headless host: one KataGo per configured engine, multiplexed across clients, token auth | `mirai-core`, `mirai-engine`, `mirai-proto` | GTK, `mirai` |
 | `mirai` | `AppState`, window, custom `gsk` widgets, GTK adapters over `mirai-client`, preferences, config | all four libraries | — |
 
@@ -185,8 +186,9 @@ boundaries are [§1](#1-the-system). User settings and shortcuts are in
 | move the cursor, undo, or remember the Save path | `crates/mirai-client/src/game/mod.rs`, `crates/mirai-client/src/game/history.rs` | `GameSession` |
 | trust a remote certificate before analysis | `crates/mirai-client/src/session.rs` | `Session` |
 | choose an AI move, resign, or advance a clock | `crates/mirai-client/src/play.rs`, `crates/mirai/src/play.rs` | `select_move_index`, `resign_check`, `PlayController` |
-| Fox HTTP, or Fox's SGF dialect | `crates/mirai-client/src/fox.rs` | `lookup_user`, `list_games`, `fetch_sgf`, `normalize_fox_sgf`; [Fox spec](FOX_KIFU_API_SPEC.md) |
-| the Fox picker | `crates/mirai/src/kifu.rs`, `crates/mirai/src/kifu_picker.rs`, `crates/mirai/src/kifu_picker.blp` | `present`, `KifuPickerDialog::show_page`, `SearchHistory` |
+| search a server for public records: the steps, and the row every server's list becomes | `crates/mirai-client/src/kifu.rs` | `Fetch`, `players`, `games`, `download`, `Record`; a numeric query is an id, and only Yike can name several players |
+| one server's HTTP or SGF dialect | `crates/mirai-client/src/fox.rs`, `crates/mirai-client/src/eweiqi.rs`, `crates/mirai-client/src/yike.rs` | `normalize_fox_sgf`, `eweiqi::parse_record` (GIB), `yike::result_text`; the [Fox](FOX_KIFU_API_SPEC.md), [eWeiqi](EWEIQI_KIFU_API_SPEC.md) and [Yike](YIKE_KIFU_API_SPEC.md) specs |
+| the record picker | `crates/mirai/src/kifu.rs`, `crates/mirai/src/kifu_picker.rs`, `crates/mirai/src/kifu_picker.blp` | `present`, `KifuPickerDialog::show_page`, `SearchHistory`, `Soup` (the libsoup `Fetch`) |
 | the headless server, or `server.toml` | `crates/mirai-server/src/main.rs`, `crates/mirai-server/src/session.rs`, `crates/mirai-server/src/config.rs`, `crates/mirai-server/server.example.toml` | `run`, `serve`, `ServerConfig::load` |
 | per-window state, or which `Change` fires | `crates/mirai/src/app.rs`, `crates/mirai/src/window.rs` | `AppState`, `Change`, `handle_change` |
 | share one KataGo across windows | `crates/mirai/src/engines.rs` | `EnginePool::acquire` |
@@ -348,8 +350,8 @@ thread.
 - **No waiting synchronously for a subscription.** `finish()` belongs to the probe and server,
   not GUI handlers.
 - **No synced write, directory scan or `PATH` search.** Config save, autosave, opening an
-  SGF file (read and parse), KataGo discovery, the saved Fox searches, the TLS trust store
-  Fox's first lookup would load, and crash-leftover scanning run on `spawn_blocking` and
+  SGF file (read and parse), KataGo discovery, the saved record searches, the TLS trust store
+  the first lookup would load, and crash-leftover scanning run on `spawn_blocking` and
   return through the weak window. A pasted record is already in memory and is parsed in
   place. `write_atomic*` syncs the file and directory (50–100 ms on an ordinary
   disk). `flush_config` on close and user-initiated Save remain synchronous: a subsequent
@@ -634,7 +636,7 @@ Transient futures may own GTK objects only for a bounded lifetime. `CalibrationR
 ties its signal handler, task, controls and engine restoration to completion or
 cancellation. Signal closures must not strongly capture an owner of their emitter;
 dialogs connecting to `AppState` disconnect their `SignalHandlerId` when they go. A dialog
-built per open goes on close. Preferences, New Game and the Fox picker are built once per
+built per open goes on close. Preferences, New Game and the record picker are built once per
 window and kept in its `Ui` — building them was most of what opening them cost
 ([RENDERING §8](RENDERING.md#8-dialogs-lists-and-a-160-hz-budget)) — so they go on
 `destroy`, with the window, and reset or reload their rows at each presentation.
@@ -690,7 +692,7 @@ projection/cache state; it does not borrow `AppState` or replay the game tree.
 | **INV-8** | `with_ui`, `take_ui`, `shutdown` in `crates/mirai/src/window_shell.rs`; `Drop for Ui` in `crates/mirai/src/window.rs` |
 | **INV-9** | `crates/mirai/src/widgets/` |
 | **INV-10** | `changed`, `resolve_node`, `set_analysis_at` in `crates/mirai/src/app.rs`; the epoch bump is `GameSession::adopt` / `restore` in `crates/mirai-client/src/game/mod.rs` |
-| **INV-11** | `runtime().spawn_blocking` at each I/O site: `AppState::save_config`, autosave and SGF open in `crates/mirai/src/window.rs`, Fox search history and `warm_tls` in `crates/mirai/src/kifu.rs`, discovery in `crates/mirai/src/prefs.rs` |
+| **INV-11** | `runtime().spawn_blocking` at each I/O site: `AppState::save_config`, autosave and SGF open in `crates/mirai/src/window.rs`, the record search history and `warm_tls` in `crates/mirai/src/kifu.rs`, discovery in `crates/mirai/src/prefs.rs` |
 
 ---
 

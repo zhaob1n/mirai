@@ -58,7 +58,7 @@ Do not modify this section without explicit approval.
 | Prove a change works, especially in the GUI | [`docs/dev/TESTING.md`](docs/dev/TESTING.md) — crate coverage, engine verification, GUI harness, debugging playbook |
 | Draw in a widget, or chase a dropped frame | [`docs/dev/RENDERING.md`](docs/dev/RENDERING.md) — why the custom widgets draw with quads, and the measurements behind it |
 | Candidate colour, or why the list is not monotonic | [`docs/dev/CANDIDATE_COLOUR.md`](docs/dev/CANDIDATE_COLOUR.md) — KataGo's `order` is play-selection value, not the win-rate column; what that does to the ramp |
-| Fox HTTP, or the Fox SGF dialect | [`docs/dev/FOX_KIFU_API_SPEC.md`](docs/dev/FOX_KIFU_API_SPEC.md) |
+| Fox, eWeiqi or Yike HTTP, or their SGF dialects | [`docs/dev/FOX_KIFU_API_SPEC.md`](docs/dev/FOX_KIFU_API_SPEC.md), [`docs/dev/EWEIQI_KIFU_API_SPEC.md`](docs/dev/EWEIQI_KIFU_API_SPEC.md), [`docs/dev/YIKE_KIFU_API_SPEC.md`](docs/dev/YIKE_KIFU_API_SPEC.md) |
 | Arch packaging, desktop entry, metainfo | [`docs/dev/PACKAGING.md`](docs/dev/PACKAGING.md) — what to regenerate, and why there is no Flatpak |
 | Add a user-visible string, or translate | [`docs/dev/TRANSLATING.md`](docs/dev/TRANSLATING.md) — gettext conventions, the `po/` workflow, why the GTK-free crates stay English |
 | Touch anything the HarmonyOS client depends on | [`../mirai-ohos/docs/dev/UPSTREAM.md`](../mirai-ohos/docs/dev/UPSTREAM.md) — optional adjacent checkout, not a path in this repository. Present only if `mirai-ohos` is checked out beside this one; that client's ledger of what it reuses from here |
@@ -75,7 +75,7 @@ Search user-facing questions in `README.md docs/user/` and implementation questi
 crates/mirai-core     geometry, rules, scoring, game tree, SGF     no I/O, no GUI
 crates/mirai-proto    MRP types, frame codec, QUIC transport       knows nothing about KataGo
 crates/mirai-engine   Engine trait, LocalEngine, RemoteEngine      knows nothing about GTK
-crates/mirai-client   shared analysis, session, play, Fox          no GTK, no files
+crates/mirai-client   shared analysis, session, play, records      no GTK, no files
 crates/mirai-server   headless host sharing KataGo across clients
 crates/mirai          the GTK application                          the only crate that links GTK
 ```
@@ -142,7 +142,7 @@ directly or through the widget tree, the emitter it is connected to (a dialog's 
 holding the dialog; an action closure holding a widget whose handler holds the action). Use
 `#[weak]` or go through `with_ui`. A handler that something shorter-lived (a dialog) connects on
 something longer-lived (`AppState`) is disconnected when the shorter-lived owner goes: when it
-closes, or — for the dialogs a window keeps (Preferences, New Game, the Fox picker) — when it
+closes, or — for the dialogs a window keeps (Preferences, New Game, the record picker) — when it
 is destroyed with the window's `Ui`.
 
 **INV-9 — rendering.** Board, win-rate graph and move tree are custom `gtk::Widget` subclasses

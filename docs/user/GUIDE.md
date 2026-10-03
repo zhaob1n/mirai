@@ -69,8 +69,8 @@ not its binary, network or config files.
 
 ## 3. The interface
 
-The header opens records from Fox, files or the clipboard, starts games and switches engine
-profiles. The board navigation holds the editing-tools toggle. The sidebar
+The header opens records from Fox, eWeiqi or Yike, files or the clipboard, starts games and
+switches engine profiles. The board navigation holds the editing-tools toggle. The sidebar
 has **Analysis**, **Moves** and **Comment** pages. A game hides review navigation, graph and
 sidebar until it ends; the sidebar returns as you left it.
 
@@ -189,7 +189,7 @@ next to KataGo's Black-positive score lead. Works whether or not live analysis i
 
 ## 5. Reviewing a game
 
-**Opening.** <kbd>Ctrl</kbd>+<kbd>O</kbd>, *Open File…* in the Fox button's arrow menu,
+**Opening.** <kbd>Ctrl</kbd>+<kbd>O</kbd>, *Open File…* in the download button's arrow menu,
 or a file on the command line. If the file holds several games a dialog lists them —
 players, size, moves, result, date — and
 you choose. <kbd>Ctrl</kbd>+<kbd>V</kbd> pastes a record from the clipboard,
@@ -197,20 +197,35 @@ you choose. <kbd>Ctrl</kbd>+<kbd>V</kbd> pastes a record from the clipboard,
 an SGF file is kept verbatim and written back, so files from other programs survive a round
 trip.
 
-**Downloading from Fox.** Click the main **Download from Fox** half of the split button,
-or press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>.
-Enter an exact Fox nickname or numeric UID. The list shows at most the latest 200 public
-records, which is the service's fixed history window, ten to a page; the arrows under it turn
-to newer and older games. Players who hide their records are not bypassed. Every search is
-kept with its games: searching for the same name again answers at once with what Fox sent
-then, and the refresh button beside the list asks Fox again. With the search box empty, or
-while you type, the dialog lists your recent searches, ten to a page like the games; pick one
-to see its games, or remove it with its trash button. A saved search still shows its games
-when Fox cannot be reached, and opening the dialog again restores the last search and page.
-Click a game, or press Enter on it, to download and open it; Enter in the search box searches.
-Fox's dialect — quarter-point Chinese komi, and handicap stones written as a run of opening
-nodes — is normalised on import. The result has no local backing file: it is named after its
-players, `柯洁 vs 申真谞 •`, and **Save** therefore asks where to store it.
+**Downloading a game record.** Click the main **Download Game Record** half of the split
+button, or press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>. Choose the server at the top
+of the dialog, then search:
+
+- **Fox** — an exact Fox nickname or numeric UID. The list shows at most the latest 200
+  public records, which is the service's fixed history window. Players who hide their
+  records are not bypassed.
+- **eWeiqi** — a player's name or nickname, matched in part and as eWeiqi spells it (a
+  Korean professional's name is often in traditional characters). eWeiqi shows strangers
+  only its catalogue of tournament records, not an account's own games, so this finds the
+  professional and tournament games it publishes; the latest 200 matches are listed.
+- **Yike** — a nickname, a Yike number such as `CGF00001`, a numeric account id, or a
+  professional's name. A professional's name opens Yike's game library; a nickname opens
+  that member's online games. Yike nicknames are not unique: when several players match,
+  the dialog lists them, ten to a page, and you pick one. The pick is kept with the search;
+  to choose again, remove the search from the recent list. The latest 100 games are listed.
+
+Games show ten to a page; the arrows under the list turn to newer and older games. Every
+search is kept with its games: searching for the same name on the same server again answers
+at once with what the server sent then, and the refresh button beside the list asks again.
+With the search box empty, or while you type, the dialog lists your recent searches on the
+chosen server, ten to a page like the games; pick one to see its games, or remove it with its
+trash button. A saved search still shows its games when the server cannot be reached, and
+opening the dialog again restores the last search and page. Click a game, or press Enter on
+it, to download and open it; Enter in the search box searches. Each server's dialect is
+normalised on import: Fox's quarter-point Chinese komi and handicap stones written as a run
+of opening nodes, eWeiqi's own record format and its commentary, Yike's results written in
+Chinese. The result has no local backing file: it is named after its players,
+`柯洁 vs 申真谞 •`, and **Save** therefore asks where to store it.
 
 **Several records at once.** Opening a file while mirai is running — from your file manager,
 or another `mirai game.sgf` on the command line — gives that record its own window rather
@@ -581,7 +596,7 @@ logs and the generated analysis config live under `$XDG_DATA_HOME/mirai/`.
 | <kbd>←</kbd> <kbd>→</kbd> | one move | <kbd>Ctrl</kbd>+<kbd>E</kbd> | estimate score | <kbd>Ctrl</kbd>+<kbd>Z</kbd> | last edit | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> | save as |
 | <kbd>Page Up/Down</kbd> | ten moves | <kbd>o</kbd> | ownership overlay | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> | redo | <kbd>Ctrl</kbd>+<kbd>C</kbd> | copy record |
 | <kbd>↑</kbd> <kbd>↓</kbd> | variations | <kbd>y</kbd> | policy overlay | <kbd>Delete</kbd> | delete branch | <kbd>Ctrl</kbd>+<kbd>V</kbd> | paste record |
-| | | <kbd>c</kbd> | coordinates | <kbd>Ctrl</kbd>+<kbd>↑</kbd> | set as main line | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> | download from Fox |
+| | | <kbd>c</kbd> | coordinates | <kbd>Ctrl</kbd>+<kbd>↑</kbd> | set as main line | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> | download a game record |
 | | | <kbd>n</kbd> | move numbers | <kbd>t</kbd> | switch side to play | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> | clear board |
 | | | <kbd>F9</kbd> | show/hide sidebar | | | | |
 | | | <kbd>g</kbd> | show/hide win-rate graph | | | | |
@@ -612,7 +627,7 @@ keyboard focus.
 |---|---|
 | `~/.config/mirai/config.toml` | settings and engine profiles, remote tokens included, so it is written readable by you alone (`0600`, in a `0700` directory when mirai creates it) |
 | `~/.local/share/mirai/autosave-*.sgf` | the record each open window is looking at, one file per window |
-| `~/.local/share/mirai/fox-searches.json` | your last 20 Fox searches with their game lists, shown again without asking Fox when you search for the same name |
+| `~/.local/share/mirai/kifu-searches.json` | your last 20 searches on Fox, eWeiqi and Yike with their game lists, shown again without asking the server when you search for the same name |
 | `~/.local/share/mirai/katago-logs/` | KataGo's own logs, one file per engine start, and the generated `katago-analysis-*.cfg`; also `mirai-server`'s, for an `[[engine]]` without `log_dir`. Created private; a directory for generated configs is refused if another user owns it or can write to it, or to a directory on the way to it (a sticky one such as `/tmp` excepted) |
 | `~/.config/mirai/server.toml` | `mirai-server`'s settings, on the machine running it |
 
@@ -624,7 +639,7 @@ Closing a window **deletes** its autosave, so a file still there on the next sta
 crash left behind, and that is what mirai offers to restore. The autosave is not your file:
 restoring it does not make it the target of a plain Save. KataGo's logs accumulate and can be
 deleted at any time, as can the generated analysis config — mirai writes it again whenever
-its contents would change. The saved Fox searches can be deleted; the next lookup starts the
+its contents would change. The saved searches can be deleted; the next lookup starts the
 list again. Nothing else is written; your own KataGo installation, model and any analysis config
 you supplied are never modified.
 

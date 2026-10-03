@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! The download dialog's fixed hierarchy, and the pages of records and searches it shows.
+//! The download dialog's fixed hierarchy, and the pages of records, searches and players it
+//! shows.
 //!
-//! Fox answers with up to 200 records. The dialog shows them [`PAGE`] at a time, as rows of
-//! an `AdwPreferencesGroup` that are built once, with the dialog, and refilled in place; a
-//! row opens its record when activated, through the `picker.open-record` action. A list
-//! view cannot do as well: `GtkListView` keeps 200 rows alive whatever its height, and any
-//! list view drops its rows while unrooted and rebinds them all, synchronously, when
+//! A server answers with up to 200 records. The dialog shows them [`PAGE`] at a time, as
+//! rows of an `AdwPreferencesGroup` that are built once, with the dialog, and refilled in
+//! place; a row opens its record when activated, through the `picker.open-record` action. A
+//! list view cannot do as well: `GtkListView` keeps 200 rows alive whatever its height, and
+//! any list view drops its rows while unrooted and rebinds them all, synchronously, when
 //! presented again (`docs/dev/RENDERING.md` §8). A page of ten is also what a reader scans.
-//! The recent searches are paged the same way, so neither list needs the dialog scrolled,
-//! and the toolbar's one pager turns whichever of them is on screen.
+//! The recent searches are paged the same way, and so are the players a Yike nickname may
+//! name, so no list needs the dialog scrolled, and the toolbar's one pager turns whichever
+//! of them is on screen.
 //!
 //! Ten rows of CJK names still take 7–8 ms to shape and measure, more than a 144 Hz frame.
 //! A page therefore changes [`ROWS_PER_FRAME`] rows a frame, and the dialog is presented
@@ -22,9 +24,19 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{CompositeTemplate, glib};
 
+use mirai_client::kifu::{Player, Record, Server};
+
 use crate::i18n;
 
 type OpenHandler = Box<dyn Fn(crate::kifu::DownloadedGame)>;
+
+/// What a search is found again by: the same words on another server are another search.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SearchKey {
+    pub(crate) server: Server,
+    /// What was typed, trimmed.
+    pub(crate) query: String,
+}
 
 /// Records, or recent searches, a page shows.
 pub(crate) const PAGE: usize = 10;
@@ -69,9 +81,13 @@ mod imp {
         #[template_child]
         pub toolbar: TemplateChild<adw::ToolbarView>,
         #[template_child]
+        pub server_group: TemplateChild<adw::ToggleGroup>,
+        #[template_child]
         pub entry: TemplateChild<gtk::SearchEntry>,
         #[template_child]
         pub search_button: TemplateChild<gtk::Button>,
+        #[template_child]
+        pub caption: TemplateChild<gtk::Label>,
         #[template_child]
         pub banner: TemplateChild<adw::Banner>,
         #[template_child]
@@ -89,6 +105,10 @@ mod imp {
         #[template_child]
         pub result_group: TemplateChild<adw::PreferencesGroup>,
         #[template_child]
+        pub players_page: TemplateChild<adw::PreferencesPage>,
+        #[template_child]
+        pub players_group: TemplateChild<adw::PreferencesGroup>,
+        #[template_child]
         pub refresh_button: TemplateChild<gtk::Button>,
         #[template_child]
         pub pager: TemplateChild<gtk::CenterBox>,
@@ -102,8 +122,8 @@ mod imp {
         pub(super) slots: OnceCell<Vec<adw::ActionRow>>,
         /// The record each row shows. Rows a page turn has yet to refill still show the
         /// last page's, for a frame or two, and a click there must open what it shows.
-        pub(super) slot_games: RefCell<Vec<Option<crate::kifu::FoxGame>>>,
-        pub(super) games: RefCell<Vec<crate::kifu::FoxGame>>,
+        pub(super) slot_games: RefCell<Vec<Option<Record>>>,
+        pub(super) games: RefCell<Vec<Record>>,
         /// How each record in `games` reads.
         pub(super) texts: RefCell<Vec<RecordText>>,
         /// The page on screen, from 0, newest first.
@@ -134,13 +154,25 @@ mod imp {
         pub(super) recent_page_index: Cell<usize>,
         /// The next row of the recent page to fill; [`PAGE`] once all are.
         pub(super) next_recent: Cell<usize>,
-        /// The history revision `recent_entries` holds.
-        pub(super) recent_revision: Cell<Option<u64>>,
-        /// The query whose records the results page holds.
-        pub(super) shown_query: RefCell<String>,
-        /// The query the status page reports on — a failure, or an account with no public
+        /// The history revision `recent_entries` holds, and the server whose searches they
+        /// are.
+        pub(super) recent_stamp: Cell<Option<(u64, Server)>>,
+        /// Rows of `players_group`, at most [`PAGE`], built as a list of players first needs
+        /// them and refilled in place.
+        pub(super) player_rows: RefCell<Vec<adw::ActionRow>>,
+        /// The players a search named, and how each reads.
+        pub(super) players: RefCell<Vec<(Player, RecordText)>>,
+        /// The players' page on screen, from 0.
+        pub(super) players_page_index: Cell<usize>,
+        /// The next row of the players' page to fill; [`PAGE`] once all are.
+        pub(super) next_player: Cell<usize>,
+        /// The search whose players the players' page holds.
+        pub(super) players_key: RefCell<SearchKey>,
+        /// The search whose records the results page holds.
+        pub(super) shown_key: RefCell<SearchKey>,
+        /// The search the status page reports on — a failure, or an account with no public
         /// games — kept on screen while the entry still reads it.
-        pub(super) status_query: RefCell<String>,
+        pub(super) status_key: RefCell<SearchKey>,
         /// What the entry read when a request began. The entry is read-only meanwhile, but
         /// its clear icon still empties it; the text is put back.
         pub(super) busy_text: RefCell<String>,
@@ -234,8 +266,10 @@ impl KifuPickerDialog {
     pub fn widgets(&self) -> KifuPickerWidgets {
         let imp = self.imp();
         KifuPickerWidgets {
+            server_group: imp.server_group.get(),
             entry: imp.entry.get(),
             search_button: imp.search_button.get(),
+            caption: imp.caption.get(),
             banner: imp.banner.get(),
             stack: imp.stack.get(),
             status_page: imp.status_page.get(),
@@ -243,6 +277,8 @@ impl KifuPickerDialog {
             recent_page: imp.recent_page.get(),
             results_page: imp.results_page.get(),
             result_group: imp.result_group.get(),
+            players_page: imp.players_page.get(),
+            players_group: imp.players_group.get(),
             refresh_button: imp.refresh_button.get(),
             newer_button: imp.newer_button.get(),
             older_button: imp.older_button.get(),
@@ -282,27 +318,22 @@ impl KifuPickerDialog {
     }
 
     pub(crate) fn clear_games(&self) {
-        self.replace_games(String::new(), Vec::new(), Vec::new());
+        self.replace_games(SearchKey::default(), Vec::new(), Vec::new());
     }
 
-    /// Installs `games`, the records `query` found, with `texts` how they read, and shows
-    /// the first page.
-    pub(crate) fn replace_games(
-        &self,
-        query: String,
-        games: Vec<crate::kifu::FoxGame>,
-        texts: Vec<RecordText>,
-    ) {
+    /// Installs `games`, the records the search `key` found, with `texts` how they read, and
+    /// shows the first page.
+    pub(crate) fn replace_games(&self, key: SearchKey, games: Vec<Record>, texts: Vec<RecordText>) {
         let imp = self.imp();
-        imp.shown_query.replace(query);
+        imp.shown_key.replace(key);
         *imp.games.borrow_mut() = games;
         *imp.texts.borrow_mut() = texts;
         self.show_page(0);
     }
 
-    /// The query whose records the results page holds; empty when it holds none.
-    pub(crate) fn shown_query(&self) -> String {
-        self.imp().shown_query.borrow().clone()
+    /// The search whose records the results page holds; an empty query when it holds none.
+    pub(crate) fn shown_key(&self) -> SearchKey {
+        self.imp().shown_key.borrow().clone()
     }
 
     fn page_count(&self) -> usize {
@@ -335,6 +366,8 @@ impl KifuPickerDialog {
         };
         if self.showing(imp.recent_page.upcast_ref()) {
             self.show_recent_page(turn(imp.recent_page_index.get()));
+        } else if self.showing(imp.players_page.upcast_ref()) {
+            self.show_players_page(turn(imp.players_page_index.get()));
         } else {
             self.show_page(turn(imp.page.get()));
         }
@@ -344,17 +377,28 @@ impl KifuPickerDialog {
         self.imp().stack.visible_child().as_ref() == Some(page)
     }
 
-    /// Reveals the pager while the records or the recent searches are on screen and there is
-    /// a page of them to turn to, and says where it is.
+    /// Reveals the pager while the records, the recent searches or the players are on screen
+    /// and there is a page of them to turn to, and says where it is.
     fn sync_pager(&self) {
+        enum List {
+            Records,
+            Searches,
+            Players,
+        }
         let imp = self.imp();
-        let records = self.showing(imp.results_page.upcast_ref());
-        let (page, count) = if records {
-            (imp.page.get(), imp.texts.borrow().len())
+        let (list, page, count) = if self.showing(imp.results_page.upcast_ref()) {
+            (List::Records, imp.page.get(), imp.texts.borrow().len())
         } else if self.showing(imp.recent_page.upcast_ref()) {
             (
+                List::Searches,
                 imp.recent_page_index.get(),
                 imp.recent_matches.borrow().len(),
+            )
+        } else if self.showing(imp.players_page.upcast_ref()) {
+            (
+                List::Players,
+                imp.players_page_index.get(),
+                imp.players.borrow().len(),
             )
         } else {
             imp.toolbar.set_reveal_bottom_bars(false);
@@ -372,13 +416,15 @@ impl KifuPickerDialog {
         let args = [("first", &*first), ("last", &*last), ("count", &*count)];
         // One message per list, so a language that counts with a measure word can use each
         // list's own.
-        let range = if records {
+        let range = match list {
             // Translators: which records of how many the page shows, such as "11–20 of 200".
-            i18n::pgettext_f("records", "{first}–{last} of {count}", &args)
-        } else {
+            List::Records => i18n::pgettext_f("records", "{first}–{last} of {count}", &args),
             // Translators: which saved searches of how many the page shows, such as
             // "11–20 of 20".
-            i18n::pgettext_f("searches", "{first}–{last} of {count}", &args)
+            List::Searches => i18n::pgettext_f("searches", "{first}–{last} of {count}", &args),
+            // Translators: which of the players a search matched the page shows, such as
+            // "11–20 of 21".
+            List::Players => i18n::pgettext_f("players", "{first}–{last} of {count}", &args),
         };
         imp.page_label.set_label(&range);
         imp.toolbar.set_reveal_bottom_bars(pages > 1);
@@ -395,8 +441,12 @@ impl KifuPickerDialog {
         for (row, _, _) in imp.recent.borrow().iter() {
             row.set_visible(false);
         }
+        for row in imp.player_rows.borrow().iter() {
+            row.set_visible(false);
+        }
         imp.next_slot.set(0);
         imp.next_recent.set(0);
+        imp.next_player.set(0);
         self.feed();
         self.sync_pager();
     }
@@ -429,17 +479,19 @@ impl KifuPickerDialog {
         to < PAGE
     }
 
-    /// Fills the rows left, of the page and of the recent list, on the dialog's frame
-    /// clock — so not before it is mapped.
+    /// Fills the rows left, of the page, of the recent list and of the players, on the
+    /// dialog's frame clock — so not before it is mapped.
     fn feed(&self) {
         let imp = self.imp();
-        let pending = imp.next_slot.get() < PAGE || imp.next_recent.get() < PAGE;
+        let pending = imp.next_slot.get() < PAGE
+            || imp.next_recent.get() < PAGE
+            || imp.next_player.get() < PAGE;
         if imp.feed.borrow().is_some() || !pending {
             return;
         }
         let id = self.add_tick_callback(|dialog, _| {
-            // Both, every frame: `|`, not `||`.
-            if dialog.fill_rows() | dialog.fill_recent() {
+            // All, every frame: `|`, not `||`.
+            if dialog.fill_rows() | dialog.fill_recent() | dialog.fill_players() {
                 return glib::ControlFlow::Continue;
             }
             // Returning `Break` removes the callback; dropping the id would not.
@@ -450,12 +502,96 @@ impl KifuPickerDialog {
     }
 
     /// The record row `slot` shows.
-    pub(crate) fn game_at(&self, slot: usize) -> Option<crate::kifu::FoxGame> {
+    pub(crate) fn game_at(&self, slot: usize) -> Option<Record> {
         self.imp().slot_games.borrow().get(slot).cloned().flatten()
     }
 
     pub(crate) fn has_games(&self) -> bool {
         !self.imp().games.borrow().is_empty()
+    }
+
+    /// Shows `players`, the people the search `key` may mean, with how each reads, from
+    /// their first page. A row opens its player's records through `picker.open-player`
+    /// with the player's index.
+    pub(crate) fn set_players(&self, key: SearchKey, players: Vec<(Player, RecordText)>) {
+        let imp = self.imp();
+        imp.players_key.replace(key);
+        imp.players.replace(players);
+        self.show_players_page(0);
+    }
+
+    pub(crate) fn has_players(&self) -> bool {
+        !self.imp().players.borrow().is_empty()
+    }
+
+    /// The search whose players the players' page holds.
+    pub(crate) fn players_key(&self) -> SearchKey {
+        self.imp().players_key.borrow().clone()
+    }
+
+    /// The player at `index` in the list.
+    pub(crate) fn player_at(&self, index: usize) -> Option<Player> {
+        let players = self.imp().players.borrow();
+        players.get(index).map(|(player, _)| player.clone())
+    }
+
+    /// Shows page `page` of the players. The first rows change at once, the rest over the
+    /// next frames.
+    fn show_players_page(&self, page: usize) {
+        let imp = self.imp();
+        let pages = imp.players.borrow().len().div_ceil(PAGE);
+        imp.players_page_index
+            .set(page.min(pages.saturating_sub(1)));
+        imp.next_player.set(0);
+        self.fill_players();
+        self.feed();
+        self.sync_pager();
+        imp.players_page.scroll_to_top();
+    }
+
+    /// Fills the players' page's next [`ROWS_PER_FRAME`] rows, building those that do not
+    /// exist yet, and hides the rows the page has no player for; false once all are filled.
+    fn fill_players(&self) -> bool {
+        let imp = self.imp();
+        let from = imp.next_player.get();
+        if from >= PAGE {
+            return false;
+        }
+        let to = (from + ROWS_PER_FRAME).min(PAGE);
+        let first = imp.players_page_index.get() * PAGE;
+        let players = imp.players.borrow();
+        let mut rows = imp.player_rows.borrow_mut();
+        for i in from..to {
+            let Some((_, text)) = players.get(first + i) else {
+                if let Some(row) = rows.get(i) {
+                    row.set_visible(false);
+                }
+                continue;
+            };
+            // A page fills its rows in order from the first, so the row a player needs is
+            // at most the next one to build.
+            if rows.len() == i {
+                let row = adw::ActionRow::builder()
+                    .activatable(true)
+                    .use_markup(false)
+                    .title_lines(1)
+                    .subtitle_lines(1)
+                    .build();
+                // The target first: an action that takes a parameter refuses a row that
+                // names it without one, with a warning.
+                row.set_action_target_value(Some(&((first + i) as u32).to_variant()));
+                row.set_action_name(Some("picker.open-player"));
+                imp.players_group.add(&row);
+                rows.push(row);
+            }
+            let row = &rows[i];
+            row.set_title(&text.title);
+            row.set_subtitle(&text.subtitle);
+            row.set_action_target_value(Some(&((first + i) as u32).to_variant()));
+            row.set_visible(true);
+        }
+        imp.next_player.set(to);
+        to < PAGE
     }
 
     pub(crate) fn abort_task(&self) {
@@ -476,18 +612,18 @@ impl KifuPickerDialog {
         }
     }
 
-    /// The history revision the recent list shows, if it has been filled.
-    pub(crate) fn recent_revision(&self) -> Option<u64> {
-        self.imp().recent_revision.get()
+    /// The history revision and the server the recent list shows, if it has been filled.
+    pub(crate) fn recent_stamp(&self) -> Option<(u64, Server)> {
+        self.imp().recent_stamp.get()
     }
 
     /// Shows `entries` as the recent searches, from the page already on screen if it still
     /// has some. A row opens its search through the dialog's `picker.open-saved` action, and
     /// its button forgets it through `picker.forget`.
-    pub(crate) fn set_recent(&self, revision: u64, entries: Vec<RecentText>) {
+    pub(crate) fn set_recent(&self, stamp: (u64, Server), entries: Vec<RecentText>) {
         let imp = self.imp();
         imp.recent_entries.replace(entries);
-        imp.recent_revision.set(Some(revision));
+        imp.recent_stamp.set(Some(stamp));
         self.match_recent();
         self.show_recent_page(imp.recent_page_index.get());
     }
@@ -600,12 +736,12 @@ impl KifuPickerDialog {
         imp.recent_matches.borrow().len()
     }
 
-    pub(crate) fn status_query(&self) -> String {
-        self.imp().status_query.borrow().clone()
+    pub(crate) fn status_key(&self) -> SearchKey {
+        self.imp().status_key.borrow().clone()
     }
 
-    pub(crate) fn set_status_query(&self, query: String) {
-        self.imp().status_query.replace(query);
+    pub(crate) fn set_status_key(&self, key: SearchKey) {
+        self.imp().status_key.replace(key);
     }
 
     pub(crate) fn busy_text(&self) -> String {
@@ -624,8 +760,10 @@ impl Default for KifuPickerDialog {
 }
 
 pub struct KifuPickerWidgets {
+    pub server_group: adw::ToggleGroup,
     pub entry: gtk::SearchEntry,
     pub search_button: gtk::Button,
+    pub caption: gtk::Label,
     pub banner: adw::Banner,
     pub stack: adw::ViewStack,
     pub status_page: adw::StatusPage,
@@ -633,6 +771,8 @@ pub struct KifuPickerWidgets {
     pub recent_page: adw::PreferencesPage,
     pub results_page: adw::PreferencesPage,
     pub result_group: adw::PreferencesGroup,
+    pub players_page: adw::PreferencesPage,
+    pub players_group: adw::PreferencesGroup,
     pub refresh_button: gtk::Button,
     pub newer_button: gtk::Button,
     pub older_button: gtk::Button,

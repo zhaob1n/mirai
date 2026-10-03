@@ -4,7 +4,7 @@ using Gtk 4.0;
 using Adw 1;
 
 template $MiraiKifuPickerDialog: Adw.Dialog {
-  title: _("Download from Fox");
+  title: _("Download Game Record");
   content-width: 640;
   content-height: 860;
 
@@ -14,7 +14,31 @@ template $MiraiKifuPickerDialog: Adw.Dialog {
     reveal-bottom-bars: false;
 
     [top]
-    Adw.HeaderBar {}
+    // The server the entry searches stands where the title would: below it, it cost the
+    // tenth record of a page its room. Rust keeps the entry's placeholder, the caption and
+    // the status page in step with it; the dialog's title still names it to a screen reader.
+    Adw.HeaderBar {
+      title-widget: Adw.ToggleGroup server_group {
+        accessibility {
+          label: _("Server");
+        }
+
+        Adw.Toggle {
+          name: "fox";
+          label: C_("server", "Fox");
+        }
+
+        Adw.Toggle {
+          name: "eweiqi";
+          label: C_("server", "eWeiqi");
+        }
+
+        Adw.Toggle {
+          name: "yike";
+          label: C_("server", "Yike");
+        }
+      };
+    }
 
     content: Gtk.Box {
       orientation: vertical;
@@ -42,7 +66,7 @@ template $MiraiKifuPickerDialog: Adw.Dialog {
             }
           }
 
-          Gtk.Label {
+          Gtk.Label caption {
             label: _("Public records only · Fox exposes at most the latest 200 games");
             xalign: 0;
             wrap: true;
@@ -58,7 +82,7 @@ template $MiraiKifuPickerDialog: Adw.Dialog {
       }
 
       Adw.Banner banner {
-        title: _("Fox request failed");
+        title: _("Request failed");
         revealed: false;
       }
 
@@ -72,15 +96,13 @@ template $MiraiKifuPickerDialog: Adw.Dialog {
           description: _("Enter an exact nickname or UID to browse their recent public games.");
         }
 
+        // Rust words it for what is loading.
         Adw.StatusPage loading_page {
-          title: _("Searching Fox");
-          description: _("This may take a few seconds.");
-
           paintable: Adw.SpinnerPaintable {};
         }
 
-        // Searches already made, answered from the saved records without asking Fox. Ten a
-        // page, like the records; the rows are added as the history needs them.
+        // Searches already made, answered from the saved records without asking the server.
+        // Ten a page, like the records; the rows are added as the history needs them.
         Adw.PreferencesPage recent_page {
           title: _("Recent Searches");
 
@@ -99,7 +121,7 @@ template $MiraiKifuPickerDialog: Adw.Dialog {
 
             header-suffix: Gtk.Button refresh_button {
               icon-name: "view-refresh-symbolic";
-              tooltip-text: _("Search Fox Again");
+              tooltip-text: _("Search Again");
               valign: center;
 
               styles [
@@ -108,11 +130,23 @@ template $MiraiKifuPickerDialog: Adw.Dialog {
             };
           }
         }
+
+        // The players a search may mean, when the server's names are not unique: ten a page,
+        // like the records, the rows added as a list first needs them. One line of
+        // description, as the records have, so that ten rows still fit.
+        Adw.PreferencesPage players_page {
+          title: _("Matching Players");
+
+          Adw.PreferencesGroup players_group {
+            title: _("Several Players Match");
+            description: _("Choose whose games to browse, or search an account number.");
+          }
+        }
       }
     };
 
-    // Revealed with the records or the recent searches, when there is more than one page of
-    // them.
+    // Revealed with the records, the recent searches or the players, when there is more
+    // than one page of them.
     [bottom]
     Gtk.CenterBox pager {
       styles [

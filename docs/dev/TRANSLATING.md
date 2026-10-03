@@ -8,8 +8,9 @@ Copyright (C) 2026 Huang Zhaobin
 mirai is translated with GNU gettext, as GNOME applications are. The interface, the desktop
 entry and the AppStream metainfo share one catalogue per language in `po/`. User documents
 are translated as separate files (`README.zh-CN.md`, `docs/user/GUIDE.zh-CN.md`); developer
-documents are written in English, except the original Chinese Fox API field notes in
-[`FOX_KIFU_API_SPEC.md`](FOX_KIFU_API_SPEC.md).
+documents are written in English, except the Chinese API notes for the record servers:
+[`FOX_KIFU_API_SPEC.md`](FOX_KIFU_API_SPEC.md), [`EWEIQI_KIFU_API_SPEC.md`](EWEIQI_KIFU_API_SPEC.md)
+and [`YIKE_KIFU_API_SPEC.md`](YIKE_KIFU_API_SPEC.md).
 
 ## Adding or updating a language
 
@@ -100,3 +101,4 @@ labels:
 | pass / resign | 停一手 / 认输 | komi / handicap | 贴目 / 让子 |
 | byo-yomi / absolute | 读秒 / 包干计时 | estimate score | 形势判断 |
 | Fox | 野狐 | Black / White | 黑方 / 白方 |
+| eWeiqi / Yike | 弈城 / 弈客 | download game record | 下载棋谱 |

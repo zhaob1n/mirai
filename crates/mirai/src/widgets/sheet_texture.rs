@@ -10,7 +10,7 @@
 //! instead. Ptyxis does the same for its tab overview.
 //!
 //! An opening dialog renders the texture again every frame. What it shows is what the user
-//! is about to read, and its content changes as it opens: scrollbars fade in, the Fox picker
+//! is about to read, and its content changes as it opens: scrollbars fade in, the record picker
 //! fills its rows. Each frame's texture is laid on the surface's pixels where that frame
 //! puts it, and once the spring is in its tail — back from its overshoot, with what scale
 //! remains moving the dialog's edges by under [`TAIL_PX`] — it is drawn at scale 1 about

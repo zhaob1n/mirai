@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: mirai\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaob1n/mirai/issues\n"
-"POT-Creation-Date: 2026-10-04 00:21+0800\n"
+"POT-Creation-Date: 2026-10-04 01:31+0800\n"
 "PO-Revision-Date: 2026-09-28 06:00+0800\n"
 "Last-Translator: Huang Zhaobin <zhaob1n@foxmail.com>\n"
 "Language-Team: Chinese (China) <i18n-zh@googlegroups.com>\n"
@@ -341,53 +341,138 @@ msgctxt "searches"
 msgid "{first}–{last} of {count}"
 msgstr "第 {first}–{last} 条，共 {count} 条"
 
+#. Translators: which of the players a search matched the page shows, such as
+#. "11–20 of 21".
+#: crates/mirai/src/kifu_picker.rs
+#, rust-format
+msgctxt "players"
+msgid "{first}–{last} of {count}"
+msgstr "第 {first}–{last} 位，共 {count} 位"
+
 #: crates/mirai/src/kifu_picker.rs
 msgid "Remove From History"
 msgstr "从历史记录中移除"
 
+#: crates/mirai/src/kifu.rs crates/mirai/src/kifu_picker.blp
+msgctxt "server"
+msgid "Fox"
+msgstr "野狐"
+
+#: crates/mirai/src/kifu.rs crates/mirai/src/kifu_picker.blp
+msgctxt "server"
+msgid "eWeiqi"
+msgstr "弈城"
+
+#: crates/mirai/src/kifu.rs crates/mirai/src/kifu_picker.blp
+msgctxt "server"
+msgid "Yike"
+msgstr "弈客"
+
 #: crates/mirai/src/kifu.rs
-msgid "Enter an exact Fox nickname or numeric UID"
-msgstr "请输入准确的野狐昵称或数字 UID"
+#, rust-format
+msgid "Could not reach {server}: request failed"
+msgstr "无法连接{server}：请求失败"
+
+#: crates/mirai/src/kifu.rs
+#, rust-format
+msgid "Could not reach {server}: response was not UTF-8 ({error})"
+msgstr "无法连接{server}：响应不是 UTF-8（{error}）"
+
+#: crates/mirai/src/kifu.rs
+#, rust-format
+msgid "Could not reach {server}: response was unexpectedly large"
+msgstr "无法连接{server}：响应意外过大"
+
+#: crates/mirai/src/kifu.rs
+#, rust-format
+msgid "Could not reach {server}: request timed out"
+msgstr "无法连接{server}：请求超时"
+
+#: crates/mirai/src/kifu.rs
+#, rust-format
+msgid "Could not reach {server}: {error}"
+msgstr "无法连接{server}：{error}"
+
+#: crates/mirai/src/kifu.rs
+#, rust-format
+msgid "{server} returned invalid data: {error}"
+msgstr "{server}返回了无效数据：{error}"
+
+#: crates/mirai/src/kifu.rs
+#, rust-format
+msgid "{server} has no player by that name"
+msgstr "{server}上没有这个名字的棋手"
 
 #: crates/mirai/src/kifu.rs
 msgid "This player has hidden their game records"
 msgstr "该玩家隐藏了自己的棋谱"
 
-#: crates/mirai/src/kifu.rs
-msgid "Fox returned invalid data: the player UID is missing"
-msgstr "野狐返回了无效数据：缺少玩家 UID"
+#: crates/mirai/src/kifu.rs crates/mirai/src/kifu_picker.blp
+msgid "Exact Fox nickname or numeric UID"
+msgstr "准确的野狐昵称或数字 UID"
+
+#: crates/mirai/src/kifu.rs crates/mirai/src/kifu_picker.blp
+msgid "Public records only · Fox exposes at most the latest 200 games"
+msgstr "仅限公开棋谱 · 野狐最多提供最近 200 盘"
+
+#: crates/mirai/src/kifu.rs crates/mirai/src/kifu_picker.blp
+msgid "Find a Fox Player"
+msgstr "查找野狐玩家"
+
+#: crates/mirai/src/kifu.rs crates/mirai/src/kifu_picker.blp
+msgid "Enter an exact nickname or UID to browse their recent public games."
+msgstr "输入准确的昵称或 UID，浏览其最近的公开对局。"
 
 #: crates/mirai/src/kifu.rs
-#, rust-format
-msgid "Fox returned invalid data: {error}"
-msgstr "野狐返回了无效数据：{error}"
+msgid "Player name or nickname on eWeiqi"
+msgstr "弈城上的棋手姓名或昵称"
 
 #: crates/mirai/src/kifu.rs
-msgid "Could not reach Fox: request failed"
-msgstr "无法连接野狐：请求失败"
+msgid "Public tournament records only · names match in part · at most the latest 200 games"
+msgstr "仅限公开赛事棋谱 · 名字部分匹配 · 最多最新 200 盘"
 
 #: crates/mirai/src/kifu.rs
-#, rust-format
-msgid "Could not reach Fox: response was not UTF-8 ({error})"
-msgstr "无法连接野狐：响应不是 UTF-8（{error}）"
+msgid "Search eWeiqi’s Records"
+msgstr "检索弈城棋谱"
 
 #: crates/mirai/src/kifu.rs
-msgid "Could not reach Fox: response was unexpectedly large"
-msgstr "无法连接野狐：响应意外过大"
+msgid "Enter a player’s name or nickname to browse the tournament games eWeiqi publishes for them."
+msgstr "输入棋手的姓名或昵称，浏览弈城为其公开的赛事对局。"
 
 #: crates/mirai/src/kifu.rs
-msgid "Could not reach Fox: request timed out"
-msgstr "无法连接野狐：请求超时"
+msgid "Yike nickname, account number or professional’s name"
+msgstr "弈客昵称、账号或职业棋手姓名"
 
 #: crates/mirai/src/kifu.rs
-#, rust-format
-msgid "Could not reach Fox: {error}"
-msgstr "无法连接野狐：{error}"
+msgid "Public records only · at most the latest 100 games"
+msgstr "仅限公开棋谱 · 最多最近 100 盘"
+
+#: crates/mirai/src/kifu.rs
+msgid "Find a Yike Player"
+msgstr "查找弈客棋手"
+
+#: crates/mirai/src/kifu.rs
+msgid "Enter a nickname, an account number or a professional’s name to browse their recent games."
+msgstr "输入昵称、账号或职业棋手的姓名，浏览其最近的对局。"
 
 #: crates/mirai/src/kifu.rs
 #, rust-format
 msgid "UID {uid}"
 msgstr "UID {uid}"
+
+#: crates/mirai/src/kifu.rs
+#, rust-format
+msgid "Account {id}"
+msgstr "账号 {id}"
+
+#: crates/mirai/src/kifu.rs
+msgid "Professional · Yike game library"
+msgstr "职业棋手 · 弈客棋手库"
+
+#: crates/mirai/src/kifu.rs
+#, rust-format
+msgid "Account {id} · {rank}"
+msgstr "账号 {id} · {rank}"
 
 #: crates/mirai/src/kifu.rs crates/mirai/src/window.rs
 #, rust-format
@@ -401,17 +486,10 @@ msgid "{count} game · saved {time}"
 msgid_plural "{count} games · saved {time}"
 msgstr[0] "{count} 盘对局 · 保存于 {time}"
 
-#: crates/mirai/src/kifu.rs crates/mirai/src/kifu_picker.blp
-msgid "Find a Fox Player"
-msgstr "查找野狐玩家"
-
-#: crates/mirai/src/kifu.rs crates/mirai/src/kifu_picker.blp
-msgid "Enter an exact nickname or UID to browse their recent public games."
-msgstr "输入准确的昵称或 UID，浏览其最近的公开对局。"
-
-#: crates/mirai/src/kifu.rs crates/mirai/src/kifu_picker.blp
-msgid "Searching Fox"
-msgstr "正在搜索野狐"
+#: crates/mirai/src/kifu.rs
+#, rust-format
+msgid "Searching {server}"
+msgstr "正在搜索{server}"
 
 #: crates/mirai/src/kifu.rs
 msgid "Looking up the player and their recent games."
@@ -431,8 +509,9 @@ msgid "No public games"
 msgstr "没有公开对局"
 
 #: crates/mirai/src/kifu.rs
-msgid "This account has no visible games in Fox's recent-history window."
-msgstr "该账号在野狐的近期记录范围内没有可见的对局。"
+#, rust-format
+msgid "{server} lists no public games for this search."
+msgstr "{server}没有这次搜索的公开对局。"
 
 #: crates/mirai/src/kifu.rs
 #, rust-format
@@ -1012,7 +1091,7 @@ msgstr "编辑远程引擎"
 msgid "Add Remote Engine"
 msgstr "添加远程引擎"
 
-#: crates/mirai/src/prefs.rs
+#: crates/mirai/src/prefs.rs crates/mirai/src/kifu_picker.blp
 msgid "Server"
 msgstr "服务器"
 
@@ -1514,8 +1593,8 @@ msgstr "文件"
 
 #: crates/mirai/src/window.rs crates/mirai/src/kifu_picker.blp
 #: crates/mirai/src/window.blp
-msgid "Download from Fox"
-msgstr "从野狐下载"
+msgid "Download Game Record"
+msgstr "下载棋谱"
 
 #: crates/mirai/src/window.rs
 msgid "Clear Board"
@@ -1578,25 +1657,13 @@ msgid "The clipboard holds no game record"
 msgstr "剪贴板中没有棋谱"
 
 #: crates/mirai/src/kifu_picker.blp
-msgid "Exact Fox nickname or numeric UID"
-msgstr "准确的野狐昵称或数字 UID"
-
-#: crates/mirai/src/kifu_picker.blp
 msgctxt "verb"
 msgid "Search"
 msgstr "搜索"
 
 #: crates/mirai/src/kifu_picker.blp
-msgid "Public records only · Fox exposes at most the latest 200 games"
-msgstr "仅限公开棋谱 · 野狐最多提供最近 200 盘"
-
-#: crates/mirai/src/kifu_picker.blp
-msgid "Fox request failed"
-msgstr "野狐请求失败"
-
-#: crates/mirai/src/kifu_picker.blp
-msgid "This may take a few seconds."
-msgstr "这可能需要几秒钟。"
+msgid "Request failed"
+msgstr "请求失败"
 
 #: crates/mirai/src/kifu_picker.blp
 msgid "Recent Searches"
@@ -1607,8 +1674,20 @@ msgid "Recent Games"
 msgstr "最近对局"
 
 #: crates/mirai/src/kifu_picker.blp
-msgid "Search Fox Again"
-msgstr "重新搜索野狐"
+msgid "Search Again"
+msgstr "重新搜索"
+
+#: crates/mirai/src/kifu_picker.blp
+msgid "Matching Players"
+msgstr "匹配的棋手"
+
+#: crates/mirai/src/kifu_picker.blp
+msgid "Several Players Match"
+msgstr "有多位棋手匹配"
+
+#: crates/mirai/src/kifu_picker.blp
+msgid "Choose whose games to browse, or search an account number."
+msgstr "选择要浏览谁的对局，或改用账号搜索。"
 
 #: crates/mirai/src/kifu_picker.blp
 msgid "Previous Page"
@@ -1934,8 +2013,8 @@ msgid "Engine Profile"
 msgstr "引擎配置"
 
 #: crates/mirai/src/window.blp
-msgid "Download a Public Game Record from Fox (Ctrl+Shift+O)"
-msgstr "从野狐下载公开棋谱（Ctrl+Shift+O）"
+msgid "Download a Public Game Record (Ctrl+Shift+O)"
+msgstr "下载公开棋谱（Ctrl+Shift+O）"
 
 #: crates/mirai/src/window.blp
 msgid "Open a File or Paste SGF"
@@ -2202,8 +2281,8 @@ msgid "Games against KataGo"
 msgstr "与 KataGo 对弈"
 
 #: data/io.github.zhaob1n.Mirai.metainfo.xml.in
-msgid "SGF editing, and game records downloaded from Fox"
-msgstr "SGF 编辑，以及从野狐下载的棋谱"
+msgid "SGF editing, and game records downloaded from Fox, eWeiqi and Yike"
+msgstr "SGF 编辑，以及从野狐、弈城和弈客下载的棋谱"
 
 #: data/io.github.zhaob1n.Mirai.metainfo.xml.in
 msgid "mirai does not include KataGo or a network; supply your own."
