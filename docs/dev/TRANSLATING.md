@@ -23,6 +23,13 @@ Edit the `.po` file with any PO editor (GNOME Translation Editor, Poedit, Lokali
 hand. `po/mirai.pot` is derived from the sources and not tracked; regenerate it rather than
 editing it. Put your name in the `translator-credits` message: the About dialog shows it.
 
+Run `tools/i18n/update-po.sh` again before committing a catalogue. It keeps each one in a
+form whose diff shows only what changed in its messages: references name the file without a
+line, no line is wrapped, and messages the sources dropped go instead of lingering as `#~`.
+An editor that wraps or reorders lines is put back, and a catalogue whose messages did not
+change is left untouched, creation date and all. Messages stay in source order, which shows
+a translator a message's neighbours, so moving code still moves its messages.
+
 `build.rs` runs `msgfmt --check` on every language in `po/LINGUAS`, so a translation that
 drops or renames a `{placeholder}`, or breaks the file, fails the build instead of showing a
 hole. `msgfmt --statistics po/fr.po -o /dev/null` counts what is left to do.
