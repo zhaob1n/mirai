@@ -319,8 +319,13 @@ few cycles at under 1 GHz, not as more work. `ui_thread.rs` gives the GTK thread
 utilization clamp (`uclamp.min` 512 of 1024), which schedutil reads as half busy while
 the thread runs; it needs no privilege, the thread's children do not inherit it, and
 asleep the thread costs nothing. 256 halved the frames over budget, 512 took them to a
-third, 768 gained little more. A driver that ramps by itself (intel_pstate with HWP,
-amd-pstate active) is unaffected. `MIRAI_NO_CLOCK_FLOOR=1` measures without it.
+third, 768 gained little more. `MIRAI_NO_CLOCK_FLOOR=1` measures without it. A driver
+that picks frequencies itself (intel_pstate with HWP, amd-pstate active) ignores the
+clamp, and HWP does the same as schedutil did: with EPP `balance_performance`, 40 of the
+46 frames over budget opening and closing dialogs were 3–18 Mcycles at a median 0.78
+GHz. EPP `performance` took frames over budget opening and closing from 0.6–1.0 % /
+1.6–2.6 % (dialogs / Fox picker) to 0.1–0.2 % / 0.2 %, and closes to none. That choice is
+the system's.
 
 **The first CJK text loaded its fonts inside a frame.** Pango builds a fallback fontset
 per font description the first time a string needs one: fontconfig sorts the installed
@@ -369,8 +374,20 @@ otherwise the paint that first scales reuses the live render node, 18 ms of glyp
 
 What remains:
 
-- **One frame on a first visit**: a Preferences page, New Game or About, 8–17 ms of
-  their first layout with the clock floor.
+- **Presenting a kept dialog restyles all of it.** The dialog host takes a closed dialog
+  out of the window, and presenting it again re-attaches its CSS nodes, so GTK computes
+  the style of every widget again, every Preferences page included: 5.4 ms of a 6–10 ms
+  first frame at 4.4 GHz. That frame only lays out, and the next paints the dialog at
+  near-zero opacity. Hiding the groups of the pages not shown, which CSS validation
+  skips, took the first open from 9 to 3.4 ms and a reopen to 2.6–6 ms, but a first visit
+  to Analysis or Play from 8 to 10–11.6 ms; not taken.
+- **The Fox picker's first open is the process's first use of its fonts and icons**: a
+  layout-only frame of 11 ms, 6 of it on-CPU and 5 waiting, on Pango's fontconfig thread
+  for the five font patterns not yet matched, about a millisecond each, and on GTK's
+  icon-loading thread pool; then 7 ms rasterising its CJK glyphs and rendering its first
+  texture, at near-zero opacity. The TLS warm-up running alongside is not part of it (no
+  difference without it), nor is GDK's dmabuf set-up, done at start-up.
+- **A Preferences page's first visit**: 7–8.5 ms laying out its rows, at full clock.
 - **A report relays out the window**: label text changes queue a resize up to the
   toplevel (`gtkwidget.c`), and no container stops it.
 
