@@ -319,8 +319,13 @@ few cycles at under 1 GHz, not as more work. `ui_thread.rs` gives the GTK thread
 utilization clamp (`uclamp.min` 512 of 1024), which schedutil reads as half busy while
 the thread runs; it needs no privilege, the thread's children do not inherit it, and
 asleep the thread costs nothing. 256 halved the frames over budget, 512 took them to a
-third, 768 gained little more. A driver that ramps by itself (intel_pstate with HWP,
-amd-pstate active) is unaffected. `MIRAI_NO_CLOCK_FLOOR=1` measures without it.
+third, 768 gained little more. `MIRAI_NO_CLOCK_FLOOR=1` measures without it. A driver
+that picks frequencies itself (intel_pstate with HWP, amd-pstate active) ignores the
+clamp, and HWP does the same as schedutil did: with EPP `balance_performance`, 40 of the
+46 frames over budget opening and closing dialogs were 3–18 Mcycles at a median 0.78
+GHz. EPP `performance` took frames over budget opening and closing from 0.6–1.0 % /
+1.6–2.6 % (dialogs / Fox picker) to 0.1–0.2 % / 0.2 %, and closes to none. That choice is
+the system's.
 
 **The first CJK text loaded its fonts inside a frame.** Pango builds a fallback fontset
 per font description the first time a string needs one: fontconfig sorts the installed
@@ -347,17 +352,42 @@ missing that cache. `widgets/sheet_texture.rs` does what Ptyxis does for its tab
 ([libadwaita #756](https://gitlab.gnome.org/GNOME/libadwaita/-/issues/756)): while the
 sheet scales, the dialog's content is drawn from a texture rendered at the surface's own
 scale, whose glyphs are cached: 1.3 ms a render at the median, 4.3 ms at p99. An opening
-dialog renders it again when its content changes, as what it shows is what the user is
-about to read; overlay scrollbars fading in and focus transitions change it nearly every
-frame. A closing one keeps the texture it began with. A close begins at rest, and its
-first frame may still be at rest, so the watch redraws each frame until the sheet shrinks:
+dialog renders it every frame, after that frame's layout, offset by where the widget's
+origin falls inside a device pixel. GSK snaps each glyph's baseline to a whole pixel of
+what it renders to, so a texture rendered from a pixel corner but drawn half a pixel off
+put its text 0.3 px high and blurred until the dialog went live, a jump as the animation
+ended; aligned, the texture at rest matches live text (no level off by more than 15 of
+255, against 126). Resampling remained: the spring's last frames, within a few tenths of
+a percent of scale 1, were softer than live text and sharpened as libadwaita snapped the
+spring to rest, a pop just as the motion ended. Recorded at 160 fps, the text changed by
+a mean 0.8–1.0 levels on that last frame, against 0.35 drawn live. Once the spring has
+turned back from its overshoot and the scale left moves the dialog's edges by under 3
+device px, the open's texture is drawn at scale 1 about the dialog's centre, the content
+off the sheet by no more than that as the spring settles; the last frame then changes the
+text by 0.22–0.25. Latched on the way up, a dialog would ride the 1.7 % overshoot off its
+sheet. Nearest-neighbour sampling, tried first, looked worse. A closing dialog keeps the
+texture it began with; its scrollbars and focus rings still fade, and rendering them
+again was a millisecond or more a frame for nothing. A close begins at rest, and its first
+frame may still be at rest, so the watch redraws each frame until the sheet shrinks:
 otherwise the paint that first scales reuses the live render node, 18 ms of glyphs.
 `MIRAI_NO_SHEET_TEXTURE=1` draws dialogs live.
 
 What remains:
 
-- **One frame on a first visit**: a Preferences page, New Game or About, 8–17 ms of
-  their first layout with the clock floor.
+- **Presenting a kept dialog restyles all of it.** The dialog host takes a closed dialog
+  out of the window, and presenting it again re-attaches its CSS nodes, so GTK computes
+  the style of every widget again, every Preferences page included: 5.4 ms of a 6–10 ms
+  first frame at 4.4 GHz. That frame only lays out, and the next paints the dialog at
+  near-zero opacity. Hiding the groups of the pages not shown, which CSS validation
+  skips, took the first open from 9 to 3.4 ms and a reopen to 2.6–6 ms, but a first visit
+  to Analysis or Play from 8 to 10–11.6 ms; not taken.
+- **The Fox picker's first open is the process's first use of its fonts and icons**: a
+  layout-only frame of 11 ms, 6 of it on-CPU and 5 waiting, on Pango's fontconfig thread
+  for the five font patterns not yet matched, about a millisecond each, and on GTK's
+  icon-loading thread pool; then 7 ms rasterising its CJK glyphs and rendering its first
+  texture, at near-zero opacity. The TLS warm-up running alongside is not part of it (no
+  difference without it), nor is GDK's dmabuf set-up, done at start-up.
+- **A Preferences page's first visit**: 7–8.5 ms laying out its rows, at full clock.
 - **A report relays out the window**: label text changes queue a resize up to the
   toplevel (`gtkwidget.c`), and no container stops it.
 

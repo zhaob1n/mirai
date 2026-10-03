@@ -15,6 +15,10 @@ prints the frame's wall time beside the GTK thread's on-CPU time (task-clock sam
 cycles, and so the clock it ran at: a slow frame on a core held at its lowest frequency
 reads as a few Mcycles at under 1 GHz, not as more work. Given a harness step and n, the
 second form prints the nth slow frame after that step by inclusive time per function.
+Each sample counts for the period perf names its event with, so any `period=` will do.
+With `kernel.perf_event_paranoid` at 2, the default, perf samples user space only: on-CPU
+time then leaves out the kernel, and a frame whose wall time exceeds it waited or ran
+there.
 
 Use frame pointers (`--call-graph fp`): GTK's widget recursion runs deeper than a DWARF
 stack copy reaches. Distribution libraries have them; a GTK built with symbols for
@@ -26,8 +30,9 @@ import collections
 import re
 import subprocess
 
+# The recipe's periods, for an event whose name does not carry its own.
 CYCLES_PERIOD = 2_000_000
-TASK_CLOCK_PERIOD_MS = 0.2
+TASK_CLOCK_PERIOD_NS = 200_000
 THREAD = "mirai"
 
 
@@ -72,13 +77,23 @@ def samples(perf, start=None, end=None, stacks=False):
         yield cur
 
 
+def period(event, default):
+    """The sampling period perf names the event with (`task-clock/period=200000/u`)."""
+    found = re.search(r"period=(\d+)", event)
+    return int(found[1]) if found else default
+
+
+def on_cpu_ms(event):
+    return period(event, TASK_CLOCK_PERIOD_NS) / 1e6 if "task-clock" in event else 0.0
+
+
 def clocks(args):
     events = [(e, t) for e, t in timed(args.perf)]
     print(f"{'step':34s} {'wall':>6s} {'on-cpu':>7s} {'Mcycles':>8s} {'GHz':>5s}  phases")
     for step, start, end, phases in frames(args.log, args.min):
         window = [e for e, t in events if start <= t <= end]
-        cpu = sum("task-clock" in e for e in window) * TASK_CLOCK_PERIOD_MS
-        cycles = sum("cycles" in e for e in window) * CYCLES_PERIOD / 1e6
+        cpu = sum(on_cpu_ms(e) for e in window)
+        cycles = sum(period(e, CYCLES_PERIOD) for e in window if "cycles" in e) / 1e6
         ghz = cycles / cpu if cpu else 0.0
         detail = phases.split(" ", 2)[2].rsplit(" at=", 1)[0]
         print(f"{step[:34]:34s} {(end - start) * 1000:6.1f} {cpu:7.1f} {cycles:8.0f} {ghz:5.2f}  {detail}")
@@ -100,17 +115,18 @@ def functions(args):
     step, start, end, phases = picked[args.nth - 1]
     print(phases)
     inclusive = collections.Counter()
-    count = 0
+    cpu = 0.0
     for event, stack in samples(args.perf, start, end, stacks=True):
-        if "task-clock" not in event:
+        weight = on_cpu_ms(event)
+        if not weight:
             continue
-        count += 1
+        cpu += weight
         for fn in set(stack):
             if not fn.startswith("[unknown]"):
-                inclusive[fn] += 1
-    print(f"on-CPU {count * TASK_CLOCK_PERIOD_MS:.1f} ms of {(end - start) * 1000:.1f} ms")
-    for fn, n in inclusive.most_common(args.top):
-        print(f"{n * TASK_CLOCK_PERIOD_MS:7.1f} ms  {fn}")
+                inclusive[fn] += weight
+    print(f"on-CPU {cpu:.1f} ms of {(end - start) * 1000:.1f} ms")
+    for fn, ms in inclusive.most_common(args.top):
+        print(f"{ms:7.1f} ms  {fn}")
 
 
 def main():
