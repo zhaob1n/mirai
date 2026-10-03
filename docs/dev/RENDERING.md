@@ -359,18 +359,21 @@ put its text 0.3 px high and blurred until the dialog went live, a jump as the a
 ended; aligned, the texture at rest matches live text (no level off by more than 15 of
 255, against 126). Resampling remained: the spring's last frames, within a few tenths of
 a percent of scale 1, were softer than live text and sharpened as libadwaita snapped the
-spring to rest, a pop just as the motion ended. Recorded at 160 fps, the text changed by
-a mean 0.8–1.0 levels on that last frame, against 0.35 drawn live. Once the spring has
-turned back from its overshoot and the scale left moves the dialog's edges by under 3
-device px, the open's texture is drawn at scale 1 about the dialog's centre, the content
-off the sheet by no more than that as the spring settles; the last frame then changes the
-text by 0.22–0.25. Latched on the way up, a dialog would ride the 1.7 % overshoot off its
-sheet. Nearest-neighbour sampling, tried first, looked worse. A closing dialog keeps the
-texture it began with; its scrollbars and focus rings still fade, and rendering them
+spring to rest, a pop just as the motion ended. `tools/perf/dialog-settle.py` records the
+open off the screen: on its last frame off rest, the text differed from rest by a mean
+0.87–0.88 grey levels, against 0.50–0.53 drawn live, the spring's own last step. Once the
+spring has turned back from its overshoot and the scale left moves the dialog's edges by
+under 3 device px, the open's texture is drawn at scale 1 about the dialog's centre, the
+content off the sheet by no more than that as the spring settles; that last frame then
+differs by 0.17–0.19. Latched on the way up, a dialog would ride the 1.7 % overshoot off
+its sheet. Nearest-neighbour sampling, tried first, looked worse. A closing dialog keeps
+the texture it began with; its scrollbars and focus rings still fade, and rendering them
 again was a millisecond or more a frame for nothing. A close begins at rest, and its first
 frame may still be at rest, so the watch redraws each frame until the sheet shrinks:
-otherwise the paint that first scales reuses the live render node, 18 ms of glyphs.
-`MIRAI_NO_SHEET_TEXTURE=1` draws dialogs live.
+otherwise the paint that first scales reuses the live render node, 18 ms of glyphs. The
+watch ends at scale 1, or at any scale held for four frames, so a sheet that came to rest
+scaled does not keep a texture rendering every frame. `MIRAI_NO_SHEET_TEXTURE=1` draws
+dialogs live.
 
 What remains:
 
