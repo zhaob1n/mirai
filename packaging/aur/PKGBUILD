@@ -1,10 +1,10 @@
 # Maintainer: Huang Zhaobin <zhaob1n@foxmail.com>
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: 0BSD
 
 pkgbase=mirai-git
 pkgname=('mirai-git' 'mirai-server-git')
 _repo=mirai
-pkgver=r0
+pkgver=r375.d695bd0
 pkgrel=1
 pkgdesc='Go analysis, review and play with KataGo'
 arch=('x86_64' 'aarch64')

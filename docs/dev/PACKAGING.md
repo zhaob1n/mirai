@@ -1,14 +1,15 @@
 # Packaging
 
-Nothing here is published: the files exist so a package can be built and checked locally.
-Commands are in the [README](../../README.md#requirements).
+`packaging/aur/` is the AUR package, published from this tree; everything else exists so a
+package can be built and checked locally. Commands are in the
+[README](../../README.md#requirements).
 
 |Path|What|
 |---|---|
 |`justfile`|`check`, `build`, `install [mirai\|mirai-server\|all]`, `uninstall [mirai\|mirai-server\|all]`; honours `PREFIX` and `DESTDIR`. The one list of installed files|
 |`data/`|templates of the desktop entry and AppStream metainfo (`*.in`), shared by every package; `just install` merges the translations from `po/` into them. Icons come from `crates/mirai/resources/icons/`|
 |`po/`|one gettext catalogue per language in `po/LINGUAS`, compiled by `just install` into `share/locale` ([TRANSLATING](TRANSLATING.md))|
-|`packaging/aur/`|split PKGBUILD and its `.SRCINFO`: `mirai-git` (the GUI, desktop files, icons) and `mirai-server-git` (the headless host, which needs no GTK), from one build, installed with `just`|
+|`packaging/aur/`|split PKGBUILD, its `.SRCINFO` and the 0BSD `LICENSE` that covers them: `mirai-git` (the GUI, desktop files, icons) and `mirai-server-git` (the headless host, which needs no GTK), from one build, installed with `just`. Exactly the files of the AUR repository `mirai-git`|
 |`tools/packaging/makepkg-local.sh`|builds that PKGBUILD from this checkout's HEAD instead of GitHub, rewriting only `source=`; `--prepare DIR` writes the PKGBUILD without building|
 |`tools/packaging/arch-chroot-test.sh`|builds the PKGBUILD in a clean devtools chroot with its own package cache, installs into a fresh one, smoke-runs both binaries, runs namcap|
 
@@ -16,19 +17,46 @@ Commands are in the [README](../../README.md#requirements).
 
 - **An installed file added or moved** → the `justfile` (install and uninstall); packages
   follow.
-- **PKGBUILD changed** → `makepkg --printsrcinfo > .SRCINFO` in `packaging/aur/`, then
+- **PKGBUILD changed** → in `packaging/aur/`, `makepkg -od --noprepare` (sets `pkgver` from
+  GitHub's current HEAD), `makepkg --printsrcinfo > .SRCINFO`, then
   `tools/packaging/arch-chroot-test.sh`. Its namcap run always flags the debug package's
   `.build-id` symlinks and an unused `ld-linux-x86-64.so.2`; both are false positives.
+  Commit here first, then publish (below).
+- **An upstream commit** → nothing. See *No PKGBUILD change per commit*.
 - **A release** → add a `<release>` to the metainfo template.
 - **A language added** → nothing here: `just install` and `uninstall` read `po/LINGUAS`.
 - **Linked libraries changed** → each package's `depends` lists the owner of every `NEEDED`
   entry of its binary (`readelf -d`, `pacman -Qqo`), plus `hicolor-icon-theme` for the
   GUI's icons.
 
+## Publishing to the AUR
+
+The AUR repository is a separate Git repository holding only the files of
+`packaging/aur/`, one commit per published change. The AUR takes pushes to `master` alone
+and refuses a pushed tip without a `.SRCINFO`.
+
+```sh
+git -c init.defaultBranch=master clone ssh://aur@aur.archlinux.org/mirai-git.git ~/aur/mirai-git
+cp packaging/aur/{PKGBUILD,.SRCINFO,LICENSE,.gitignore} ~/aur/mirai-git/
+cd ~/aur/mirai-git && git add -A && git commit -m '…' && git push
+```
+
+The commit message says what changed in the package, as here. `mirai-server-git` appears
+on its own page as a split package of the `mirai-git` base.
+
 ## Decisions
 
 **The PKGBUILD is a VCS package** because there are no release tags. A tagged release would
 add PKGBUILDs pinned to a tarball and checksum.
+
+**No PKGBUILD change per commit.** `pkgver()` computes `r<count>.<hash>` from the clone at
+build time, and AUR helpers rebuild `-git` packages on request, so a push to GitHub
+reaches users without touching the AUR. The guidelines forbid commits that only bump a VCS
+`pkgver`; the AUR is pushed only when the build itself changes — dependencies, build
+steps, installed files that `just install` does not already cover.
+
+**The package files are 0BSD**, not the project's GPL: it is what Arch asks of AUR package
+sources, and the condition for a package ever moving to the official repositories.
 
 **`!lto`.** The chroot's `makepkg.conf` enables LTO, which compiles the C inside `ring` and
 `zstd-sys` to GCC bitcode that rust-lld, rustc's default linker, cannot read; every C
@@ -41,7 +69,13 @@ rejects its signature. The `_v3` repositories carry a different architecture suf
 never collide.
 
 **Split, from one build.** `mirai-server` runs on the machine with the GPU and links no GTK;
-installing it should not pull GTK in, and a client does not need it.
+installing it should not pull GTK in, and a client does not need it. One `pkgbase` keeps one
+AUR repository, one build of the shared crates, and both packages built from one commit: the
+MRP version does not move during development, so the handshake would not catch a client and
+server built from commits whose wire formats differ. The price falls on a headless host:
+building `mirai-server-git` installs the GTK makedepends for the build and compiles the GUI
+too. A separate `pkgbase` would remove that and duplicate everything else; it is the move
+if server-only users ask for it.
 
 **`just install`, not a package per distribution.** `cargo install` places only binaries,
 not the desktop entry, metainfo and icons, so the install lives in a `justfile`. Debian,
