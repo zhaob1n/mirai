@@ -13,7 +13,9 @@ Wayland root grabs are black. Use the in-process harness (§5) for screenshots;
 `shot:` proves what is drawn, not frame time. For per-frame changes or observed
 stutter, measure with `MIRAI_FRAMES=1` and `tools/perf/` as in
 [`RENDERING.md`](RENDERING.md); `tools/perf/ui-survey.sh` runs every surface through the
-harness and prints frames over the display's budget, step by step.
+harness and prints frames over the display's budget, step by step. A glitch that costs no
+time shows only on the screen: `tools/perf/dialog-settle.py` records a dialog opening with
+gpu-screen-recorder and prints how far its last frames are from rest.
 
 ## 1. Quick reference
 
@@ -704,7 +706,7 @@ Run §1; choose evidence for the surface changed:
 | Remote engine or server | Compare both probe modes and check subscription/cancellation (§6) |
 | Drawn output | Inspect a harness PNG; use recipe (b) for point, ownership or policy changes |
 | Per-frame drawing | Measure `MIRAI_FRAMES=1` with a finished search during a sidebar fold; use `tools/perf/frame-stats.py` and [`RENDERING.md` §§6–9](RENDERING.md) |
-| Opening or closing a dialog, or anything that should hold 144 Hz | `tools/perf/ui-survey.sh` on the fast output: `over` per step, `action:<name>` for work between frames, and `tools/perf/frame-profile.py` for a slow frame's clock and stack ([`RENDERING.md` §8](RENDERING.md#8-dialogs-lists-and-a-160-hz-budget)) |
+| Opening or closing a dialog, or anything that should hold 144 Hz | `tools/perf/ui-survey.sh` on the fast output: `over` per step, `action:<name>` for work between frames, and `tools/perf/frame-profile.py` for a slow frame's clock and stack; `tools/perf/dialog-settle.py` for how the text settles as the open ends ([`RENDERING.md` §8](RENDERING.md#8-dialogs-lists-and-a-160-hz-budget)) |
 | Signals, properties, capture or teardown | Recipe (e): exit 0, no autosave or orphaned KataGo |
 | New action | Drive `action:` and confirm `ok`, not `MISSING` |
 | User-visible text | `tools/i18n/update-po.sh`, translate the new messages, and look at the window with `LANGUAGE=zh_CN` ([`TRANSLATING.md`](TRANSLATING.md)) |
