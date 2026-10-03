@@ -140,7 +140,7 @@ pub struct Ui {
     analysis_stack: adw::ViewStack,
     /// This window's Fox picker, built the first time it is asked for. One per
     /// window: libadwaita refuses to present one dialog in two windows at once.
-    fox_picker: RefCell<Option<crate::fox_picker::FoxPickerDialog>>,
+    kifu_picker: RefCell<Option<crate::kifu_picker::KifuPickerDialog>>,
     /// This window's Preferences, built the first time it is opened and kept: see
     /// [`crate::prefs::Preferences`].
     preferences: RefCell<Option<crate::prefs::Preferences>>,
@@ -403,7 +403,7 @@ pub fn present(
         retry_button,
         resign_button,
         analysis_stack,
-        fox_picker: RefCell::new(None),
+        kifu_picker: RefCell::new(None),
         preferences: RefCell::new(None),
         new_game: RefCell::new(None),
         comment_node: Cell::new(None),
@@ -1533,9 +1533,9 @@ fn do_open(ui: &Ui) {
 fn do_download_fox(ui: &Ui) {
     let Some(window) = ui.window() else { return };
     let weak = ui.weak_window();
-    crate::fox::present(
+    crate::kifu::present(
         &window,
-        &ui.fox_picker,
+        &ui.kifu_picker,
         ui.state.runtime(),
         move |download| {
             with_window_ui(&weak, |ui| {

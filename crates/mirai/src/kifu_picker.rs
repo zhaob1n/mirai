@@ -24,7 +24,7 @@ use gtk::{CompositeTemplate, glib};
 
 use crate::i18n;
 
-type OpenHandler = Box<dyn Fn(crate::fox::DownloadedGame)>;
+type OpenHandler = Box<dyn Fn(crate::kifu::DownloadedGame)>;
 
 /// Records, or recent searches, a page shows.
 pub(crate) const PAGE: usize = 10;
@@ -64,8 +64,8 @@ mod imp {
     use super::*;
 
     #[derive(Default, CompositeTemplate)]
-    #[template(file = "src/fox_picker.blp")]
-    pub struct FoxPickerDialog {
+    #[template(file = "src/kifu_picker.blp")]
+    pub struct KifuPickerDialog {
         #[template_child]
         pub toolbar: TemplateChild<adw::ToolbarView>,
         #[template_child]
@@ -102,8 +102,8 @@ mod imp {
         pub(super) slots: OnceCell<Vec<adw::ActionRow>>,
         /// The record each row shows. Rows a page turn has yet to refill still show the
         /// last page's, for a frame or two, and a click there must open what it shows.
-        pub(super) slot_games: RefCell<Vec<Option<crate::fox::FoxGame>>>,
-        pub(super) games: RefCell<Vec<crate::fox::FoxGame>>,
+        pub(super) slot_games: RefCell<Vec<Option<crate::kifu::FoxGame>>>,
+        pub(super) games: RefCell<Vec<crate::kifu::FoxGame>>,
         /// How each record in `games` reads.
         pub(super) texts: RefCell<Vec<RecordText>>,
         /// The page on screen, from 0, newest first.
@@ -147,10 +147,10 @@ mod imp {
     }
 
     #[glib::object_subclass]
-    impl ObjectSubclass for FoxPickerDialog {
-        const NAME: &'static str = "MiraiFoxPickerDialog";
+    impl ObjectSubclass for KifuPickerDialog {
+        const NAME: &'static str = "MiraiKifuPickerDialog";
 
-        type Type = super::FoxPickerDialog;
+        type Type = super::KifuPickerDialog;
         type ParentType = adw::Dialog;
 
         fn class_init(klass: &mut Self::Class) {
@@ -162,7 +162,7 @@ mod imp {
         }
     }
 
-    impl ObjectImpl for FoxPickerDialog {
+    impl ObjectImpl for KifuPickerDialog {
         fn constructed(&self) {
             self.parent_constructed();
             if let Some(paintable) = self.loading_page.paintable()
@@ -187,18 +187,18 @@ mod imp {
             self.on_open.borrow_mut().take();
         }
     }
-    impl WidgetImpl for FoxPickerDialog {}
-    impl AdwDialogImpl for FoxPickerDialog {}
+    impl WidgetImpl for KifuPickerDialog {}
+    impl AdwDialogImpl for KifuPickerDialog {}
 }
 
 glib::wrapper! {
-    pub struct FoxPickerDialog(ObjectSubclass<imp::FoxPickerDialog>)
+    pub struct KifuPickerDialog(ObjectSubclass<imp::KifuPickerDialog>)
         @extends gtk::Widget, adw::Dialog,
         @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget,
             gtk::ShortcutManager;
 }
 
-impl FoxPickerDialog {
+impl KifuPickerDialog {
     pub fn new() -> Self {
         let dialog = glib::Object::new();
         crate::widgets::sheet_texture::install(&dialog);
@@ -231,9 +231,9 @@ impl FoxPickerDialog {
         imp.slot_games.replace(vec![None; PAGE]);
     }
 
-    pub fn widgets(&self) -> FoxPickerWidgets {
+    pub fn widgets(&self) -> KifuPickerWidgets {
         let imp = self.imp();
-        FoxPickerWidgets {
+        KifuPickerWidgets {
             entry: imp.entry.get(),
             search_button: imp.search_button.get(),
             banner: imp.banner.get(),
@@ -249,7 +249,7 @@ impl FoxPickerDialog {
         }
     }
 
-    pub(crate) fn install_handler(&self, handler: impl Fn(crate::fox::DownloadedGame) + 'static) {
+    pub(crate) fn install_handler(&self, handler: impl Fn(crate::kifu::DownloadedGame) + 'static) {
         *self.imp().on_open.borrow_mut() = Some(Box::new(handler));
     }
 
@@ -290,7 +290,7 @@ impl FoxPickerDialog {
     pub(crate) fn replace_games(
         &self,
         query: String,
-        games: Vec<crate::fox::FoxGame>,
+        games: Vec<crate::kifu::FoxGame>,
         texts: Vec<RecordText>,
     ) {
         let imp = self.imp();
@@ -450,7 +450,7 @@ impl FoxPickerDialog {
     }
 
     /// The record row `slot` shows.
-    pub(crate) fn game_at(&self, slot: usize) -> Option<crate::fox::FoxGame> {
+    pub(crate) fn game_at(&self, slot: usize) -> Option<crate::kifu::FoxGame> {
         self.imp().slot_games.borrow().get(slot).cloned().flatten()
     }
 
@@ -470,7 +470,7 @@ impl FoxPickerDialog {
         }
     }
 
-    pub(crate) fn open_game(&self, game: crate::fox::DownloadedGame) {
+    pub(crate) fn open_game(&self, game: crate::kifu::DownloadedGame) {
         if let Some(handler) = self.imp().on_open.borrow().as_ref() {
             handler(game);
         }
@@ -617,13 +617,13 @@ impl FoxPickerDialog {
     }
 }
 
-impl Default for FoxPickerDialog {
+impl Default for KifuPickerDialog {
     fn default() -> Self {
         Self::new()
     }
 }
 
-pub struct FoxPickerWidgets {
+pub struct KifuPickerWidgets {
     pub entry: gtk::SearchEntry,
     pub search_button: gtk::Button,
     pub banner: adw::Banner,

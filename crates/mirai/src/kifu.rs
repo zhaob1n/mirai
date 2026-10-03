@@ -24,8 +24,8 @@ use serde::{Deserialize, Serialize};
 use soup::prelude::*;
 
 use crate::config::Config;
-use crate::fox_picker::{FoxPickerDialog, RecentText, RecordText};
 use crate::i18n;
+use crate::kifu_picker::{KifuPickerDialog, RecentText, RecordText};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(25);
 const RETRIES: u32 = 3;
@@ -476,9 +476,9 @@ fn recent_text(search: &SavedSearch) -> RecentText {
     }
 }
 
-impl FoxPickerDialog {
+impl KifuPickerDialog {
     fn wired() -> Self {
-        let dialog = FoxPickerDialog::new();
+        let dialog = KifuPickerDialog::new();
         let widgets = dialog.widgets();
         widgets.stack.set_visible_child(&widgets.status_page);
 
@@ -569,7 +569,7 @@ impl FoxPickerDialog {
 
     /// Puts the dialog back into a state fit to be shown again: whatever was loading is
     /// dropped, the page it shows is the one its entry asks for, and its rows come back
-    /// once it is on screen (`fox_picker` module docs).
+    /// once it is on screen (`kifu_picker` module docs).
     fn prepare_to_show(&self) {
         self.abort_task();
         self.set_busy(false);
@@ -930,13 +930,13 @@ fn warm_tls(runtime: &tokio::runtime::Handle) {
 /// its records and its page, so opening it again needs no lookup and no file read.
 pub(crate) fn present(
     parent: &impl IsA<gtk::Widget>,
-    slot: &std::cell::RefCell<Option<FoxPickerDialog>>,
+    slot: &std::cell::RefCell<Option<KifuPickerDialog>>,
     runtime: tokio::runtime::Handle,
     on_open: impl Fn(DownloadedGame) + 'static,
 ) {
     let dialog = slot
         .borrow_mut()
-        .get_or_insert_with(FoxPickerDialog::wired)
+        .get_or_insert_with(KifuPickerDialog::wired)
         .clone();
     // Ctrl+Shift+O reaches the window even with the picker up. Preparing it again would
     // abort the search in flight.

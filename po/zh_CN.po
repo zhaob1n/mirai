@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: mirai\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaob1n/mirai/issues\n"
-"POT-Creation-Date: 2026-10-03 17:00+0800\n"
+"POT-Creation-Date: 2026-10-04 00:21+0800\n"
 "PO-Revision-Date: 2026-09-28 06:00+0800\n"
 "Last-Translator: Huang Zhaobin <zhaob1n@foxmail.com>\n"
 "Language-Team: Chinese (China) <i18n-zh@googlegroups.com>\n"
@@ -186,134 +186,6 @@ msgstr "无法将分析配置写入 {dir}：{error}"
 msgid "refusing to send the token before the certificate is pinned"
 msgstr "证书固定之前拒绝发送令牌"
 
-#. Translators: which records of how many the page shows, such as "11–20 of 200".
-#: crates/mirai/src/fox_picker.rs
-#, rust-format
-msgctxt "records"
-msgid "{first}–{last} of {count}"
-msgstr "第 {first}–{last} 盘，共 {count} 盘"
-
-#. Translators: which saved searches of how many the page shows, such as
-#. "11–20 of 20".
-#: crates/mirai/src/fox_picker.rs
-#, rust-format
-msgctxt "searches"
-msgid "{first}–{last} of {count}"
-msgstr "第 {first}–{last} 条，共 {count} 条"
-
-#: crates/mirai/src/fox_picker.rs
-msgid "Remove From History"
-msgstr "从历史记录中移除"
-
-#: crates/mirai/src/fox.rs
-msgid "Enter an exact Fox nickname or numeric UID"
-msgstr "请输入准确的野狐昵称或数字 UID"
-
-#: crates/mirai/src/fox.rs
-msgid "This player has hidden their game records"
-msgstr "该玩家隐藏了自己的棋谱"
-
-#: crates/mirai/src/fox.rs
-msgid "Fox returned invalid data: the player UID is missing"
-msgstr "野狐返回了无效数据：缺少玩家 UID"
-
-#: crates/mirai/src/fox.rs
-#, rust-format
-msgid "Fox returned invalid data: {error}"
-msgstr "野狐返回了无效数据：{error}"
-
-#: crates/mirai/src/fox.rs
-msgid "Could not reach Fox: request failed"
-msgstr "无法连接野狐：请求失败"
-
-#: crates/mirai/src/fox.rs
-#, rust-format
-msgid "Could not reach Fox: response was not UTF-8 ({error})"
-msgstr "无法连接野狐：响应不是 UTF-8（{error}）"
-
-#: crates/mirai/src/fox.rs
-msgid "Could not reach Fox: response was unexpectedly large"
-msgstr "无法连接野狐：响应意外过大"
-
-#: crates/mirai/src/fox.rs
-msgid "Could not reach Fox: request timed out"
-msgstr "无法连接野狐：请求超时"
-
-#: crates/mirai/src/fox.rs
-#, rust-format
-msgid "Could not reach Fox: {error}"
-msgstr "无法连接野狐：{error}"
-
-#: crates/mirai/src/fox.rs
-#, rust-format
-msgid "UID {uid}"
-msgstr "UID {uid}"
-
-#: crates/mirai/src/fox.rs crates/mirai/src/window.rs
-#, rust-format
-msgid "{moves} move"
-msgid_plural "{moves} moves"
-msgstr[0] "{moves} 手"
-
-#: crates/mirai/src/fox.rs
-#, rust-format
-msgid "{count} game · saved {time}"
-msgid_plural "{count} games · saved {time}"
-msgstr[0] "{count} 盘对局 · 保存于 {time}"
-
-#: crates/mirai/src/fox.rs crates/mirai/src/fox_picker.blp
-msgid "Find a Fox Player"
-msgstr "查找野狐玩家"
-
-#: crates/mirai/src/fox.rs crates/mirai/src/fox_picker.blp
-msgid "Enter an exact nickname or UID to browse their recent public games."
-msgstr "输入准确的昵称或 UID，浏览其最近的公开对局。"
-
-#: crates/mirai/src/fox.rs crates/mirai/src/fox_picker.blp
-msgid "Searching Fox"
-msgstr "正在搜索野狐"
-
-#: crates/mirai/src/fox.rs
-msgid "Looking up the player and their recent games."
-msgstr "正在查找该玩家及其最近的对局。"
-
-#: crates/mirai/src/fox.rs
-#, rust-format
-msgid "{error}. Showing the games saved {time}."
-msgstr "{error}。正在显示 {time} 保存的对局。"
-
-#: crates/mirai/src/fox.rs
-msgid "Couldn’t load games"
-msgstr "无法加载对局"
-
-#: crates/mirai/src/fox.rs
-msgid "No public games"
-msgstr "没有公开对局"
-
-#: crates/mirai/src/fox.rs
-msgid "This account has no visible games in Fox's recent-history window."
-msgstr "该账号在野狐的近期记录范围内没有可见的对局。"
-
-#: crates/mirai/src/fox.rs
-#, rust-format
-msgid "{account} · {count} recent game"
-msgid_plural "{account} · {count} recent games"
-msgstr[0] "{account} · {count} 盘近期对局"
-
-#: crates/mirai/src/fox.rs
-#, rust-format
-msgid "Saved {time}"
-msgstr "保存于 {time}"
-
-#: crates/mirai/src/fox.rs
-msgid "Downloading game"
-msgstr "正在下载对局"
-
-#: crates/mirai/src/fox.rs
-#, rust-format
-msgid "Could not download the game: {error}"
-msgstr "无法下载对局：{error}"
-
 #: crates/mirai/src/i18n.rs
 msgctxt "player"
 msgid "Black"
@@ -453,6 +325,134 @@ msgstr "与远程引擎的连接已断开：{error}"
 #, rust-format
 msgid "protocol error: {error}"
 msgstr "协议错误：{error}"
+
+#. Translators: which records of how many the page shows, such as "11–20 of 200".
+#: crates/mirai/src/kifu_picker.rs
+#, rust-format
+msgctxt "records"
+msgid "{first}–{last} of {count}"
+msgstr "第 {first}–{last} 盘，共 {count} 盘"
+
+#. Translators: which saved searches of how many the page shows, such as
+#. "11–20 of 20".
+#: crates/mirai/src/kifu_picker.rs
+#, rust-format
+msgctxt "searches"
+msgid "{first}–{last} of {count}"
+msgstr "第 {first}–{last} 条，共 {count} 条"
+
+#: crates/mirai/src/kifu_picker.rs
+msgid "Remove From History"
+msgstr "从历史记录中移除"
+
+#: crates/mirai/src/kifu.rs
+msgid "Enter an exact Fox nickname or numeric UID"
+msgstr "请输入准确的野狐昵称或数字 UID"
+
+#: crates/mirai/src/kifu.rs
+msgid "This player has hidden their game records"
+msgstr "该玩家隐藏了自己的棋谱"
+
+#: crates/mirai/src/kifu.rs
+msgid "Fox returned invalid data: the player UID is missing"
+msgstr "野狐返回了无效数据：缺少玩家 UID"
+
+#: crates/mirai/src/kifu.rs
+#, rust-format
+msgid "Fox returned invalid data: {error}"
+msgstr "野狐返回了无效数据：{error}"
+
+#: crates/mirai/src/kifu.rs
+msgid "Could not reach Fox: request failed"
+msgstr "无法连接野狐：请求失败"
+
+#: crates/mirai/src/kifu.rs
+#, rust-format
+msgid "Could not reach Fox: response was not UTF-8 ({error})"
+msgstr "无法连接野狐：响应不是 UTF-8（{error}）"
+
+#: crates/mirai/src/kifu.rs
+msgid "Could not reach Fox: response was unexpectedly large"
+msgstr "无法连接野狐：响应意外过大"
+
+#: crates/mirai/src/kifu.rs
+msgid "Could not reach Fox: request timed out"
+msgstr "无法连接野狐：请求超时"
+
+#: crates/mirai/src/kifu.rs
+#, rust-format
+msgid "Could not reach Fox: {error}"
+msgstr "无法连接野狐：{error}"
+
+#: crates/mirai/src/kifu.rs
+#, rust-format
+msgid "UID {uid}"
+msgstr "UID {uid}"
+
+#: crates/mirai/src/kifu.rs crates/mirai/src/window.rs
+#, rust-format
+msgid "{moves} move"
+msgid_plural "{moves} moves"
+msgstr[0] "{moves} 手"
+
+#: crates/mirai/src/kifu.rs
+#, rust-format
+msgid "{count} game · saved {time}"
+msgid_plural "{count} games · saved {time}"
+msgstr[0] "{count} 盘对局 · 保存于 {time}"
+
+#: crates/mirai/src/kifu.rs crates/mirai/src/kifu_picker.blp
+msgid "Find a Fox Player"
+msgstr "查找野狐玩家"
+
+#: crates/mirai/src/kifu.rs crates/mirai/src/kifu_picker.blp
+msgid "Enter an exact nickname or UID to browse their recent public games."
+msgstr "输入准确的昵称或 UID，浏览其最近的公开对局。"
+
+#: crates/mirai/src/kifu.rs crates/mirai/src/kifu_picker.blp
+msgid "Searching Fox"
+msgstr "正在搜索野狐"
+
+#: crates/mirai/src/kifu.rs
+msgid "Looking up the player and their recent games."
+msgstr "正在查找该玩家及其最近的对局。"
+
+#: crates/mirai/src/kifu.rs
+#, rust-format
+msgid "{error}. Showing the games saved {time}."
+msgstr "{error}。正在显示 {time} 保存的对局。"
+
+#: crates/mirai/src/kifu.rs
+msgid "Couldn’t load games"
+msgstr "无法加载对局"
+
+#: crates/mirai/src/kifu.rs
+msgid "No public games"
+msgstr "没有公开对局"
+
+#: crates/mirai/src/kifu.rs
+msgid "This account has no visible games in Fox's recent-history window."
+msgstr "该账号在野狐的近期记录范围内没有可见的对局。"
+
+#: crates/mirai/src/kifu.rs
+#, rust-format
+msgid "{account} · {count} recent game"
+msgid_plural "{account} · {count} recent games"
+msgstr[0] "{account} · {count} 盘近期对局"
+
+#: crates/mirai/src/kifu.rs
+#, rust-format
+msgid "Saved {time}"
+msgstr "保存于 {time}"
+
+#: crates/mirai/src/kifu.rs
+msgid "Downloading game"
+msgstr "正在下载对局"
+
+#: crates/mirai/src/kifu.rs
+#, rust-format
+msgid "Could not download the game: {error}"
+msgstr "无法下载对局：{error}"
 
 #: crates/mirai/src/label_editor.rs
 msgid "The position changed; open the label editor again"
@@ -1512,7 +1512,7 @@ msgctxt "noun"
 msgid "File"
 msgstr "文件"
 
-#: crates/mirai/src/window.rs crates/mirai/src/fox_picker.blp
+#: crates/mirai/src/window.rs crates/mirai/src/kifu_picker.blp
 #: crates/mirai/src/window.blp
 msgid "Download from Fox"
 msgstr "从野狐下载"
@@ -1577,44 +1577,44 @@ msgstr[0] "已粘贴一局 {moves} 手的棋谱"
 msgid "The clipboard holds no game record"
 msgstr "剪贴板中没有棋谱"
 
-#: crates/mirai/src/fox_picker.blp
+#: crates/mirai/src/kifu_picker.blp
 msgid "Exact Fox nickname or numeric UID"
 msgstr "准确的野狐昵称或数字 UID"
 
-#: crates/mirai/src/fox_picker.blp
+#: crates/mirai/src/kifu_picker.blp
 msgctxt "verb"
 msgid "Search"
 msgstr "搜索"
 
-#: crates/mirai/src/fox_picker.blp
+#: crates/mirai/src/kifu_picker.blp
 msgid "Public records only · Fox exposes at most the latest 200 games"
 msgstr "仅限公开棋谱 · 野狐最多提供最近 200 盘"
 
-#: crates/mirai/src/fox_picker.blp
+#: crates/mirai/src/kifu_picker.blp
 msgid "Fox request failed"
 msgstr "野狐请求失败"
 
-#: crates/mirai/src/fox_picker.blp
+#: crates/mirai/src/kifu_picker.blp
 msgid "This may take a few seconds."
 msgstr "这可能需要几秒钟。"
 
-#: crates/mirai/src/fox_picker.blp
+#: crates/mirai/src/kifu_picker.blp
 msgid "Recent Searches"
 msgstr "最近搜索"
 
-#: crates/mirai/src/fox_picker.blp
+#: crates/mirai/src/kifu_picker.blp
 msgid "Recent Games"
 msgstr "最近对局"
 
-#: crates/mirai/src/fox_picker.blp
+#: crates/mirai/src/kifu_picker.blp
 msgid "Search Fox Again"
 msgstr "重新搜索野狐"
 
-#: crates/mirai/src/fox_picker.blp
+#: crates/mirai/src/kifu_picker.blp
 msgid "Previous Page"
 msgstr "上一页"
 
-#: crates/mirai/src/fox_picker.blp
+#: crates/mirai/src/kifu_picker.blp
 msgid "Next Page"
 msgstr "下一页"
 
