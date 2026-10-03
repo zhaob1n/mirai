@@ -369,8 +369,10 @@ sheet. Nearest-neighbour sampling, tried first, looked worse. A closing dialog k
 texture it began with; its scrollbars and focus rings still fade, and rendering them
 again was a millisecond or more a frame for nothing. A close begins at rest, and its first
 frame may still be at rest, so the watch redraws each frame until the sheet shrinks:
-otherwise the paint that first scales reuses the live render node, 18 ms of glyphs.
-`MIRAI_NO_SHEET_TEXTURE=1` draws dialogs live.
+otherwise the paint that first scales reuses the live render node, 18 ms of glyphs. The
+watch ends at scale 1, or at any scale held for four frames, so a sheet that came to rest
+scaled does not keep a texture rendering every frame. `MIRAI_NO_SHEET_TEXTURE=1` draws
+dialogs live.
 
 What remains:
 
