@@ -394,7 +394,7 @@ Traps:
 | `scroll:<px>` | Scroll the first mapped `ScrolledWindow` that has room to scroll by that many pixels through its vertical adjustment, where the wheel and scrollbar end. Clamped to the range. `NOTHING TO SCROLL` when none is mapped or the content fits | 250 ms |
 | `size:<w>x<h>` | Ask for that window size with `set_default_size` (a floating window on niri honours it), then log what it got: `size 902x900 -> 902x900 collapsed=true sidebar=false board=902x603 side=603`. Sweep a width across the sidebar fold and `side` must not change | 500 ms |
 | `close-dialog` | Close the dialog presented over the active window through `adw::Dialog::close`, as its close button and Escape do; `NO DIALOG` when none is up | 250 ms |
-| `close-window` | Close only the active window through its normal shutdown path | 250 ms |
+| `close-window` | Close only the active window through its normal shutdown path, force-closing any dialog presented over it first (libadwaita would otherwise close the dialog and keep the window). `STILL OPEN` when the window survived; `NO WINDOW` when none remained | 250 ms |
 | `quit` | `app.quit()`, ending the script | — |
 
 Unknown or malformed steps fail the script, rather than silently skipping the
@@ -415,7 +415,7 @@ harness: action win.next10 -> ok            # MISSING = no such window action
 harness: page "Analysis" -> ok              # NOT FOUND = dialog not up, or no such page
 harness: set "Maximum Visits"=2000 -> ok    # NOT FOUND = row hidden or title wrong
 harness: close-dialog -> ok                 # NO DIALOG = nothing presented
-harness: close-window -> ok                 # NO WINDOW = none remained
+harness: close-window -> ok                 # NO WINDOW = none remained; STILL OPEN = it did not close
 harness: wrote /tmp/mirai-a.png             # or: harness: screenshot failed: <reason>
 harness: quitting
 ```

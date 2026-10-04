@@ -418,17 +418,11 @@ pub fn install(app: &adw::Application) {
                     glib::timeout_future(Duration::from_millis(250)).await;
                 }
                 Step::CloseWindow => {
-                    let done = app.active_window().is_some_and(|window| {
-                        window.close();
-                        true
-                    });
-                    if !done {
+                    let outcome = close_window(&app);
+                    if outcome != "ok" {
                         mark_failed();
                     }
-                    eprintln!(
-                        "harness: close-window -> {}",
-                        if done { "ok" } else { "NO WINDOW" }
-                    );
+                    eprintln!("harness: close-window -> {outcome}");
                     glib::timeout_future(Duration::from_millis(250)).await;
                 }
                 Step::Quit => {
@@ -442,6 +436,33 @@ pub fn install(app: &adw::Application) {
             }
         }
     });
+}
+
+/// Closes the active window through `gtk::Window::close`, the title-bar button's path,
+/// and says whether it went: `ok`, `NO WINDOW`, or `STILL OPEN`.
+///
+/// libadwaita answers a window's close request by closing its presented dialog instead;
+/// with Preferences up the window stayed, and the script ran on against it. A script asks
+/// for the window, so its dialogs are dismissed first with `force_close`, which skips
+/// their own `can-close` veto.
+fn close_window(app: &adw::Application) -> &'static str {
+    let Some(window) = app.active_window() else {
+        return "NO WINDOW";
+    };
+    if let Some(adw_window) = window.downcast_ref::<adw::ApplicationWindow>() {
+        while let Some(dialog) = adw_window.visible_dialog() {
+            dialog.force_close();
+            if adw_window.visible_dialog().as_ref() == Some(&dialog) {
+                return "STILL OPEN";
+            }
+        }
+    }
+    window.close();
+    if app.windows().contains(&window) {
+        "STILL OPEN"
+    } else {
+        "ok"
+    }
 }
 
 async fn wait_status(app: &adw::Application, needle: &str) -> bool {
