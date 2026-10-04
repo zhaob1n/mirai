@@ -8,6 +8,9 @@
 
 [English](README.md) | 简体中文
 
+✨ [亮点](#亮点) · 📦 [安装](#安装) · 🚀 [快速上手](#快速上手) ·
+🌐 [通过网络使用引擎](#通过网络使用引擎) · 💬 [反馈](#反馈) · 📖 [文档](#文档)
+
 </div>
 
 ![mirai 正在用 KataGo 实时分析一局棋](https://github.com/zhaob1n/mirai/releases/download/readme-assets/preview.png)
@@ -20,28 +23,38 @@ mirai 把 KataGo 的计算结果放到一块原生 Linux 棋盘上。每个候�
 
 ## 亮点
 
-- **一目了然的分析。** 每个候选手都标出胜率、目差和计算量。颜色表示它比引擎首选亏了多少：从青色经过绿色、黄色一直到红色；色块越实，背后的计算越充分。鼠标悬停在候选手上，就能在棋盘上看到它的变化，而不会改动棋谱。
-- **全盘复盘。** 一个按键就能分析整条主线。胜率和目差曲线随之补全，图下方的问题手条从落子一方的角度标出每一步失误，问题手列表可以直接跳到那一手。
-- **地盘图和策略图** 显示 KataGo 认为每个点最终归谁，以及神经网络在搜索之前最想下在哪里。
-- **真正的 SGF 编辑器。** 变化、摆子、标记、标签和注释，都能撤销和重做。支持多局合集；mirai 不显示的属性会原样保留，其他软件的棋谱存回去也不会丢东西。
-- **和 KataGo 对弈**：按计算量、按每手用时，或者配合拟人网络按段位模仿人类棋风。棋盘从 2×2 到 19×19，支持让子、九种规则，以及包干、读秒和费舍尔加秒三种计时。双方停一手后由 KataGo 判断死子，判断错的棋块点一下就能改。也可以不用引擎，自己下双方。
-- **网络棋谱。** 在野狐（昵称或 UID）、弈城（姓名或昵称，限其赛事棋谱目录）或弈客（昵称、账号或职业棋手姓名）上查找棋手，打开其最近的任意一盘公开对局。
-- **安全的远程引擎。** `mirai-server` 通过 QUIC 把一个或多个 KataGo 共享给局域网里的所有客户端。客户端用令牌认证，并在第一次连接时固定服务器的证书指纹。
-- **原生、流畅。** 基于 GTK 4 和 libadwaita，支持浅色和深色样式，界面渲染经过专门调优，在高刷新率屏幕上同样流畅。多个窗口共用一个 KataGo；程序意外退出后，自动保存会把你的棋谱找回来。
-- **说你的语言。** 目前支持英文和简体中文，欢迎贡献更多翻译。
+- 🎯 **一目了然的分析。** 每个候选手都标出胜率、目差和计算量。颜色表示它比引擎首选亏了多少：从青色经过绿色、黄色一直到红色；色块越实，背后的计算越充分。鼠标悬停在候选手上，就能在棋盘上看到它的变化，而不会改动棋谱。
+- 📈 **全盘复盘。** 一个按键就能分析整条主线。胜率和目差曲线随之补全，图下方的问题手条从落子一方的角度标出每一步失误，问题手列表可以直接跳到那一手。
+- 🗺️ **地盘图和策略图** 显示 KataGo 认为每个点最终归谁，以及神经网络在搜索之前最想下在哪里。
+- ✏️ **真正的 SGF 编辑器。** 变化、摆子、标记、标签和注释，都能撤销和重做。支持多局合集；mirai 不显示的属性会原样保留，其他软件的棋谱存回去也不会丢东西。
+- ⚫ **和 KataGo 对弈**：按计算量、按每手用时，或者配合拟人网络按段位模仿人类棋风。棋盘从 2×2 到 19×19，支持让子、九种规则，以及包干、读秒和费舍尔加秒三种计时。双方停一手后由 KataGo 判断死子，判断错的棋块点一下就能改。也可以不用引擎，自己下双方。
+- 🔎 **网络棋谱。** 在野狐（昵称或 UID）、弈城（姓名或昵称，限其赛事棋谱目录）或弈客（昵称、账号或职业棋手姓名）上查找棋手，打开其最近的任意一盘公开对局。
+- 🔒 **安全的远程引擎。** `mirai-server` 通过 QUIC 把一个或多个 KataGo 共享给局域网里的所有客户端。客户端用令牌认证，并在第一次连接时固定服务器的证书指纹。
+- ⚡ **原生、流畅。** 基于 GTK 4 和 libadwaita，支持浅色和深色样式，界面渲染经过专门调优，在高刷新率屏幕上同样流畅。多个窗口共用一个 KataGo；程序意外退出后，自动保存会把你的棋谱找回来。
+- 🌏 **说你的语言。** 目前支持英文和简体中文，欢迎贡献更多翻译。
 
 ---
 
-## 环境要求
+## 安装
+
+### Arch Linux
+
+从 AUR 安装 [`mirai-git`](https://aur.archlinux.org/packages/mirai-git)；要共享 KataGo 的机器上再装 [`mirai-server-git`](https://aur.archlinux.org/packages/mirai-server-git)。两者构建的都是最新提交。
+
+### 从源码构建
 
 - 当前稳定版 Rust（2024 edition），由 `rust-toolchain.toml` 选定，不支持更旧的编译器。
 - GTK 4.22+、libadwaita 1.9+、libsoup 3 和 Blueprint Compiler 0.22+，以及它们的开发包。
 - GNU gettext，用于编译翻译。
 - [`just`](https://github.com/casey/just)，用于安装。
-- KataGo 程序和神经网络模型（JSON 分析模式，不是 GTP）。mirai 不会替你下载 KataGo。
-- 如需落子音效，还要安装 GStreamer 的 good 插件（Arch 上为 `gst-plugins-good`，Debian/Ubuntu 上为 `gstreamer1.0-plugins-good`），GTK 通过它播放声音。没有它 mirai 也能运行，只是没有声音。
 
-Arch：`pacman -S gtk4 libadwaita libsoup3 blueprint-compiler gettext just`。Debian/Ubuntu：安装 `libgtk-4-dev`、`libadwaita-1-dev`、`libsoup-3.0-dev`、`blueprint-compiler`、`gettext` 和 `just`；Fedora：安装 `gtk4-devel`、`libadwaita-devel`、`libsoup3-devel`、`blueprint-compiler`、`gettext` 和 `just`。请注意版本：早于 GNOME 50 的发行版自带的 GTK 和 libadwaita 太旧，无法构建 mirai。
+|发行版|软件包|
+|---|---|
+|Arch|`gtk4 libadwaita libsoup3 blueprint-compiler gettext just`|
+|Debian / Ubuntu|`libgtk-4-dev libadwaita-1-dev libsoup-3.0-dev blueprint-compiler gettext just`|
+|Fedora|`gtk4-devel libadwaita-devel libsoup3-devel blueprint-compiler gettext just`|
+
+早于 GNOME 50 的发行版自带的 GTK 和 libadwaita 太旧，无法构建 mirai。
 
 ```
 just build
@@ -49,16 +62,22 @@ sudo just install        # 两者都装；或 `just install mirai` / `just insta
 sudo just uninstall      # 同上
 ```
 
-这会把 `mirai`、`mirai-server`、桌面文件、元信息、图标和翻译安装到 `/usr/local`；`just prefix=$HOME/.local install` 不需要 root 权限。在 Arch 上，可以改从 AUR 安装 [`mirai-git`](https://aur.archlinux.org/packages/mirai-git) 和 [`mirai-server-git`](https://aur.archlinux.org/packages/mirai-server-git)，它们构建的是最新提交。
+这会把 `mirai`、`mirai-server`、桌面文件、元信息、图标和翻译安装到 `/usr/local`；`just prefix=$HOME/.local install` 不需要 root 权限。
+
+### KataGo
+
+无论哪种安装方式，都需要 KataGo 程序和神经网络模型，以 JSON 分析模式运行，不是 GTP；mirai 不会替你下载。需要准备什么见[用户指南](docs/user/GUIDE.zh-CN.md#需要从-katago-准备什么)。如需落子音效，还要安装 GStreamer 的 good 插件（Arch 上为 `gst-plugins-good`，Debian/Ubuntu 上为 `gstreamer1.0-plugins-good`），GTK 通过它播放声音；没有它 mirai 也能运行，只是没有声音。
 
 ---
 
 ## 快速上手
 
 ```
-cargo run -p mirai
-cargo run -p mirai -- game.sgf
+mirai
+mirai game.sgf
 ```
+
+在源码目录里，用 `cargo run -p mirai -- game.sgf` 效果相同。
 
 如果找到了 KataGo 和模型，mirai 会立即开始分析；否则请在首选项中添加。打开一份棋谱，按 <kbd>Space</kbd> 开始实时分析，按 <kbd>Ctrl</kbd>+<kbd>A</kbd> 进行全盘分析。设置方法和首次运行的行为见[用户指南](docs/user/GUIDE.zh-CN.md#2-首次运行)。
 

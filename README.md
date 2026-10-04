@@ -8,6 +8,9 @@
 
 English | [简体中文](README.zh-CN.md)
 
+✨ [Highlights](#highlights) · 📦 [Installing](#installing) · 🚀 [Getting started](#getting-started) ·
+🌐 [Over a network](#running-over-a-network) · 💬 [Feedback](#feedback) · 📖 [Documentation](#documentation)
+
 </div>
 
 ![mirai reviewing a game with live KataGo analysis](https://github.com/zhaob1n/mirai/releases/download/readme-assets/preview.png)
@@ -24,53 +27,59 @@ the GPU, and a laptop with none analyses just as well.
 
 ## Highlights
 
-- **Readable analysis.** Each candidate shows win rate, score lead and visits. Its colour is
+- 🎯 **Readable analysis.** Each candidate shows win rate, score lead and visits. Its colour is
   what it loses against the engine's pick, from cyan through green and yellow to red; how
   solid it is says how much search stands behind it. Hover one to see its variation played
   out on the board, without touching the record.
-- **Whole-game review.** One key sweeps the main line. The win-rate and score-lead curves
+- 📈 **Whole-game review.** One key sweeps the main line. The win-rate and score-lead curves
   fill in, a strip under the graph marks every mistake from the side that made it, and a
   Blunders list jumps straight to the move.
-- **Ownership and policy overlays** show who KataGo expects to own each point, and where the
-  raw network wanted to play before any search.
-- **A real SGF editor.** Variations, setup stones, marks, labels and comments, with undo and
+- 🗺️ **Ownership and policy overlays** show who KataGo expects to own each point, and where
+  the raw network wanted to play before any search.
+- ✏️ **A real SGF editor.** Variations, setup stones, marks, labels and comments, with undo and
   redo. Multi-game collections open; properties mirai does not draw are kept, so other
   programs' files survive a round trip.
-- **Play against KataGo** by visits, by time per move, or at a human-like rank with a human
+- ⚫ **Play against KataGo** by visits, by time per move, or at a human-like rank with a human
   SL network. Boards from 2×2 to 19×19, handicap, nine rulesets, absolute, byo-yomi or
   Fischer clocks. After two passes KataGo marks the dead stones, and a click fixes any group
   it misjudged. Or play both sides yourself, with no engine at all.
-- **Online records.** Look up a player on Fox (nickname or UID), eWeiqi (name or nickname,
+- 🔎 **Online records.** Look up a player on Fox (nickname or UID), eWeiqi (name or nickname,
   in its tournament catalogue) or Yike (nickname, account or professional's name) and open
   any of their latest public games.
-- **A remote engine that stays private.** `mirai-server` shares one or more KataGo instances
-  with every client on your network over QUIC. Clients authenticate with a token and pin
-  the server's certificate the first time they connect.
-- **Native and smooth.** GTK 4 and libadwaita, light and dark styles, and rendering
+- 🔒 **A remote engine that stays private.** `mirai-server` shares one or more KataGo
+  instances with every client on your network over QUIC. Clients authenticate with a token
+  and pin the server's certificate the first time they connect.
+- ⚡ **Native and smooth.** GTK 4 and libadwaita, light and dark styles, and rendering
   specially tuned to stay fluid even on high-refresh displays. Several windows share one
   KataGo, and autosave brings your record back after a crash.
-- **In your language.** English and Simplified Chinese so far; translations are welcome.
+- 🌏 **In your language.** English and Simplified Chinese so far; translations are welcome.
 
 ---
 
-## Requirements
+## Installing
 
-- The current stable Rust (edition 2024), which `rust-toolchain.toml` selects. No older compiler is supported.
-- GTK 4.22+, libadwaita 1.9+, libsoup 3 and Blueprint Compiler 0.22+ with their development
+### Arch Linux
+
+Install [`mirai-git`](https://aur.archlinux.org/packages/mirai-git) from the AUR, and
+[`mirai-server-git`](https://aur.archlinux.org/packages/mirai-server-git) on a machine that
+should share its KataGo. Both build the latest commit.
+
+### From source
+
+- The current stable Rust (edition 2024), which `rust-toolchain.toml` selects. No older
+  compiler is supported.
+- GTK 4.22+, libadwaita 1.9+, libsoup 3 and Blueprint Compiler 0.22+, with their development
   packages.
 - GNU gettext, for the translations.
 - [`just`](https://github.com/casey/just), to install.
-- A KataGo binary and network model (JSON analysis mode, not GTP). mirai does not download KataGo.
-- For stone sounds, GStreamer's good plugins (`gst-plugins-good` on Arch,
-  `gstreamer1.0-plugins-good` on Debian/Ubuntu), which GTK plays audio through. Without them
-  mirai runs silently.
 
-On Arch: `pacman -S gtk4 libadwaita libsoup3 blueprint-compiler gettext just`. On
-Debian/Ubuntu, install `libgtk-4-dev`, `libadwaita-1-dev`, `libsoup-3.0-dev`,
-`blueprint-compiler`, `gettext` and `just`; on Fedora, `gtk4-devel`, `libadwaita-devel`,
-`libsoup3-devel`, `blueprint-compiler`, `gettext` and `just`. Check
-the versions: a distribution release older than GNOME 50 ships a GTK and libadwaita too old
-to build mirai.
+|Distribution|Packages|
+|---|---|
+|Arch|`gtk4 libadwaita libsoup3 blueprint-compiler gettext just`|
+|Debian / Ubuntu|`libgtk-4-dev libadwaita-1-dev libsoup-3.0-dev blueprint-compiler gettext just`|
+|Fedora|`gtk4-devel libadwaita-devel libsoup3-devel blueprint-compiler gettext just`|
+
+A distribution release older than GNOME 50 ships a GTK and libadwaita too old to build mirai.
 
 ```
 just build
@@ -79,19 +88,26 @@ sudo just uninstall      # likewise
 ```
 
 This installs `mirai`, `mirai-server`, the desktop entry, metainfo, icons and translations
-under `/usr/local`; `just prefix=$HOME/.local install` needs no root. On Arch, install
-[`mirai-git`](https://aur.archlinux.org/packages/mirai-git) and
-[`mirai-server-git`](https://aur.archlinux.org/packages/mirai-server-git) from the AUR instead;
-they build the latest commit.
+under `/usr/local`; `just prefix=$HOME/.local install` needs no root.
+
+### KataGo
+
+Every install needs a KataGo binary and network model, run in its JSON analysis mode, not
+GTP; mirai does not download them. The [user guide](docs/user/GUIDE.md#what-you-need-from-katago)
+says what to get. For stone sounds, install GStreamer's good plugins (`gst-plugins-good` on
+Arch, `gstreamer1.0-plugins-good` on Debian/Ubuntu), which GTK plays audio through; without
+them mirai runs silently.
 
 ---
 
 ## Getting started
 
 ```
-cargo run -p mirai
-cargo run -p mirai -- game.sgf
+mirai
+mirai game.sgf
 ```
+
+From a source checkout, `cargo run -p mirai -- game.sgf` does the same.
 
 If KataGo and a model are found, mirai starts analysing right away; otherwise add them in
 Preferences. Open a record and press <kbd>Space</kbd> for live analysis, <kbd>Ctrl</kbd>+<kbd>A</kbd>

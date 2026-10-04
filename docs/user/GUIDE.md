@@ -15,8 +15,8 @@ against the computer. The engine can run on the same machine or on another one o
 
 ## 1. Installing
 
-Build dependencies, package names and the release build are in the
-[README Requirements](../../README.md#requirements). `mirai` is the board. `mirai-server` is
+Installing from the AUR or from source is covered in the
+[README](../../README.md#installing). `mirai` is the board. `mirai-server` is
 optional and only needed to put the engine on another machine
 ([section 7](#7-using-a-remote-engine)).
 

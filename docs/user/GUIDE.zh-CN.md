@@ -10,7 +10,7 @@ Linux 上的围棋棋盘，对接 KataGo：实时分析、SGF 棋谱的复盘与
 
 ## 1. 安装
 
-构建依赖、软件包名称和 release 模式构建（`just build`）见 [README 环境要求](../../README.zh-CN.md#环境要求)。`mirai` 是棋盘。`mirai-server` 是可选的，只有要把引擎放到另一台机器上时才需要（[第 7 节](#7-使用远程引擎)）。
+从 AUR 或源码安装见 [README 安装](../../README.zh-CN.md#安装)。`mirai` 是棋盘。`mirai-server` 是可选的，只有要把引擎放到另一台机器上时才需要（[第 7 节](#7-使用远程引擎)）。
 
 ### 需要从 KataGo 准备什么
 
