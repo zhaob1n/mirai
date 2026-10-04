@@ -1,7 +1,9 @@
 # 弈城围棋（eweiqi）棋谱查询 API Spec
 
 匿名可取的是公开赛事目录，不是登录用户的「他的棋谱」。无官方文档或 SLA。
+
 请求参数按 UTF-8 URL 编码。列表是 UTF-8 JSON，正文前有 BOM（`EF BB BF`），非 ASCII 用 `\uXXXX`。棋谱正文也带 BOM，但是裸 GIB，`Content-Type: application/json` 是错的，不要按 JSON 解析。
+
 以下样本于 2026-10-03 测得（响应头 `Date: Sat, 03 Oct 2026 GMT`）。示例账号为柯洁，英文 nick `KeJie`。数值用户号 `6463429` 不在列表里，是从棋谱头像 URL 抽出的。
 
 `https://client.eweiqi.com` 的证书主机名不匹配，一律用 `http://client.eweiqi.com`。`https://client.tygem.com` 是同一套 PHP 的韩国入口。
