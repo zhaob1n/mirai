@@ -51,8 +51,6 @@ A PKGBUILD changes when the build does: a dependency, a build step, an installed
 - **Linked libraries changed** → each package's `depends` lists the owner of every `NEEDED`
   entry of its binary (`readelf -d`, `pacman -Qqo`), plus `hicolor-icon-theme` for the
   GUI's icons.
-- **mirai-server gains a workspace dependency** → add it to `check()` in
-  `mirai-server-git`.
 
 ### Changing and publishing a PKGBUILD
 
@@ -84,6 +82,11 @@ release would add PKGBUILDs pinned to a tarball and checksum.
 building `mirai-server` on a headless host would install GTK.
 
 **The package files are 0BSD**, as Arch asks of AUR package sources.
+
+**No `check()`.** The test suite guards commits upstream (every commit passes it); rerunning
+it on each user's machine adds a second release-profile compile of the whole workspace and
+proves nothing a build from a tested commit does not. The chroot test's smoke run covers
+what packaging can break.
 
 **`!lto`.** The chroot's `makepkg.conf` enables LTO, which compiles the C inside `ring` and
 `zstd-sys` to GCC bitcode that rust-lld, rustc's default linker, cannot read; every C
