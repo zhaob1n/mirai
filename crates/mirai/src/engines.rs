@@ -37,7 +37,7 @@ use std::sync::{Arc, Weak};
 
 use gtk::glib;
 use mirai_engine::remote::RemoteStatus;
-use mirai_engine::{Engine, EngineError, TuningOverrides};
+use mirai_engine::{Engine, EngineError, EngineTuning, TuningOverrides};
 use tokio::sync::{oneshot, watch};
 
 use crate::config::{EngineProfile, ProfileKind};
@@ -84,15 +84,7 @@ struct InFlight {
 /// Lives on the GTK main thread and is only ever touched from it, hence `Rc`/`RefCell`.
 #[derive(Default)]
 pub struct EnginePool {
-    entries: RefCell<HashMap<String, Entry>>,
-}
-
-/// Two profiles share an engine only if every field matches.
-///
-/// Derived `Debug` rather than a hand-written field list: a field added to `ProfileKind`
-/// later must not silently widen sharing to profiles that differ in it.
-fn key(profile: &EngineProfile) -> String {
-    format!("{profile:?}")
+    entries: RefCell<HashMap<EngineProfile, Entry>>,
 }
 
 impl EnginePool {
@@ -102,7 +94,7 @@ impl EnginePool {
     /// through the asynchronous path, so re-selecting the active profile neither restarts
     /// KataGo nor blanks the readout.
     pub fn running(&self, profile: &EngineProfile) -> Option<Built> {
-        Self::ready(self.entries.borrow().get(&key(profile)))
+        Self::ready(self.entries.borrow().get(profile))
     }
 
     /// Hands back the engine for `profile`, starting it or joining a start already in flight.
@@ -131,7 +123,7 @@ impl EnginePool {
         F: FnOnce() -> Fut + 'static,
         Fut: Future<Output = Result<Built, String>> + 'static,
     {
-        let key = key(&profile);
+        let key = profile;
         let (launch, rx) = {
             let mut entries = self.entries.borrow_mut();
             if let Some(engine) = Self::ready(entries.get(&key)) {
@@ -185,7 +177,7 @@ impl EnginePool {
     /// `Arc` in `result` is the only strong reference until a waiter receives its clone; if
     /// every `send` fails, that `Arc` drops here and the `Ready` weak is already dead. The
     /// next acquire starts again. Acceptable: nobody was left to own the engine.
-    fn finish(&self, key: &str, result: Result<Built, String>) {
+    fn finish(&self, key: &EngineProfile, result: Result<Built, String>) {
         let waiting = {
             let mut entries = self.entries.borrow_mut();
             match entries.remove(key) {
@@ -196,7 +188,7 @@ impl EnginePool {
                     pending.waiters
                 }
                 Some(other) => {
-                    entries.insert(key.to_string(), other);
+                    entries.insert(key.clone(), other);
                     return;
                 }
                 None => return,
@@ -205,7 +197,7 @@ impl EnginePool {
         if let Ok(engine) = &result {
             self.entries
                 .borrow_mut()
-                .insert(key.to_string(), engine.entry());
+                .insert(key.clone(), engine.entry());
         }
         for tx in waiting {
             let _ = tx.send(result.clone());
@@ -260,9 +252,9 @@ async fn start(
 async fn build(profile: EngineProfile, log_dir: PathBuf) -> Result<Built, EngineError> {
     match profile.kind {
         ProfileKind::Local {
-            ref katago,
-            ref model,
-            ref config,
+            katago,
+            model,
+            config,
             analysis_threads,
             search_threads,
             nn_max_batch_size,
@@ -279,25 +271,22 @@ async fn build(profile: EngineProfile, log_dir: PathBuf) -> Result<Built, Engine
             // file is the only source of the four keys.
             let custom = config.is_some();
             let config = match config {
-                Some(path) => path.clone(),
-                None => profile.kind.tuning().write_to(&log_dir).map_err(|e| {
-                    // Translators: {dir} is a directory path; {error} is the operating-system's own message.
-                    EngineError::Startup(crate::i18n::gettext_f(
-                        "could not write the analysis config into {dir}: {error}",
-                        &[
-                            ("dir", &log_dir.display().to_string()),
-                            ("error", &e.to_string()),
-                        ],
-                    ))
-                })?,
+                Some(path) => path,
+                None => EngineTuning::with_overrides(overrides)
+                    .write_to(&log_dir)
+                    .map_err(|e| {
+                        // Translators: {dir} is a directory path; {error} is the operating-system's own message.
+                        EngineError::Startup(crate::i18n::gettext_f(
+                            "could not write the analysis config into {dir}: {error}",
+                            &[
+                                ("dir", &log_dir.display().to_string()),
+                                ("error", &e.to_string()),
+                            ],
+                        ))
+                    })?,
             };
 
-            let mut cfg = mirai_engine::LocalEngineConfig::new(
-                profile.name.clone(),
-                katago.clone(),
-                model.clone(),
-                config,
-            );
+            let mut cfg = mirai_engine::LocalEngineConfig::new(profile.name, katago, model, config);
             cfg.log_dir = log_dir;
             cfg.apply_config_overrides(custom, overrides);
             let engine = mirai_engine::LocalEngine::spawn(cfg).await?;
@@ -375,9 +364,14 @@ mod tests {
     /// Getting this wrong would hand a window an engine configured for something else.
     #[test]
     fn only_identical_profiles_share_an_engine() {
-        assert_eq!(key(&local("a", Some(16))), key(&local("a", Some(16))));
-        assert_ne!(key(&local("a", Some(16))), key(&local("a", Some(8))));
-        assert_ne!(key(&local("a", Some(16))), key(&local("b", Some(16))));
+        let pool = EnginePool::default();
+        let built = stub();
+        pool.entries
+            .borrow_mut()
+            .insert(local("a", Some(16)), built.entry());
+        assert!(pool.running(&local("a", Some(16))).is_some());
+        assert!(pool.running(&local("a", Some(8))).is_none());
+        assert!(pool.running(&local("b", Some(16))).is_none());
     }
 
     /// A dropped engine must not be handed out again: the pool holds weak references so the
@@ -389,7 +383,7 @@ mod tests {
         let built = stub();
         pool.entries
             .borrow_mut()
-            .insert(key(&profile), built.entry());
+            .insert(profile.clone(), built.entry());
         assert!(pool.running(&profile).is_some());
         drop(built);
         assert!(pool.running(&profile).is_none());
@@ -408,7 +402,7 @@ mod tests {
         };
         pool.entries
             .borrow_mut()
-            .insert(key(&profile), built.entry());
+            .insert(profile.clone(), built.entry());
 
         let adopted = pool.running(&profile).expect("the engine is running");
         let mut link = adopted.link.expect("the link travels with the engine");

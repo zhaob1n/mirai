@@ -6,7 +6,6 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use mirai_core::RuleSet;
-use mirai_engine::{EngineTuning, TuningOverrides};
 use serde::{Deserialize, Serialize};
 
 /// The user-specific XDG root and the ordered system roots are kept separate because
@@ -138,32 +137,34 @@ fn which(name: &str) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-/// Every `*.bin.gz` directly inside `dir`, newest first.
-fn network_files(dir: &Path) -> Vec<PathBuf> {
+/// Every regular file directly inside `dir` whose name `wanted` accepts, newest first.
+fn files_newest_first(dir: &Path, wanted: impl Fn(&str) -> bool) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
-    let mut files = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.to_str().is_some_and(|s| s.ends_with(".bin.gz")) {
-            continue;
-        }
-        let Ok(metadata) = std::fs::metadata(&path) else {
-            continue;
-        };
-        if !metadata.is_file() {
-            continue;
-        }
-        let Ok(modified) = metadata.modified() else {
-            continue;
-        };
-        files.push((modified, path));
-    }
+    let mut files: Vec<_> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if !wanted(path.file_name()?.to_str()?) {
+                return None;
+            }
+            // `fs::metadata` rather than the entry's own, so a symlink counts as its target.
+            let metadata = std::fs::metadata(&path)
+                .ok()
+                .filter(std::fs::Metadata::is_file)?;
+            Some((metadata.modified().ok()?, path))
+        })
+        .collect();
     files.sort_by(|(a_time, a_path), (b_time, b_path)| {
         b_time.cmp(a_time).then_with(|| a_path.cmp(b_path))
     });
     files.into_iter().map(|(_, path)| path).collect()
+}
+
+/// Every `*.bin.gz` directly inside `dir`, newest first.
+fn network_files(dir: &Path) -> Vec<PathBuf> {
+    files_newest_first(dir, |name| name.ends_with(".bin.gz"))
 }
 
 /// Every analysis `*.cfg` directly inside `dir`.
@@ -171,39 +172,17 @@ fn network_files(dir: &Path) -> Vec<PathBuf> {
 /// The conventional `analysis.cfg` comes first, then other matching files newest first. A
 /// plain `gtp.cfg` is never offered for `katago analysis`.
 fn analysis_config_files(dir: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut files = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(OsStr::to_str) else {
-            continue;
-        };
+    let mut files = files_newest_first(dir, |name| {
         let name = name.to_ascii_lowercase();
-        if !name.contains("analysis") || !name.ends_with(".cfg") {
-            continue;
-        }
-        let Ok(metadata) = std::fs::metadata(&path) else {
-            continue;
-        };
-        if !metadata.is_file() {
-            continue;
-        }
-        let Ok(modified) = metadata.modified() else {
-            continue;
-        };
-        files.push((name == "analysis.cfg", modified, path));
-    }
-    files.sort_by(
-        |(a_conventional, a_time, a_path), (b_conventional, b_time, b_path)| {
-            b_conventional
-                .cmp(a_conventional)
-                .then_with(|| b_time.cmp(a_time))
-                .then_with(|| a_path.cmp(b_path))
-        },
-    );
-    files.into_iter().map(|(_, _, path)| path).collect()
+        name.contains("analysis") && name.ends_with(".cfg")
+    });
+    // A stable sort, so the rest stay newest first.
+    files.sort_by_key(|path| {
+        !path
+            .file_name()
+            .is_some_and(|name| name.eq_ignore_ascii_case("analysis.cfg"))
+    });
+    files
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -251,7 +230,7 @@ impl ConfigError {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum ProfileKind {
     Local {
@@ -287,33 +266,7 @@ pub enum ProfileKind {
     },
 }
 
-impl ProfileKind {
-    /// The tuning a local profile runs with: mirai's defaults, with whatever the user
-    /// changed in Preferences applied over them.
-    ///
-    /// Meaningful only for a profile with no custom `config`; with one, KataGo reads the
-    /// user's file and only the two thread values are passed as overrides.
-    pub fn tuning(&self) -> EngineTuning {
-        let ProfileKind::Local {
-            analysis_threads,
-            search_threads,
-            nn_max_batch_size,
-            nn_cache_size_power_of_two,
-            ..
-        } = self
-        else {
-            return EngineTuning::default();
-        };
-        EngineTuning::with_overrides(TuningOverrides {
-            analysis_threads: *analysis_threads,
-            search_threads: *search_threads,
-            nn_max_batch_size: *nn_max_batch_size,
-            nn_cache_size_power_of_two: *nn_cache_size_power_of_two,
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EngineProfile {
     pub name: String,
     #[serde(flatten)]
@@ -510,25 +463,19 @@ impl Config {
         }
     }
 
-    /// Writes the configuration over whatever `path` holds. It carries every remote
-    /// profile's bearer token, so the file is written `0600` and a directory this creates
-    /// is `0700` (see [`write_private`]).
-    pub fn save(&self, path: &Path) -> Result<(), ConfigError> {
-        let text = toml::to_string_pretty(self)?;
-        write_private(path, &text)
-    }
-
-    /// Writes the configuration, keeping edits another window has made meanwhile.
+    /// Writes the configuration, keeping edits another window has made meanwhile. The file
+    /// carries every remote profile's bearer token, so it is written `0600` (see
+    /// [`write_private`]).
     ///
-    /// Every window holds the `Config` it loaded when it opened, so the plain overwrite
-    /// above would revert whatever a second window changed since — the last window to close
-    /// would win, silently. This is a three-way merge at the TOML level: only the keys that
+    /// Every window holds the `Config` it loaded when it opened, so a plain overwrite would
+    /// revert whatever a second window changed since — the last window to close would win,
+    /// silently. This is a three-way merge at the TOML level: only the keys that
     /// differ between `base` (what this window loaded) and `self` (what it holds now) are
     /// written over the file as it stands, so untouched keys keep the file's values.
     /// `engine_profile` is merged by name rather than replaced; if both windows edited the
     /// same profile, this save wins for that profile.
     pub fn save_merged(&self, base: &Config, path: &Path) -> Result<(), ConfigError> {
-        if self == base && path.exists() {
+        if self == base {
             return Ok(());
         }
         // Saves run on the runtime's blocking pool, so two windows can be merging at once.
@@ -929,7 +876,7 @@ mod tests {
 
         // Both windows opened on this.
         let base = Config::default();
-        base.save(&path).expect("write the baseline");
+        write_baseline(&base, &path);
 
         // The other window raised the visit cap and wrote it out.
         let mut other = base.clone();
@@ -950,6 +897,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// What every window in a test opened on: the file as another session left it.
+    fn write_baseline(cfg: &Config, path: &Path) {
+        write_private(path, &toml::to_string_pretty(cfg).unwrap()).unwrap();
+    }
+
     #[cfg(unix)]
     fn unix_mode(path: &Path) -> u32 {
         use std::os::unix::fs::PermissionsExt;
@@ -966,15 +918,20 @@ mod tests {
         let dir = base.join("mirai");
         let path = dir.join("config.toml");
 
-        Config::default().save(&path).expect("first save");
+        let first = Config {
+            active_engine: Some("first".into()),
+            ..Config::default()
+        };
+        first
+            .save_merged(&Config::default(), &path)
+            .expect("first save");
 
         assert_eq!(unix_mode(&path), 0o600);
         assert_eq!(unix_mode(&dir), 0o700);
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// A config an older mirai wrote with the umask default is tightened by the next save,
-    /// through either save path.
+    /// A config an older mirai wrote with the umask default is tightened by the next save.
     #[cfg(unix)]
     #[test]
     fn an_existing_world_readable_config_is_tightened_on_save() {
@@ -984,21 +941,14 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
-        let widen = || {
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-        };
-
         std::fs::write(&path, "").unwrap();
-        widen();
-        Config::default().save(&path).expect("save");
-        assert_eq!(unix_mode(&path), 0o600, "save");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
 
-        widen();
         let base = Config::default();
         let mut edited = base.clone();
         edited.analysis.live_max_visits = 4242;
         edited.save_merged(&base, &path).expect("merged save");
-        assert_eq!(unix_mode(&path), 0o600, "save_merged");
+        assert_eq!(unix_mode(&path), 0o600);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1021,7 +971,7 @@ mod tests {
             }],
             ..Config::default()
         };
-        base.save(&path).expect("write the baseline");
+        write_baseline(&base, &path);
 
         let mut mine = base.clone();
         mine.engine_profiles.clear();
@@ -1097,7 +1047,7 @@ mod tests {
         let path = dir.join("merge.toml");
         let _ = std::fs::remove_dir_all(&dir);
         let base = Config::default();
-        base.save(&path).unwrap();
+        write_baseline(&base, &path);
 
         let mut left = base.clone();
         left.engine_profiles.push(remote("alpha", "mirai://a"));
@@ -1122,7 +1072,7 @@ mod tests {
             engine_profiles: vec![remote("keep", "mirai://k")],
             ..Config::default()
         };
-        base.save(&path).unwrap();
+        write_baseline(&base, &path);
 
         let mut other = base.clone();
         other.engine_profiles.push(remote("added", "mirai://a"));
@@ -1147,7 +1097,7 @@ mod tests {
             engine_profiles: vec![remote("alpha", "mirai://a1"), remote("beta", "mirai://b1")],
             ..Config::default()
         };
-        base.save(&path).unwrap();
+        write_baseline(&base, &path);
 
         let mut left = base.clone();
         left.engine_profiles[0] = remote("alpha", "mirai://a2");

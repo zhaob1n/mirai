@@ -598,8 +598,8 @@ projection/cache state; it does not borrow `AppState` or replay the game tree.
 3. Re-export the type from `mirai-engine/src/lib.rs`.
 4. Add a `ProfileKind` variant in `mirai/src/config.rs` (`#[serde(tag = "kind")]`, so the variant
    name is the on-disk discriminant).
-5. Handle that variant in `build` in `mirai/src/engines.rs`, and check that `key` still tells
-   two profiles of the new kind apart — an over-broad key shares the wrong engine.
+5. Handle that variant in `build` in `mirai/src/engines.rs`. `EnginePool` keys on the profile
+   itself; keep `ProfileKind`'s derived equality and hash so every field distinguishes engines.
 6. Add an editor subpage in `mirai/src/prefs.rs` alongside the local and remote ones.
 7. Verify with `examples/probe.rs` before touching the GUI — it exercises the trait with no GTK.
 
