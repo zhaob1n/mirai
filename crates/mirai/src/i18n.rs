@@ -37,28 +37,35 @@ const LC_ALL: c_int = 6;
 /// Adopts the user's locale and binds the catalogue. Call first thing in `main`: GLib decides
 /// once, at the first lookup, whether translating is wanted at all.
 pub fn init() {
-    let dir = CString::new(locale_dir().into_os_string().into_vec())
-        .expect("a filesystem path holds no NUL");
+    let dir = locale_dir()
+        .map(|dir| CString::new(dir.into_os_string().into_vec()).expect("a path holds no NUL"));
     // SAFETY: every pointer is a NUL-terminated string that outlives the call; libintl copies
     // what it keeps. A locale the C library lacks makes `setlocale` return NULL and leaves
     // the "C" locale, which only means English.
     unsafe {
         setlocale(LC_ALL, c"".as_ptr());
-        bindtextdomain(DOMAIN.as_ptr(), dir.as_ptr());
+        if let Some(dir) = &dir {
+            bindtextdomain(DOMAIN.as_ptr(), dir.as_ptr());
+        }
         bind_textdomain_codeset(DOMAIN.as_ptr(), c"UTF-8".as_ptr());
         textdomain(DOMAIN.as_ptr());
     }
 }
 
 /// `<prefix>/share/locale` beside an installed `<prefix>/bin/mirai`, whatever the prefix, so
-/// installing needs no build-time path. A binary run from the build tree has no such
-/// directory and reads the catalogues `build.rs` compiled for this build instead.
-fn locale_dir() -> PathBuf {
-    std::env::current_exe()
+/// installing needs no build-time path. A debug-assertion build run from the build tree has
+/// no such directory and reads the catalogues `build.rs` compiled for it instead. A release
+/// build holds no build path, which would leak into a package; run from the tree, it is
+/// English.
+fn locale_dir() -> Option<PathBuf> {
+    let beside = std::env::current_exe()
         .ok()
-        .and_then(|exe| Some(exe.parent()?.parent()?.join("share/locale")))
-        .filter(|dir| dir.is_dir())
-        .unwrap_or_else(|| PathBuf::from(concat!(env!("OUT_DIR"), "/locale")))
+        .and_then(|exe| Some(exe.parent()?.parent()?.join("share/locale")));
+    #[cfg(debug_assertions)]
+    if !beside.as_deref().is_some_and(std::path::Path::is_dir) {
+        return Some(PathBuf::from(concat!(env!("OUT_DIR"), "/locale")));
+    }
+    beside
 }
 
 pub fn gettext(msgid: &str) -> String {

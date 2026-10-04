@@ -12,8 +12,8 @@ fn main() {
     compile_catalogues();
 }
 
-/// Compiles each language in `po/LINGUAS` into `$OUT_DIR/locale`, which a binary run from
-/// the build tree reads (`i18n::locale_dir`); `just install` compiles its own copies into
+/// Compiles each language in `po/LINGUAS` into `$OUT_DIR/locale`, which a debug build run
+/// from the build tree reads (`i18n::locale_dir`); `just install` compiles its own copies into
 /// the prefix. `--check` refuses a translation whose placeholders differ from the English,
 /// so a broken catalogue fails the build instead of showing a hole at run time.
 fn compile_catalogues() {

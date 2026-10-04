@@ -74,8 +74,9 @@ Blueprint templates use `_("…")` and `C_("context", "…")`.
 
 `i18n::init`, first thing in `main`, binds the `mirai` domain to `<prefix>/share/locale` next
 to an installed `<prefix>/bin/mirai`, whatever the prefix, so installing needs no build-time
-path. A binary in the build tree has no such directory and reads the catalogues `build.rs`
-compiled into `OUT_DIR`, which is why `cargo run` is translated too. `just install` compiles
+path. A debug build in the build tree has no such directory and reads the catalogues
+`build.rs` compiled into `OUT_DIR`, which is why `cargo run` is translated too; a release
+build carries no build path, so one run from the tree is English. `just install` compiles
 its own copies into the prefix and merges the translations into the desktop entry and
 metainfo from `data/*.in` with `msgfmt --desktop` and `--xml`.
 
