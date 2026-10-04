@@ -295,21 +295,21 @@ fn refresh_profiles(
         edit.set_tooltip_text(Some(&gettext("Edit This Profile")));
         edit.add_css_class("flat");
         let edit_state = state.clone();
-        let edit_profile = profile.clone();
+        let edit_name = name.clone();
         edit.connect_clicked(clone!(
             #[weak]
             dialog,
             #[weak]
             group,
             move |_| {
-                let remote = !edit_profile.is_local();
-                open_editor(
-                    &dialog,
-                    &group,
-                    &edit_state,
-                    Some(edit_profile.clone()),
-                    remote,
-                );
+                // Read now, not when the row was built: selecting a remote profile here
+                // pins its certificate without rebuilding the rows, and an editor opened on
+                // the older copy would save the pin away again.
+                let Some(profile) = edit_state.config().profile(&edit_name).cloned() else {
+                    return;
+                };
+                let remote = !profile.is_local();
+                open_editor(&dialog, &group, &edit_state, Some(profile), remote);
             }
         ));
         row.add_suffix(&edit);
@@ -429,23 +429,18 @@ fn open_editor(
     dialog.push_subpage(&page);
 }
 
-/// Wires a declared file row: the subtitle shows `initial`, `slot` takes a chooser over
-/// discovered candidates, and the button opens a `gtk::FileDialog`. The slot starts empty
-/// when discovery has not finished; [`show_discovered`] fills it.
+/// Wires a declared file row: the subtitle shows `initial`, and the button opens a
+/// `gtk::FileDialog`. Where discovery runs, [`show_discovered`] later adds a chooser over
+/// what it found.
 fn wire_file_row(
     row: &adw::ActionRow,
     button: &gtk::Button,
-    slot: &gtk::Box,
     initial: PathBuf,
-    candidates: Vec<PathBuf>,
     chooser_title: &str,
     dialog: &adw::PreferencesDialog,
 ) -> Rc<RefCell<PathBuf>> {
     let cell = Rc::new(RefCell::new(initial));
     row.set_subtitle(&path_subtitle(&cell.borrow()));
-    if let Some(chooser) = discovered_button(candidates, row, &cell) {
-        slot.append(&chooser);
-    }
 
     let row = row.clone();
     let prompt = chooser_title.to_string();
@@ -512,21 +507,14 @@ fn show_discovered(
     candidates: Vec<PathBuf>,
     suggest: bool,
 ) {
-    // Read before the chain: the body borrows the cell mutably.
-    let empty = path.borrow().as_os_str().is_empty();
-    if suggest
-        && empty
-        && let Some(first) = candidates.first()
-    {
+    let Some(first) = candidates.first() else {
+        return;
+    };
+    if suggest && path.borrow().as_os_str().is_empty() {
         row.set_subtitle(&path_subtitle(first));
         *path.borrow_mut() = first.clone();
     }
-    if slot.first_child().is_some() || candidates.is_empty() {
-        return;
-    }
-    if let Some(chooser) = discovered_button(candidates, row, path) {
-        slot.append(&chooser);
-    }
+    slot.append(&discovered_button(&candidates, row, path));
 }
 
 /// A chooser over every path discovered in the configured XDG directories, living in the row
@@ -537,16 +525,13 @@ fn show_discovered(
 /// the ends that identify a file, and the whole path is in the tooltip either way. The row's
 /// own file button still accepts anything discovery never saw.
 fn discovered_button(
-    candidates: Vec<PathBuf>,
+    candidates: &[PathBuf],
     row: &adw::ActionRow,
     path: &Rc<RefCell<PathBuf>>,
-) -> Option<gtk::MenuButton> {
-    if candidates.is_empty() {
-        return None;
-    }
+) -> gtk::MenuButton {
     let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let popover = gtk::Popover::builder().build();
-    for (candidate, (name, dir)) in candidates.iter().zip(candidate_labels(&candidates)) {
+    for (candidate, (name, dir)) in candidates.iter().zip(candidate_labels(candidates)) {
         let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
         content.append(&candidate_label(&name, false));
         if let Some(dir) = dir {
@@ -600,7 +585,7 @@ fn discovered_button(
         .tooltip_text(tip)
         .build();
     button.add_css_class("flat");
-    Some(button)
+    button
 }
 
 fn candidate_label(text: &str, dim: bool) -> gtk::Label {
@@ -875,7 +860,6 @@ fn local_editor(
     let LocalFormWidgets {
         name_row,
         katago_row,
-        katago_slot,
         katago_button,
         model_row,
         model_slot,
@@ -898,18 +882,14 @@ fn local_editor(
     let katago_path = wire_file_row(
         &katago_row,
         &katago_button,
-        &katago_slot,
         katago,
-        Vec::new(),
         &gettext("Select the KataGo Binary"),
         dialog,
     );
     let model_path = wire_file_row(
         &model_row,
         &model_button,
-        &model_slot,
         model,
-        Vec::new(),
         &gettext("Select the Neural Network Model"),
         dialog,
     );
@@ -921,9 +901,7 @@ fn local_editor(
     let config_path = wire_file_row(
         &config_row,
         &config_button,
-        &config_slot,
         suggested_config,
-        Vec::new(),
         &gettext("Select the Custom Analysis Config"),
         dialog,
     );

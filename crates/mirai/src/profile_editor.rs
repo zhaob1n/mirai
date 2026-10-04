@@ -27,8 +27,6 @@ mod imp {
         #[template_child]
         pub katago_row: TemplateChild<adw::ActionRow>,
         #[template_child]
-        pub katago_slot: TemplateChild<gtk::Box>,
-        #[template_child]
         pub katago_button: TemplateChild<gtk::Button>,
         #[template_child]
         pub model_row: TemplateChild<adw::ActionRow>,
@@ -184,7 +182,6 @@ impl LocalProfileForm {
         LocalFormWidgets {
             name_row: imp.name_row.get(),
             katago_row: imp.katago_row.get(),
-            katago_slot: imp.katago_slot.get(),
             katago_button: imp.katago_button.get(),
             model_row: imp.model_row.get(),
             model_slot: imp.model_slot.get(),
@@ -209,7 +206,6 @@ impl LocalProfileForm {
 pub struct LocalFormWidgets {
     pub name_row: adw::EntryRow,
     pub katago_row: adw::ActionRow,
-    pub katago_slot: gtk::Box,
     pub katago_button: gtk::Button,
     pub model_row: adw::ActionRow,
     pub model_slot: gtk::Box,
