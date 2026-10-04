@@ -14,6 +14,8 @@ use anyhow::{Context, bail};
 use mirai_engine::{EngineTuning, LocalEngineConfig, TuningOverrides};
 use serde::Deserialize;
 
+use crate::session::MAX_HELLO_FIELD;
+
 pub const DEFAULT_LISTEN: &str = "0.0.0.0:9678";
 
 /// The all-zero token shipped in `server.example.toml`. It is in the repository, so a
@@ -173,6 +175,13 @@ impl ServerConfig {
         for (i, t) in self.tokens.iter().enumerate() {
             if t.value.is_empty() {
                 bail!("[[token]] #{} has an empty value", i + 1);
+            }
+            // A longer token could never be presented: the server refuses such a Hello.
+            if t.value.len() > MAX_HELLO_FIELD {
+                bail!(
+                    "[[token]] #{} is longer than {MAX_HELLO_FIELD} bytes; no client could present it",
+                    i + 1
+                );
             }
             if t.max_subs == 0 {
                 bail!(
@@ -445,6 +454,11 @@ mod tests {
         assert!(dup.is_err(), "duplicate engine names make `Open` ambiguous");
 
         assert!(parse("[[token]]\nvalue=''\n").is_err(), "empty token");
+        let long = "v".repeat(MAX_HELLO_FIELD + 1);
+        assert!(
+            parse(&format!("[[token]]\nvalue='{long}'\n")).is_err(),
+            "a token no Hello may carry"
+        );
         assert!(
             parse("[[token]]\nvalue='v'\nmax_subs=0\n").is_err(),
             "a token that can open nothing"
