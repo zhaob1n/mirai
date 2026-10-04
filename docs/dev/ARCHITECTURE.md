@@ -1,14 +1,6 @@
 # mirai — system architecture
 
-Contributor entry point is [`../../AGENTS.md`](../../AGENTS.md). The wire format is specified
-normatively in [`PROTOCOL.md`](PROTOCOL.md); how to prove a change works is
-[`TESTING.md`](TESTING.md); why the design is what it is, with the history, is
-[`../archive/RETROSPECTIVE.md`](../archive/RETROSPECTIVE.md); the user's view is
-[`../user/GUIDE.md`](../user/GUIDE.md). Candidate colour versus KataGo's `order` is
-[`CANDIDATE_COLOUR.md`](CANDIDATE_COLOUR.md). Each record server's HTTP and SGF dialect are
-[`FOX_KIFU_API_SPEC.md`](FOX_KIFU_API_SPEC.md), [`EWEIQI_KIFU_API_SPEC.md`](EWEIQI_KIFU_API_SPEC.md)
-and [`YIKE_KIFU_API_SPEC.md`](YIKE_KIFU_API_SPEC.md). Arch packaging is
-[`PACKAGING.md`](PACKAGING.md). Translation is [`TRANSLATING.md`](TRANSLATING.md).
+Contributor entry point is [`../../AGENTS.md`](../../AGENTS.md).
 
 §3 maps tasks to files; paths there are from the repository root. Signatures and field lists
 live in code. Invariants are defined in [`../../AGENTS.md`](../../AGENTS.md) §2; wire rules
@@ -57,8 +49,7 @@ flowchart TB
 | `mirai` | `AppState`, window, custom `gsk` widgets, GTK adapters over `mirai-client`, preferences, config | all four libraries | — |
 
 Third-party dependencies are each crate's `Cargo.toml`, with versions pinned in the root
-`[workspace.dependencies]`. `mirai` and `mirai-server` are binaries; nothing depends on either. The table's dependency boundaries are rules: a GTK import
-outside `mirai` or KataGo JSON in `mirai-proto` is a design break.
+`[workspace.dependencies]`. `mirai` and `mirai-server` are binaries; nothing depends on either.
 
 ---
 
@@ -66,91 +57,29 @@ outside `mirai` or KataGo JSON in `mirai-proto` is a design break.
 
 ### 2.1 The KataGo JSON analysis engine, never GTP — and stateless queries (INV-4)
 
-Each JSON analysis query sends one whole position (INV-4); mirai never emits KataGo's
-`analyzeTurns`. GTP's stateful `play`/`undo`/`clear_board` would require a mirrored engine board.
-Stateless queries let tree navigation and remote multiplexing work without replay or per-client
-board state. They resend the move list (a 200-move `Open` is 500 bytes,
-[PROTOCOL §11](PROTOCOL.md#11-reference-figures)) and KataGo re-walks it; its NN cache absorbs
-most of that cost. Search cannot persist across cursor moves.
+JSON analysis, never GTP or `analyzeTurns`: each query is the whole position (INV-4), so
+navigation and multiplexing need no mirrored board. Search does not persist across cursor moves.
 
 ### 2.2 mirai generates KataGo's analysis config
 
-`katago analysis` requires `-config`. A managed local profile without a user-supplied file gets
-one from `EngineTuning` (`crates/mirai-engine/src/tuning.rs`); a profile naming its own file
-uses it unchanged. The generated file sets the required `numAnalysisThreads`,
-`numSearchThreadsPerAnalysisThread` and `nnMaxBatchSize`, plus `nnCacheSizePowerOfTwo`; query
-values and `-override-config` carry the other settings. Defaults are 4 analysis threads,
-16 search threads each, batch size 64 and cache power 20. Leaving other keys to KataGo avoids
-tracking upstream defaults.
+mirai owns the managed config, using static defaults rather than unasked hardware detection
+(`EngineTuning::render` in `crates/mirai-engine/src/tuning.rs`).
+A user-supplied file is left unchanged; only its two thread counts get tuning overrides
+(`LocalEngineConfig::apply_config_overrides` in `crates/mirai-engine/src/local.rs`).
 
-**Automatic tuning** runs only on explicit request for a managed profile. `calibrate` tests
-2–64 search threads at one analysis thread, selects the point before the first doubling
-that improves visits/s by less than 10%, then tests 1, 2 and 4 concurrent positions at
-that width, selecting the highest aggregate visits/s. Each candidate starts a separate
-KataGo against the profile's binary and model with an empty NN cache and warm-up before
-its fixed-visit, ownership-producing measurement.
-The winning thread product determines batch size; cache size is not calibrated.
-On a Radeon RX 6800, 1 → 4 analysis threads reduced cursor-move cost
-from 112 ms to 2.4 ms without losing single-position speed. At one position, 8 → 16 search
-threads improved speed 14%; 16 → 32 improved it 8% and worsened in-tree contention.
-KataGo's analysis cache default (2^23) settled near 24 GiB with ownership, versus about
-3 GiB at 2^20; a miss costs a re-evaluation.
+Calibration is opt-in (`crates/mirai-engine/src/calibrate.rs`). Preferences releases the
+usual engine and refuses calibration while another window, startup or whole-game analysis
+could compete for the GPU (`crates/mirai/src/prefs.rs`).
 
-Calibration releases the window's usual engine and refuses to run during startup, whole-game
-analysis or with another window open, so competing models and searches cannot skew results or
-exhaust VRAM. Aborting drops the in-flight subscription (INV-3). The predictable generated
-config path is in a private profile log directory; `atomic::private_dir` and
-`write_atomic_generated` prevent another user or symlink from redirecting what KataGo later
-reads. Its name encodes the tuning values, avoiding races between differently tuned windows;
-identical values leave a byte-identical shared file unchanged. With a user-supplied config,
-Preferences hides generated batching/cache options and passes only the two thread overrides.
+### 2.3 `tokio::sync::watch` for subscriptions — a lagging consumer *should* skip
 
-### 2.3 KataGo's own point encoding (INV-1)
+`Subscription` uses `watch` and `send_replace` so an unread report is superseded rather than
+queued. A lagging consumer skips intermediate reports; do not treat this stream as a log.
 
-KataGo emits ownership/policy arrays in point order (INV-1;
-[PROTOCOL §7.1](PROTOCOL.md#71-inv-1-point-and-array-ordering)). Matching the board avoids
-remaps that transpose heat maps; `report.ownership[i]` and `board.stones()[i]` address
-the same intersection. GTP's bottom-left origin is confined to `Size::to_gtp`/`from_gtp`.
+### 2.4 Ownership independent of overlays
 
-### 2.4 Everything is stored Black-perspective (INV-2)
-
-Black-perspective storage (INV-2; [PROTOCOL §7.2.1](PROTOCOL.md#721-inv-2-black-perspective))
-keeps cached win-rate series and SGF analysis sign-stable across turns. Only display
-converts through `winrate_for`/`score_lead_for`: the graph is Black-perspective, the
-sidebar side-to-move. Blunder detection flips each side once before subtraction.
-A double conversion looks plausible (45% instead of 55%); never hand-roll `1.0 - x`
-at a display site.
-
-### 2.5 `tokio::sync::watch` for subscriptions — a lagging consumer *should* skip
-
-`Subscription` uses `watch` and `send_replace`: at ~10 reports/s for one position,
-an unread report is superseded rather than queued. A busy GUI therefore neither
-accumulates stale reports nor stalls KataGo. `current()` sees the latest value; a
-terminal event is final because a query covers only one position. Intermediate reports
-are lost, so consumers must not use this stream as a log. The MRP server coalesces
-only if writes block; the small client `STREAM_WINDOW` prevents old frames buffering
-in transport. Within one compressed stream the client still decodes each frame before
-coalescing ([PROTOCOL §4.1](PROTOCOL.md#41-subscription-streams-one-zstd-stream)).
-
-### 2.6 Quantised wire values (INV-6)
-
-Fixed-point report types (INV-6) shrink KataGo JSON averaging 33.6 KB/report in a
-20 s, 18-move 19×19 search reporting every 0.1 s. [PROTOCOL §11](PROTOCOL.md#11-reference-figures)
-gives framed sizes under the same conditions; [§7.2](PROTOCOL.md#72-quantisation) specifies
-scales, the illegal-prior sentinel and the round-trip error budget. Both backends use
-the same quantisers in `crates/mirai-proto/src/types.rs`, yielding bit-identical reports;
-`*_f32` accessors recover floats. A scale change needs PROTOCOL and
-`crates/mirai-proto/tests/wire_size.rs` updated together.
-
-### 2.7 Custom `gsk` widgets, not `DrawingArea` + cairo (INV-9)
-
-Board, win-rate graph and move tree render in `gtk::Widget::snapshot()` (INV-9), not through
-CPU-rasterised `DrawingArea`/cairo. They cache static GSK nodes and upload overlay textures only
-while visible; ownership is still requested when its overlay is off because score estimates
-and stored analysis use it. Projections are pushed into widgets; `snapshot()` does not walk the
-tree. Cache invalidation and deferred text during resizing matter: see
-[`RENDERING.md`](RENDERING.md) for the measurements and implementation rationale, and
-[`TESTING.md`](TESTING.md#5-testing-the-gui) for GUI/frame verification.
+Ownership is still requested when its overlay is off: score estimates and stored analysis
+use it. Rendering decisions and measurements live in [`RENDERING.md`](RENDERING.md).
 
 ---
 
@@ -222,12 +151,6 @@ templates in `data/`. README images are release assets, not tracked files:
 ---
 
 ## 4. Data model
-
-### Point, Size, Color
-
-`Size` owns point conversions (INV-1). SGF shares the top-left origin; GTP uses a
-bottom-left origin, confined to `Size::to_gtp`/`from_gtp`. `Point::PASS` is a `u16` sentinel,
-not an array index: check `is_pass()` or `Size::contains` before indexing.
 
 ### Board: Zobrist and ko
 
@@ -378,9 +301,9 @@ flowchart TB
 
 `AppState`'s `generation` counter is a belt-and-braces guard so a pump already inside
 `next().await` exits instead of writing a stale report; it is not the cancellation mechanism.
-The same chain is what makes server-side cleanup free: `session.rs`'s `pump` returning drops its
-`Subscription`, so a client that simply disappears stops KataGo. Measured: a client SIGINT makes
-the server drop the subscription in under a millisecond and KataGo falls to 0% CPU.
+Server-side `session.rs` drops its `Subscription` when the pump exits. A graceful disconnect
+can trigger this promptly; an abruptly killed client sends no close, so cleanup waits until
+QUIC detects the loss at its idle timeout (`mirai-proto/src/transport.rs`).
 
 Other participants follow the same ownership rule: score and play tasks, plus the batch
 coordinator's runtime task, are aborted by their owning window/controller. Dropping those tasks
@@ -442,21 +365,9 @@ The command line is built in `LocalEngine::spawn`:
                   -override-config <k=v,k=v,…>
 ```
 
-stdio piped, `kill_on_drop` set. `override_config` always sets:
-
-| override | value | why |
-|---|---|---|
-| `reportAnalysisWinratesAs` | `BLACK` | **INV-2**; everything downstream assumes it |
-| `logDir` | the profile's log directory | one KataGo log file per run |
-| `logToStderr` | `false` | stderr is ours — we tail it for diagnostics |
-| `logAllRequests`, `logAllResponses` | `false` | detail stays in KataGo's own log |
-
-plus `numAnalysisThreads` and `numSearchThreadsPerAnalysisThread` when the caller set them
-— which both frontends do only for a user-supplied config file. That file owns every other
-setting, including `nnCacheSizePowerOfTwo`. With mirai's generated config (§2.2) the file is
-the single source of those values and no tuning override is passed.
-KataGo splits this value on commas, so a value containing one is rejected up front with a
-`Startup` error rather than producing a mangled config.
+stdio is piped, with `kill_on_drop` set. Forced overrides live in `override_config`
+(`crates/mirai-engine/src/local.rs`). Profile tuning follows
+[§2.2](#22-mirai-generates-katagos-analysis-config).
 
 **Handshake as readiness probe.** Two action queries (`query_version`, `query_models`) are written
 before anything else and `handshake` reads until both are answered; KataGo only answers once its
@@ -619,26 +530,10 @@ no accelerator exists for the menu to find. Pressing the board, graph or move tr
 window's focus (`widgets::release_focus`), handing the keys back after typing; they are not
 Tab stops, having no keys of their own.
 
-### Window ownership rule (INV-8)
+### Dialog lifetime
 
-`MiraiWindow` owns exactly one `Ui` (INV-8). Long-lived callbacks capture a
-`glib::WeakRef<MiraiWindow>` and enter through `with_ui`; controllers live in `Ui`.
-Custom widgets hold their window's `AppState` directly because none points back to the
-window.
-
-`close-request`, disposal and application shutdown all call idempotent
-`MiraiWindow::shutdown`. `take_ui` releases the sole owner; `Drop for Ui` flushes
-comments, stops timers/play/batch/analysis, saves config, clears the engine and drops
-the clean-window autosave file. `take_ui` runs before callbacks can re-enter:
-`with_ui` then finds no state. Widget-tree work belongs before the drop, not in it.
-
-Transient futures may own GTK objects only for a bounded lifetime. `CalibrationRun`
-ties its signal handler, task, controls and engine restoration to completion or
-cancellation. Signal closures must not strongly capture an owner of their emitter;
-dialogs connecting to `AppState` disconnect their `SignalHandlerId` when they go. A dialog
-built per open goes on close. Preferences, New Game and the record picker are built once per
-window and kept in its `Ui` — building them was most of what opening them cost
-([RENDERING §8](RENDERING.md#8-dialogs-lists-and-a-160-hz-budget)) — so they go on
+Preferences, New Game and the record picker are kept in `Ui` because rebuilding them dominated
+opening cost ([RENDERING §8](RENDERING.md#8-dialogs-lists-and-a-160-hz-budget)). They go on
 `destroy`, with the window, and reset or reload their rows at each presentation.
 
 ### More than one window
@@ -652,23 +547,10 @@ window and kept in its `Ui` — building them was most of what opening them cost
 | `config.toml` | `Config::save_merged` applies only the window's diff to the current file, avoiding stale writes over another window's changes. A missing file is an empty base; other read/parse errors leave it untouched. `engine_profile` merges by name; an untouched profile keeps the file's copy, and for simultaneous edits of one name the last save wins. Debounced saves run on `spawn_blocking`; `flush_config` runs synchronously on close and before another window loads config. |
 | Autosave | Each window uses `autosave-<pid>-<start>-<n>.sgf`. Clean close waits for writes then deletes it; startup offers remaining crash files most recent first. Scans, writes and SGF opening/parsing use the blocking pool. |
 
-### RefCell and identity discipline (INV-10)
+### Async result identity
 
-`AppState` keeps the `GameSession` (and thus the tree) in a `RefCell`. Shared borrows —
-`tree()`, `cursor()`, `tree_epoch()` — overlap safely; a mutable borrow while any other is live
-panics. Mutable borrows are not only edits: `position()`, `to_play()` and `with_tree_cached`
-take one because `GameTree` fills its position cache through `&mut`, and `changed`,
-`set_cursor`, `set_report` and `toast` enter dispatcher code that may edit (`BeforeEdit`
-flushes the comment through `with_session_mut`). So a `tree()` borrow is never held across any
-of them. `with_session_mut`, `adopt_record` / `adopt_unsaved`, report caching and navigation
-helpers scope or explicitly drop their borrows before dispatch.
-
-`NodeId` is stable only within one `GameTree` arena. Every node reference that can outlive a
-borrow is therefore a `NodeRef { epoch, id }`. Replacing the record (`GameSession::adopt` /
-`restore`, in `crates/mirai-client/src/game/mod.rs`) increments the epoch; `resolve_node`
-rejects references from the previous tree. Comments, batch results, play snapshots
-and async score/analysis work must carry `NodeRef` and, for in-tree edits, the
-`position_revision` they started with — never a naked long-lived `NodeId`.
+Async work targeting the tree must carry the starting `position_revision` as well as `NodeRef`,
+so an in-tree edit invalidates results even when the node still exists (INV-10).
 
 Widgets receive projections when `Change` is dispatched. `snapshot()` borrows only widget-local
 projection/cache state; it does not borrow `AppState` or replay the game tree.
@@ -755,7 +637,7 @@ projection/cache state; it does not borrow `AppState` or replay the game tree.
    `handle_int`/`handle_cmd` (`mirai-engine/src/remote.rs`). An unknown message must be an error
    with an `ErrCode`, never a panic.
 4. Peers must match `PROTO_VERSION` exactly; the handshake rejects a mismatch with
-   `ErrCode::BadVersion`. During development the version does not move when the protocol changes.
+   `ErrCode::BadVersion`. Version policy is [PROTOCOL §10](PROTOCOL.md#10-version).
 5. If the message carries a report or a large payload, check `MAX_FRAME` and extend
    `tests/wire_size.rs`.
 

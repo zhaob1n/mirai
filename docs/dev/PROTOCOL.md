@@ -175,9 +175,7 @@ zstd level 1 and window 2^19 on control streams; subscription windows are 2^16.
 A subscription stream carries a single zstd stream that starts in its first `0x02` frame and
 is never ended. The sender compresses each message into it and flushes (`ZSTD_e_flush`) at the
 end of the frame, so every frame decodes as soon as it arrives, and every report is compressed
-against the reports before it. Consecutive reports of one search differ in a few numbers;
-measured on a real search, a stream carries about a quarter of what the same reports cost
-framed one by one ([§11](#11-reference-figures)).
+against the reports before it.
 
 | # | Rule | Level |
 |---|---|---|
@@ -369,30 +367,22 @@ Scale constants are normative (`types.rs`): `LCB_SCALE` 16384.0 · `UTILITY_SCAL
 | `q_own` / `dq_own` — ownership | `i8 = clamp(round(v * 127), -127, 127)` | `v = i / 127` | saturates at ±127; `-128` never produced |
 | `q_policy` / `dq_policy` — policy | `v < 0` → `65535`; else `u16 = clamp(round(v * 65534), 0, 65534)` | `65535` → *illegal, no value*; else `v = u / 65534` | KataGo reports `-1` for illegal moves |
 
-| Field group | Codec, scale | Range | Resolution | Max round-trip error |
-|---|---|---|---|---|
-| winrate, prior | `q16` | `[0, 1]` | 1.526e-5 | 7.63e-6 |
-| `lcb` | `qs`, 16384 | ±1.99994 | 6.1e-5 | 3.05e-5 |
-| `utility`, `utility_lcb` | `qs`, 8192 | ±3.99988 | 1.22e-4 | 6.1e-5 |
-| `score_lead`, `score_selfplay`, `raw_lead` | `qs`, 32 | ±1023.97 points | 0.03125 pt | 0.015625 pt |
-| `score_stdev` | `qu`, 32 | `[0, 2047.97]` points | 0.03125 pt | 0.015625 pt |
-| ownership cell | `q_own` | `[-1, 1]` | 0.00787 | 0.00394 |
-| policy cell | `q_policy` | `[0, 1]` ∪ illegal | 1.526e-5 | 7.63e-6 |
-| `raw_var_time_left` | `qu`, 4 | `[0, 16383.75]` | 0.25 | 0.125 |
+| Field group | Codec, scale | Range | Resolution | Max round-trip error | Guaranteed budget |
+|---|---|---|---|---|---|
+| winrate, prior | `q16` | `[0, 1]` | 1.526e-5 | ≈7.66e-6 | ≤ 1e-4 |
+| `lcb` | `qs`, 16384 | ±1.99994 | 6.1e-5 | 3.05e-5 | — |
+| `utility`, `utility_lcb` | `qs`, 8192 | ±3.99988 | 1.22e-4 | 6.1e-5 | — |
+| `score_lead`, `score_selfplay`, `raw_lead` | `qs`, 32 | ±1023.97 points | 0.03125 pt | 0.015625 pt | ≤ 0.02 pt |
+| `score_stdev` | `qu`, 32 | `[0, 2047.97]` points | 0.03125 pt | 0.015625 pt | — |
+| ownership cell | `q_own` | `[-1, 1]` | 0.00787 | 0.00394 | ≤ 0.005 |
+| policy cell | `q_policy` | `[0, 1]` ∪ illegal | 1.526e-5 | ≈7.66e-6 | — |
+| `raw_var_time_left` | `qu`, 4 | `[0, 16383.75]` | 0.25 | 0.125 | — |
 
-Guaranteed tolerances, asserted by `mirai-proto/tests/wire_size.rs` —
-`dequantisation_error_stays_inside_the_documented_tolerances`:
-winrate ≤ 1e-4 (measured 7.644e-6) · score lead ≤ 0.02 points (measured 0.015625) ·
-ownership ≤ 0.005 (measured 0.00394).
+These error bounds apply to finite inputs within the codec's range; saturation is not
+a round-trip error guarantee.
 
-`utility_lcb` is the one field whose source routinely leaves that range. KataGo's lower
-confidence bound subtracts `lcbStdevs * stdev / sqrt(ess)` from the utility — 3.5 at one
-visit, and `2 * (winLoss + staticScore + dynamicScore) * lcbStdevs` = 14 for a child with no
-visits at all — so a policy-tail candidate arrives clipped at −3.99988 (18 % of candidates on
-a 42-position sweep at 5 000 visits, every one of them at one visit). This is not a defect to
-fix by rescaling: below a handful of visits the bound carries no information. Clipping only
-loosens it — a clipped value is still a lower bound — so a receiver MAY read one as
-"unsearched", but MUST NOT read it as a magnitude.
+`utility_lcb` saturates at ±3.99988 for barely searched candidates. A receiver MAY read a
+clipped value as "unsearched", but MUST NOT read it as a magnitude. Do not rescale.
 
 ### 7.2.1 INV-2: Black perspective
 
@@ -653,10 +643,6 @@ control. Connection loss cancels everything implicitly.
 | (Server) Stop the underlying searches when the connection goes away. Every exit path of the reference server's `pump` drops the engine subscription, which terminates the KataGo query. | MUST |
 | (Client) Reconnecting automatically is optional; capped exponential backoff is RECOMMENDED (reference: 0.5 s, 1 s, 2 s, 4 s, then 8 s forever — `remote.rs` — `backoff`). | MAY / SHOULD |
 | (Client) Never treat a fingerprint mismatch, `BadVersion` or `Unauthorized` as transient. Background retries are allowed, but the session MUST NOT be reported as healthy (`remote.rs` — `RemoteStatus::Failed`). | MUST |
-
-Rationale: analysis requests are cheap to reissue and expensive to run. Replaying a queue of
-stale positions after a five-second outage burns search threads on positions nobody is
-watching.
 
 Both peers close normally with application code 0 and reason `bye` ([§9.2](#92-quic-application-codes)).
 On a fatal handshake rejection the server MUST attempt to write and finish the
