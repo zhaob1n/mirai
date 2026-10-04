@@ -5,20 +5,19 @@ English | [简体中文](GUIDE.zh-CN.md)
 A Go board for Linux that talks to KataGo: live analysis, SGF review and editing, and games
 against the computer. The engine can run on the same machine or on another one on your network.
 
-[Installing](#1-installing) · [First run](#2-first-run) · [The interface](#3-the-interface) ·
-[Analysing](#4-analysing-a-position) · [Reviewing](#5-reviewing-a-game) ·
-[Playing](#6-playing) · [Remote engine](#7-using-a-remote-engine) ·
-[Settings](#8-settings-reference) · [Keys](#9-keyboard-reference) ·
-[Files](#10-files-mirai-writes) · [Troubleshooting](#11-troubleshooting)
+📦 [Installing](#1-installing) · 🚀 [First run](#2-first-run) · 🪟 [The interface](#3-the-interface) ·
+🔍 [Analysing](#4-analysing-a-position) · 📈 [Reviewing](#5-reviewing-a-game) ·
+⚫ [Playing](#6-playing) · 🌐 [Remote engine](#7-using-a-remote-engine) ·
+⚙️ [Settings](#8-settings-reference) · ⌨️ [Keys](#9-keyboard-reference) ·
+📁 [Files](#10-files-mirai-writes) · 🩺 [Troubleshooting](#11-troubleshooting)
 
 ---
 
 ## 1. Installing
 
 Installing from the AUR or from source is covered in the
-[README](../../README.md#installing). `mirai` is the board. `mirai-server` is
-optional and only needed to put the engine on another machine
-([section 7](#7-using-a-remote-engine)).
+[README](../../README.md#installing). `mirai` is the board. `mirai-server` is optional and only
+needed to put the engine on another machine ([section 7](#7-using-a-remote-engine)).
 
 ### What you need from KataGo
 
@@ -27,30 +26,42 @@ them. It generates KataGo's analysis config from your Preferences settings. To u
 own, select **Preferences → Engines → Analysis config → Custom file**; KataGo ships an
 `analysis.cfg` in its `configs` directory.
 
-mirai drives KataGo's JSON **analysis** engine, never GTP — a GTP-only bot or wrapper script
-will not work. If you already run KataGo under Lizzie, KaTrain or Sabaki, point mirai at the
-same binary and network; nothing of yours is copied or modified.
+> [!IMPORTANT]
+> mirai drives KataGo's JSON **analysis** engine, never GTP — a GTP-only bot or wrapper
+> script will not work.
 
-Boards from 2×2 to 19×19, matching a stock KataGo build.
+If you already run KataGo under Lizzie, KaTrain or Sabaki, point mirai at the same binary and
+network; nothing of yours is copied or modified. Boards from 2×2 to 19×19, matching a stock
+KataGo build.
 
 ---
 
 ## 2. First run
 
 If `katago` is on `PATH` and a network is found, mirai creates and starts a `local-default`
-profile. The first OpenCL start can take minutes; see
-[Troubleshooting](#the-very-first-start-takes-minutes).
+profile.
 
-Networks are found in `$XDG_DATA_HOME/{katago,mirai}/models`, `~/.katago/models`, then
-`{katago,mirai}/models` under each `$XDG_DATA_DIRS` entry. Newer `*.bin.gz` files take
-priority within each directory. The first seeds `local-default`; the others are available
-from the model chooser in Preferences.
+> [!NOTE]
+> The first OpenCL start can take minutes; see
+> [Troubleshooting](#the-very-first-start-takes-minutes).
 
-If no KataGo or network is found, the Analysis page shows **No Engine Configured** with a
-**Preferences** button; Preferences does not open by itself. The board and navigation still
-work, and stored analysis remains visible without a live engine. Live analysis, whole-game
-analysis and score estimation stay greyed out until an engine is starting or running; live
-analysis may be switched on while one starts, and the others wait until it is ready.
+Networks are looked for in this order, newest `*.bin.gz` first within each directory:
+
+1. `$XDG_DATA_HOME/{katago,mirai}/models`
+2. `~/.katago/models`
+3. `{katago,mirai}/models` under each `$XDG_DATA_DIRS` entry
+
+The first one found seeds `local-default`; the others are offered by the model chooser in
+Preferences.
+
+If no KataGo or network is found:
+
+- The Analysis page shows **No Engine Configured** with a **Preferences** button;
+  Preferences does not open by itself.
+- The board and navigation still work, and stored analysis remains visible.
+- Live analysis, whole-game analysis and score estimation stay greyed out until an engine is
+  starting or running. Live analysis may be switched on while one starts; the others wait
+  until it is ready.
 
 ### Adding a local engine
 
@@ -71,27 +82,20 @@ not its binary, network or config files.
 
 ## 3. The interface
 
-The header opens records from Fox, eWeiqi or Yike, files or the clipboard, starts games and
-switches engine profiles. The board navigation holds the editing-tools toggle. The sidebar
-has **Analysis**, **Moves** and **Comment** pages. A game hides review navigation, graph and
-sidebar until it ends; the sidebar returns as you left it.
+| Part | What it does |
+|---|---|
+| **Header** | opens records from Fox, eWeiqi or Yike, files or the clipboard; starts games; switches engine profiles. The title is the file name, else `Black vs White`, else the event, else `Untitled`, with `•` for an unsaved record. The status subtitle appears only when there is something to report |
+| **Board navigation** | under the board; holds the **Editing Tools** toggle |
+| **Sidebar** | **Analysis**, **Moves** and **Comment** pages. <kbd>F9</kbd> toggles it. When the window is too narrow for it to sit beside the board without shrinking the board, it opens as an overlay instead |
+| **Win-rate graph** | always from Black's view, while the Analysis sidebar reads the side to move. The solid curve is Black's win rate, the dashed curve Black's score lead, and the bottom bars mark blunders. Click or drag it to navigate the main line; drag the divider to resize it, and mirai remembers the height. <kbd>g</kbd> toggles it |
 
-The win-rate graph is always from Black's view; the Analysis sidebar reads the side to move.
-The graph's solid curve is Black's win rate, the dashed curve is Black's score lead, and its
-bottom bars mark blunders. Click or drag the graph to navigate the main line. Drag the divider
-to resize it; mirai remembers its height. <kbd>g</kbd> toggles the graph and <kbd>F9</kbd>
-toggles the sidebar. When the window is too narrow for the sidebar to sit beside the board
-without shrinking it, the sidebar opens as an overlay instead.
+A game hides review navigation, graph and sidebar until it ends; the sidebar returns as you
+left it.
 
-The header title shows `•` for an unsaved record. A saved record uses its file name; a new
-one uses `Black vs White`, then the event, then `Untitled`. The status subtitle appears only
-when there is something to report.
-
-Use **Editing Tools** on the navigation bar or Main Menu → *View* to reveal the editing
-toolbar; closing it returns to Play. The last board move has a red dot (or a red number if
-move numbers are on). SGF triangle, square, circle, cross and text labels are drawn.
-See [reviewing](#5-reviewing-a-game) for editing behaviour and [keys](#9-keyboard-reference)
-for shortcuts.
+**Editing Tools**, on the navigation bar or Main Menu → *View*, reveals the editing toolbar;
+closing it returns to Play. The last board move has a red dot (or a red number if move
+numbers are on). SGF triangle, square, circle, cross and text labels are drawn. See
+[reviewing](#5-reviewing-a-game) for editing and [keys](#9-keyboard-reference) for shortcuts.
 
 ### Mouse on the board
 
@@ -130,14 +134,15 @@ than ten visits is drawn without numbers. Two moves keep their numbers whatever 
 — the engine's own first choice, and the one the record plays next.
 
 **Colour is how much the move loses. How solid the blob is, is how much to trust that
-reading.** The engine's pick is cyan. A worse move walks through mint and green into yellow,
-orange and red — the same warm colours the blunder strip uses. Loss is the engine's own
-combined reading of win rate and score, not the visit count and not the rank. Fewer than ten
-visits is grey and faint: unknown, not good or bad. The pick is never grey. Why the list
-order can disagree with Win, Score and Visits is measured in
-[Candidate order versus candidate colour](../dev/CANDIDATE_COLOUR.md).
+reading.**
 
-The row number is the engine's rank, not its visit count; its colour matches the blob's loss grade.
+🟦 cyan → 🟩 mint and green → 🟨 yellow → 🟧 orange → 🟥 red
+
+The engine's pick is cyan; a worse move walks towards red, through the same warm colours the
+blunder strip uses. Loss is the engine's own combined reading of win rate and score, not the
+visit count and not the rank. Fewer than ten visits is grey and faint: unknown, not good or
+bad. The pick is never grey. Why the list order can disagree with Win, Score and Visits is
+measured in [Candidate order versus candidate colour](../dev/CANDIDATE_COLOUR.md).
 
 **The white outline marks the move the record plays next.** Standing on move 57, the outlined
 blob is move 58. If that move is not among the candidates — the search never went there, or
@@ -149,18 +154,26 @@ search, while decreasing it only redraws. See the [range and defaults](#analysis
 
 ### The candidate list
 
-The default columns are **#** (engine rank), **Move** (point), **Win** and **Score**
-(side-to-move perspective), and **Visits**. Enable **Loss** and **Prior** with Main Menu →
-*View* → *Loss and Prior Columns*, or by right-clicking a column heading. Loss is what the
-move gives away against the pick (`—` if a saved record lacks it); Prior is the raw network's
-pre-search preference. High prior with few visits means the network liked a move that search
-did not; low prior with many visits means search found something the network nearly missed.
+| Column | Meaning |
+|---|---|
+| **#** | the engine's rank, not its visit count; coloured like the blob's loss grade |
+| **Move** | the point |
+| **Win**, **Score** | from the side to move's perspective |
+| **Visits** | how much of the search went there |
+| **Loss** *(off by default)* | what the move gives away against the pick; `—` if a saved record lacks it |
+| **Prior** *(off by default)* | the raw network's pre-search preference |
 
-The list initially follows the engine's rank; sorting changes only list order, never blobs,
-rank numbers or the move the engine would play. Sort by **#** to restore engine order.
-Selecting a row pins its variation through subsequent reports until you navigate away;
-double-clicking or pressing Enter plays the move. Hover the visits line above the list for
-KataGo's final-score spread; a cached reading has no search speed.
+Enable **Loss** and **Prior** with Main Menu → *View* → *Loss and Prior Columns*, or by
+right-clicking a column heading. High prior with few visits means the network liked a move
+that search did not; low prior with many visits means search found something the network
+nearly missed.
+
+- The list starts in engine order. Sorting changes only list order, never blobs, rank
+  numbers or the move the engine would play; sort by **#** to restore engine order.
+- Selecting a row pins its variation through later reports until you navigate away.
+  Double-clicking or pressing <kbd>Enter</kbd> plays the move.
+- Hover the visits line above the list for KataGo's final-score spread; a cached reading has
+  no search speed.
 
 ### Previewing a variation
 
@@ -190,74 +203,81 @@ next to KataGo's Black-positive score lead. Works whether or not live analysis i
 
 ## 5. Reviewing a game
 
-**Opening.** <kbd>Ctrl</kbd>+<kbd>O</kbd>, *Open File…* in the download button's arrow menu,
-or a file on the command line. If the file holds several games a dialog lists them —
-players, size, moves, result, date — and
-you choose. <kbd>Ctrl</kbd>+<kbd>V</kbd> pastes a record from the clipboard,
-<kbd>Ctrl</kbd>+<kbd>C</kbd> copies the current one out. Anything mirai does not understand in
-an SGF file is kept verbatim and written back, so files from other programs survive a round
-trip.
+### Opening records
 
-**Downloading a game record.** Click the main **Download Game Record** half of the split
-button, or press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>. Choose the server at the top
-of the dialog, then search:
+<kbd>Ctrl</kbd>+<kbd>O</kbd>, *Open File…* in the download button's arrow menu, or a file on
+the command line. If the file holds several games a dialog lists them — players, size,
+moves, result, date — and you choose. <kbd>Ctrl</kbd>+<kbd>V</kbd> pastes a record from the
+clipboard, <kbd>Ctrl</kbd>+<kbd>C</kbd> copies the current one out. Anything mirai does not
+understand in an SGF file is kept verbatim and written back, so files from other programs
+survive a round trip.
 
-- **Fox** — an exact Fox nickname or numeric UID. The list shows at most the latest 200
-  public records, which is the service's fixed history window. Players who hide their
-  records are not bypassed.
-- **eWeiqi** — a player's name or nickname, matched in part and as eWeiqi spells it (a
-  Korean professional's name is often in traditional characters). eWeiqi shows strangers
-  only its catalogue of tournament records, not an account's own games, so this finds the
-  professional and tournament games it publishes; the latest 200 matches are listed.
-- **Yike** — a nickname, a Yike number such as `CGF00001`, a numeric account id, or a
-  professional's name. A professional's name opens Yike's game library; a nickname opens
-  that member's online games. Yike nicknames are not unique: when several players match,
-  the dialog lists them, ten to a page, and you pick one. The pick is kept with the search;
-  to choose again, remove the search from the recent list. The latest 100 games are listed.
-
-Games show ten to a page; the arrows under the list turn to newer and older games. Every
-search is kept with its games: searching for the same name on the same server again answers
-at once with what the server sent then, and the refresh button beside the list asks again.
-With the search box empty, or while you type, the dialog lists your recent searches on the
-chosen server, ten to a page like the games; pick one to see its games, or remove it with its
-trash button. A saved search still shows its games when the server cannot be reached, and
-opening the dialog again restores the last search and page. Click a game, or press Enter on
-it, to download and open it; Enter in the search box searches. Each server's dialect is
-normalised on import: Fox's quarter-point Chinese komi and handicap stones written as a run
-of opening nodes, eWeiqi's own record format and its commentary, Yike's results written in
-Chinese. The result has no local backing file: it is named after its players,
-`柯洁 vs 申真谞 •`, and **Save** therefore asks where to store it.
-
-**Several records at once.** Opening a file while mirai is running — from your file manager,
-or another `mirai game.sgf` on the command line — gives that record its own window rather
-than replacing what you are looking at; passing several files at once opens one window each.
-The windows are independent, but they share one KataGo: a second window costs no extra GPU
+Opening a file while mirai is running — from your file manager, or another
+`mirai game.sgf` on the command line — gives that record its own window rather than
+replacing what you are looking at; passing several files at once opens one window each. The
+windows are independent, but they share one KataGo: a second window costs no extra GPU
 memory and no second startup wait, and the engine shuts down when the last window using it
 closes.
 
-**Navigating.** Use the [keys](#9-keyboard-reference), board scroll wheel or slider, graph,
-or Moves page. Clicking the graph scrubs the main line.
+### Downloading a game record
 
-**The curves.** They have gaps where moves have no stored analysis. A whole-game analysis
-fills them in.
+Click the main **Download Game Record** half of the split button, or press
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>. Choose the server at the top of the dialog,
+then search:
 
-**The blunder strip.** One bar per move, from the point of view of whoever played it. A bar
-is drawn only when both that move and the position before it have been analysed — an
+| Server | Search by | Lists |
+|---|---|---|
+| **Fox** | an exact Fox nickname or numeric UID | at most the latest 200 public records, the service's fixed history window. Players who hide their records are not bypassed |
+| **eWeiqi** | a player's name or nickname, matched in part and as eWeiqi spells it (a Korean professional's name is often in traditional characters) | the latest 200 matches. eWeiqi shows strangers only its catalogue of tournament records, not an account's own games, so this finds the professional and tournament games it publishes |
+| **Yike** | a nickname, a Yike number such as `CGF00001`, a numeric account id, or a professional's name | the latest 100 games. A professional's name opens Yike's game library; a nickname opens that member's online games. Nicknames are not unique: when several players match, the dialog lists them, ten to a page, and you pick one. The pick is kept with the search; to choose again, remove the search from the recent list |
+
+- Games show ten to a page; the arrows under the list turn to newer and older games.
+- Every search is kept with its games. Searching for the same name on the same server again
+  answers at once with what the server sent then; the refresh button beside the list asks
+  again. A saved search still shows its games when the server cannot be reached.
+- With the search box empty, or while you type, the dialog lists your recent searches on the
+  chosen server, ten to a page; pick one to see its games, or remove it with its trash
+  button. Opening the dialog again restores the last search and page.
+- Click a game, or press <kbd>Enter</kbd> on it, to download and open it; <kbd>Enter</kbd> in
+  the search box searches.
+
+Each server's dialect is normalised on import: Fox's quarter-point Chinese komi and handicap
+stones written as a run of opening nodes, eWeiqi's own record format and its commentary,
+Yike's results written in Chinese. The result has no local backing file: it is named after
+its players, `柯洁 vs 申真谞 •`, and **Save** therefore asks where to store it.
+
+### Navigating
+
+Use the [keys](#9-keyboard-reference), board scroll wheel or slider, graph, or Moves page.
+Clicking the graph scrubs the main line.
+
+### Curves and the blunder strip
+
+The curves have gaps where moves have no stored analysis; a whole-game analysis fills them
+in.
+
+The blunder strip has one bar per move, from the point of view of whoever played it. A bar is
+drawn only when both that move and the position before it have been analysed — an
 unanalysed stretch is a gap, not a mistake.
 
 | Win rate lost | Bar |
 |---|---|
 | up to 2 % | nothing |
-| 2 – 5 % | yellow |
-| 5 – 10 % | orange |
-| over 10 % | red |
+| 2 – 5 % | 🟨 yellow |
+| 5 – 10 % | 🟧 orange |
+| over 10 % | 🟥 red |
 
-**Whole-game analysis.** <kbd>Ctrl</kbd>+<kbd>A</kbd> sweeps the main line at **Visits per
-Move** (100 by default). **Cancel** keeps completed analyses; the curves fill in as results
-arrive. A **Blunders** list uses stored analyses and updates with the record. Each row shows
-the mover, move number, win rate lost, played move and engine choice if stored. Click a row to
+### Whole-game analysis
+
+<kbd>Ctrl</kbd>+<kbd>A</kbd> sweeps the main line at **Visits per Move** (100 by default).
+**Cancel** keeps completed analyses; the curves fill in as results arrive.
+
+A **Blunders** list uses stored analyses and updates with the record. Each row shows the
+mover, move number, win rate lost, played move and engine choice if stored. Click a row to
 jump there; collapse the list without losing its contents. An analysed record shows its
 blunders even without a running engine, though starting a new sweep requires one.
+
+### Editing the record
 
 **Editing tools.** The toolbar above the board starts open; hide or show it with **Editing
 Tools** on the navigation bar or the View menu. It contains undo/redo, **Switch Side to
@@ -310,23 +330,31 @@ See the [settings reference](#play) for board, clock, ruleset and strength choic
 
 ### While the game runs
 
-Click an empty point to move. The board is read-only while the engine thinks (`Thinking… 3.4k
-visits` in the status line), while its turn is stalled, and after the game ends. If the engine
-cannot move — none is running, or the search fails — the status line says why. **Retry** in the
-play bar asks again; starting an engine does that on its own. **Undo** and **Resign** still
-work, and the board stays read-only until it is your turn. During a game the editor is forced
-closed, the editing toggle is disabled, ordinary right-click is ignored, redo is disabled,
-and <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes back the whole exchange rather than a document edit.
-*Both (no engine)* is still a game: you play both colours, there is no engine move and no
-**Resign**, and editing stays closed until the session ends.
+- Click an empty point to move.
+- The board is read-only while the engine thinks (`Thinking… 3.4k visits` in the status
+  line), while its turn is stalled, and after the game ends.
+- If the engine cannot move — none is running, or the search fails — the status line says
+  why. **Retry** in the play bar asks again; starting an engine does that on its own.
+  **Undo** and **Resign** still work, and the board stays read-only until it is your turn.
+- The editor is forced closed, the editing toggle is disabled, ordinary right-click is
+  ignored, redo is disabled, and <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes back the whole exchange
+  rather than a document edit.
+- *Both (no engine)* is still a game: you play both colours, there is no engine move and no
+  **Resign**, and editing stays closed until the session ends.
 
-You can navigate back to review earlier moves during a game. The clock and engine
-continue at the latest played move, not the viewed position; when the engine replies,
-the board follows the new move. Playing on an earlier position is disabled, and
-**Undo** retracts the latest exchange rather than the position you were reviewing.
+You can navigate back to review earlier moves during a game. The clock and engine continue at
+the latest played move, not the viewed position; when the engine replies, the board follows
+the new move. Playing on an earlier position is disabled, and **Undo** retracts the latest
+exchange rather than the position you were reviewing.
 
-**Clocks** appear in the play bar under the board navigation, not in the header. Black is
-`●`, White is `○`, and the side to move is shown in the accent colour.
+> [!TIP]
+> Live analysis works during a game and will show you the engine's own thinking. Turn it
+> off for a fair game.
+
+### Clocks
+
+Clocks appear in the play bar under the board navigation, not in the header. Black is `●`,
+White is `○`, and the side to move is shown in the accent colour.
 
 | Type | Behaviour |
 |---|---|
@@ -337,15 +365,14 @@ the board follows the new move. Playing on an earlier position is disabled, and
 Starting a byo-yomi game with zero main time drops you straight into the first period.
 A Fischer game with zero main time starts with one increment on the clock.
 
-| | |
+### Pass, retry, undo, resign
+
+| Action | How |
 |---|---|
 | **Pass** | <kbd>p</kbd>, or the play-bar button. Two passes in a row end the game and open scoring |
 | **Retry** | the play-bar button, only when the engine's turn stalled. Asks for the move again |
 | **Undo** | <kbd>Ctrl</kbd>+<kbd>Z</kbd>, or the play-bar button, takes back the whole exchange — the engine's move and yours — cancels any search in progress, and restores both clocks exactly |
 | **Resign** | the play-bar button, only when you are playing the engine. No shortcut, deliberately. The *engine* resigns when its win rate stays below **Resign Threshold** for **Resign Streak** consecutive turns and the move number exceeds one quarter of the board's points |
-
-Live analysis works during a game and will show you the engine's own thinking. Turn it off
-for a fair game.
 
 ### Scoring
 
@@ -355,9 +382,13 @@ with squares in the owner's colour.
 
 **Click any group to toggle it alive or dead** once the count is shown; while the status
 line says `Counting…` the board is read-only. The count updates locally, without another
-engine query; use it to correct a misjudged group or seki. **Close** keeps counting;
-**Review Game** ends the session so the record can be edited, and **Analyse Game** ends it
-and starts whole-game analysis.
+engine query; use it to correct a misjudged group or seki.
+
+| Button | Effect |
+|---|---|
+| **Close** | keeps counting |
+| **Review Game** | ends the session so the record can be edited |
+| **Analyse Game** | ends it and starts whole-game analysis |
 
 A resignation or a lost flag settles the result on its own; mirai still counts the board and
 shows what the count would have been.
@@ -367,8 +398,10 @@ shows what the count would have been.
 ## 7. Using a remote engine
 
 `mirai-server` keeps KataGo on the desktop with the GPU while a laptop connects over
-the network. With both machines on your LAN, analysis stays on that network. The
-connection uses QUIC, so the firewall must allow UDP, not TCP.
+the network. With both machines on your LAN, analysis stays on that network.
+
+> [!IMPORTANT]
+> The connection uses QUIC, so the firewall must allow UDP, not TCP.
 
 ### On the desktop
 
@@ -388,9 +421,12 @@ chmod 600 ~/.config/mirai/server.toml
 
 That path is `$XDG_CONFIG_HOME/mirai/server.toml` when the variable is set. Paste the
 generated token into `[[token]]` (the example's all-zero token is rejected) and set
-the KataGo binary and model. Keep this bearer secret readable only by your account;
-the server warns if other users can read the file. Relative paths resolve next to
-the config file. A token longer than 256 bytes stops the server starting.
+the KataGo binary and model. Relative paths resolve next to the config file. A token longer
+than 256 bytes stops the server starting.
+
+> [!CAUTION]
+> The token is a bearer secret: keep the file readable only by your account. The server
+> warns if other users can read it.
 
 **3. Start it.**
 
@@ -416,21 +452,23 @@ live analysis goes ahead of a whole-game analysis, otherwise first come, first s
 
 ### On the laptop
 
-In **Preferences → Engines → Add Remote Engine**, enter a name, the server URL
-(`mirai://192.168.1.10:9678`), and the generated token. If the server hosts several
-engines, name one; otherwise leave **Engine name** blank to use the first.
+1. In **Preferences → Engines → Add Remote Engine**, enter a name, the server URL
+   (`mirai://192.168.1.10:9678`), and the generated token. If the server hosts several
+   engines, name one; otherwise leave **Engine name** blank to use the first.
+2. Press **Test Connection** and compare the fingerprint in **Trust This Server?** with the
+   one the server printed.
+3. If they match, press **Trust**, then **Save Profile**, and select it from the engine
+   button. If they differ, cancel and investigate the network and address.
 
-Press **Test Connection** and compare the fingerprint in **Trust This Server?** with
-the one the server printed. If they match, press **Trust**, then **Save Profile**
-and select it from the engine button. If they differ, cancel and investigate the
-network and address. The token is sent only after you trust the matching fingerprint.
-Selecting an unpinned profile asks the same question; cancelling leaves it unconnected.
-Changing the Server URL clears its old pin.
+The token is sent only after you trust the matching fingerprint. Selecting an unpinned
+profile asks the same question; cancelling leaves it unconnected. Changing the Server URL
+clears its old pin.
 
 ### If mirai later refuses to connect
 
-A certificate that does not match the pinned one is a hard refusal, not a warning you can
-click through.
+> [!WARNING]
+> A certificate that does not match the pinned one is a hard refusal, not a warning you can
+> click through.
 
 | Cause | What to do |
 |---|---|
@@ -467,18 +505,26 @@ With **Managed by mirai**, `0` in any of those four rows means mirai's own defau
 *Custom file* it means *keep what the file says*, and the row subtitles change to say so.
 Managed configs set the four values above. Custom configs keep their tuning settings except
 for any nonzero thread-count overrides. In both modes, mirai fixes reporting to Black's
-perspective and controls logging. In a custom config, set `nnCacheSizePowerOfTwo` explicitly:
-KataGo's analysis default is 2^23, roughly 24 GiB once warm.
+perspective and controls logging.
 
-Automatic tuning is deliberately manual and per profile: changing a path or opening
-Preferences never starts a benchmark. Wait for engine startup to finish, and finish or cancel
-whole-game analysis first. Close other mirai windows; opening one while tuning stops the run.
-The tuner temporarily stops this window's normal engine so another search or a second copy of
-the model cannot skew the result or exhaust GPU memory. It starts KataGo once per candidate,
-so first-run OpenCL kernel tuning can make the run take longer than the usual one or two
-minutes. **Stop Tuning** cancels the current query and leaves the saved profile unchanged. On
-success, review the measured positions, threads and batch values, then press **Save Profile**
-to persist and activate them. The neural-net cache is not changed.
+> [!WARNING]
+> In a custom config, set `nnCacheSizePowerOfTwo` explicitly: KataGo's analysis default is
+> 2^23, roughly 24 GiB once warm.
+
+#### Automatic tuning
+
+Tuning is deliberately manual and per profile: changing a path or opening Preferences never
+starts a benchmark.
+
+- **Before you start**, wait for engine startup to finish, finish or cancel whole-game
+  analysis, and close other mirai windows; opening one while tuning stops the run.
+- **While it runs**, the tuner stops this window's normal engine so another search or a
+  second copy of the model cannot skew the result or exhaust GPU memory. It starts KataGo
+  once per candidate, so first-run OpenCL kernel tuning can make the run take longer than the
+  usual one or two minutes. **Stop Tuning** cancels the current query and leaves the saved
+  profile unchanged.
+- **On success**, review the measured positions, threads and batch values, then press
+  **Save Profile** to persist and activate them. The neural-net cache is not changed.
 
 ### Analysis
 
@@ -588,22 +634,54 @@ logs and the generated analysis config live under `$XDG_DATA_HOME/mirai/`.
 
 ## 9. Keyboard reference
 
-| Navigation | | Analysis | | Game | | File | |
-|---|---|---|---|---|---|---|---|
-| <kbd>Home</kbd> | first move | <kbd>Space</kbd> | live analysis on/off | <kbd>Ctrl</kbd>+<kbd>N</kbd> | new game | <kbd>Ctrl</kbd>+<kbd>O</kbd> | open |
-| <kbd>End</kbd> | last move | <kbd>Ctrl</kbd>+<kbd>A</kbd> | analyse whole game | <kbd>p</kbd> | pass | <kbd>Ctrl</kbd>+<kbd>S</kbd> | save |
-| <kbd>←</kbd> <kbd>→</kbd> | one move | <kbd>Ctrl</kbd>+<kbd>E</kbd> | estimate score | <kbd>Ctrl</kbd>+<kbd>Z</kbd> | last edit | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> | save as |
-| <kbd>Page Up/Down</kbd> | ten moves | <kbd>o</kbd> | ownership overlay | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> | redo | <kbd>Ctrl</kbd>+<kbd>C</kbd> | copy record |
-| <kbd>↑</kbd> <kbd>↓</kbd> | variations | <kbd>y</kbd> | policy overlay | <kbd>Delete</kbd> | delete branch | <kbd>Ctrl</kbd>+<kbd>V</kbd> | paste record |
-| | | <kbd>c</kbd> | coordinates | <kbd>Ctrl</kbd>+<kbd>↑</kbd> | set as main line | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> | download a game record |
-| | | <kbd>n</kbd> | move numbers | <kbd>t</kbd> | switch side to play | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> | clear board |
-| | | <kbd>F9</kbd> | show/hide sidebar | | | | |
-| | | <kbd>g</kbd> | show/hide win-rate graph | | | | |
+The same tables are in the application under Main Menu → *Keyboard Shortcuts*.
+
+### Navigation
+
+| Key | Action |
+|---|---|
+| <kbd>Home</kbd> / <kbd>End</kbd> | first / last move |
+| <kbd>←</kbd> <kbd>→</kbd> | one move |
+| <kbd>Page Up</kbd> / <kbd>Page Down</kbd> | ten moves |
+| <kbd>↑</kbd> <kbd>↓</kbd> | variations |
+
+### Analysis and view
+
+| Key | Action |
+|---|---|
+| <kbd>Space</kbd> | live analysis on/off |
+| <kbd>Ctrl</kbd>+<kbd>A</kbd> | analyse whole game |
+| <kbd>Ctrl</kbd>+<kbd>E</kbd> | estimate score |
+| <kbd>o</kbd> / <kbd>y</kbd> | ownership / policy overlay |
+| <kbd>c</kbd> / <kbd>n</kbd> | coordinates / move numbers |
+| <kbd>F9</kbd> / <kbd>g</kbd> | show/hide sidebar / win-rate graph |
+
+### Game and editing
+
+| Key | Action |
+|---|---|
+| <kbd>Ctrl</kbd>+<kbd>N</kbd> | new game |
+| <kbd>p</kbd> | pass |
+| <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> | undo / redo the last edit |
+| <kbd>Delete</kbd> | delete branch |
+| <kbd>Ctrl</kbd>+<kbd>↑</kbd> | set as main line |
+| <kbd>t</kbd> | switch side to play |
 
 <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes back both players' last moves during a game; in review it
 undoes the last edit — a placed stone, a mark, a comment commit — not each keystroke.
-<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redoes it (disabled during a game). The same
-table is in the application under Main Menu → *Keyboard Shortcuts*.
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> redoes it (disabled during a game).
+
+### Files and records
+
+| Key | Action |
+|---|---|
+| <kbd>Ctrl</kbd>+<kbd>O</kbd> | open |
+| <kbd>Ctrl</kbd>+<kbd>S</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> | save / save as |
+| <kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>Ctrl</kbd>+<kbd>V</kbd> | copy / paste record |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> | download a game record |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> | clear board |
+
+### When a text field has focus
 
 **Typing wins.** While a comment, label or search field has focus, the keys it types and
 edits with go to it: letters, Space, arrows, <kbd>Delete</kbd>, and
@@ -615,8 +693,7 @@ board, the graph or the move tree to hand those keys back. <kbd>Ctrl</kbd>+<kbd>
 as everywhere in GNOME.
 
 No dedicated accelerator: switching engine profile, *Preferences*, *Keyboard Shortcuts*,
-*About mirai* and *Editing Tools*. These remain reachable with standard
-keyboard focus.
+*About mirai* and *Editing Tools*. These remain reachable with standard keyboard focus.
 
 ---
 
@@ -632,15 +709,18 @@ keyboard focus.
 
 (`$XDG_CONFIG_HOME` and `$XDG_DATA_HOME` are honoured if set.)
 
-Autosave runs every 30 seconds, and only when there is something worth keeping — a move, a
-setup stone, a mark, an explicit side to play, or a comment; a blank board is never saved.
-Closing a window **deletes** its autosave, so a file still there on the next start is one a
-crash left behind, and that is what mirai offers to restore. The autosave is not your file:
-restoring it does not make it the target of a plain Save. KataGo's logs accumulate and can be
-deleted at any time, as can the generated analysis config — mirai writes it again whenever
-its contents would change. The saved searches can be deleted; the next lookup starts the
-list again. Nothing else is written; your own KataGo installation, model and any analysis config
-you supplied are never modified.
+- **Autosave** runs every 30 seconds, and only when there is something worth keeping — a
+  move, a setup stone, a mark, an explicit side to play, or a comment; a blank board is never
+  saved.
+- **Closing a window deletes its autosave**, so a file still there on the next start is one a
+  crash left behind, and that is what mirai offers to restore. The autosave is not your file:
+  restoring it does not make it the target of a plain Save.
+- **KataGo's logs** accumulate and can be deleted at any time, as can the generated analysis
+  config — mirai writes it again whenever its contents would change.
+- **The saved searches** can be deleted; the next lookup starts the list again.
+
+Nothing else is written; your own KataGo installation, model and any analysis config you
+supplied are never modified.
 
 ---
 
@@ -657,13 +737,12 @@ read `~/.local/share/mirai/katago-logs/`; use a binary and model that work toget
 
 Possibly ending in `katago did not answer within 180s`.
 
-*Cause:* an OpenCL KataGo tunes itself to your GPU the first time it runs on a given board
-size. This genuinely takes minutes, once.
-
-*Fix:* wait it out, watching `~/.local/share/mirai/katago-logs/`. If it does time out, run
-`katago benchmark -model … -config …` once from a terminal so the tuning completes with no
-clock on it; afterwards mirai starts in seconds. Do the same on the server for a remote
-engine.
+- **Cause:** an OpenCL KataGo tunes itself to your GPU the first time it runs on a given
+  board size. This genuinely takes minutes, once.
+- **Fix:** wait it out, watching `~/.local/share/mirai/katago-logs/`. If it does time out,
+  run `katago benchmark -model … -config …` once from a terminal so the tuning completes with
+  no clock on it; afterwards mirai starts in seconds. Do the same on the server for a remote
+  engine.
 
 ### Analysis does not appear
 
@@ -689,7 +768,7 @@ windows were open, new windows offer their autosaves, most recent first.
 
 | Symptom | Cause / fix |
 |---|---|
-| Only one game opened from a multi-game file | reopen and choose another in the [game list](#5-reviewing-a-game) |
+| Only one game opened from a multi-game file | reopen and choose another in the [game list](#opening-records) |
 | Curves are empty | run a whole-game analysis, then enable [Save Analysis in SGF](#analysis) to preserve them |
 | Some annotations are not drawn | unsupported properties are preserved, even if mirai does not display them |
 | Result or komi looks odd | the file's own values are used as written |
