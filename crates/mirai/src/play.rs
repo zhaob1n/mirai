@@ -11,6 +11,7 @@
 //! HarmonyOS client. What is here is the GTK half of it: the tick source, the engine
 //! subscription and its status text, the territory overlay, and the
 //! result dialog. Every action mutates `Play` and then calls [`PlayController::sync`],
+//! which redraws and starts whatever the new state asks for.
 
 use std::cell::{Cell, RefCell};
 use std::sync::{Arc, Weak};
