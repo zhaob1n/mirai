@@ -79,9 +79,10 @@ sudo just uninstall      # likewise
 ```
 
 This installs `mirai`, `mirai-server`, the desktop entry, metainfo, icons and translations
-under `/usr/local`; `just prefix=$HOME/.local install` needs no root. On Arch, the PKGBUILDs in
-[`packaging/aur/`](packaging/aur/) build `mirai-git` and `mirai-server-git` instead (not
-published yet).
+under `/usr/local`; `just prefix=$HOME/.local install` needs no root. On Arch, install
+[`mirai-git`](https://aur.archlinux.org/packages/mirai-git) and
+[`mirai-server-git`](https://aur.archlinux.org/packages/mirai-server-git) from the AUR instead;
+they build the latest commit.
 
 ---
 
