@@ -90,6 +90,14 @@ QUIC transport parameters (`transport.rs` — `transport_config`), shared by bot
 
 Other flow-control windows, migration and datagrams are implementation choices outside MRP.
 
+The reference client tries every address a hostname resolves to, starting attempts 250 ms
+apart until one handshake succeeds. A silent address must not prevent reaching a server on
+another address (for example, IPv4-only listening behind a dual-stack name). Each attempt
+checks its own certificate; for a pinned connect, only a handshake with the accepted pin can
+win. A mismatching address is never used or retried. If no address succeeds, the client
+reports a fingerprint mismatch in preference to a handshake rejection, and a rejection in
+preference to a timeout.
+
 ### 2.2 Certificates: trust on first use
 
 MRP pins certificates instead of using PKI, so a LAN server needs no public DNS or CA.

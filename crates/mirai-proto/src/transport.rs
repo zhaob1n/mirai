@@ -411,11 +411,38 @@ fn endpoint_with(verifier: TofuVerifier) -> Result<quinn::Endpoint, TransportErr
 }
 
 /// How [`open_connection`] decides which certificates to accept.
+#[derive(Clone)]
 enum Trust {
     /// Only this pin. The only mode that may be followed by `Hello`.
     Pin(String),
     /// Record the leaf. [`probe`] closes immediately afterwards.
     Observe,
+}
+
+/// Preserve why an attempt failed until all addresses have been tried. Formatting
+/// Quinn's timeout into `TransportError::Connect` too soon loses that distinction.
+#[derive(Debug)]
+struct AttemptFailure {
+    error: TransportError,
+    priority: FailurePriority,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum FailurePriority {
+    Timeout,
+    Rejection,
+    Fingerprint,
+}
+
+impl From<TransportError> for AttemptFailure {
+    fn from(error: TransportError) -> Self {
+        let priority = if matches!(error, TransportError::FingerprintMismatch { .. }) {
+            FailurePriority::Fingerprint
+        } else {
+            FailurePriority::Rejection
+        };
+        Self { error, priority }
+    }
 }
 
 /// Resolves `url` and finishes the TLS handshake. Does not open a stream.
@@ -424,13 +451,10 @@ async fn open_connection(
     trust: Trust,
 ) -> Result<(quinn::Connection, String, quinn::Endpoint), TransportError> {
     let (host, port) = parse_url(url)?;
-    let observed = Arc::new(Mutex::new(None));
-    let (endpoint, expected) = match trust {
-        Trust::Pin(pin) => {
-            let pin = canonical_pin(&pin)?;
-            (client_endpoint(pin.clone(), observed.clone())?, Some(pin))
-        }
-        Trust::Observe => (observe_endpoint(observed.clone())?, None),
+    // Validate before any address is tried; a malformed pin is not a network failure.
+    let trust = match trust {
+        Trust::Pin(pin) => Trust::Pin(canonical_pin(&pin)?),
+        Trust::Observe => Trust::Observe,
     };
 
     let addr = tokio::task::spawn_blocking({
@@ -438,20 +462,73 @@ async fn open_connection(
         move || {
             (host.as_str(), port)
                 .to_socket_addrs()
-                .map(|mut it| it.next())
+                .map(|it| it.collect::<Vec<_>>())
         }
     })
     .await
     .map_err(|e| TransportError::Address(url.into(), e.to_string()))?
-    .map_err(|e| TransportError::Address(url.into(), e.to_string()))?
-    .ok_or_else(|| TransportError::Address(url.into(), "no address resolved".into()))?;
+    .map_err(|e| TransportError::Address(url.into(), e.to_string()))?;
+    if addr.is_empty() {
+        return Err(TransportError::Address(
+            url.into(),
+            "no address resolved".into(),
+        ));
+    }
 
-    // A self-signed certificate is generated for its hostname; the verifier only compares
-    // fingerprints, but rustls still needs a syntactically valid SNI name.
-    let sni = sni_for(&host);
+    // A hostname may resolve to both families while the server listens on only one.
+    // QUIC has no TCP-style refusal to advance us promptly, so overlap attempts rather
+    // than spending a whole idle timeout on the first address. Each attempt owns its
+    // verifier: a certificate observed on one address must not identify another.
+    connect_addresses(addr, sni_for(&host), trust).await
+}
 
+/// Races the addresses of one endpoint, retaining each attempt's own identity check.
+async fn connect_addresses(
+    addr: Vec<SocketAddr>,
+    sni: String,
+    trust: Trust,
+) -> Result<(quinn::Connection, String, quinn::Endpoint), TransportError> {
+    let mut attempts = tokio::task::JoinSet::new();
+    for (n, addr) in addr.into_iter().enumerate() {
+        let trust = trust.clone();
+        let sni = sni.clone();
+        attempts.spawn(async move {
+            tokio::time::sleep(Duration::from_millis(250).saturating_mul(n as u32)).await;
+            open_address(addr, &sni, trust).await
+        });
+    }
+    let mut best_error: Option<AttemptFailure> = None;
+    while let Some(result) = attempts.join_next().await {
+        let failure = match result {
+            // Every successful attempt independently checked the accepted pin. A
+            // rejected address never supplies a connection or sends a token.
+            Ok(Ok(connection)) => return Ok(connection),
+            Ok(Err(failure)) => failure,
+            Err(error) => TransportError::Connect(error.to_string()).into(),
+        };
+        if best_error
+            .as_ref()
+            .is_none_or(|previous| failure.priority > previous.priority)
+        {
+            best_error = Some(failure);
+        }
+    }
+    Err(best_error.expect("at least one address was tried").error)
+}
+
+/// One address's handshake and certificate observation, isolated from other attempts.
+async fn open_address(
+    addr: SocketAddr,
+    sni: &str,
+    trust: Trust,
+) -> Result<(quinn::Connection, String, quinn::Endpoint), AttemptFailure> {
+    let observed = Arc::new(Mutex::new(None));
+    let (endpoint, expected) = match trust {
+        Trust::Pin(pin) => (client_endpoint(pin.clone(), observed.clone())?, Some(pin)),
+        Trust::Observe => (observe_endpoint(observed.clone())?, None),
+    };
     let attempt = endpoint
-        .connect(addr, &sni)
+        .connect(addr, sni)
         .map_err(|e| TransportError::Connect(e.to_string()))?
         .await;
 
@@ -476,9 +553,17 @@ async fn open_connection(
                 return Err(TransportError::FingerprintMismatch {
                     expected: expected.clone(),
                     got,
-                });
+                }
+                .into());
             }
-            return Err(TransportError::Connect(e.to_string()));
+            return Err(AttemptFailure {
+                priority: if matches!(e, quinn::ConnectionError::TimedOut) {
+                    FailurePriority::Timeout
+                } else {
+                    FailurePriority::Rejection
+                },
+                error: TransportError::Connect(e.to_string()),
+            });
         }
     };
 
@@ -488,12 +573,10 @@ async fn open_connection(
     if let Some(expected) = expected
         && expected != fp
     {
-        return Err(TransportError::FingerprintMismatch { expected, got: fp });
+        return Err(TransportError::FingerprintMismatch { expected, got: fp }.into());
     }
     if fp.is_empty() {
-        return Err(TransportError::Cert(
-            "the server presented no certificate".into(),
-        ));
+        return Err(TransportError::Cert("the server presented no certificate".into()).into());
     }
     Ok((conn, fp, endpoint))
 }
@@ -701,6 +784,77 @@ mod tests {
             .await
             .expect("the pinned certificate was refused");
         assert_eq!(fp, real);
+    }
+
+    /// `localhost` can resolve to `::1` before `127.0.0.1`, and the reference server
+    /// listens on IPv4 by default. Trying only the first address would wait out the idle
+    /// timeout on `::1` and never reach the server.
+    #[tokio::test]
+    async fn every_resolved_address_is_tried() {
+        let (addr, real) = a_server("localhost");
+        let url = format!("mirai://localhost:{}", addr.port());
+        let (_conn, fp) = tokio::time::timeout(Duration::from_secs(5), connect(&url, real.clone()))
+            .await
+            .expect("stuck on an address nothing listens on")
+            .expect("connect");
+        assert_eq!(fp, real);
+    }
+
+    #[tokio::test]
+    async fn a_pinned_address_can_win_after_another_address_rejects_the_pin() {
+        let (wrong, _) = a_server("race-wrong");
+        let (right, pin) = a_server("race-right");
+        let (_conn, got, _endpoint) = connect_addresses(
+            vec![wrong, right],
+            "localhost".into(),
+            Trust::Pin(pin.clone()),
+        )
+        .await
+        .expect("the pinned address must still be reachable");
+        assert_eq!(got, pin);
+    }
+
+    /// The attempt that fails last is not necessarily the one worth reporting. Waiting out a
+    /// silent address would cost the suite a whole idle timeout; a mismatch followed by a
+    /// later protocol rejection exercises the same selection.
+    #[tokio::test]
+    async fn a_later_rejection_does_not_hide_an_identity_failure() {
+        let ck = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let mut crypto = rustls::ServerConfig::builder_with_provider(provider())
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![ck.cert.der().clone()],
+                rustls::pki_types::PrivatePkcs8KeyDer::from(ck.signing_key.serialize_der()).into(),
+            )
+            .unwrap();
+        crypto.alpn_protocols = vec![b"not-mirai".to_vec()];
+        let config =
+            quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(crypto).unwrap()));
+        let endpoint = quinn::Endpoint::server(config, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let rejected = endpoint.local_addr().unwrap();
+        let accepting = endpoint.clone();
+        let server = tokio::spawn(async move {
+            while let Some(incoming) = accepting.accept().await {
+                let _ = incoming.await;
+            }
+        });
+        let (mismatched, real) = a_server("race-all-fail");
+        let wrong = "00".repeat(32);
+        let error = connect_addresses(
+            vec![mismatched, rejected],
+            "localhost".into(),
+            Trust::Pin(wrong.clone()),
+        )
+        .await
+        .unwrap_err();
+        server.abort();
+        assert!(
+            matches!(error, TransportError::FingerprintMismatch { expected, got }
+                if expected == wrong && got == real),
+            "a later protocol rejection must not hide the identity failure"
+        );
     }
 
     /// Uppercase hex with colons and surrounding whitespace, as pasted from
