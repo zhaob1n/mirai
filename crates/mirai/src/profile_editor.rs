@@ -179,81 +179,53 @@ impl LocalProfileForm {
         glib::Object::new()
     }
 
-    pub fn name_row(&self) -> adw::EntryRow {
-        self.imp().name_row.get()
+    pub fn widgets(&self) -> LocalFormWidgets {
+        let imp = self.imp();
+        LocalFormWidgets {
+            name_row: imp.name_row.get(),
+            katago_row: imp.katago_row.get(),
+            katago_slot: imp.katago_slot.get(),
+            katago_button: imp.katago_button.get(),
+            model_row: imp.model_row.get(),
+            model_slot: imp.model_slot.get(),
+            model_button: imp.model_button.get(),
+            mode_row: imp.mode_row.get(),
+            config_row: imp.config_row.get(),
+            config_slot: imp.config_slot.get(),
+            config_button: imp.config_button.get(),
+            analysis_row: imp.analysis_row.get(),
+            search_row: imp.search_row.get(),
+            memory_group: imp.memory_group.get(),
+            batch_row: imp.batch_row.get(),
+            cache_row: imp.cache_row.get(),
+            tuning_group: imp.tuning_group.get(),
+            tune_row: imp.tune_row.get(),
+            tune_button: imp.tune_button.get(),
+        }
     }
+}
 
-    pub fn katago_row(&self) -> adw::ActionRow {
-        self.imp().katago_row.get()
-    }
-
-    pub fn katago_slot(&self) -> gtk::Box {
-        self.imp().katago_slot.get()
-    }
-
-    pub fn katago_button(&self) -> gtk::Button {
-        self.imp().katago_button.get()
-    }
-
-    pub fn model_row(&self) -> adw::ActionRow {
-        self.imp().model_row.get()
-    }
-
-    pub fn model_slot(&self) -> gtk::Box {
-        self.imp().model_slot.get()
-    }
-
-    pub fn model_button(&self) -> gtk::Button {
-        self.imp().model_button.get()
-    }
-
-    pub fn mode_row(&self) -> adw::ComboRow {
-        self.imp().mode_row.get()
-    }
-
-    pub fn config_row(&self) -> adw::ActionRow {
-        self.imp().config_row.get()
-    }
-
-    pub fn config_slot(&self) -> gtk::Box {
-        self.imp().config_slot.get()
-    }
-
-    pub fn config_button(&self) -> gtk::Button {
-        self.imp().config_button.get()
-    }
-
-    pub fn analysis_row(&self) -> adw::SpinRow {
-        self.imp().analysis_row.get()
-    }
-
-    pub fn search_row(&self) -> adw::SpinRow {
-        self.imp().search_row.get()
-    }
-
-    pub fn memory_group(&self) -> adw::PreferencesGroup {
-        self.imp().memory_group.get()
-    }
-
-    pub fn batch_row(&self) -> adw::SpinRow {
-        self.imp().batch_row.get()
-    }
-
-    pub fn cache_row(&self) -> adw::SpinRow {
-        self.imp().cache_row.get()
-    }
-
-    pub fn tuning_group(&self) -> adw::PreferencesGroup {
-        self.imp().tuning_group.get()
-    }
-
-    pub fn tune_row(&self) -> adw::ActionRow {
-        self.imp().tune_row.get()
-    }
-
-    pub fn tune_button(&self) -> gtk::Button {
-        self.imp().tune_button.get()
-    }
+/// The children of `local_profile_form.blp` that the editor fills in and wires.
+pub struct LocalFormWidgets {
+    pub name_row: adw::EntryRow,
+    pub katago_row: adw::ActionRow,
+    pub katago_slot: gtk::Box,
+    pub katago_button: gtk::Button,
+    pub model_row: adw::ActionRow,
+    pub model_slot: gtk::Box,
+    pub model_button: gtk::Button,
+    pub mode_row: adw::ComboRow,
+    pub config_row: adw::ActionRow,
+    pub config_slot: gtk::Box,
+    pub config_button: gtk::Button,
+    pub analysis_row: adw::SpinRow,
+    pub search_row: adw::SpinRow,
+    pub memory_group: adw::PreferencesGroup,
+    pub batch_row: adw::SpinRow,
+    pub cache_row: adw::SpinRow,
+    pub tuning_group: adw::PreferencesGroup,
+    pub tune_row: adw::ActionRow,
+    pub tune_button: gtk::Button,
 }
 
 impl RemoteProfileForm {
@@ -261,27 +233,25 @@ impl RemoteProfileForm {
         glib::Object::new()
     }
 
-    pub fn name_row(&self) -> adw::EntryRow {
-        self.imp().name_row.get()
+    pub fn widgets(&self) -> RemoteFormWidgets {
+        let imp = self.imp();
+        RemoteFormWidgets {
+            name_row: imp.name_row.get(),
+            url_row: imp.url_row.get(),
+            token_row: imp.token_row.get(),
+            engine_row: imp.engine_row.get(),
+            trust_row: imp.trust_row.get(),
+            test_button: imp.test_button.get(),
+        }
     }
+}
 
-    pub fn url_row(&self) -> adw::EntryRow {
-        self.imp().url_row.get()
-    }
-
-    pub fn token_row(&self) -> adw::PasswordEntryRow {
-        self.imp().token_row.get()
-    }
-
-    pub fn engine_row(&self) -> adw::EntryRow {
-        self.imp().engine_row.get()
-    }
-
-    pub fn trust_row(&self) -> adw::ActionRow {
-        self.imp().trust_row.get()
-    }
-
-    pub fn test_button(&self) -> gtk::Button {
-        self.imp().test_button.get()
-    }
+/// The children of `remote_profile_form.blp` that the editor fills in and wires.
+pub struct RemoteFormWidgets {
+    pub name_row: adw::EntryRow,
+    pub url_row: adw::EntryRow,
+    pub token_row: adw::PasswordEntryRow,
+    pub engine_row: adw::EntryRow,
+    pub trust_row: adw::ActionRow,
+    pub test_button: gtk::Button,
 }

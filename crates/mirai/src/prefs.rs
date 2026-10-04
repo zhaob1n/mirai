@@ -25,7 +25,9 @@ use crate::config::{
 };
 use crate::i18n::{self, gettext, gettext_f, ngettext_f, pgettext};
 use crate::preferences_shell::{PreferencesDialog, PreferencesWidgets};
-use crate::profile_editor::{LocalProfileForm, ProfileEditorPage, RemoteProfileForm};
+use crate::profile_editor::{
+    LocalFormWidgets, LocalProfileForm, ProfileEditorPage, RemoteFormWidgets, RemoteProfileForm,
+};
 use mirai_engine::{
     CalibrationConfig, CalibrationProgress, CalibrationResult, EngineTuning, TuningOverrides,
 };
@@ -870,23 +872,41 @@ fn local_editor(
     let form = LocalProfileForm::new();
     let editor = editor_shell(&title, &form);
 
-    let name_row = form.name_row();
+    let LocalFormWidgets {
+        name_row,
+        katago_row,
+        katago_slot,
+        katago_button,
+        model_row,
+        model_slot,
+        model_button,
+        mode_row: mode,
+        config_row,
+        config_slot,
+        config_button,
+        analysis_row,
+        search_row,
+        memory_group: memory,
+        batch_row,
+        cache_row,
+        tuning_group: auto,
+        tune_row,
+        tune_button: tune,
+    } = form.widgets();
     name_row.set_text(editing.as_deref().unwrap_or(""));
 
     let katago_path = wire_file_row(
-        &form.katago_row(),
-        &form.katago_button(),
-        &form.katago_slot(),
+        &katago_row,
+        &katago_button,
+        &katago_slot,
         katago,
         Vec::new(),
         &gettext("Select the KataGo Binary"),
         dialog,
     );
-    let model_row = form.model_row();
-    let model_slot = form.model_slot();
     let model_path = wire_file_row(
         &model_row,
-        &form.model_button(),
+        &model_button,
         &model_slot,
         model,
         Vec::new(),
@@ -897,13 +917,10 @@ fn local_editor(
     // KataGo will not start without a `-config`, but mirai can write that file itself —
     // it needs three keys the user has no reason to care about. A custom file stays
     // available for anyone who does.
-    let mode = form.mode_row();
     mode.set_selected(u32::from(custom));
-    let config_row = form.config_row();
-    let config_slot = form.config_slot();
     let config_path = wire_file_row(
         &config_row,
-        &form.config_button(),
+        &config_button,
         &config_slot,
         suggested_config,
         Vec::new(),
@@ -911,13 +928,11 @@ fn local_editor(
         dialog,
     );
 
-    let analysis_row = form.analysis_row();
     configure_tuned(
         &analysis_row,
         u32::from(analysis_threads.unwrap_or(0)),
         f64::from(EngineTuning::MAX_ANALYSIS_THREADS),
     );
-    let search_row = form.search_row();
     configure_tuned(
         &search_row,
         u32::from(search_threads.unwrap_or(0)),
@@ -926,14 +941,12 @@ fn local_editor(
 
     // A custom file has to carry these two itself — KataGo will not start without
     // `nnMaxBatchSize` — so there is nothing for mirai to override.
-    let memory = form.memory_group();
     let batch_default = defaults.nn_max_batch_size.to_string();
     // Translators: nnMaxBatchSize is a KataGo setting name; leave it untranslated. {size} is that default.
     let batch_subtitle = gettext_f(
         "nnMaxBatchSize — 0 uses mirai's default ({size}). Wants to be at least positions × threads.",
         &[("size", &batch_default)],
     );
-    let batch_row = form.batch_row();
     batch_row.set_subtitle(&batch_subtitle);
     configure_tuned(
         &batch_row,
@@ -941,7 +954,6 @@ fn local_editor(
         f64::from(EngineTuning::MAX_BATCH_SIZE),
     );
     let cache_shown = snap_cache_power(0, cache.unwrap_or(0));
-    let cache_row = form.cache_row();
     cache_row.set_subtitle(&cache_subtitle(cache_shown));
     configure_tuned(
         &cache_row,
@@ -967,10 +979,6 @@ fn local_editor(
     // GPU does with them is not something mirai can predict from the model file or the
     // driver version. The run needs the machine to itself, hence the engine shutdown and
     // the refusal to start with a second window open.
-    let auto = form.tuning_group();
-    let tune_row = form.tune_row();
-    let tune = form.tune_button();
-
     let tune_state = state.clone();
     let tune_banner = editor.banner.clone();
     let tune_save = editor.save.clone();
@@ -1356,21 +1364,23 @@ fn remote_editor(
     let form = RemoteProfileForm::new();
     let editor = editor_shell(&title, &form);
 
-    let name_row = form.name_row();
+    let RemoteFormWidgets {
+        name_row,
+        url_row,
+        token_row,
+        engine_row,
+        trust_row,
+        test_button: test,
+    } = form.widgets();
     name_row.set_text(editing.as_deref().unwrap_or(""));
 
     // Only the address is shown and typed. mirai speaks one protocol, so its scheme says
     // nothing to the user; `entered_url` puts it back.
-    let url_row = form.url_row();
     url_row.set_text(url.strip_prefix(mirai_proto::URL_SCHEME).unwrap_or(&url));
-    let token_row = form.token_row();
     token_row.set_text(&token);
-    let engine_row = form.engine_row();
     engine_row.set_text(&engine);
 
-    let trust_row = form.trust_row();
     trust_row.set_subtitle(&fingerprint_subtitle(&pin.borrow()));
-    let test = form.test_button();
 
     // -- test connection ------------------------------------------------------------
     // The check in flight: re-testing replaces it, and leaving the editor drops it —
