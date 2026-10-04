@@ -510,19 +510,13 @@ impl Config {
         }
     }
 
-    /// Writes the configuration over whatever `path` holds. It carries every remote
-    /// profile's bearer token, so the file is written `0600` and a directory this creates
-    /// is `0700` (see [`write_private`]).
-    pub fn save(&self, path: &Path) -> Result<(), ConfigError> {
-        let text = toml::to_string_pretty(self)?;
-        write_private(path, &text)
-    }
-
-    /// Writes the configuration, keeping edits another window has made meanwhile.
+    /// Writes the configuration, keeping edits another window has made meanwhile. The file
+    /// carries every remote profile's bearer token, so it is written `0600` (see
+    /// [`write_private`]).
     ///
-    /// Every window holds the `Config` it loaded when it opened, so the plain overwrite
-    /// above would revert whatever a second window changed since — the last window to close
-    /// would win, silently. This is a three-way merge at the TOML level: only the keys that
+    /// Every window holds the `Config` it loaded when it opened, so a plain overwrite would
+    /// revert whatever a second window changed since — the last window to close would win,
+    /// silently. This is a three-way merge at the TOML level: only the keys that
     /// differ between `base` (what this window loaded) and `self` (what it holds now) are
     /// written over the file as it stands, so untouched keys keep the file's values.
     /// `engine_profile` is merged by name rather than replaced; if both windows edited the
@@ -929,7 +923,7 @@ mod tests {
 
         // Both windows opened on this.
         let base = Config::default();
-        base.save(&path).expect("write the baseline");
+        write_baseline(&base, &path);
 
         // The other window raised the visit cap and wrote it out.
         let mut other = base.clone();
@@ -950,6 +944,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// What every window in a test opened on: the file as another session left it.
+    fn write_baseline(cfg: &Config, path: &Path) {
+        write_private(path, &toml::to_string_pretty(cfg).unwrap()).unwrap();
+    }
+
     #[cfg(unix)]
     fn unix_mode(path: &Path) -> u32 {
         use std::os::unix::fs::PermissionsExt;
@@ -966,15 +965,20 @@ mod tests {
         let dir = base.join("mirai");
         let path = dir.join("config.toml");
 
-        Config::default().save(&path).expect("first save");
+        let first = Config {
+            active_engine: Some("first".into()),
+            ..Config::default()
+        };
+        first
+            .save_merged(&Config::default(), &path)
+            .expect("first save");
 
         assert_eq!(unix_mode(&path), 0o600);
         assert_eq!(unix_mode(&dir), 0o700);
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// A config an older mirai wrote with the umask default is tightened by the next save,
-    /// through either save path.
+    /// A config an older mirai wrote with the umask default is tightened by the next save.
     #[cfg(unix)]
     #[test]
     fn an_existing_world_readable_config_is_tightened_on_save() {
@@ -984,21 +988,14 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
-        let widen = || {
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-        };
-
         std::fs::write(&path, "").unwrap();
-        widen();
-        Config::default().save(&path).expect("save");
-        assert_eq!(unix_mode(&path), 0o600, "save");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
 
-        widen();
         let base = Config::default();
         let mut edited = base.clone();
         edited.analysis.live_max_visits = 4242;
         edited.save_merged(&base, &path).expect("merged save");
-        assert_eq!(unix_mode(&path), 0o600, "save_merged");
+        assert_eq!(unix_mode(&path), 0o600);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1021,7 +1018,7 @@ mod tests {
             }],
             ..Config::default()
         };
-        base.save(&path).expect("write the baseline");
+        write_baseline(&base, &path);
 
         let mut mine = base.clone();
         mine.engine_profiles.clear();
@@ -1097,7 +1094,7 @@ mod tests {
         let path = dir.join("merge.toml");
         let _ = std::fs::remove_dir_all(&dir);
         let base = Config::default();
-        base.save(&path).unwrap();
+        write_baseline(&base, &path);
 
         let mut left = base.clone();
         left.engine_profiles.push(remote("alpha", "mirai://a"));
@@ -1122,7 +1119,7 @@ mod tests {
             engine_profiles: vec![remote("keep", "mirai://k")],
             ..Config::default()
         };
-        base.save(&path).unwrap();
+        write_baseline(&base, &path);
 
         let mut other = base.clone();
         other.engine_profiles.push(remote("added", "mirai://a"));
@@ -1147,7 +1144,7 @@ mod tests {
             engine_profiles: vec![remote("alpha", "mirai://a1"), remote("beta", "mirai://b1")],
             ..Config::default()
         };
-        base.save(&path).unwrap();
+        write_baseline(&base, &path);
 
         let mut left = base.clone();
         left.engine_profiles[0] = remote("alpha", "mirai://a2");
