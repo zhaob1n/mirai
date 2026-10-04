@@ -1,5 +1,7 @@
 # mirai — user guide
 
+English | [简体中文](GUIDE.zh-CN.md)
+
 A Go board for Linux that talks to KataGo: live analysis, SGF review and editing, and games
 against the computer. The engine can run on the same machine or on another one on your network.
 
@@ -133,8 +135,7 @@ orange and red — the same warm colours the blunder strip uses. Loss is the eng
 combined reading of win rate and score, not the visit count and not the rank. Fewer than ten
 visits is grey and faint: unknown, not good or bad. The pick is never grey. Why the list
 order can disagree with Win, Score and Visits is measured in
-[Candidate order versus candidate colour](../dev/CANDIDATE_COLOUR.md); that note is the
-derivation, not a second set of on-screen rules.
+[Candidate order versus candidate colour](../dev/CANDIDATE_COLOUR.md).
 
 The row number is the engine's rank, not its visit count; its colour matches the blob's loss grade.
 
@@ -341,7 +342,7 @@ A Fischer game with zero main time starts with one increment on the clock.
 | **Pass** | <kbd>p</kbd>, or the play-bar button. Two passes in a row end the game and open scoring |
 | **Retry** | the play-bar button, only when the engine's turn stalled. Asks for the move again |
 | **Undo** | <kbd>Ctrl</kbd>+<kbd>Z</kbd>, or the play-bar button, takes back the whole exchange — the engine's move and yours — cancels any search in progress, and restores both clocks exactly |
-| **Resign** | the play-bar button, only when you are playing the engine. No shortcut, deliberately. The *engine* resigns on its own when its win rate has stayed below **Resign Threshold** for **Resign Streak** consecutive moves *and* the game is past the opening — both conditions, so it never gives up on move 3 |
+| **Resign** | the play-bar button, only when you are playing the engine. No shortcut, deliberately. The *engine* resigns when its win rate stays below **Resign Threshold** for **Resign Streak** consecutive turns and the move number exceeds one quarter of the board's points |
 
 Live analysis works during a game and will show you the engine's own thinking. Turn it off
 for a fair game.
@@ -444,7 +445,7 @@ Without a token block the server starts but refuses every client.
 
 ## 8. Settings reference
 
-Preferences saves changes immediately. This section is the reference for client settings
+Preferences saves changes automatically. This section is the reference for client settings
 and hand-edited configs.
 
 ### Engines
@@ -453,7 +454,7 @@ and hand-edited configs.
 |---|---|---|
 | Engine profiles | one, if a KataGo was found | radio button = active engine; pencil edits, bin deletes |
 | *local* Name / KataGo binary / model | — | both paths must exist to save; the model row's list button holds every discovered network, the folder button any other file |
-| *local* Analysis config | Managed by mirai | *Custom file* reveals the config row, whose list button holds every discovered Analysis config; all settings except the two thread counts then come from that file |
+| *local* Analysis config | Managed by mirai | *Custom file* reveals the config row, whose list button holds every discovered Analysis config; tuning settings come from that file unless you override the two thread counts |
 | *local* Positions in parallel | 0, meaning 4 | `numAnalysisThreads`: positions searched at once. Four keeps a whole-game sweep and a cursor move from queueing behind each other |
 | *local* Threads per position | 0, meaning 16 | `numSearchThreadsPerAnalysisThread`: how hard one position is searched. Raise on a many-core CPU, but the returns fall off past 16 |
 | *local* GPU batch size | 0, meaning 64 | `nnMaxBatchSize`. Wants to be at least positions × threads. Hidden while a custom config is selected |
@@ -463,13 +464,11 @@ and hand-edited configs.
 | *remote* Pinned fingerprint | not pinned | read-only; set by **Test Connection** and **Trust** |
 
 With **Managed by mirai**, `0` in any of those four rows means mirai's own default; with
-*Custom file* it means *keep what the file says*, and the row subtitles change to say so. The
-generated config sets those four values and nothing else — everything else is KataGo's own
-default. Three of them are there because KataGo refuses to start without
-`numAnalysisThreads`, `numSearchThreadsPerAnalysisThread` and `nnMaxBatchSize`, which is why
-there is a file at all rather than a handful of command-line overrides. The cache is the
-exception: KataGo's own analysis-engine default is 2^23, meant for a server analysing games
-in bulk, and would settle around 24 GiB on a desktop.
+*Custom file* it means *keep what the file says*, and the row subtitles change to say so.
+Managed configs set the four values above. Custom configs keep their tuning settings except
+for any nonzero thread-count overrides. In both modes, mirai fixes reporting to Black's
+perspective and controls logging. In a custom config, set `nnCacheSizePowerOfTwo` explicitly:
+KataGo's analysis default is 2^23, roughly 24 GiB once warm.
 
 Automatic tuning is deliberately manual and per profile: changing a path or opening
 Preferences never starts a benchmark. Wait for engine startup to finish, and finish or cancel
@@ -495,9 +494,9 @@ to persist and activate them. The neural-net cache is not changed.
 Changing **Maximum Visits**, **Report Interval**, or a larger **Suggestions Shown**
 restarts a search that is already running, after a brief pause so dragging or
 key-repeating the row does not restart on every step. Shrinking **Suggestions Shown**
-only redraws: the engine already sent every move the board now keeps. The number is
-written to disk immediately either way. The numeric rows accept typing, scrolling and the keyboard's arrow
-keys. Each page ends with **Restore Defaults**. Its toast offers **Undo**. Restoring a page
+only redraws: the engine already sent every move the board now keeps. Both changes are saved
+automatically. The numeric rows accept typing, scrolling and the keyboard's arrow keys.
+Each page ends with **Restore Defaults**. Its toast offers **Undo**. Restoring a page
 does not delete engine profiles.
 
 ### Play
