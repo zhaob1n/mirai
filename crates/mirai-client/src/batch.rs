@@ -69,7 +69,7 @@ impl Planned {
             req.initial_player = Some(boundary.initial_player);
             req.initial_stones = boundary.initial_stones.clone();
             req.komi_x2 = boundary.komi_x2;
-        } else if self.start == self.end {
+        } else {
             req.initial_player = self.bare_player;
         }
         req.moves = self.shared.moves[self.start..self.end].to_vec();
@@ -105,7 +105,8 @@ pub fn plan_mainline(tree: &mut GameTree, want: Want, visits: u32) -> Vec<Planne
     let mut moves: Vec<(Color, Point)> = Vec::new();
     let mut raw = Vec::with_capacity(line.len());
     let mut boundary: Option<Arc<BoundarySnapshot>> = None;
-    let mut boundary_end = 0usize;
+    // Where the move list after the latest boundary begins; the whole list before one.
+    let mut start = 0usize;
     // Move-number base for the next node, matching [`GameTree::move_number`]: an `MN`
     // replaces the count at its own node and that node's own move is not added.
     let mut turn_base = 0u16;
@@ -114,7 +115,6 @@ pub fn plan_mainline(tree: &mut GameTree, want: Want, visits: u32) -> Vec<Planne
         // Stepping the cache along the line makes each boundary snapshot one `step`,
         // not a replay from the root. The old per-node `path_to` was the quadratic walk.
         let _ = tree.position(id);
-        let is_boundary = analysis::is_reconstruction_boundary(tree, id);
         let (mv, move_number_override) = {
             let node = tree.node(id);
             (node.mv, node.move_number_override)
@@ -129,41 +129,24 @@ pub fn plan_mainline(tree: &mut GameTree, want: Want, visits: u32) -> Vec<Planne
             turn_base
         };
 
-        if is_boundary {
-            let snap = Arc::new(analysis::snapshot_boundary(tree, id));
-            if let Some(mv) = mv {
-                moves.push(mv);
-            }
-            boundary_end = moves.len();
-            boundary = Some(snap);
-            raw.push(RawPlanned {
-                node: id,
-                turn,
-                start: boundary_end,
-                end: boundary_end,
-                boundary: boundary.clone(),
-                bare_player: None,
-            });
-        } else {
-            if let Some(mv) = mv {
-                moves.push(mv);
-            }
-            let end = moves.len();
-            let start = if boundary.is_some() { boundary_end } else { 0 };
-            let bare_player = if boundary.is_none() && start == end {
-                Some(tree.position(id).to_play)
-            } else {
-                None
-            };
-            raw.push(RawPlanned {
-                node: id,
-                turn,
-                start,
-                end,
-                boundary: boundary.clone(),
-                bare_player,
-            });
+        if let Some(mv) = mv {
+            moves.push(mv);
         }
+        // A boundary's own move is part of its snapshot, so its range starts after it.
+        if analysis::is_reconstruction_boundary(tree, id) {
+            boundary = Some(Arc::new(analysis::snapshot_boundary(tree, id)));
+            start = moves.len();
+        }
+        let end = moves.len();
+        let bare_player = (boundary.is_none() && start == end).then(|| tree.position(id).to_play);
+        raw.push(RawPlanned {
+            node: id,
+            turn,
+            start,
+            end,
+            boundary: boundary.clone(),
+            bare_player,
+        });
     }
 
     let shared = Arc::new(PlanBase {

@@ -102,6 +102,7 @@ needed, `cargo test -p <crate> -- --list`.
 - Fox dialect normalised before `sgf::parse`
 - eWeiqi's GIB read top-down with commentary on the move it follows and its variation diagrams kept off the main line
 - Yike's Chinese results, exact-name candidates and paged lists that stop where they should
+- Malformed eWeiqi dates and extreme Fox rank / Yike result numbers do not panic
 - Only a single step onto a placed stone sounds, and a capture is told by the stones it removed
 
 ### `mirai-server`

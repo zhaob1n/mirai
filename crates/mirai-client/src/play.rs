@@ -973,27 +973,17 @@ impl Play {
 
     fn end_game(&mut self, game: &mut GameSession, forced: Option<String>, end: GameEnd) {
         if let Some(s) = self.session.as_mut() {
-            s.state = PlayState::Scoring;
+            s.state = forced
+                .as_ref()
+                .map_or(PlayState::Scoring, |result| PlayState::Over(result.clone()));
             s.resign_streak = 0;
             s.end = Some(end);
-            s.forced_result = forced.clone();
-        }
-        if let Some(r) = &forced {
-            game.set_result(r.clone());
+            s.forced_result = forced;
         }
         // The search that produced this ending, and any count asked for an earlier
         // position, must not land afterwards.
         self.retire_requests();
-        if forced.is_some() {
-            self.rescore(game);
-            if let Some(s) = self.session.as_mut()
-                && let Some(result) = s.forced_result.clone()
-            {
-                s.state = PlayState::Over(result);
-            }
-        } else {
-            self.rescore(game);
-        }
+        self.rescore(game);
     }
 
     /// Counts `ownership` only when `anchor` is still the outstanding scoring request.
@@ -1020,15 +1010,9 @@ impl Play {
         if let Some(s) = self.session.as_mut() {
             s.dead = dead;
         }
-        let forced = self.session.as_ref().and_then(|s| s.forced_result.clone());
         self.score_anchor = None;
         game.go_to(anchor.id);
         self.rescore(game);
-        if let Some(result) = forced
-            && let Some(s) = self.session.as_mut()
-        {
-            s.state = PlayState::Over(result);
-        }
         true
     }
 

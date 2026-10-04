@@ -147,7 +147,7 @@ STO 0 {序号} {颜色} {x} {y}
 
 让子：`INI 0 1 {n}` 的第 4 个字段（零基索引 3）在 `2`～`9` 时，按 Sabaki `gib.js` 的 `getHandicapPlacement(n, {tygem:true})` 放座子，角的顺序与 mirai 的 `fixed_handicap` 相同。这是源码对照，不是活样本：本次 `chisu` 全是 `0`，主线 `INI` 的这个字段全是 `0`。
 
-`GDATE` 取前 10 位作 `yyyy-MM-dd`。
+`GDATE` 取前 10 字节作 `yyyy-MM-dd`；不足 10 字节或截断 UTF-8 字符时不写日期。
 
 ### 5.1 解说与变化图
 
