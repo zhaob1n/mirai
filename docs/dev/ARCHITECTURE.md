@@ -490,6 +490,13 @@ show one value in two perspectives.
 Static layout is [`crates/mirai/src/window.blp`](../../crates/mirai/src/window.blp). The user's
 map of regions and mouse behaviour is [GUIDE §3](../user/GUIDE.md#3-the-interface).
 
+A Blueprint file is a template when it has a widget class carrying Rust state
+(`CompositeTemplate`). A fixed dialog with no class of its own — the restore and tuning
+alerts — is listed in `BUILDER_UI` in `crates/mirai/build.rs`, compiled to `$OUT_DIR/ui`, and
+built on demand with `gtk::Builder::from_string`. Values that come from Rust constants or
+enums (spin ranges, the rule list) and the keyboard shortcuts dialog, which reads
+`window::SHORTCUTS`, stay in Rust.
+
 Board navigation and the play bar sit beneath the board, not across the window; the
 sidebar reaches the bottom. `editor_revealer` starts revealed. `set_editor_visible` is
 its only writer: a non-Play tool reveals it, returning to Play does not undo a user's

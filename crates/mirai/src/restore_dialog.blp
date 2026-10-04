@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Huang Zhaobin
+// Not a template: `window::offer_restore` builds it with gtk::Builder; build.rs compiles it.
+using Gtk 4.0;
+using Adw 1;
+
+Adw.AlertDialog dialog {
+  heading: _("Restore the Last Game?");
+  /* Translators: mirai is the application name; do not translate it. */
+  body: _("mirai did not shut down cleanly. An autosaved copy of the game record you were looking at is available.");
+  default-response: "restore";
+  close-response: "discard";
+
+  responses [
+    discard: _("Discard"),
+    restore: _("Restore") suggested,
+  ]
+}

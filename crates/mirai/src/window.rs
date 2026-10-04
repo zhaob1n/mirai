@@ -1930,18 +1930,13 @@ impl Drop for ClearInFlight<'_> {
 }
 
 fn offer_restore(ui: &Ui, autosave: PathBuf) {
-    let heading = gettext("Restore the Last Game?");
-    // Translators: mirai is the application name; do not translate it.
-    let body = gettext(
-        "mirai did not shut down cleanly. An autosaved copy of the game record you were looking at is available.",
-    );
-    let dialog = adw::AlertDialog::new(Some(&heading), Some(&body));
-    let discard = gettext("Discard");
-    let restore = gettext("Restore");
-    dialog.add_responses(&[("discard", &discard), ("restore", &restore)]);
-    dialog.set_response_appearance("restore", adw::ResponseAppearance::Suggested);
-    dialog.set_default_response(Some("restore"));
-    dialog.set_close_response("discard");
+    let builder = gtk::Builder::from_string(include_str!(concat!(
+        env!("OUT_DIR"),
+        "/ui/restore_dialog.ui"
+    )));
+    let dialog: adw::AlertDialog = builder
+        .object("dialog")
+        .expect("restore_dialog.blp defines dialog");
     let weak = ui.weak_window();
     dialog.connect_response(None, move |_, response| {
         if response == "restore" {

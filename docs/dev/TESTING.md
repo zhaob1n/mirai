@@ -30,7 +30,7 @@ workspace suite with the lockfile — the checks every commit owes.
 | Changed | Check |
 |---|---|
 | Rust | `cargo fmt --all --check`. Avoid `cargo clippy --fix`: it rewrites files you have not reviewed |
-| Blueprint | `blueprint-compiler lint crates/mirai/src/{window,preferences,new_game,kifu_picker,label_editor,profile_editor}.blp crates/mirai/src/panels/analysis.blp` |
+| Blueprint | `blueprint-compiler lint crates/mirai/src/*.blp crates/mirai/src/panels/*.blp` |
 | Documentation | `python tools/docs/check-links.py`: local files and heading anchors, and it refuses a source file cited with a line number — cite a symbol or a section, which survives the next edit. The optional adjacent `mirai-ohos` link is reported separately |
 | Translations | the GUI build script runs `msgfmt --check` over the catalogues in `po/LINGUAS` (`crates/mirai/build.rs`) |
 | Desktop entry, metainfo | run `desktop-file-validate` and `appstreamcli validate` on what `just install` wrote |

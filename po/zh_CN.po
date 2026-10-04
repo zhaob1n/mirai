@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: mirai\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaob1n/mirai/issues\n"
-"POT-Creation-Date: 2026-10-05 00:58+0800\n"
+"POT-Creation-Date: 2026-10-05 01:56+0800\n"
 "PO-Revision-Date: 2026-09-28 06:00+0800\n"
 "Last-Translator: Huang Zhaobin <zhaob1n@foxmail.com>\n"
 "Language-Team: Chinese (China) <i18n-zh@googlegroups.com>\n"
@@ -892,26 +892,6 @@ msgid_plural "Fastest here: {positions} positions in parallel, {threads} threads
 msgstr[0] "本机最快：并行 {positions} 个局面，每个 {threads} 个线程。按“保存配置”应用。"
 
 #: crates/mirai/src/prefs.rs
-msgid "Starting…"
-msgstr "正在启动…"
-
-#: crates/mirai/src/prefs.rs
-msgid "Waiting for the current engine to let go of the GPU…"
-msgstr "正在等待当前引擎释放 GPU…"
-
-#: crates/mirai/src/prefs.rs
-msgid "Tuning KataGo"
-msgstr "正在调优 KataGo"
-
-#: crates/mirai/src/prefs.rs
-msgid "Every setting is timed in its own KataGo, so this takes a few minutes. Your engine stays stopped until the run ends."
-msgstr "每种设置都在单独的 KataGo 中计时，因此需要几分钟。调优结束之前，你的引擎会一直停止。"
-
-#: crates/mirai/src/prefs.rs
-msgid "Stop Tuning"
-msgstr "停止调优"
-
-#: crates/mirai/src/prefs.rs
 msgid "Edit Local Engine"
 msgstr "编辑本地引擎"
 
@@ -1444,22 +1424,6 @@ msgstr "保存 SGF"
 #, rust-format
 msgid "Could not save: {error}"
 msgstr "无法保存：{error}"
-
-#: crates/mirai/src/window.rs
-msgid "Restore the Last Game?"
-msgstr "恢复上次的棋谱？"
-
-#: crates/mirai/src/window.rs
-msgid "mirai did not shut down cleanly. An autosaved copy of the game record you were looking at is available."
-msgstr "mirai 未能正常退出。你当时查看的棋谱有一份自动保存的副本。"
-
-#: crates/mirai/src/window.rs
-msgid "Discard"
-msgstr "丢弃"
-
-#: crates/mirai/src/window.rs
-msgid "Restore"
-msgstr "恢复"
 
 #: crates/mirai/src/window.rs
 msgid "No engine to estimate the score with"
@@ -2012,6 +1976,43 @@ msgstr "无法保存配置"
 #: crates/mirai/src/profile_editor.blp
 msgid "Engine Profile"
 msgstr "引擎配置"
+
+#: crates/mirai/src/restore_dialog.blp
+msgid "Restore the Last Game?"
+msgstr "恢复上次的棋谱？"
+
+#. Translators: mirai is the application name; do not translate it.
+#: crates/mirai/src/restore_dialog.blp
+msgid "mirai did not shut down cleanly. An autosaved copy of the game record you were looking at is available."
+msgstr "mirai 未能正常退出。你当时查看的棋谱有一份自动保存的副本。"
+
+#: crates/mirai/src/restore_dialog.blp
+msgid "Discard"
+msgstr "丢弃"
+
+#: crates/mirai/src/restore_dialog.blp
+msgid "Restore"
+msgstr "恢复"
+
+#: crates/mirai/src/tuning_dialog.blp
+msgid "Tuning KataGo"
+msgstr "正在调优 KataGo"
+
+#: crates/mirai/src/tuning_dialog.blp
+msgid "Every setting is timed in its own KataGo, so this takes a few minutes. Your engine stays stopped until the run ends."
+msgstr "每种设置都在单独的 KataGo 中计时，因此需要几分钟。调优结束之前，你的引擎会一直停止。"
+
+#: crates/mirai/src/tuning_dialog.blp
+msgid "Starting…"
+msgstr "正在启动…"
+
+#: crates/mirai/src/tuning_dialog.blp
+msgid "Waiting for the current engine to let go of the GPU…"
+msgstr "正在等待当前引擎释放 GPU…"
+
+#: crates/mirai/src/tuning_dialog.blp
+msgid "Stop Tuning"
+msgstr "停止调优"
 
 #: crates/mirai/src/window.blp
 msgid "Download a Public Game Record (Ctrl+Shift+O)"

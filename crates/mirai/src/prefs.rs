@@ -804,35 +804,21 @@ fn measured_subtitle(result: &CalibrationResult) -> String {
     }
 }
 
-/// The modal a calibration runs behind: one bar for the eight candidates, one line naming
-/// the setting being timed, and a Cancel that stops the run.
+/// The modal a calibration runs behind (`tuning_dialog.blp`), with its bar and caption.
 fn tuning_progress() -> (adw::AlertDialog, gtk::ProgressBar, gtk::Label) {
-    let bar = gtk::ProgressBar::builder()
-        .show_text(true)
-        .text(gettext("Starting…"))
-        .build();
-    let caption = gtk::Label::builder()
-        .label(gettext(
-            "Waiting for the current engine to let go of the GPU…",
-        ))
-        .wrap(true)
-        .build();
-    caption.add_css_class("dim-label");
-
-    let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    body.append(&bar);
-    body.append(&caption);
-
-    let heading = gettext("Tuning KataGo");
-    let explanation = gettext(
-        "Every setting is timed in its own KataGo, so this takes a few minutes. \
-         Your engine stays stopped until the run ends.",
-    );
-    let dialog = adw::AlertDialog::new(Some(&heading), Some(&explanation));
-    dialog.set_extra_child(Some(&body));
-    dialog.add_response("cancel", &gettext("Stop Tuning"));
-    dialog.set_close_response("cancel");
-    dialog.set_default_response(Some("cancel"));
+    let builder = gtk::Builder::from_string(include_str!(concat!(
+        env!("OUT_DIR"),
+        "/ui/tuning_dialog.ui"
+    )));
+    let dialog = builder
+        .object("dialog")
+        .expect("tuning_dialog.blp defines dialog");
+    let bar = builder
+        .object("bar")
+        .expect("tuning_dialog.blp defines bar");
+    let caption = builder
+        .object("caption")
+        .expect("tuning_dialog.blp defines caption");
     (dialog, bar, caption)
 }
 
