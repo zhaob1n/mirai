@@ -15,6 +15,7 @@
 //! * [`kifu`] — searching Fox, eWeiqi and Yike for public records, over a frontend's HTTP;
 //!   [`fox`], [`eweiqi`] and [`yike`] are each server's endpoints, replies and dialect.
 //! * [`session`] — connecting, trust-on-first-use, and observable connection state.
+//! * [`play`] — AI turns, clocks, resignation and counting, anchored to the play head.
 //! * [`sound`] — which cursor step sounds, and the stone clips to play for it.
 
 pub mod analysis;
