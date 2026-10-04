@@ -412,6 +412,9 @@ sheet that came to rest scaled does not keep a texture rendering every frame.
   and repaint via a tick callback (§6).
 - `MIRAI_SPIN` on a dense board should paint in single-digit milliseconds;
   `MIRAI_NO_LABEL_DEFER=1` checks the text cost while folding with live analysis.
+- The move-tree layout is keyed by tree epoch as well as `structure_revision`:
+  replacing a record can reuse the same revision. Refresh projects the cursor
+  too; a tree snapshot never borrows `AppState` or lays out the tree.
 - Measure drawing with the search **finished**: report-driven layouts during
   search mask changes to `snapshot()` (§7). The [testing guide](TESTING.md)
   has the GUI verification recipes.

@@ -9,7 +9,7 @@
 //! window — so the axis a 250-move record is 5000 px long on has to be the panel's long
 //! axis, and the wheel then scrolls it without a modifier. Lanes run across instead, where
 //! a handful of variations fit in the width. The layout, including each parent's trunk
-//! span, is cached and only recomputed when [`GameTree::structure_revision`] moves.
+//! span, is cached by tree epoch and [`GameTree::structure_revision`].
 //! `draw` culls edges, trunks and nodes to the scrolled viewport, so a long record does
 //! not repaint nodes the panel cannot see. Deliberately *not* `GameTree::revision`: that
 //! counts a stored analysis as a change too, so a running engine would invalidate this
@@ -26,7 +26,7 @@ use gtk::subclass::prelude::*;
 
 use mirai_core::{Color, GameTree, NodeId};
 
-use crate::app::AppState;
+use crate::app::{AppState, TreeEpoch};
 use crate::widgets::paint::{fill_disc, hline, stroke_disc, vline, with_alpha};
 
 /// Grid geometry: `CELL_W` spaces the lanes across, `CELL_H` the depths down. Equal, so a
@@ -119,6 +119,26 @@ pub(crate) fn lay_out(tree: &GameTree) -> TreeLayout {
     layout
 }
 
+/// Revisions and node IDs are arena-local: adopting another record can keep the
+/// same revision while replacing every move the view draws.
+#[derive(Default)]
+struct LayoutCache {
+    source: Option<(TreeEpoch, u64)>,
+    layout: TreeLayout,
+}
+
+impl LayoutCache {
+    fn update(&mut self, tree: &GameTree, epoch: TreeEpoch) -> bool {
+        let source = (epoch, tree.structure_revision());
+        if self.source == Some(source) {
+            return false;
+        }
+        self.layout = lay_out(tree);
+        self.source = Some(source);
+        true
+    }
+}
+
 /// Centre of a grid cell in widget coordinates: lanes across, depth down.
 #[inline]
 fn cell_xy(depth: u32, lane: u32) -> (f32, f32) {
@@ -191,9 +211,8 @@ mod imp {
     #[derive(Default)]
     pub struct MoveTreeView {
         pub state: OnceCell<AppState>,
-        pub(super) layout: RefCell<TreeLayout>,
-        /// Structure revision the cached layout was built from; `None` means "never built".
-        pub structure: Cell<Option<u64>>,
+        pub(super) layout: RefCell<LayoutCache>,
+        pub cursor: Cell<Option<NodeId>>,
         /// The node context menu. Its items name a raw `NodeId`, so the window closes it
         /// on every structural change before that id can go stale.
         pub popover: RefCell<Option<gtk::PopoverMenu>>,
@@ -330,6 +349,7 @@ impl MoveTreeView {
 
     /// Rebuilds the cached layout if the tree changed, then redraws.
     pub(crate) fn refresh(&self) {
+        self.imp().cursor.set(Some(self.state().cursor()));
         self.ensure_layout();
         self.queue_draw();
         self.scroll_to_cursor();
@@ -337,15 +357,14 @@ impl MoveTreeView {
 
     fn ensure_layout(&self) {
         let state = self.state();
-        let structure = state.tree().structure_revision();
-        if self.imp().structure.get() == Some(structure) {
+        let mut cache = self.imp().layout.borrow_mut();
+        if !cache.update(&state.tree(), state.tree_epoch()) {
             return;
         }
-        let layout = lay_out(&state.tree());
+        let layout = &cache.layout;
         let w = (MARGIN * 2.0 + RADIUS * 2.0 + layout.lanes as f32 * CELL_W).ceil() as i32;
         let h = (MARGIN * 2.0 + RADIUS * 2.0 + layout.depth as f32 * CELL_H).ceil() as i32;
-        *self.imp().layout.borrow_mut() = layout;
-        self.imp().structure.set(Some(structure));
+        drop(cache);
         // The ScrolledWindow pans over this; we never implement gtk::Scrollable.
         if self.width_request() != w || self.height_request() != h {
             self.set_size_request(w, h);
@@ -354,7 +373,8 @@ impl MoveTreeView {
 
     fn node_at(&self, x: f32, y: f32) -> Option<NodeId> {
         self.ensure_layout();
-        let layout = self.imp().layout.borrow();
+        let cache = self.imp().layout.borrow();
+        let layout = &cache.layout;
         layout
             .nodes
             .iter()
@@ -436,12 +456,13 @@ impl MoveTreeView {
         };
         self.ensure_layout();
         let cursor = self.state().cursor();
-        let layout = self.imp().layout.borrow();
+        let cache = self.imp().layout.borrow();
+        let layout = &cache.layout;
         let Some(&slot) = layout.index.get(&cursor) else {
             return;
         };
         let node = layout.nodes[slot];
-        drop(layout);
+        drop(cache);
         let (cx, cy) = cell_xy(node.depth, node.lane);
 
         for (adj, pos, pad) in [
@@ -468,12 +489,12 @@ impl MoveTreeView {
 
     fn draw(&self, snapshot: &gtk::Snapshot) {
         let _t = crate::render_probe::Timer::new("tree-snapshot");
-        self.ensure_layout();
-        let layout = self.imp().layout.borrow();
+        let cache = self.imp().layout.borrow();
+        let layout = &cache.layout;
         if layout.nodes.is_empty() {
             return;
         }
-        let cursor = self.state().cursor();
+        let cursor = self.imp().cursor.get();
 
         let fg = self.color();
         let accent = adw::StyleManager::default()
@@ -561,7 +582,7 @@ impl MoveTreeView {
                 }
             }
 
-            if node.id == cursor {
+            if Some(node.id) == cursor {
                 stroke_disc(snapshot, cx, cy, RADIUS + 2.5, 2.0, &accent);
             }
         }
@@ -607,6 +628,24 @@ mod tests {
     fn tree19() -> (GameTree, Size) {
         let size = Size::square(19);
         (GameTree::new(GameInfo::new(size, Default::default())), size)
+    }
+
+    #[test]
+    fn replacing_a_record_at_the_same_revision_replaces_its_layout() {
+        use mirai_client::GameSession;
+
+        let mut session = GameSession::blank();
+        let records = [
+            "(;FF[4]GM[1]SZ[19];B[dd];W[pp])",
+            "(;FF[4]GM[1]SZ[19];W[dd];B[pp])",
+        ];
+        let mut cache = LayoutCache::default();
+        for (record, color) in records.into_iter().zip([Color::Black, Color::White]) {
+            let tree = GameSession::parse(record.as_bytes()).unwrap().remove(0);
+            session.adopt(tree, None);
+            cache.update(session.tree(), TreeEpoch(session.epoch()));
+            assert_eq!(cache.layout.nodes[1].mv.unwrap().0, color);
+        }
     }
 
     /// Main line D4-D16-Q16-Q4-C10, a variation off move 3, and a variation off that.
