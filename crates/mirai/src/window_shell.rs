@@ -39,7 +39,7 @@ mod imp {
         #[template_child]
         pub split: TemplateChild<adw::OverlaySplitView>,
         #[template_child]
-        pub banner_slot: TemplateChild<gtk::Box>,
+        pub batch_banner: TemplateChild<adw::Banner>,
         #[template_child]
         pub board_view: TemplateChild<adw::ToolbarView>,
         #[template_child]
@@ -61,7 +61,11 @@ mod imp {
         #[template_child]
         pub content: TemplateChild<gtk::Paned>,
         #[template_child]
-        pub sidebar_stack: TemplateChild<adw::ViewStack>,
+        pub analysis_stack: TemplateChild<adw::ViewStack>,
+        #[template_child]
+        pub tree_scroller: TemplateChild<gtk::ScrolledWindow>,
+        #[template_child]
+        pub comment: TemplateChild<gtk::TextView>,
         #[template_child]
         pub play_bar: TemplateChild<gtk::Box>,
         #[template_child]
@@ -164,8 +168,8 @@ impl MiraiWindow {
         self.imp().split.get()
     }
 
-    pub fn banner_slot(&self) -> gtk::Box {
-        self.imp().banner_slot.get()
+    pub fn batch_banner(&self) -> adw::Banner {
+        self.imp().batch_banner.get()
     }
 
     pub(crate) fn header_bar(&self) -> adw::HeaderBar {
@@ -212,8 +216,16 @@ impl MiraiWindow {
         self.imp().content.get()
     }
 
-    pub fn sidebar_stack(&self) -> adw::ViewStack {
-        self.imp().sidebar_stack.get()
+    pub fn analysis_stack(&self) -> adw::ViewStack {
+        self.imp().analysis_stack.get()
+    }
+
+    pub fn tree_scroller(&self) -> gtk::ScrolledWindow {
+        self.imp().tree_scroller.get()
+    }
+
+    pub fn comment(&self) -> gtk::TextView {
+        self.imp().comment.get()
     }
 
     pub fn clock_box(&self) -> gtk::Box {

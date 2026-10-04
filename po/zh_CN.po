@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: mirai\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaob1n/mirai/issues\n"
-"POT-Creation-Date: 2026-10-05 02:08+0800\n"
+"POT-Creation-Date: 2026-10-05 02:16+0800\n"
 "PO-Revision-Date: 2026-09-28 06:00+0800\n"
 "Last-Translator: Huang Zhaobin <zhaob1n@foxmail.com>\n"
 "Language-Team: Chinese (China) <i18n-zh@googlegroups.com>\n"
@@ -67,12 +67,6 @@ msgstr "未信任证书"
 #, rust-format
 msgid "{profile}: {message}"
 msgstr "{profile}：{message}"
-
-#: crates/mirai/src/batch.rs crates/mirai/src/dialogs.rs
-#: crates/mirai/src/prefs.rs crates/mirai/src/window.rs
-#: crates/mirai/src/label_editor.blp crates/mirai/src/new_game.blp
-msgid "Cancel"
-msgstr "取消"
 
 #: crates/mirai/src/batch.rs
 msgid "Whole-game analysis is already running"
@@ -167,6 +161,12 @@ msgstr "信任此服务器？"
 #, rust-format
 msgid "{host} presented this certificate. Compare it with the fingerprint mirai-server printed at startup. The token is sent only after you trust it, and a later change is refused."
 msgstr "{host} 出示了此证书。请将它与 mirai-server 启动时打印的指纹进行比对。只有在你信任它之后才会发送令牌，此后证书若有变化将被拒绝。"
+
+#: crates/mirai/src/dialogs.rs crates/mirai/src/prefs.rs
+#: crates/mirai/src/window.rs crates/mirai/src/label_editor.blp
+#: crates/mirai/src/new_game.blp crates/mirai/src/window.blp
+msgid "Cancel"
+msgstr "取消"
 
 #: crates/mirai/src/dialogs.rs
 msgctxt "verb"
@@ -785,18 +785,6 @@ msgid "Black {black} — White {white}"
 msgstr "黑 {black} — 白 {white}"
 
 #: crates/mirai/src/prefs.rs
-msgid "No Engine Configured"
-msgstr "尚未配置引擎"
-
-#: crates/mirai/src/prefs.rs
-msgid "Add a local KataGo or a remote mirai-server in Preferences."
-msgstr "请在首选项中添加本地 KataGo 或远程 mirai-server。"
-
-#: crates/mirai/src/prefs.rs crates/mirai/src/preferences.blp
-msgid "Preferences"
-msgstr "首选项"
-
-#: crates/mirai/src/prefs.rs
 msgid "No Engine Profiles"
 msgstr "没有引擎配置"
 
@@ -1090,20 +1078,6 @@ msgstr "删除分支"
 msgid "Black win rate (solid) and Black score lead (dashed) over the main line"
 msgstr "主线上黑方的胜率（实线）和目差（虚线）"
 
-#: crates/mirai/src/window.rs crates/mirai/src/preferences.blp
-msgid "Analysis"
-msgstr "分析"
-
-#: crates/mirai/src/window.rs
-msgid "Moves"
-msgstr "棋谱树"
-
-#. Translators: the sidebar tab for the note on this position, not the verb.
-#: crates/mirai/src/window.rs
-msgctxt "noun"
-msgid "Comment"
-msgstr "注释"
-
 #: crates/mirai/src/window.rs crates/mirai/src/window.blp
 msgid "Hide Sidebar (F9)"
 msgstr "隐藏侧边栏（F9）"
@@ -1366,6 +1340,11 @@ msgstr "上一个变化"
 #: crates/mirai/src/window.rs crates/mirai/src/window.blp
 msgid "Next Variation"
 msgstr "下一个变化"
+
+#: crates/mirai/src/window.rs crates/mirai/src/preferences.blp
+#: crates/mirai/src/window.blp
+msgid "Analysis"
+msgstr "分析"
 
 #: crates/mirai/src/window.rs crates/mirai/src/preferences.blp
 #: crates/mirai/src/window.blp
@@ -1764,6 +1743,10 @@ msgstr "分析主线的每一手（Ctrl+A）"
 #: crates/mirai/src/panels/analysis.blp crates/mirai/src/window.blp
 msgid "_Loss and Prior Columns"
 msgstr "损失与先验列(_L)"
+
+#: crates/mirai/src/preferences.blp crates/mirai/src/window.blp
+msgid "Preferences"
+msgstr "首选项"
 
 #: crates/mirai/src/preferences.blp
 msgid "Engines"
@@ -2173,6 +2156,24 @@ msgstr "认输"
 #: crates/mirai/src/window.blp
 msgid "Resign the Current Game"
 msgstr "认输本局"
+
+#: crates/mirai/src/window.blp
+msgid "No Engine Configured"
+msgstr "尚未配置引擎"
+
+#: crates/mirai/src/window.blp
+msgid "Add a local KataGo or a remote mirai-server in Preferences."
+msgstr "请在首选项中添加本地 KataGo 或远程 mirai-server。"
+
+#: crates/mirai/src/window.blp
+msgid "Moves"
+msgstr "棋谱树"
+
+#. Translators: the sidebar tab for the note on this position, not the verb.
+#: crates/mirai/src/window.blp
+msgctxt "noun"
+msgid "Comment"
+msgstr "注释"
 
 #: crates/mirai/src/window.blp
 msgid "_Open File…"

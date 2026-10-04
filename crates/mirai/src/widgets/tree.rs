@@ -288,17 +288,13 @@ impl MoveTreeView {
             .expect("MoveTreeView was built without a state")
     }
 
-    /// Wraps the view in the `gtk::ScrolledWindow` the window packs.
+    /// Puts the view in `scroller` and redraws whenever that scroller's adjustments change.
     ///
     /// [`Self::draw`] culls to the scroller's page, but scrolling only moves this widget's
     /// allocation and GTK reuses its cached render node. Without a redraw on every
     /// adjustment change, nodes that scroll or resize into view stay blank.
-    pub fn in_scroller(&self) -> gtk::ScrolledWindow {
-        let scroller = gtk::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::Automatic)
-            .vscrollbar_policy(gtk::PolicyType::Automatic)
-            .child(self)
-            .build();
+    pub fn pack_into(&self, scroller: &gtk::ScrolledWindow) {
+        scroller.set_child(Some(self));
         self.redraw_on(&scroller.hadjustment());
         self.redraw_on(&scroller.vadjustment());
         let view = self.downgrade();
@@ -313,7 +309,6 @@ impl MoveTreeView {
                 view.redraw_on(&scroller.vadjustment());
             }
         });
-        scroller
     }
 
     /// Scrolling changes `value`; a resized sidebar changes `page-size`, which emits
@@ -575,7 +570,7 @@ impl MoveTreeView {
     /// Inclusive depth and lane range the scrolled viewport can see.
     ///
     /// The tree does not implement `gtk::Scrollable`; the `ScrolledWindow` from
-    /// [`Self::in_scroller`] pans over it, and these are the same adjustments
+    /// [`Self::pack_into`] pans over it, and these are the same adjustments
     /// [`Self::scroll_to_cursor`] writes. gtk-rs does not expose the snapshot clip.
     /// `None` means the page size is not known yet — draw everything rather than guess.
     fn viewport(&self) -> Option<Viewport> {

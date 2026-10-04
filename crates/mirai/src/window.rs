@@ -278,15 +278,7 @@ pub fn present(
     let winrate = WinrateGraph::new(&state);
     let move_tree = MoveTreeView::new(&state);
     let analysis = AnalysisPanel::new(&state);
-    let comment = gtk::TextView::builder()
-        .name("comment")
-        .wrap_mode(gtk::WrapMode::WordChar)
-        .left_margin(8)
-        .right_margin(8)
-        .top_margin(8)
-        .bottom_margin(8)
-        .build();
-    comment.buffer().set_enable_undo(true);
+    let comment = window.comment();
     let play = PlayController::new(&state, &window);
     let batch = BatchAnalysis::new(&state, &window);
 
@@ -300,38 +292,13 @@ pub fn present(
     let content = window.content_paned();
     content.set_start_child(Some(&board));
     content.set_end_child(Some(&winrate));
-    window.banner_slot().append(batch.banner());
+    move_tree.pack_into(&window.tree_scroller());
 
-    let analysis_stack = adw::ViewStack::new();
+    // The empty page is the template's visible child. The panel has to be in the stack,
+    // and the visible child chosen, before the window is mapped — `update_analysis_page`
+    // runs before `present` — or a configured engine paints "No Engine Configured" first.
+    let analysis_stack = window.analysis_stack();
     analysis_stack.add_named(&analysis, Some("panel"));
-    analysis_stack.add_named(&crate::prefs::no_engine_status_page(), Some("empty"));
-    analysis_stack.set_vexpand(true);
-
-    let sidebar_stack = window.sidebar_stack();
-    sidebar_stack.add_titled_with_icon(
-        &analysis_stack,
-        Some("analysis"),
-        &gettext("Analysis"),
-        "view-list-symbolic",
-    );
-    let tree_scroller = move_tree.in_scroller();
-    tree_scroller.set_hexpand(true);
-    tree_scroller.set_vexpand(true);
-    sidebar_stack.add_titled_with_icon(
-        &tree_scroller,
-        Some("moves"),
-        &gettext("Moves"),
-        "view-grid-symbolic",
-    );
-    let comment_scroll = gtk::ScrolledWindow::builder().child(&comment).build();
-    comment_scroll.set_vexpand(true);
-    sidebar_stack.add_titled_with_icon(
-        &comment_scroll,
-        Some("comment"),
-        // Translators: the sidebar tab for the note on this position, not the verb.
-        &pgettext("noun", "Comment"),
-        "text-editor-symbolic",
-    );
 
     // `win.toggle-analysis` drives the button's `active`; this only follows it.
     {

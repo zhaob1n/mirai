@@ -135,25 +135,6 @@ fn build(state: &AppState) -> Preferences {
     }
 }
 
-/// The empty-state page shown on first run when no engine profile exists.
-pub fn no_engine_status_page() -> adw::StatusPage {
-    let page = adw::StatusPage::builder()
-        .icon_name("application-x-executable-symbolic")
-        .title(gettext("No Engine Configured"))
-        .description(gettext(
-            "Add a local KataGo or a remote mirai-server in Preferences.",
-        ))
-        .build();
-    let button = gtk::Button::builder()
-        .label(gettext("Preferences"))
-        .action_name("win.preferences")
-        .halign(gtk::Align::Center)
-        .css_classes(["pill", "suggested-action"])
-        .build();
-    page.set_child(Some(&button));
-    page
-}
-
 /// The engine drop-down menu model for the header bar: one radio item per profile plus a
 /// "Preferences…" item. Rebuild it whenever `engine-changed` fires.
 ///

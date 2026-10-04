@@ -608,8 +608,9 @@ projection/cache state; it does not borrow `AppState` or replay the game tree.
 1. Create `mirai/src/panels/<name>.rs`; a `gtk::Box` subclass built from stock widgets is enough
    (INV-9 applies only to the custom-drawn widgets).
 2. Re-export it from `panels/mod.rs`.
-3. Construct it in `window::present` with the `AppState`, and add it to the sidebar `ViewStack`
-   with `add_titled_with_icon`.
+3. Add an `Adw.ViewStackPage` to `sidebar_stack` in `window.blp` (name, title, icon). Construct
+   the panel in `window::present` with the `AppState` and, if it is a Rust widget, insert it
+   into that page — the analysis panel is added to `analysis_stack` with `add_named`.
 4. Add its refresh call to the appropriate arm of `window::handle_change`; do not install a
    second AppState dispatcher or accept references to sibling widgets (INV-7). Widget-internal
    selection hooks still route through the window.
