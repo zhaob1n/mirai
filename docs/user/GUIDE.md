@@ -454,8 +454,8 @@ live analysis goes ahead of a whole-game analysis, otherwise first come, first s
 
 1. In **Preferences → Engines → Add Remote Engine**, enter a name, the server address
    (`192.168.1.10`, or `192.168.1.10:9678`; the port defaults to 9678), and the generated
-   token. If the server hosts several engines, name one; otherwise leave **Engine name**
-   blank to use the first.
+   token. If the server hosts several engines, name one; otherwise leave
+   **Engine Name (Optional)** blank to use the first.
 2. Press **Test Connection** and compare the fingerprint in **Trust This Server?** with the
    one the server printed.
 3. If they match, press **Trust**, then **Save Profile**, and select it from the engine
@@ -730,7 +730,7 @@ supplied are never modified.
 
 ### The engine will not start
 
-If the profile fails and the engine button falls back to “No engine”, check that the
+If the profile fails and the engine button reads “*name* Unavailable”, check that the
 binary and model still exist in **Preferences → Engines**. It must be KataGo's JSON
 analysis engine, not GTP ([setup](#1-installing)). For GPU errors or a mismatched model,
 read `~/.local/share/mirai/katago-logs/`; use a binary and model that work together.
