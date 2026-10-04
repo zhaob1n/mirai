@@ -458,7 +458,8 @@ async fn wait_status(app: &adw::Application, needle: &str) -> bool {
 }
 
 fn find_label(widget: &gtk::Widget, needle: &str) -> bool {
-    if widget.is_visible()
+    // A hidden page's children still have visible=true; only mapped includes ancestors.
+    if widget.is_mapped()
         && let Some(label) = widget.downcast_ref::<gtk::Label>()
         && label.text().contains(needle)
     {
@@ -783,7 +784,7 @@ fn sort_by_column(app: &adw::Application, needle: &str) -> bool {
 /// Selects the first visible `adw::ComboRow` whose title contains `needle`.
 fn select(app: &adw::Application, needle: &str, index: u32) -> bool {
     fn walk(w: &gtk::Widget, needle: &str, index: u32) -> bool {
-        if w.is_visible()
+        if w.is_mapped()
             && let Some(row) = w.downcast_ref::<adw::ComboRow>()
             && row.title().contains(needle)
         {
@@ -811,7 +812,7 @@ fn select(app: &adw::Application, needle: &str, index: u32) -> bool {
 /// how a script changes one.
 fn set_spin(app: &adw::Application, needle: &str, value: f64) -> bool {
     fn walk(w: &gtk::Widget, needle: &str, value: f64) -> bool {
-        if w.is_visible()
+        if w.is_mapped()
             && let Some(row) = w.downcast_ref::<adw::SpinRow>()
             && row.title().contains(needle)
         {
@@ -836,7 +837,7 @@ fn set_spin(app: &adw::Application, needle: &str, value: f64) -> bool {
 /// Fills the first visible Entry or SearchEntry whose placeholder contains `needle`.
 fn fill(app: &adw::Application, needle: &str, text: &str) -> bool {
     fn walk(w: &gtk::Widget, needle: &str, text: &str) -> bool {
-        if w.is_visible()
+        if w.is_mapped()
             && let Some(entry) = w.downcast_ref::<gtk::SearchEntry>()
             && entry
                 .placeholder_text()
@@ -845,7 +846,7 @@ fn fill(app: &adw::Application, needle: &str, text: &str) -> bool {
             entry.set_text(text);
             return true;
         }
-        if w.is_visible()
+        if w.is_mapped()
             && let Some(entry) = w.downcast_ref::<gtk::Entry>()
             && entry
                 .placeholder_text()

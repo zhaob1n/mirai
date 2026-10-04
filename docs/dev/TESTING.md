@@ -355,6 +355,8 @@ Traps:
   `LANGUAGE=en`, or write the needles in the language you run.
 - Substring match is depth-first. Choose a needle unique to the control, or
   switch the page first when titles repeat.
+- `wait-status:`, `set:`, `select:` and `fill:` match mapped widgets, not a widget's
+  own `visible` flag: a hidden Preferences page keeps that flag on its children.
 - A popover lives on its own surface, so its contents never appear in a `shot`.
   Verify a chooser by what picking an entry *does*.
 - `press:` walks visible dialog controls, including mapped response buttons
