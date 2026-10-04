@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: mirai\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaob1n/mirai/issues\n"
-"POT-Creation-Date: 2026-10-04 23:55+0800\n"
+"POT-Creation-Date: 2026-10-05 00:15+0800\n"
 "PO-Revision-Date: 2026-09-28 06:00+0800\n"
 "Last-Translator: Huang Zhaobin <zhaob1n@foxmail.com>\n"
 "Language-Team: Chinese (China) <i18n-zh@googlegroups.com>\n"
@@ -1100,7 +1100,7 @@ msgid "For example 192.168.1.10, or 192.168.1.10:9678. The port defaults to 9678
 msgstr "例如 192.168.1.10 或 192.168.1.10:9678。端口默认为 9678。"
 
 #: crates/mirai/src/prefs.rs
-msgid "Server URL"
+msgid "Server Address"
 msgstr "服务器地址"
 
 #: crates/mirai/src/prefs.rs
@@ -1128,7 +1128,7 @@ msgid "Test Connection"
 msgstr "测试连接"
 
 #: crates/mirai/src/prefs.rs
-msgid "Enter the server URL first."
+msgid "Enter the server address first."
 msgstr "请先输入服务器地址。"
 
 #: crates/mirai/src/prefs.rs
@@ -1154,7 +1154,7 @@ msgid "The certificate check was cancelled."
 msgstr "证书检查已取消。"
 
 #: crates/mirai/src/prefs.rs
-msgid "Enter the server URL."
+msgid "Enter the server address."
 msgstr "请输入服务器地址。"
 
 #: crates/mirai/src/prefs.rs

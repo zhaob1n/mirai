@@ -453,18 +453,18 @@ live analysis goes ahead of a whole-game analysis, otherwise first come, first s
 ### On the laptop
 
 1. In **Preferences → Engines → Add Remote Engine**, enter a name, the server address
-   (`192.168.1.10`; the `mirai://` beside the entry is fixed, and the default port `:9678`
-   is optional), and the generated token. If the server hosts several engines, name one;
-   otherwise leave **Engine name** blank to use the first.
+   (`192.168.1.10`, or `192.168.1.10:9678`; the port defaults to 9678), and the generated
+   token. If the server hosts several engines, name one; otherwise leave **Engine name**
+   blank to use the first.
 2. Press **Test Connection** and compare the fingerprint in **Trust This Server?** with the
    one the server printed.
 3. If they match, press **Trust**, then **Save Profile**, and select it from the engine
    button. If they differ, cancel and investigate the network and address.
 
 The token is sent only after you trust the matching fingerprint. Selecting an unpinned
-profile asks the same question; cancelling leaves it unconnected. Pointing the Server URL at
-another server clears its old pin; respelling the same one (adding or dropping `:9678`)
-keeps it.
+profile asks the same question; cancelling leaves it unconnected. Pointing the Server
+Address at another server clears its old pin; respelling the same one (adding or
+dropping `:9678`) keeps it.
 
 ### If mirai later refuses to connect
 
@@ -500,7 +500,7 @@ and hand-edited configs.
 | *local* GPU batch size | 0, meaning 64 | `nnMaxBatchSize`. Wants to be at least positions × threads. Hidden while a custom config is selected |
 | *local* Neural-net cache | 0, meaning 20 | `nnCacheSizePowerOfTwo`: 2^20 cached evaluations, roughly 3 GiB once warm. 0 is the default; the next step is 14. Hidden while a custom config is selected |
 | *local* Automatic tuning | off | **Tune…** measures the selected binary and model, updates the three performance rows, and waits for **Save Profile** before applying them. Managed configs only |
-| *remote* Server URL / Token / Engine name (optional) | — / — / blank | blank engine name means the server's first engine |
+| *remote* Server Address / Token / Engine name (optional) | — / — / blank | blank engine name means the server's first engine |
 | *remote* Pinned fingerprint | not pinned | read-only; set by **Test Connection** and **Trust** |
 
 With **Managed by mirai**, `0` in any of those four rows means mirai's own default; with

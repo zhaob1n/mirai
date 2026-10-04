@@ -1446,10 +1446,11 @@ fn remote_editor(
             "For example 192.168.1.10, or 192.168.1.10:9678. The port defaults to 9678.",
         ))
         .build();
+    // Only the address is shown and typed. mirai speaks one protocol, so its scheme says
+    // nothing to the user; `entered_url` puts it back.
     let url_row = adw::EntryRow::builder()
-        .title(gettext("Server URL"))
+        .title(gettext("Server Address"))
         .build();
-    add_scheme_prefix(&url_row);
     url_row.set_text(url.strip_prefix(mirai_proto::URL_SCHEME).unwrap_or(&url));
     let token_row = adw::PasswordEntryRow::builder()
         .title(gettext("Token"))
@@ -1518,7 +1519,7 @@ fn remote_editor(
         trust_row,
         move |button| {
             let Some(url) = entered_url(&test_url) else {
-                complain(&test_banner, gettext("Enter the server URL first."));
+                complain(&test_banner, gettext("Enter the server address first."));
                 return;
             };
             let token = test_token.text().to_string();
@@ -1630,7 +1631,7 @@ fn remote_editor(
                 return;
             }
             let Some(url) = url else {
-                complain(&banner, gettext("Enter the server URL."));
+                complain(&banner, gettext("Enter the server address."));
                 return;
             };
             if let Err(e) = mirai_proto::parse_url(&url) {
@@ -1671,50 +1672,8 @@ fn remote_editor(
     editor.page
 }
 
-/// Fixes `mirai://` beside the address rather than having it typed: every address is a
-/// mirai one.
-///
-/// A plain prefix is centred on the row and so sits between the floating title and the
-/// text. The editable area stacks the title, 3 px (libadwaita's `TITLE_SPACING`) and the
-/// text, centred as one block; the prefix stacks a blank line in the title's style above
-/// the scheme, so the scheme lands on the text's line. While the row is empty and
-/// unfocused the title is one centred line, and without the blank line the scheme reads
-/// on that line instead.
-fn add_scheme_prefix(row: &adw::EntryRow) {
-    let spacer = gtk::Label::builder()
-        .label(" ")
-        .css_classes(["subtitle"])
-        .accessible_role(gtk::AccessibleRole::Presentation)
-        .build();
-    let scheme = gtk::Label::builder()
-        .label(mirai_proto::URL_SCHEME)
-        .css_classes(["dim-label"])
-        .build();
-    let column = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(3)
-        .valign(gtk::Align::Center)
-        .build();
-    column.append(&spacer);
-    column.append(&scheme);
-    row.add_prefix(&column);
-    row.add_css_class("mirai-url");
-    // An address reads left to right in every locale; mirrored, the scheme would follow it.
-    row.set_direction(gtk::TextDirection::Ltr);
-
-    // libadwaita's own test, minus its private `text_changed`: the row adds `focused`
-    // while its text has focus.
-    let sync = move |row: &adw::EntryRow| {
-        spacer.set_visible(!row.text().is_empty() || row.has_css_class("focused"));
-    };
-    sync(row);
-    let on_text = sync.clone();
-    row.connect_changed(move |row| on_text(row));
-    row.connect_notify_local(Some("css-classes"), move |row, _| sync(row));
-}
-
-/// The server URL in `row`, with the scheme the row shows beside it. A pasted
-/// `mirai://host` is taken as it is rather than doubled.
+/// The server URL for the address in `row`. A pasted `mirai://host` is taken as it is
+/// rather than doubled.
 fn entered_url(row: &adw::EntryRow) -> Option<String> {
     let text = row.text();
     let text = text.trim();

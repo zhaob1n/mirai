@@ -69,10 +69,3 @@
   padding-top: 0;
   padding-bottom: 0;
 }
-
-/* The fixed `mirai://` prefix (`add_scheme_prefix` in prefs.rs, which also pins the row
-   left to right) reads as part of the address: drop the editable area's padding between
-   the two. */
-row.entry.mirai-url > box.header > .editable-area {
-  padding-left: 0;
-}
