@@ -15,7 +15,7 @@ English | [简体中文](README.zh-CN.md)
 mirai puts KataGo's reading on a board that feels at home on Linux. Every candidate move
 tells you at a glance how much it loses and how far to trust that number; a win-rate graph
 marks each blunder of a game; a move tree keeps every variation you try. Play the engine at
-any strength, or pull a game from Fox and replay it with KataGo beside you.
+any strength, or pull a game from Fox, eWeiqi or Yike and replay it with KataGo beside you.
 
 The engine does not have to be on the same computer. Run `mirai-server` on the machine with
 the GPU, and a laptop with none analyses just as well.
@@ -40,8 +40,9 @@ the GPU, and a laptop with none analyses just as well.
   SL network. Boards from 2×2 to 19×19, handicap, nine rulesets, absolute, byo-yomi or
   Fischer clocks. After two passes KataGo marks the dead stones, and a click fixes any group
   it misjudged. Or play both sides yourself, with no engine at all.
-- **Fox records.** Look up a Fox Go player by nickname or UID and open any of their latest
-  public games.
+- **Online records.** Look up a player on Fox (nickname or UID), eWeiqi (name or nickname,
+  in its tournament catalogue) or Yike (nickname, account or professional's name) and open
+  any of their latest public games.
 - **A remote engine that stays private.** `mirai-server` shares one or more KataGo instances
   with every client on your network over QUIC. Clients authenticate with a token and pin
   the server's certificate the first time they connect.
@@ -129,8 +130,8 @@ expected and what happened instead; for an engine problem, the newest file in
 
 ## Documentation
 
-- Users: [docs/user/GUIDE.md](docs/user/GUIDE.md) — first run, the window, analysis, Fox,
-  playing, remote engines, settings and keys.
+- Users: [docs/user/GUIDE.md](docs/user/GUIDE.md) — first run, the window, analysis, online
+  records, playing, remote engines, settings and keys.
 - Translators: [docs/dev/TRANSLATING.md](docs/dev/TRANSLATING.md).
 - Contributors and agents: [AGENTS.md](AGENTS.md).
 

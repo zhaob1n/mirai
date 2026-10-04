@@ -9,11 +9,11 @@ mod config;
 mod dialogs;
 mod engines;
 mod font_warmup;
-mod fox;
-mod fox_picker;
 #[cfg(debug_assertions)]
 mod harness;
 mod i18n;
+mod kifu;
+mod kifu_picker;
 mod label_editor;
 mod new_game;
 mod palette;

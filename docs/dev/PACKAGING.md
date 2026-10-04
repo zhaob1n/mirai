@@ -98,7 +98,7 @@ it outside through `flatpak-spawn --host`, which Flathub rejects as a sandbox es
 bundled OpenCL KataGo does run inside; measured on an RX 6800 XT (b10 network, 16 threads,
 400 visits) it managed 123 visits/s against 472 for the host's ROCm build.
 
-**Fox lookup talks to libsoup directly.** `fox.rs` used to fetch through
+**Fox lookup talks to libsoup directly.** `kifu.rs` used to fetch through
 `gio::File::for_uri`, but GIO serves `https://` only through GVfs's daemon — itself
 libsoup — which a Linux desktop need not install, and the Arch package never depended on.
 Calling libsoup keeps the request on the GLib main context and the desktop's proxy

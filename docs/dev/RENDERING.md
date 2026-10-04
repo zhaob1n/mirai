@@ -280,7 +280,7 @@ Fox's 200 records was 200 bound, measured, styled rows. A one-column `GtkGridVie
 `GTK_GRID_VIEW_MAX_VISIBLE_ROWS` (30) plus three. Both are *inert* while unrooted: they
 drop their factory, and rebind every live row synchronously when presented again. The
 picker shows ten records a page instead, as rows of an `AdwPreferencesGroup` built once and
-refilled in place (`fox_picker.rs`). Ten rows of CJK names still take 7–8 ms to shape
+refilled in place (`kifu_picker.rs`). Ten rows of CJK names still take 7–8 ms to shape
 and measure, so a page fills four rows a frame, and the dialog is presented with its
 rows hidden — a dialog put back on screen shapes all its text again — to refill them the
 same way once it is mapped.

@@ -19,13 +19,13 @@ template $MiraiWindow: Adw.ApplicationWindow {
         [start]
         Adw.SplitButton {
           icon-name: "folder-download-symbolic";
-          tooltip-text: _("Download a Public Game Record from Fox (Ctrl+Shift+O)");
+          tooltip-text: _("Download a Public Game Record (Ctrl+Shift+O)");
           dropdown-tooltip: _("Open a File or Paste SGF");
-          action-name: "win.download-fox";
+          action-name: "win.download-record";
           menu-model: open_menu;
 
           accessibility {
-            label: _("Download from Fox");
+            label: _("Download Game Record");
           }
         }
 
