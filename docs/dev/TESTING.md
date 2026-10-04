@@ -330,7 +330,7 @@ the window's `WidgetPaintable` and GSK renderer, including custom widgets'
 `app.`); `action:win.toggle-analysis` reaches the same handler as <kbd>space</kbd>.
 `press:` searches the visible dialog if present, otherwise the window. It
 matches mapped, sensitive controls by label/title, nested label or tooltip;
-use `press:Edit this profile` for an icon button. Menu buttons open their
+use `press:Edit This Profile` for an icon button. Menu buttons open their
 popover; wait for it to map before choosing an item:
 `stack:Moves,tree:secondary:2:1,wait:400,press:Set as Main Line`. Action rows and expanders
 activate by title or label (`press:Blunders`).
@@ -620,13 +620,13 @@ The icon button on a profile row is matched by its tooltip.
 s=/tmp/mirai-ui; mkdir -p "$s/config/mirai" "$s/data"
 # one local profile, katago and model paths only
 XDG_CONFIG_HOME="$s/config" XDG_DATA_HOME="$s/data" \
-  MIRAI_HARNESS="wait:4000,action:win.preferences,wait:1000,press:Edit this profile,wait:1200,shot:/tmp/ui-managed.png,quit" \
+  MIRAI_HARNESS="wait:4000,action:win.preferences,wait:1000,press:Edit This Profile,wait:1200,shot:/tmp/ui-managed.png,quit" \
   ./target/debug/mirai
 ```
 
 | Profile in `config.toml` | What the PNG must show |
 |---|---|
-| No `config` key | Analysis config shows `Managed by mirai`. Search subtitles read `0 uses mirai's default (4)` and `(16)`. Batching and Memory is visible |
+| No `config` key | Analysis Config shows `Managed by mirai`. Search subtitles read `0 uses mirai's default (4)` and `(16)`. Batching and Memory is visible |
 | `config = "…"` | Custom mode shows the config row. Batching and Memory is hidden. Search subtitles read `0 keeps the value from your analysis config` |
 
 `page:Analysis,set:Maximum Visits=2000,press:Restore Defaults` is how a script

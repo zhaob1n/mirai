@@ -994,7 +994,7 @@ impl KifuPickerDialog {
                     self.set_status_key(key);
                     self.show_status(
                         "dialog-warning-symbolic",
-                        &i18n::gettext("Couldn’t load games"),
+                        &i18n::gettext("Couldn’t Load Games"),
                         &message,
                     );
                 }
@@ -1015,7 +1015,7 @@ impl KifuPickerDialog {
             }
             self.show_status(
                 "edit-find-symbolic",
-                &i18n::gettext("No public games"),
+                &i18n::gettext("No Public Games"),
                 &i18n::gettext_f(
                     "{server} lists no public games for this search.",
                     &[("server", &server_name(saved.server))],
@@ -1029,8 +1029,8 @@ impl KifuPickerDialog {
         let account = account_label(&saved.player);
         // Translators: {account} is a player name, or "UID" and a number.
         let heading = i18n::ngettext_f(
-            "{account} · {count} recent game",
-            "{account} · {count} recent games",
+            "{account} · {count} Recent Game",
+            "{account} · {count} Recent Games",
             count,
             &[("account", &account), ("count", &count.to_string())],
         );
@@ -1095,7 +1095,7 @@ impl KifuPickerDialog {
         widgets.banner.set_revealed(false);
         widgets
             .loading_page
-            .set_title(&i18n::gettext("Downloading game"));
+            .set_title(&i18n::gettext("Downloading Game"));
         widgets
             .loading_page
             .set_description(Some(&record.matchup()));

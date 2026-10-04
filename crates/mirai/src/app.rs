@@ -168,13 +168,13 @@ pub enum EngineState {
 impl EngineState {
     pub fn label(&self) -> String {
         match self {
-            Self::None => i18n::gettext("No engine"),
+            Self::None => i18n::gettext("No Engine"),
             Self::Starting { profile } => {
                 i18n::gettext_f("Starting {profile}…", &[("profile", profile)])
             }
             Self::Ready { description, .. } => description.clone(),
             Self::Failed { profile, .. } => {
-                i18n::gettext_f("{profile} unavailable", &[("profile", profile)])
+                i18n::gettext_f("{profile} Unavailable", &[("profile", profile)])
             }
         }
     }
@@ -271,7 +271,7 @@ mod imp {
                 show_move_numbers: Cell::new(false),
                 ownership_overlay: Cell::new(false),
                 policy_overlay: Cell::new(false),
-                engine_label: RefCell::new(crate::i18n::gettext("No engine")),
+                engine_label: RefCell::new(crate::i18n::gettext("No Engine")),
                 status: RefCell::new(String::new()),
                 busy: Cell::new(false),
                 file_path: RefCell::new(String::new()),

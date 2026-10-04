@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: mirai\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaob1n/mirai/issues\n"
-"POT-Creation-Date: 2026-10-05 00:15+0800\n"
+"POT-Creation-Date: 2026-10-05 00:58+0800\n"
 "PO-Revision-Date: 2026-09-28 06:00+0800\n"
 "Last-Translator: Huang Zhaobin <zhaob1n@foxmail.com>\n"
 "Language-Team: Chinese (China) <i18n-zh@googlegroups.com>\n"
@@ -16,8 +16,8 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
-#: crates/mirai/src/app.rs crates/mirai/src/panels/analysis.rs
-msgid "No engine"
+#: crates/mirai/src/app.rs crates/mirai/src/window.blp
+msgid "No Engine"
 msgstr "无引擎"
 
 #: crates/mirai/src/app.rs crates/mirai/src/panels/analysis.rs
@@ -27,7 +27,7 @@ msgstr "正在启动 {profile}…"
 
 #: crates/mirai/src/app.rs
 #, rust-format
-msgid "{profile} unavailable"
+msgid "{profile} Unavailable"
 msgstr "{profile} 不可用"
 
 #: crates/mirai/src/app.rs
@@ -501,11 +501,11 @@ msgid "{error}. Showing the games saved {time}."
 msgstr "{error}。正在显示 {time} 保存的对局。"
 
 #: crates/mirai/src/kifu.rs
-msgid "Couldn’t load games"
+msgid "Couldn’t Load Games"
 msgstr "无法加载对局"
 
 #: crates/mirai/src/kifu.rs
-msgid "No public games"
+msgid "No Public Games"
 msgstr "没有公开对局"
 
 #: crates/mirai/src/kifu.rs
@@ -515,8 +515,8 @@ msgstr "{server}没有这次搜索的公开对局。"
 
 #: crates/mirai/src/kifu.rs
 #, rust-format
-msgid "{account} · {count} recent game"
-msgid_plural "{account} · {count} recent games"
+msgid "{account} · {count} Recent Game"
+msgid_plural "{account} · {count} Recent Games"
 msgstr[0] "{account} · {count} 盘近期对局"
 
 #: crates/mirai/src/kifu.rs
@@ -525,7 +525,7 @@ msgid "Saved {time}"
 msgstr "保存于 {time}"
 
 #: crates/mirai/src/kifu.rs
-msgid "Downloading game"
+msgid "Downloading Game"
 msgstr "正在下载对局"
 
 #: crates/mirai/src/kifu.rs
@@ -670,6 +670,10 @@ msgid_plural "{visits} visits"
 msgstr[0] "计算量 {visits}"
 
 #: crates/mirai/src/panels/analysis.rs
+msgid "No engine"
+msgstr "无引擎"
+
+#: crates/mirai/src/panels/analysis.rs
 msgid "Analysing…"
 msgstr "分析中…"
 
@@ -793,7 +797,7 @@ msgid "Preferences"
 msgstr "首选项"
 
 #: crates/mirai/src/prefs.rs
-msgid "No engine profiles"
+msgid "No Engine Profiles"
 msgstr "没有引擎配置"
 
 #: crates/mirai/src/prefs.rs
@@ -809,15 +813,15 @@ msgid "Add a local KataGo installation or a remote mirai-server."
 msgstr "添加本地安装的 KataGo 或远程 mirai-server。"
 
 #: crates/mirai/src/prefs.rs
-msgid "Use this engine"
+msgid "Use This Engine"
 msgstr "使用此引擎"
 
 #: crates/mirai/src/prefs.rs
-msgid "Edit this profile"
+msgid "Edit This Profile"
 msgstr "编辑此配置"
 
 #: crates/mirai/src/prefs.rs
-msgid "Delete this profile"
+msgid "Delete This Profile"
 msgstr "删除此配置"
 
 #: crates/mirai/src/prefs.rs
@@ -839,7 +843,7 @@ msgid "Deleted “{name}”"
 msgstr "已删除“{name}”"
 
 #: crates/mirai/src/prefs.rs
-msgid "Choose a file"
+msgid "Choose a File"
 msgstr "选择文件"
 
 #: crates/mirai/src/prefs.rs
@@ -853,8 +857,8 @@ msgstr "{path} 不存在。"
 
 #: crates/mirai/src/prefs.rs
 #, rust-format
-msgid "Choose the discovered file"
-msgid_plural "Choose one of {n} discovered files"
+msgid "Choose the Discovered File"
+msgid_plural "Choose One of {n} Discovered Files"
 msgstr[0] "从发现的 {n} 个文件中选择"
 
 #. Translators: {power} is the cache-size exponent used when the row is left at 0.
@@ -928,19 +932,19 @@ msgid "Both must exist before the profile can be saved."
 msgstr "两者都存在时才能保存配置。"
 
 #: crates/mirai/src/prefs.rs
-msgid "KataGo binary"
+msgid "KataGo Binary"
 msgstr "KataGo 程序"
 
 #: crates/mirai/src/prefs.rs
-msgid "Select the katago binary"
+msgid "Select the KataGo Binary"
 msgstr "选择 katago 程序"
 
 #: crates/mirai/src/prefs.rs
-msgid "Neural network model"
+msgid "Neural Network Model"
 msgstr "神经网络模型"
 
 #: crates/mirai/src/prefs.rs
-msgid "Select the neural network model"
+msgid "Select the Neural Network Model"
 msgstr "选择神经网络模型"
 
 #: crates/mirai/src/prefs.rs
@@ -956,15 +960,15 @@ msgid "Custom file"
 msgstr "自定义文件"
 
 #: crates/mirai/src/prefs.rs
-msgid "Analysis config"
+msgid "Analysis Config"
 msgstr "分析配置"
 
 #: crates/mirai/src/prefs.rs
-msgid "Custom analysis config"
+msgid "Custom Analysis Config"
 msgstr "自定义分析配置"
 
 #: crates/mirai/src/prefs.rs
-msgid "Select the custom analysis config"
+msgid "Select the Custom Analysis Config"
 msgstr "选择自定义分析配置"
 
 #. Translators: noun, the search-thread settings, not the verb.
@@ -974,11 +978,11 @@ msgid "Search"
 msgstr "搜索"
 
 #: crates/mirai/src/prefs.rs
-msgid "Positions in parallel"
+msgid "Positions in Parallel"
 msgstr "并行局面数"
 
 #: crates/mirai/src/prefs.rs
-msgid "Threads per position"
+msgid "Threads per Position"
 msgstr "每局面线程数"
 
 #: crates/mirai/src/prefs.rs
@@ -991,11 +995,11 @@ msgid "nnMaxBatchSize — 0 uses mirai's default ({size}). Wants to be at least 
 msgstr "nnMaxBatchSize——0 表示使用 mirai 的默认值（{size}）。应不小于局面数 × 线程数。"
 
 #: crates/mirai/src/prefs.rs
-msgid "GPU batch size"
+msgid "GPU Batch Size"
 msgstr "GPU 批大小"
 
 #: crates/mirai/src/prefs.rs
-msgid "Neural-net cache"
+msgid "Neural-Net Cache"
 msgstr "神经网络缓存"
 
 #: crates/mirai/src/prefs.rs
@@ -1108,7 +1112,7 @@ msgid "Token"
 msgstr "令牌"
 
 #: crates/mirai/src/prefs.rs
-msgid "Engine name (optional)"
+msgid "Engine Name (Optional)"
 msgstr "引擎名称（可选）"
 
 #: crates/mirai/src/prefs.rs
@@ -1120,7 +1124,7 @@ msgid "mirai checks the certificate before sending the token. Test the connectio
 msgstr "mirai 会在发送令牌之前检查证书。请测试连接，并将指纹与 mirai-server 启动时打印的指纹进行比对。"
 
 #: crates/mirai/src/prefs.rs
-msgid "Pinned fingerprint"
+msgid "Pinned Fingerprint"
 msgstr "已固定指纹"
 
 #: crates/mirai/src/prefs.rs
@@ -1255,7 +1259,7 @@ msgid "Play — Black to Play"
 msgstr "落子——黑方行棋"
 
 #: crates/mirai/src/window.rs
-msgid "Play — Black to Play; Left-click to Play, Right-click to Take Back and Delete the Current Branch"
+msgid "Play — Black to Play; Left-Click to Play, Right-Click to Take Back and Delete the Current Branch"
 msgstr "落子——黑方行棋；左键落子，右键悔棋并删除当前分支"
 
 #: crates/mirai/src/window.rs
@@ -1263,7 +1267,7 @@ msgid "Play — White to Play"
 msgstr "落子——白方行棋"
 
 #: crates/mirai/src/window.rs
-msgid "Play — White to Play; Left-click to Play, Right-click to Take Back and Delete the Current Branch"
+msgid "Play — White to Play; Left-Click to Play, Right-Click to Take Back and Delete the Current Branch"
 msgstr "落子——白方行棋；左键落子，右键悔棋并删除当前分支"
 
 #. Translators: {engine} is the analysis engine's name or status.
@@ -1289,12 +1293,12 @@ msgstr "{index} / {upper} · 白"
 
 #: crates/mirai/src/window.rs
 #, rust-format
-msgid "Move {index} of {upper} · Black to play"
+msgid "Move {index} of {upper} · Black to Play"
 msgstr "第 {index} 手，共 {upper} 手 · 黑方行棋"
 
 #: crates/mirai/src/window.rs
 #, rust-format
-msgid "Move {index} of {upper} · White to play"
+msgid "Move {index} of {upper} · White to Play"
 msgstr "第 {index} 手，共 {upper} 手 · 白方行棋"
 
 #: crates/mirai/src/window.rs
@@ -1355,7 +1359,7 @@ msgid "Start Live Analysis (Space)"
 msgstr "开始实时分析（Space）"
 
 #: crates/mirai/src/window.rs
-msgid "SGF game records"
+msgid "SGF Game Records"
 msgstr "SGF 棋谱"
 
 #: crates/mirai/src/window.rs
@@ -1389,7 +1393,7 @@ msgid "{name} ({rank})"
 msgstr "{name}（{rank}）"
 
 #: crates/mirai/src/window.rs
-msgid "Games in file"
+msgid "Games in File"
 msgstr "文件中的对局"
 
 #: crates/mirai/src/window.rs
@@ -1482,7 +1486,7 @@ msgid_plural "KataGo lead for Black after {visits} visits: {lead}"
 msgstr[0] "KataGo 黑方目差（计算量 {visits}）：{lead}"
 
 #: crates/mirai/src/window.rs
-msgid "Score estimate"
+msgid "Score Estimate"
 msgstr "形势判断"
 
 #: crates/mirai/src/window.rs
@@ -2030,10 +2034,6 @@ msgid "Analysis Engine"
 msgstr "分析引擎"
 
 #: crates/mirai/src/window.blp
-msgid "No Engine"
-msgstr "无引擎"
-
-#: crates/mirai/src/window.blp
 msgid "Main Menu"
 msgstr "主菜单"
 
@@ -2063,7 +2063,7 @@ msgid "Play"
 msgstr "落子"
 
 #: crates/mirai/src/window.blp
-msgid "Play — Left-click to Play, Right-click to Take Back"
+msgid "Play — Left-Click to Play, Right-Click to Take Back"
 msgstr "落子——左键落子，右键悔棋"
 
 #: crates/mirai/src/window.blp
@@ -2071,7 +2071,7 @@ msgid "Setup Black"
 msgstr "摆黑子"
 
 #: crates/mirai/src/window.blp
-msgid "Setup Black — Left-click Black, Right-click White; Matching Color Removes the Stone"
+msgid "Setup Black — Left-Click Black, Right-Click White; Matching Color Removes the Stone"
 msgstr "摆黑子——左键摆黑子，右键摆白子；点击同色棋子则将其移除"
 
 #: crates/mirai/src/window.blp
@@ -2079,7 +2079,7 @@ msgid "Setup White"
 msgstr "摆白子"
 
 #: crates/mirai/src/window.blp
-msgid "Setup White — Left-click White, Right-click Black; Matching Color Removes the Stone"
+msgid "Setup White — Left-Click White, Right-Click Black; Matching Color Removes the Stone"
 msgstr "摆白子——左键摆白子，右键摆黑子；点击同色棋子则将其移除"
 
 #: crates/mirai/src/window.blp

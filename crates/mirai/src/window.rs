@@ -703,14 +703,14 @@ fn update_editor_actions(ui: &Ui) {
                 "mirai-play-black",
                 gettext("Play — Black to Play"),
                 gettext(
-                    "Play — Black to Play; Left-click to Play, Right-click to Take Back and Delete the Current Branch",
+                    "Play — Black to Play; Left-Click to Play, Right-Click to Take Back and Delete the Current Branch",
                 ),
             ),
             Color::White => (
                 "mirai-play-white",
                 gettext("Play — White to Play"),
                 gettext(
-                    "Play — White to Play; Left-click to Play, Right-click to Take Back and Delete the Current Branch",
+                    "Play — White to Play; Left-Click to Play, Right-Click to Take Back and Delete the Current Branch",
                 ),
             ),
         };
@@ -978,11 +978,11 @@ fn update_scale(ui: &Ui) {
     ui.move_position.set_label(&position);
     let tip = match color {
         Color::Black => gettext_f(
-            "Move {index} of {upper} · Black to play",
+            "Move {index} of {upper} · Black to Play",
             &[("index", &index_s), ("upper", &upper_s)],
         ),
         Color::White => gettext_f(
-            "Move {index} of {upper} · White to play",
+            "Move {index} of {upper} · White to Play",
             &[("index", &index_s), ("upper", &upper_s)],
         ),
     };
@@ -1234,7 +1234,7 @@ fn load_comment(ui: &Ui) {
 
 fn sgf_filters() -> (gio::ListStore, gtk::FileFilter) {
     let filter = gtk::FileFilter::new();
-    filter.set_name(Some(&gettext("SGF game records")));
+    filter.set_name(Some(&gettext("SGF Game Records")));
     filter.add_pattern("*.sgf");
     filter.add_suffix("sgf");
     let store = gio::ListStore::new::<gtk::FileFilter>();
@@ -1462,7 +1462,7 @@ fn choose_game(
         .build();
 
     let count = trees.len();
-    let heading = gettext("Games in file");
+    let heading = gettext("Games in File");
     let body = ngettext_f(
         "{file} holds {count} game record.",
         "{file} holds {count} game records.",
@@ -2044,7 +2044,7 @@ fn show_estimate(ui: &Ui, report: &Report) {
         &[("visits", &visits_label), ("lead", &lead_text)],
     );
     let body = format!("{headline}\n\n{scores}\n{lead_line}");
-    let title = gettext("Score estimate");
+    let title = gettext("Score Estimate");
     let close = gettext("Close");
     let dialog = adw::AlertDialog::new(Some(&title), Some(&body));
     dialog.add_responses(&[("close", &close)]);

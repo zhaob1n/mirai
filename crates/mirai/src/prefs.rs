@@ -176,7 +176,7 @@ pub fn engine_menu_model(state: &AppState) -> gio::Menu {
         if cfg.engine_profiles.is_empty() {
             // No action, so GTK renders it insensitive — a hint, not a choice.
             profiles.append_item(&gio::MenuItem::new(
-                Some(&gettext("No engine profiles")),
+                Some(&gettext("No Engine Profiles")),
                 None,
             ));
         }
@@ -284,7 +284,7 @@ fn refresh_profiles(
 
         let radio = gtk::CheckButton::builder()
             .valign(gtk::Align::Center)
-            .tooltip_text(gettext("Use this engine"))
+            .tooltip_text(gettext("Use This Engine"))
             .build();
         match &leader {
             Some(first) => radio.set_group(Some(first)),
@@ -309,7 +309,7 @@ fn refresh_profiles(
 
         let edit = gtk::Button::from_icon_name("document-edit-symbolic");
         edit.set_valign(gtk::Align::Center);
-        edit.set_tooltip_text(Some(&gettext("Edit this profile")));
+        edit.set_tooltip_text(Some(&gettext("Edit This Profile")));
         edit.add_css_class("flat");
         let edit_state = state.clone();
         let edit_profile = profile.clone();
@@ -333,7 +333,7 @@ fn refresh_profiles(
 
         let delete = gtk::Button::from_icon_name("user-trash-symbolic");
         delete.set_valign(gtk::Align::Center);
-        delete.set_tooltip_text(Some(&gettext("Delete this profile")));
+        delete.set_tooltip_text(Some(&gettext("Delete This Profile")));
         delete.add_css_class("flat");
         let delete_state = state.clone();
         let delete_name = name.clone();
@@ -476,7 +476,7 @@ fn file_row(
 
     let button = gtk::Button::from_icon_name("document-open-symbolic");
     button.set_valign(gtk::Align::Center);
-    button.set_tooltip_text(Some(&gettext("Choose a file")));
+    button.set_tooltip_text(Some(&gettext("Choose a File")));
     button.add_css_class("flat");
     row.add_suffix(&button);
     row.set_activatable_widget(Some(&button));
@@ -621,8 +621,8 @@ fn discovered_button(
     // Translators: {n} is how many files were found on disk; there is always more than one
     // when the plural is used.
     let tip = ngettext_f(
-        "Choose the discovered file",
-        "Choose one of {n} discovered files",
+        "Choose the Discovered File",
+        "Choose One of {n} Discovered Files",
         n,
         &[("n", &count)],
     );
@@ -919,15 +919,15 @@ fn local_editor(
         .description(gettext("Both must exist before the profile can be saved."))
         .build();
     let (katago_row, katago_path, _) = file_row(
-        &gettext("KataGo binary"),
-        &gettext("Select the katago binary"),
+        &gettext("KataGo Binary"),
+        &gettext("Select the KataGo Binary"),
         katago,
         Vec::new(),
         dialog,
     );
     let (model_row, model_path, model_slot) = file_row(
-        &gettext("Neural network model"),
-        &gettext("Select the neural network model"),
+        &gettext("Neural Network Model"),
+        &gettext("Select the Neural Network Model"),
         model,
         Vec::new(),
         dialog,
@@ -945,13 +945,13 @@ fn local_editor(
     let managed = gettext("Managed by mirai");
     let custom_file = gettext("Custom file");
     let mode = adw::ComboRow::builder()
-        .title(gettext("Analysis config"))
+        .title(gettext("Analysis Config"))
         .model(&gtk::StringList::new(&[&managed, &custom_file]))
         .selected(u32::from(custom))
         .build();
     let (config_row, config_path, config_slot) = file_row(
-        &gettext("Custom analysis config"),
-        &gettext("Select the custom analysis config"),
+        &gettext("Custom Analysis Config"),
+        &gettext("Select the Custom Analysis Config"),
         suggested_config,
         Vec::new(),
         dialog,
@@ -966,13 +966,13 @@ fn local_editor(
         .title(&search_title)
         .build();
     let analysis_row = tuned_row(
-        &gettext("Positions in parallel"),
+        &gettext("Positions in Parallel"),
         "",
         u32::from(analysis_threads.unwrap_or(0)),
         f64::from(EngineTuning::MAX_ANALYSIS_THREADS),
     );
     let search_row = tuned_row(
-        &gettext("Threads per position"),
+        &gettext("Threads per Position"),
         "",
         u32::from(search_threads.unwrap_or(0)),
         f64::from(EngineTuning::MAX_SEARCH_THREADS),
@@ -993,14 +993,14 @@ fn local_editor(
         &[("size", &batch_default)],
     );
     let batch_row = tuned_row(
-        &gettext("GPU batch size"),
+        &gettext("GPU Batch Size"),
         &batch_subtitle,
         u32::from(batch.unwrap_or(0)),
         f64::from(EngineTuning::MAX_BATCH_SIZE),
     );
     let cache_shown = snap_cache_power(0, cache.unwrap_or(0));
     let cache_row = tuned_row(
-        &gettext("Neural-net cache"),
+        &gettext("Neural-Net Cache"),
         &cache_subtitle(cache_shown),
         u32::from(cache_shown),
         f64::from(EngineTuning::MAX_CACHE_POWER),
@@ -1457,7 +1457,7 @@ fn remote_editor(
         .build();
     token_row.set_text(&token);
     let engine_row = adw::EntryRow::builder()
-        .title(gettext("Engine name (optional)"))
+        .title(gettext("Engine Name (Optional)"))
         .build();
     engine_row.set_text(&engine);
     server.add(&url_row);
@@ -1474,7 +1474,7 @@ fn remote_editor(
         ))
         .build();
     let trust_row = adw::ActionRow::builder()
-        .title(gettext("Pinned fingerprint"))
+        .title(gettext("Pinned Fingerprint"))
         .subtitle(fingerprint_subtitle(&pin.borrow()))
         .build();
     trust_row.set_use_markup(false);

@@ -23,7 +23,7 @@ needed to put the engine on another machine ([section 7](#7-using-a-remote-engin
 
 Supply a recent KataGo binary (`katago`) and a network (`*.bin.gz`); mirai does not download
 them. It generates KataGo's analysis config from your Preferences settings. To use your
-own, select **Preferences → Engines → Analysis config → Custom file**; KataGo ships an
+own, select **Preferences → Engines → Analysis Config → Custom file**; KataGo ships an
 `analysis.cfg` in its `configs` directory.
 
 > [!IMPORTANT]
@@ -66,9 +66,9 @@ If no KataGo or network is found:
 ### Adding a local engine
 
 1. In **Preferences → Engines → Add Local Engine**, name the profile and choose the
-   **KataGo binary** and **Neural network model**. The model chooser lists discovered
+   **KataGo Binary** and **Neural Network Model**. The model chooser lists discovered
    networks; the folder button accepts any other file. Both paths must exist.
-2. Leave **Analysis config** at **Managed by mirai**, or choose *Custom file* to supply your
+2. Leave **Analysis Config** at **Managed by mirai**, or choose *Custom file* to supply your
    own. Its chooser lists `*.cfg` files in `{katago,mirai}/cfg/analysis` under
    `$XDG_CONFIG_HOME` and `$XDG_CONFIG_DIRS`.
 3. Leave **Search** and **Batching and Memory** at **0** for mirai's defaults
@@ -492,16 +492,16 @@ and hand-edited configs.
 
 | Setting | Default | Notes |
 |---|---|---|
-| Engine profiles | one, if a KataGo was found | radio button = active engine; pencil edits, bin deletes |
-| *local* Name / KataGo binary / model | — | both paths must exist to save; the model row's list button holds every discovered network, the folder button any other file |
-| *local* Analysis config | Managed by mirai | *Custom file* reveals the config row, whose list button holds every discovered Analysis config; tuning settings come from that file unless you override the two thread counts |
-| *local* Positions in parallel | 0, meaning 4 | `numAnalysisThreads`: positions searched at once. Four keeps a whole-game sweep and a cursor move from queueing behind each other |
-| *local* Threads per position | 0, meaning 16 | `numSearchThreadsPerAnalysisThread`: how hard one position is searched. Raise on a many-core CPU, but the returns fall off past 16 |
-| *local* GPU batch size | 0, meaning 64 | `nnMaxBatchSize`. Wants to be at least positions × threads. Hidden while a custom config is selected |
-| *local* Neural-net cache | 0, meaning 20 | `nnCacheSizePowerOfTwo`: 2^20 cached evaluations, roughly 3 GiB once warm. 0 is the default; the next step is 14. Hidden while a custom config is selected |
-| *local* Automatic tuning | off | **Tune…** measures the selected binary and model, updates the three performance rows, and waits for **Save Profile** before applying them. Managed configs only |
-| *remote* Server Address / Token / Engine name (optional) | — / — / blank | blank engine name means the server's first engine |
-| *remote* Pinned fingerprint | not pinned | read-only; set by **Test Connection** and **Trust** |
+| Engine Profiles | one, if a KataGo was found | radio button = active engine; pencil edits, bin deletes |
+| *local* Name / KataGo Binary / Neural Network Model | — | both paths must exist to save; the model row's list button holds every discovered network, the folder button any other file |
+| *local* Analysis Config | Managed by mirai | *Custom file* reveals the config row, whose list button holds every discovered analysis config; tuning settings come from that file unless you override the two thread counts |
+| *local* Positions in Parallel | 0, meaning 4 | `numAnalysisThreads`: positions searched at once. Four keeps a whole-game sweep and a cursor move from queueing behind each other |
+| *local* Threads per Position | 0, meaning 16 | `numSearchThreadsPerAnalysisThread`: how hard one position is searched. Raise on a many-core CPU, but the returns fall off past 16 |
+| *local* GPU Batch Size | 0, meaning 64 | `nnMaxBatchSize`. Wants to be at least positions × threads. Hidden while a custom config is selected |
+| *local* Neural-Net Cache | 0, meaning 20 | `nnCacheSizePowerOfTwo`: 2^20 cached evaluations, roughly 3 GiB once warm. 0 is the default; the next step is 14. Hidden while a custom config is selected |
+| *local* Automatic Tuning | off | **Tune…** measures the selected binary and model, updates the three performance rows, and waits for **Save Profile** before applying them. Managed configs only |
+| *remote* Server Address / Token / Engine Name (Optional) | — / — / blank | blank engine name means the server's first engine |
+| *remote* Pinned Fingerprint | not pinned | read-only; set by **Test Connection** and **Trust** |
 
 With **Managed by mirai**, `0` in any of those four rows means mirai's own default; with
 *Custom file* it means *keep what the file says*, and the row subtitles change to say so.
