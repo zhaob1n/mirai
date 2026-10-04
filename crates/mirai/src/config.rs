@@ -522,7 +522,7 @@ impl Config {
     /// `engine_profile` is merged by name rather than replaced; if both windows edited the
     /// same profile, this save wins for that profile.
     pub fn save_merged(&self, base: &Config, path: &Path) -> Result<(), ConfigError> {
-        if self == base && path.exists() {
+        if self == base {
             return Ok(());
         }
         // Saves run on the runtime's blocking pool, so two windows can be merging at once.
