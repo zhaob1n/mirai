@@ -318,8 +318,11 @@ fn gib_result(grlt: &str, zipsu: &str) -> String {
 
 fn gdate_day(raw: &str) -> String {
     let raw = raw.trim();
-    if raw.len() >= 10 && raw.as_bytes()[4] == b'-' && raw.as_bytes()[7] == b'-' {
-        raw[..10].to_string()
+    if let Some(day) = raw.get(..10)
+        && day.as_bytes()[4] == b'-'
+        && day.as_bytes()[7] == b'-'
+    {
+        day.to_string()
     } else {
         String::new()
     }
@@ -660,6 +663,12 @@ STO 0 2 2 9 9
         assert_eq!(parse_record(&raw(5, 0)).unwrap().info.result, "");
         let six = "\\HS\n\\[GAMEINFOMAIN=LINE:19,GONGJE:65\\]\n\\HE\n\\GS\n\\GE\n";
         assert_eq!(parse_record(six).unwrap().info.komi, 6.5);
+    }
+
+    #[test]
+    fn a_malformed_gdate_does_not_split_a_utf8_character() {
+        let raw = "\\HS\n\\[GAMEINFOSUB=GDATE:2026-07-中\\]\n\\GS\n\\GE";
+        assert_eq!(parse_record(raw).unwrap().info.date, "");
     }
 
     #[test]

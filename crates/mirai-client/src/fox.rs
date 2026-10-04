@@ -107,6 +107,7 @@ fn player_name<'a>(nickname: &'a str, english: &'a str) -> &'a str {
 /// Fox's rank encoding: `occupation != 0` is a professional, otherwise `dan` counts up from
 /// 17 = 1 dan and down into kyu.
 pub fn rank(dan: i32, occupation: i32) -> String {
+    let dan = i64::from(dan);
     if occupation != 0 {
         return match dan - 99 {
             level @ 1..=9 => format!("P{level}"),
@@ -627,6 +628,15 @@ mod tests {
         assert_eq!(rank(23, 0), "6d");
         assert_eq!(rank(17, 0), "1k");
         assert_eq!(rank(108, 1), "P9");
+    }
+    #[test]
+    fn extreme_rank_codes_do_not_overflow() {
+        let body = r#"{"result":0,"chesslist":[
+            {"chessid":"1","blackdan":-2147483648,"whitedan":-2147483648,"whiteocc":1}
+        ]}"#;
+        let record = parse_games(body).unwrap()[0].record();
+        assert_eq!(record.black_rank, "2147483666k");
+        assert_eq!(record.white_rank, "Pro");
     }
 
     #[test]

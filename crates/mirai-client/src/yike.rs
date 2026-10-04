@@ -473,7 +473,7 @@ fn slash_zi(text: &str) -> Option<String> {
     Some(format_ratio(a * 2, b))
 }
 
-fn leading_fraction(text: &str) -> Option<(i64, i64, usize)> {
+fn leading_fraction(text: &str) -> Option<(i128, i128, usize)> {
     let (a, used_a) = leading_digits(text)?;
     let rest = &text[used_a..];
     if !rest.starts_with('/') {
@@ -483,27 +483,32 @@ fn leading_fraction(text: &str) -> Option<(i64, i64, usize)> {
     Some((a, b, used_a + 1 + used_b))
 }
 
-fn digits_before(text: &str, suffix: &str) -> Option<i64> {
+fn digits_before(text: &str, suffix: &str) -> Option<i128> {
     let idx = text.find(suffix)?;
     trailing_digits(&text[..idx])
 }
 
-fn trailing_digits(text: &str) -> Option<i64> {
+// Keep each input within i64, but leave room for `(whole * denominator + numerator) * 2`
+// and the decimal remainder's `* 10` when a server supplies extreme numbers.
+fn trailing_digits(text: &str) -> Option<i128> {
     let start = text.trim_end_matches(|c: char| c.is_ascii_digit()).len();
-    text[start..].parse().ok()
+    text[start..].parse::<i64>().ok().map(i128::from)
 }
 
-fn leading_digits(text: &str) -> Option<(i64, usize)> {
+fn leading_digits(text: &str) -> Option<(i128, usize)> {
     let end = text.len() - text.trim_start_matches(|c: char| c.is_ascii_digit()).len();
-    text[..end].parse().ok().map(|n| (n, end))
+    text[..end]
+        .parse::<i64>()
+        .ok()
+        .map(|n| (i128::from(n), end))
 }
 
-fn digits_in(text: &str) -> Option<i64> {
+fn digits_in(text: &str) -> Option<i128> {
     let start = text.find(|c: char| c.is_ascii_digit())?;
     leading_digits(&text[start..]).map(|(n, _)| n)
 }
 
-fn format_ratio(num: i64, den: i64) -> String {
+fn format_ratio(num: i128, den: i128) -> String {
     if den == 0 {
         return String::new();
     }
@@ -649,6 +654,21 @@ mod tests {
         for (raw, want) in cases {
             assert_eq!(result_text(raw), want, "{raw}");
         }
+    }
+    #[test]
+    fn large_result_numbers_do_not_overflow_the_ratio() {
+        assert_eq!(
+            result_text("黑胜9223372036854775807子"),
+            "B+18446744073709551614"
+        );
+        assert_eq!(
+            result_text("白胜9223372036854775807又9223372036854775807/9223372036854775807子"),
+            "W+18446744073709551616"
+        );
+        assert_eq!(
+            result_text("黑胜9223372036854775806/9223372036854775807子"),
+            "B+1.999999"
+        );
     }
 
     #[test]
