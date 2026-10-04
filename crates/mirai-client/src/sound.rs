@@ -44,7 +44,7 @@ impl Visit {
         Visit {
             id,
             zobrist: board.zobrist(),
-            removed: board.captures.iter().map(|&c| u32::from(c)).sum(),
+            removed: board.captures.iter().sum(),
         }
     }
 

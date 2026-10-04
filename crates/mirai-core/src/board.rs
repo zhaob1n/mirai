@@ -74,7 +74,7 @@ type Chain = ArrayVec<Point, MAX_POINTS>;
 pub struct Board {
     pub size: Size,
     stones: Box<[Option<Color>]>,
-    pub captures: [u16; 2],
+    pub captures: [u32; 2],
     zobrist: u64,
     ko_ban: Option<Point>,
 }
@@ -243,7 +243,7 @@ impl Board {
                 }
             }
         }
-        self.captures[color.index()] += captured as u16;
+        self.captures[color.index()] += captured as u32;
 
         // Two liberties are enough to rule out both suicide and a simple-ko reply.
         // A zero-liberty fill always visits every member needed for self-capture.
@@ -256,7 +256,7 @@ impl Board {
                 (captured == 1 && members.len() == 1 && liberties == 1).then_some(last_captured);
         } else if liberties == 0 {
             if rules.multi_stone_suicide && members.len() > 1 {
-                self.captures[color.other().index()] += members.len() as u16;
+                self.captures[color.other().index()] += members.len() as u32;
                 for &p in &members {
                     self.put(p, None);
                 }

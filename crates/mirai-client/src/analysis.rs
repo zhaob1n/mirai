@@ -117,7 +117,7 @@ pub(crate) fn snapshot_boundary(tree: &mut GameTree, boundary: NodeId) -> Bounda
         let black_captures = captures[Color::Black.index()];
         let white_captures = captures[Color::White.index()];
         let adjusted =
-            i32::from(komi_x2) + 2 * (i32::from(white_captures) - i32::from(black_captures));
+            i64::from(komi_x2) + 2 * (i64::from(white_captures) - i64::from(black_captures));
         komi_x2 = adjusted.clamp(i16::MIN.into(), i16::MAX.into()) as i16;
     }
     BoundarySnapshot {

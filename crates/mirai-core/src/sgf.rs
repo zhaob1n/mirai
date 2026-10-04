@@ -1143,6 +1143,26 @@ mod tests {
         assert_eq!(games[1].len(), 2);
     }
 
+    #[test]
+    fn replay_keeps_prisoners_beyond_u16() {
+        let text = format!(
+            "(;SZ[19]RU[japanese]KM[0]{})",
+            ";AE[aa]AW[ba:ss][ab:as]B[aa]".repeat(183)
+        );
+        let mut tree = parse_str(&text).unwrap().remove(0);
+        let last = *tree.main_line().last().unwrap();
+        let board = &tree.position(last).board;
+        assert_eq!(u64::from(board.captures[0]), 183 * 360);
+        let counted = crate::score(
+            board,
+            &RuleSet::Japanese.rules(),
+            0.0,
+            0,
+            &crate::DeadSet::default(),
+        );
+        assert_eq!(counted.black, 183.0 * 360.0 + 360.0);
+    }
+
     /// FF[4] point lists compress a rectangle to `ul:lr`, and the parser accepts the two
     /// corners in either order. Every point inside is one entry.
     #[test]
