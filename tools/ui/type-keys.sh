@@ -13,7 +13,7 @@
 # keys go to whatever is focused, so do not touch the keyboard while this runs. Start the
 # typing within the script's leading waits: typing begins about four seconds after launch.
 set -eu
-[ $# -ge 1 ] || { sed -n '6,14p' "$0"; exit 2; }
+[ $# -ge 1 ] || { sed -n '5,14p' "$0"; exit 2; }
 script=$1
 shift
 wtype=${WTYPE:-wtype}
