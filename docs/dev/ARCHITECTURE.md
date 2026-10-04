@@ -464,7 +464,7 @@ refresh. This avoids several independently ordered signal callbacks observing ha
 | `Samples` | stored analysis changed | refresh graph samples, retaining unchanged GSK base |
 | `StoneVolume` | Stone Sounds slider | mute at once; otherwise rebuild the clips 250 ms after the slider rests |
 | `Engine` | engine or profile change | refresh engine menu, panel and subtitle; retry play if ready |
-| `Reconnected` | remote link restored | retry stalled play turn |
+| `Reconnected` | remote link restored, even when the status watch coalesced the outage away | retry stalled play turn |
 | `Toast(String)` | toast request | show one toast |
 | `Play` | play state changed | refresh clocks and controls; lock editor during play |
 | `BatchProgress` | sweep progress | throttle graph/blunder refresh to 250 ms; final `Tree` refresh on exit |

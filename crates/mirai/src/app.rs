@@ -966,21 +966,18 @@ impl AppState {
         let Some(mut link) = link else {
             return;
         };
-        // Only a return is news. The link may already be down when a window adopts the
-        // engine, and the status it starts from asks for nothing. Sampled here, before
-        // `restart_analysis` subscribes, so a return between the two is still a change.
-        let mut up = *link.borrow_and_update() == RemoteStatus::Connected;
+        // The starting status asks for nothing. Mark it seen before subscribing, so a
+        // return between the two is still a change. Every later Connected notification
+        // is a completed handshake, even if watch coalesced away the intervening outage.
+        link.borrow_and_update();
         let weak = self.downgrade();
         let task = glib::spawn_future_local(async move {
             while link.changed().await.is_ok() {
-                let now = *link.borrow_and_update() == RemoteStatus::Connected;
-                if now
-                    && !up
+                if *link.borrow_and_update() == RemoteStatus::Connected
                     && let Some(state) = weak.upgrade()
                 {
                     state.link_restored();
                 }
-                up = now;
             }
         });
         imp.link_watch.replace(Some(task));
@@ -1698,13 +1695,20 @@ mod tests {
             );
             assert_eq!(reconnects(), 1, "a stalled play turn was not told");
 
+            // A busy GTK thread may miss the outage: watch retains only the latest status.
+            status.send_replace(RemoteStatus::Reconnecting { attempt: 1 });
+            status.send_replace(RemoteStatus::Connected);
+            settle().await;
+            assert_eq!(asked.load(Ordering::SeqCst), 3, "coalesced reconnect");
+            assert_eq!(reconnects(), 1, "coalesced reconnect stalled play");
+
             // Replaced: that engine's link is none of this window's business any more.
             state.set_engine(None);
             status.send_replace(RemoteStatus::Reconnecting { attempt: 2 });
             settle().await;
             status.send_replace(RemoteStatus::Connected);
             settle().await;
-            assert_eq!(asked.load(Ordering::SeqCst), 2);
+            assert_eq!(asked.load(Ordering::SeqCst), 3);
             assert_eq!(reconnects(), 0);
 
             state.cancel_tasks();

@@ -124,7 +124,7 @@ needed, `cargo test -p <crate> -- --list`.
 `cargo test -p mirai`. Display-free projections and dispatch only; nothing is drawn, and what the window looks like is §5.
 
 - A comment or mark does not run the `Tree` refresh and one move projects once
-- A returning remote link re-requests analysis, only for the window's current engine
+- A returning remote link re-requests analysis, including a coalesced outage, only for the window's current engine
 - A score overlay is drawn on the real position, never a pinned variation
 - A pick is never faded
 - Config merge and discovery order
