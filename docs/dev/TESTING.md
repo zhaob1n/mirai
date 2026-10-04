@@ -396,10 +396,13 @@ Traps:
 | `quit` | `app.quit()`, ending the script | — |
 
 Unknown or malformed steps fail the script, rather than silently skipping the
-step. Whitespace around steps is trimmed, so a script may wrap. `mod harness`
-is `#[cfg(debug_assertions)]` and `install` returns immediately when
-`MIRAI_HARNESS` is unset — **a release build ignores the variable. Always use
-a debug build.**
+step. Targets must be nonempty: `press:`, `wait-status:`, and `select:=2` are
+invalid, not requests to match the first control. Only `fill:` and a string
+action's value may be empty. Bare commands (`close-dialog`, `close-window`,
+`quit`) take no colon or argument. Whitespace around steps is trimmed, so a
+script may wrap. `mod harness` is `#[cfg(debug_assertions)]` and `install`
+returns immediately when `MIRAI_HARNESS` is unset — **a release build ignores
+the variable. Always use a debug build.**
 
 Every step logs to stderr:
 
