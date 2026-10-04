@@ -38,7 +38,7 @@ MRP carries Go position analysis between a client and a server running KataGo. E
 request contains the whole position (INV-4); results stream until completion or
 cancellation. Wire values are quantised, not floating-point ([§7](#7-value-types-and-quantisation)).
 
-### URL syntax
+### 1.1 URL syntax
 
 ```
 mirai-url = [ "mirai://" ] host [ ":" port ] [ "/" ]
@@ -188,7 +188,7 @@ against the reports before it.
 A stream's zstd state never crosses into another stream, so cancelling one — which throws its
 unread bytes away ([§8.4](#84-cancellation-inv-3)) — cannot desynchronise any other.
 
-### Worked frame
+### 4.2 Worked frame
 
 `ClientMsg::Ping(7)` — variant 4, one `u64`:
 

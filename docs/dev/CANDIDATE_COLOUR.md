@@ -129,6 +129,7 @@ White to play, root 44.0 % / −0.9 at 5.4k visits:
 | 1 | D8 | 44.6 % | −0.8 | 4.8k | 24.7 % | cyan |
 | 2 | C8 | 36.2 % | −1.5 | 404 | **59.5 %** | yellow |
 | 3 | Q4 | **38.8 %** | **−1.2** | 113 | 2.8 % | green |
+
 Q4's mean is closer to the pick on both visible channels, but KataGo ranks C8
 higher: its 59.5 % prior drew more search and its play-selection weight reflects
 that spend. Neither move qualifies for the LCB boost: 15 % of D8's weight is
@@ -184,9 +185,10 @@ confidence.
 The list stays in KataGo's `order`. Colour is a **loss** signal, not a rank
 signal, and the two are allowed to disagree.
 
-The tail is **unknown**: below 10 visits the blob is grey (`UNKNOWN_RGB`) and the badge
-(class `mirai-grade-unknown`) a faint neutral chip rather than a grey fill. The engine's pick is exempt —
-`palette::is_known` takes the rank, so no caller can paint the reference grey.
+The tail is **unknown**: below 10 visits the blob is grey (`UNKNOWN_RGB`) and the
+badge (class `mirai-grade-unknown`) a faint neutral chip rather than a grey fill. The
+engine's pick is exempt — `palette::is_known` takes the rank, so no caller can paint the
+reference grey.
 
 Among searched moves the loss is **pick `utility` − candidate `utility`**,
 side-to-move (`Color::utility_for`, which flips like score lead and not like a

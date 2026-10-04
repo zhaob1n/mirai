@@ -203,9 +203,8 @@ and move tree available after the live `Report` is gone. `analysis_of` converts 
 `AppState::set_report` stores the result only when it has more visits than what the node holds
 (`replaces_stored_analysis`), so early pondering cannot overwrite a finished sweep, and
 `GameSession::set_analysis_at` refuses it if the `position_revision` it was requested at is
-stale. `last_report` remains
-quantised and is discarded on cursor or position changes. Marks and comments do not bump
-`position_revision`.
+stale. `last_report` remains quantised and is discarded on cursor or position changes. Marks
+and comments do not bump `position_revision`.
 
 ```mermaid
 flowchart LR
@@ -513,6 +512,8 @@ combines the user's `ui.show_graph` preference with whether play is active.
 Keep the sidebar header's default `show-title` (otherwise its switcher disappears).
 Sidebar widths are 300 sp normally and 386 sp with Loss/Prior. Candidate cell width
 requests stay fixed so changing figures do not remeasure the list on every report.
+
+### Actions and shortcuts
 
 Every user-triggerable operation is a `win.*` action registered in `install_actions`, so the
 menu, the buttons, the shortcuts, the shortcuts window and the debug harness all drive the

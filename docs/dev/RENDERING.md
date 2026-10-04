@@ -19,24 +19,19 @@ board in 90–120 ms (8–11 fps). Both exposed the same rendering cost.
 
 ## 2. How it was measured
 
-The in-app instrument, [`render_probe.rs`](../../crates/mirai/src/render_probe.rs),
-logs frame cadence (`frame-dt`) and GTK update, layout and paint phases
-(`frame-phases`). `Timer` measures the drawing passes, and every window action's
-synchronous cost (`action:<name>`), which runs between frames where no phase sees it. The
-probes need debug assertions, not an unoptimised build:
-[`ui-survey.sh`](../../tools/perf/ui-survey.sh) builds `target/perf` (release, assertions
-on) and drives each surface — dialogs, the Fox picker, the main window, live analysis —
-through the harness. [`frame-stats.py`](../../tools/perf/frame-stats.py) aggregates the
-logs and judges each frame against the output's refresh period. [`dense-board.py`](../../tools/perf/dense-board.py) produces the 285-stone
-worst case; [`numbered-game.py`](../../tools/perf/numbered-game.py) exercises
-190 numbered moves, which setup stones cannot test. `MIRAI_NO_BOARD`,
-`MIRAI_NO_GRAPH`, `MIRAI_NO_LABEL_DEFER`, `MIRAI_SPIN` and `MIRAI_DUMP_NODE`
-are available for ablation and render-node capture in debug builds. For a stack,
-`MIRAI_WRAP` prefixes the survey's command with `perf record`; with
-`-k CLOCK_MONOTONIC`, [`frame-profile.py`](../../tools/perf/frame-profile.py) cuts the
-profile at each frame's `at=` and says, per slow frame, how long the GTK thread was on a
-CPU and at what clock, or where one frame's time went. Unwind with frame pointers: Arch's
-libraries have them, and GTK's widget recursion runs deeper than a DWARF stack copy.
+| Tool | What it measures |
+|---|---|
+| [`render_probe.rs`](../../crates/mirai/src/render_probe.rs) | in-app: frame cadence (`frame-dt`), GTK's update, layout and paint phases (`frame-phases`), the drawing passes (`Timer`), and each window action's synchronous cost (`action:<name>`), which runs between frames where no phase sees it. Needs debug assertions, not an unoptimised build |
+| [`ui-survey.sh`](../../tools/perf/ui-survey.sh) | builds `target/perf` (release, assertions on) and drives dialogs, the Fox picker, the main window and live analysis through the harness |
+| [`frame-stats.py`](../../tools/perf/frame-stats.py) | aggregates the logs and judges each frame against the output's refresh period |
+| [`dense-board.py`](../../tools/perf/dense-board.py) | produces the 285-stone worst case |
+| [`numbered-game.py`](../../tools/perf/numbered-game.py) | 190 numbered moves, which setup stones cannot test |
+| [`frame-profile.py`](../../tools/perf/frame-profile.py) | with `MIRAI_WRAP` prefixing the survey's command with `perf record -k CLOCK_MONOTONIC`, cuts the profile at each frame's `at=` and says, per slow frame, how long the GTK thread was on a CPU and at what clock, or where one frame's time went |
+
+`MIRAI_NO_BOARD`, `MIRAI_NO_GRAPH`, `MIRAI_NO_LABEL_DEFER`, `MIRAI_SPIN` and
+`MIRAI_DUMP_NODE` are available for ablation and render-node capture in debug builds.
+Unwind with frame pointers: Arch's libraries have them, and GTK's widget recursion runs
+deeper than a DWARF stack copy.
 
 Measurements in §§3–5 used no engine, a ~1486×1634 window on a
 6016×3384@60 Hz output at scale 2. Reset persisted `[ui]` toggles between
@@ -62,12 +57,18 @@ handing GSK a render node and the frame being done.
 sweep (285 stones, before the fix) shows the cost is flat against window area — so it is not
 fill rate:
 
-| renderer (empty board) | paint median | | window | area | paint median |
-|---|---|---|---|---|---|
-| `vulkan` (default) | 29.1 ms | | 560×480 | 0.27 Mpx | 100.3 ms |
-| `ngl` | 49.6 ms | | 800×680 | 0.54 Mpx | 83.6 ms |
-| `cairo` | 27.8 ms | | 1100×940 | 1.03 Mpx | 98.8 ms |
-| | | | 1400×1200 | 1.68 Mpx | 72.7 ms |
+| renderer (empty board) | paint median |
+|---|---|
+| `vulkan` (default) | 29.1 ms |
+| `ngl` | 49.6 ms |
+| `cairo` | 27.8 ms |
+
+| window | area | paint median |
+|---|---|---|
+| 560×480 | 0.27 Mpx | 100.3 ms |
+| 800×680 | 0.54 Mpx | 83.6 ms |
+| 1100×940 | 1.03 Mpx | 98.8 ms |
+| 1400×1200 | 1.68 Mpx | 72.7 ms |
 
 **Historical ablations** (`MIRAI_NO_WOOD`/`MIRAI_NO_GRID` were temporary):
 sidebar fold on an empty board before the fix.
@@ -265,8 +266,10 @@ GTK 4.24.0, with intel_pstate active (HWP).
 | frames over budget, live analysis survey | 25–29 % | 3.2 % |
 | frames over budget opening and closing, dialogs / Fox picker | 2.5–3.0 % / 9.7–11 % | 0.6–1.0 % / 1.6–2.6 % |
 
-**A list view keeps 200 rows.** `GtkListView` keeps `GTK_LIST_VIEW_MAX_LIST_ITEMS`
-(200) rows alive around its anchor whatever its height (`gtklistview.c`), so a list of
+### A list view keeps 200 rows
+
+`GtkListView` keeps `GTK_LIST_VIEW_MAX_LIST_ITEMS` (200) rows alive around its anchor
+whatever its height (`gtklistview.c`), so a list of
 Fox's 200 records was 200 bound, measured, styled rows. A one-column `GtkGridView` keeps
 `GTK_GRID_VIEW_MAX_VISIBLE_ROWS` (30) plus three. Both are *inert* while unrooted: they
 drop their factory, and rebind every live row synchronously when presented again. The
@@ -276,22 +279,28 @@ and measure, so a page fills four rows a frame, and the dialog is presented with
 rows hidden — a dialog put back on screen shapes all its text again — to refill them the
 same way once it is mapped.
 
-**`adw_dialog_present` measures the whole dialog, synchronously** — every page of
-Preferences, every row's text. Building the template and that measure took 38–130 ms
+### `adw_dialog_present` measures the whole dialog, synchronously
+
+Every page of Preferences, every row's text. Building the template and that measure took
+38–130 ms
 per open; a dialog kept for the window and presented again costs 2–9 ms. Preferences,
 New Game and the Fox picker are kept and reset or reloaded on each presentation.
 Setting a spin row to the value it shows still formats and relays it out, so reloads
 compare first.
 
-**A resize re-shaped the coordinates every frame.** The static layer is rebuilt at each
-new allocation, and each fractional font size meant Pango matching a font through
+### A resize re-shaped the coordinates every frame
+
+The static layer is rebuilt at each new allocation, and each fractional font size meant
+Pango matching a font through
 fontconfig and shaping 38 strings: 7 ms a frame. Coordinates are now set in whole
 pixels and kept shaped across rebuilds. Candidate figures went through one layout whose
 text and font were switched twice per line, so every figure was shaped twice per report;
 one layout per line shapes it once.
 
-**The candidate list rebuilt its rows on every step.** Under live analysis a step
-emptied the store until the position's first report, which refilled it a few moves a
+### The candidate list rebuilt its rows on every step
+
+Under live analysis a step emptied the store until the position's first report, which
+refilled it a few moves a
 report. `GtkColumnView` destroys the row of each object that leaves its model and builds
 one for each that arrives, synchronously inside `items-changed`, so the panel's refresh
 between frames carried the churn. A row the report has no move for is now blanked
@@ -300,8 +309,10 @@ stylesheet keys on to drop its cells' padding, so it has no height, and it sorts
 The list looks as it did; only a lowered suggestion limit removes rows. `MIRAI_FRAMES`
 counts rows built (`candidate-row`) and times the refresh (`candidates`).
 
-**The CPU ran at its lowest clock.** On a machine whose kernel picks frequencies from
-load — here intel_pstate in passive mode (`intel_pstate=no_hwp`) under schedutil — the
+### The CPU ran at its lowest clock
+
+On a machine whose kernel picks frequencies from load — here intel_pstate in passive mode
+(`intel_pstate=no_hwp`) under schedutil — the
 GTK thread looks idle: it works a millisecond or two a frame and sleeps the rest. Its
 slow frames were on-CPU for their whole length, on P-cores at 0.65–0.97 GHz of 4.9: an
 animation frame of 4 Mcycles, under a millisecond at full clock, took 5 ms; a
@@ -318,8 +329,10 @@ GHz. EPP `performance` took frames over budget opening and closing from 0.6–1.
 1.6–2.6 % (dialogs / Fox picker) to 0.1–0.2 % / 0.2 %, and closes to none. That choice is
 the system's.
 
-**The first CJK text loaded its fonts inside a frame.** Pango builds a fallback fontset
-per font description the first time a string needs one: fontconfig sorts the installed
+### The first CJK text loaded its fonts inside a frame
+
+Pango builds a fallback fontset per font description the first time a string needs one:
+fontconfig sorts the installed
 fonts for it, and the CJK face is opened and shaped with. With an English interface the
 picker's first records paid that for four text styles at once, 60–130 ms of layout.
 Pango's font map belongs to its thread, so `font_warmup.rs` lays out a CJK sample on the
@@ -329,27 +342,33 @@ step takes 17–45 ms at idle, 9–30 ms with a Chinese interface, whose own tex
 part of it. Laying out a sample with the window's own context alone, as first tried,
 covered one style and saved nothing measurable.
 
-**Dialog animations re-rasterised their text.** libadwaita's floating sheet animates its
-scale from 0.8 (`adw-floating-sheet.c`). GSK's GPU renderer lifts that scale and
-translation out of the modelview into the pass's scale, and rasterises glyphs at that
-exact scale, keying its glyph cache by it (`gskgpunodeprocessor.c`,
-`gskgpucachedglyph.c`). GTK 4.24 rounds the scale to a power of two only when the
-modelview keeps a rotation, skew or projection (`<= GSK_FINE_TRANSFORM_CATEGORY_2D`),
-not when it was lifted, so every frame of an open or close rasterised every glyph again:
-31–37 ms closing the picker. Rounding the lifted scale too, in `add_glyph_node`, took that
-to 6–7 ms ([GTK #8440](https://gitlab.gnome.org/GNOME/gtk/-/work_items/8440)), but text
-whose glyphs are rasterised ahead of drawing cannot follow a continuous scale without
-missing that cache. `widgets/sheet_texture.rs` does what Ptyxis does for its tab overview
+### Dialog animations re-rasterised their text
+
+libadwaita's floating sheet animates its scale from 0.8 (`adw-floating-sheet.c`). GSK's GPU
+renderer lifts that scale and translation out of the modelview into the pass's scale, and
+rasterises glyphs at that exact scale, keying its glyph cache by it
+(`gskgpunodeprocessor.c`, `gskgpucachedglyph.c`). GTK 4.24 rounds the scale to a power of
+two only when the modelview keeps a rotation, skew or projection
+(`<= GSK_FINE_TRANSFORM_CATEGORY_2D`), not when it was lifted, so every frame of an open or
+close rasterised every glyph again: 31–37 ms closing the picker. Rounding the lifted scale
+too, in `add_glyph_node`, took that to 6–7 ms
+([GTK #8440](https://gitlab.gnome.org/GNOME/gtk/-/work_items/8440)), but text whose glyphs
+are rasterised ahead of drawing cannot follow a continuous scale without missing that cache.
+
+`widgets/sheet_texture.rs` does what Ptyxis does for its tab overview
 ([libadwaita #756](https://gitlab.gnome.org/GNOME/libadwaita/-/issues/756)): while the
 sheet scales, the dialog's content is drawn from a texture rendered at the surface's own
 scale, whose glyphs are cached: 1.3 ms a render at the median, 4.3 ms at p99. An opening
 dialog renders it every frame, after that frame's layout, offset by where the widget's
-origin falls inside a device pixel. GSK snaps each glyph's baseline to a whole pixel of
-what it renders to, so a texture rendered from a pixel corner but drawn half a pixel off
-put its text 0.3 px high and blurred until the dialog went live, a jump as the animation
-ended; aligned, the texture at rest matches live text (no level off by more than 15 of
-255, against 126). Resampling remained: the spring's last frames, within a few tenths of
-a percent of scale 1, were softer than live text and sharpened as libadwaita snapped the
+origin falls inside a device pixel.
+
+**Alignment.** GSK snaps each glyph's baseline to a whole pixel of what it renders to, so a
+texture rendered from a pixel corner but drawn half a pixel off put its text 0.3 px high and
+blurred until the dialog went live, a jump as the animation ended; aligned, the texture at
+rest matches live text (no level off by more than 15 of 255, against 126).
+
+**The last frames.** Resampling remained: the spring's last frames, within a few tenths of a
+percent of scale 1, were softer than live text and sharpened as libadwaita snapped the
 spring to rest, a pop just as the motion ended. `tools/perf/dialog-settle.py` records the
 open off the screen: on its last frame off rest, the text differed from rest by a mean
 0.87–0.88 grey levels, against 0.50–0.53 drawn live, the spring's own last step. Once the
@@ -357,16 +376,17 @@ spring has turned back from its overshoot and the scale left moves the dialog's 
 under 3 device px, the open's texture is drawn at scale 1 about the dialog's centre, the
 content off the sheet by no more than that as the spring settles; that last frame then
 differs by 0.17–0.19. Latched on the way up, a dialog would ride the 1.7 % overshoot off
-its sheet. Nearest-neighbour sampling, tried first, looked worse. A closing dialog keeps
-the texture it began with; its scrollbars and focus rings still fade, and rendering them
-again was a millisecond or more a frame for nothing. A close begins at rest, and its first
-frame may still be at rest, so the watch redraws each frame until the sheet shrinks:
-otherwise the paint that first scales reuses the live render node, 18 ms of glyphs. The
-watch ends at scale 1, or at any scale held for four frames, so a sheet that came to rest
-scaled does not keep a texture rendering every frame. `MIRAI_NO_SHEET_TEXTURE=1` draws
-dialogs live.
+its sheet. Nearest-neighbour sampling, tried first, looked worse.
 
-What remains:
+**Closing.** A closing dialog keeps the texture it began with; its scrollbars and focus
+rings still fade, and rendering them again was a millisecond or more a frame for nothing. A
+close begins at rest, and its first frame may still be at rest, so the watch redraws each
+frame until the sheet shrinks: otherwise the paint that first scales reuses the live render
+node, 18 ms of glyphs. The watch ends at scale 1, or at any scale held for four frames, so a
+sheet that came to rest scaled does not keep a texture rendering every frame.
+`MIRAI_NO_SHEET_TEXTURE=1` draws dialogs live.
+
+### What remains
 
 - **Presenting a kept dialog restyles all of it.** The dialog host takes a closed dialog
   out of the window, and presenting it again re-attaches its CSS nodes, so GTK computes

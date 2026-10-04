@@ -9,14 +9,11 @@ How to prove a change to mirai works. Contributor entry is
 [`AGENTS.md`](../../AGENTS.md). Frame cost is [`RENDERING.md`](RENDERING.md); the
 candidate-colour ramp is [`CANDIDATE_COLOUR.md`](CANDIDATE_COLOUR.md).
 
-Wayland root grabs are black. Use the in-process harness (§5) for screenshots;
-`shot:` proves what is drawn, not frame time. For per-frame changes or observed
-stutter, measure with `MIRAI_FRAMES=1` and `tools/perf/` as in
-[`RENDERING.md`](RENDERING.md); `tools/perf/ui-survey.sh` runs the `dialogs`, `fox` and
-`main` scenarios by default (request live analysis with `--engine analysis`), and prints frames
-over the display's budget, step by step. A glitch that costs no time shows only on the
-screen: `tools/perf/dialog-settle.py` records a dialog opening with gpu-screen-recorder
-and prints how far its last frames are from rest.
+| To prove | Use |
+|---|---|
+| what is drawn | the in-process harness's `shot:` (§5); Wayland root grabs are black |
+| frame time, or observed stutter | `MIRAI_FRAMES=1` and `tools/perf/` as in [`RENDERING.md`](RENDERING.md). `tools/perf/ui-survey.sh` runs the `dialogs`, `fox` and `main` scenarios by default (request live analysis with `--engine analysis`) and prints frames over the display's budget, step by step |
+| a glitch that costs no time | `tools/perf/dialog-settle.py` records a dialog opening with gpu-screen-recorder and prints how far its last frames are from rest |
 
 ## 1. Quick reference
 
@@ -30,30 +27,116 @@ cargo test -p mirai-proto --test wire_size -- --nocapture   # prints the measure
 `just check` runs formatting, all-target Clippy with warnings denied, and the full
 workspace suite with the lockfile — the checks every commit owes.
 
-For documentation edits, run `python tools/docs/check-links.py`. It checks local
-files and heading anchors, and refuses a source file cited with a line number: cite a symbol
-or a section, which survives the next edit. The optional adjacent `mirai-ohos` link is
-reported separately. For Rust, run `cargo fmt --all --check`; for Blueprint, run
-`blueprint-compiler lint crates/mirai/src/{window,preferences,new_game,kifu_picker,label_editor,profile_editor}.blp crates/mirai/src/panels/analysis.blp`.
-Avoid `cargo clippy --fix`: it rewrites files you have not reviewed.
-`harness.rs` and `probe.rs` have prose examples, not doc-tests. The GUI build script runs
-`msgfmt --check` over the catalogues in `po/LINGUAS` (`crates/mirai/build.rs`). For the merged
-desktop entry and metainfo, run `desktop-file-validate` and `appstreamcli validate` on
-what `just install` wrote.
+| Changed | Check |
+|---|---|
+| Rust | `cargo fmt --all --check`. Avoid `cargo clippy --fix`: it rewrites files you have not reviewed |
+| Blueprint | `blueprint-compiler lint crates/mirai/src/{window,preferences,new_game,kifu_picker,label_editor,profile_editor}.blp crates/mirai/src/panels/analysis.blp` |
+| Documentation | `python tools/docs/check-links.py`: local files and heading anchors, and it refuses a source file cited with a line number — cite a symbol or a section, which survives the next edit. The optional adjacent `mirai-ohos` link is reported separately |
+| Translations | the GUI build script runs `msgfmt --check` over the catalogues in `po/LINGUAS` (`crates/mirai/build.rs`) |
+| Desktop entry, metainfo | run `desktop-file-validate` and `appstreamcli validate` on what `just install` wrote |
+
+`harness.rs` and `probe.rs` have prose examples, not doc-tests.
 
 ## 2. What is covered where
 
 Six crates. The suite defends behaviour. It is not a name index: when a test name is
 needed, `cargo test -p <crate> -- --list`.
 
-| Crate | Behaviour the suite proves | Command / fixture |
-|---|---|---|
-| `mirai-core` | INV-1 geometry; each ruleset's KataGo string; ko, suicide, captures, Zobrist; positional versus situational superko, and that edits keep `NodeId`s; scoring totals (territory **plus the prisoners that side holds**), not the margin alone; SGF escaping, collections, branches, compressed `ul:lr` point lists, and a corrupt `MRAI` ignored rather than fatal | `cargo test -p mirai-core`. Parser fixtures: `crates/mirai-core/tests/data/katago-selfplay.sgf` (mirai's writer; regenerate in §4) and `lizzieyzy-autoGame1.sgf` (another writer's bytes, vendored) |
-| `mirai-proto` | INV-6 quantisation and the INV-2 flip; the frame length cap enforced *before* allocate; a stream cut anywhere inside a frame, header included, is an error rather than a clean end; a control frame's zstd plaintext stops inflating at the read's limit; trailing bytes and a flag the stream does not allow refused; a subscription stream decodes frame by frame, compresses a repeat to a back-reference, refuses a bomb and an oversized window, and restores ownership sent as changes; a stream cannot run more than one window ahead of its reader; cert reuse; a mismatched pin refused as a mismatch, not as a generic failure; an openssl-style pin of the real certificate connects; a probe returns the fingerprint and opens no stream | `cargo test -p mirai-proto`. The byte budget is the `wire_size` command in §1 — read the printed numbers, do not copy them into this table |
-| `mirai-engine` | The JSON handed to KataGo (empty `avoidMoves` dropped, never `analyzeTurns`, `terminate` behind INV-3); decode order and Black-perspective values; a candidate cap keeps the engine's best, not KataGo's first; reporting perspective forced on the command line; a comma in an override path is an error; a user-supplied config is overridden only for the two thread counts; the generated analysis config carries every key KataGo demands and is not rewritten when unchanged; calibration selects the measured winner and covers the thread product; dropping a subscription forgets it before the tail is decoded; a decode failure still terminates the search; a dead remote address fails instead of hanging; a subscription stream without its preamble fails the connection instead of hanging; the MRP session rules against a scripted server; a probe returns the fingerprint and sends no Hello, and a wrong pin fails before Hello | `cargo test -p mirai-engine`. These tests never start KataGo. A real engine is §4 |
-| `mirai-client` | A request built from the last setup/`PL` boundary, with territory komi taken from that boundary; a sweep hands back a result before the rest of the plan is dispatched; blunder drop measured from the mover, above the 2% noise floor; an illegal move changes nothing; dirty is a document token; an unpinned connect probes and waits, and Trust is what sends the pin; temperature 0 is deterministic and one bad report does not resign; Fox dialect normalised before `sgf::parse`; eWeiqi's GIB read top-down with commentary on the move it follows and its variation diagrams kept off the main line; Yike's Chinese results, exact-name candidates and paged lists that stop where they should; only a single step onto a placed stone sounds, and a capture is told by the stones it removed | `cargo test -p mirai-client` |
-| `mirai-server` | Token shape and placeholder rejection; misspelled keys, duplicate tokens and a zero `max_subs` refused; relative paths resolved against the config directory; an authenticated client cannot exceed its token's cross-connection subscription quota or raise priority; off-board, oversized or unbounded requests constrained before KataGo, with only allow-listed overrides forwarded; silent pre-auth and blocked error writes release session slots; cancellation stops the search even when its stream is not read, and `STOP_SENDING` alone stops a search that is not reporting; a pipelined burst is answered in full, while a peer that stops reading its control stream loses its searches; oversized/compressed Hello refused without logging secrets | `cargo test -p mirai-server`. Example: `crates/mirai-server/server.example.toml` |
-| `mirai` | Display-free projections and dispatch only: a comment or mark does not run the `Tree` refresh and one move projects once; a returning remote link re-requests analysis, only for the window's current engine; a score overlay is drawn on the real position, never a pinned variation; a pick is never faded; config merge and discovery order; a missing Human model does not overwrite the saved strength; handicap only where the board has points; cache power 0 or at least 2^14; Clear Board keeps size/rules/komi; the slider spans the line through the cursor; widget geometry lifted out of `snapshot()`; harness grammar; a server's reply is taken only from a 2xx, within its size cap (a loopback libsoup server); the record search history keeps one search per server and query, most recent first, drops the oldest past its limit, and round-trips through its file; `EnginePool` sharing, stranding and teardown. Nothing drawn | `cargo test -p mirai`. What the window looks like is §5 |
+### `mirai-core`
+
+`cargo test -p mirai-core`. Parser fixtures: `crates/mirai-core/tests/data/katago-selfplay.sgf` (mirai's writer; regenerate in §4) and `lizzieyzy-autoGame1.sgf` (another writer's bytes, vendored).
+
+- INV-1 geometry
+- Each ruleset's KataGo string
+- Ko, suicide, captures, Zobrist
+- Positional versus situational superko, and that edits keep `NodeId`s
+- Scoring totals (territory **plus the prisoners that side holds**), not the margin alone
+- SGF escaping, collections, branches, compressed `ul:lr` point lists, and a corrupt `MRAI` ignored rather than fatal
+
+### `mirai-proto`
+
+`cargo test -p mirai-proto`. The byte budget is the `wire_size` command in §1 — read the printed numbers, do not copy them here.
+
+- INV-6 quantisation and the INV-2 flip
+- The frame length cap enforced *before* allocate
+- A stream cut anywhere inside a frame, header included, is an error rather than a clean end
+- A control frame's zstd plaintext stops inflating at the read's limit
+- Trailing bytes and a flag the stream does not allow refused
+- A subscription stream decodes frame by frame, compresses a repeat to a back-reference, refuses a bomb and an oversized window, and restores ownership sent as changes
+- A stream cannot run more than one window ahead of its reader
+- Cert reuse
+- A mismatched pin refused as a mismatch, not as a generic failure
+- An openssl-style pin of the real certificate connects
+- A probe returns the fingerprint and opens no stream
+
+### `mirai-engine`
+
+`cargo test -p mirai-engine`. These tests never start KataGo. A real engine is §4.
+
+- The JSON handed to KataGo (empty `avoidMoves` dropped, never `analyzeTurns`, `terminate` behind INV-3)
+- Decode order and Black-perspective values
+- A candidate cap keeps the engine's best, not KataGo's first
+- Reporting perspective forced on the command line
+- A comma in an override path is an error
+- A user-supplied config is overridden only for the two thread counts
+- The generated analysis config carries every key KataGo demands and is not rewritten when unchanged
+- Calibration selects the measured winner and covers the thread product
+- Dropping a subscription forgets it before the tail is decoded
+- A decode failure still terminates the search
+- A dead remote address fails instead of hanging
+- A subscription stream without its preamble fails the connection instead of hanging
+- The MRP session rules against a scripted server
+- A probe returns the fingerprint and sends no Hello, and a wrong pin fails before Hello
+
+### `mirai-client`
+
+`cargo test -p mirai-client`.
+
+- A request built from the last setup/`PL` boundary, with territory komi taken from that boundary
+- A sweep hands back a result before the rest of the plan is dispatched
+- Blunder drop measured from the mover, above the 2% noise floor
+- An illegal move changes nothing
+- Dirty is a document token
+- An unpinned connect probes and waits, and Trust is what sends the pin
+- Temperature 0 is deterministic and one bad report does not resign
+- Fox dialect normalised before `sgf::parse`
+- eWeiqi's GIB read top-down with commentary on the move it follows and its variation diagrams kept off the main line
+- Yike's Chinese results, exact-name candidates and paged lists that stop where they should
+- Only a single step onto a placed stone sounds, and a capture is told by the stones it removed
+
+### `mirai-server`
+
+`cargo test -p mirai-server`. Example: `crates/mirai-server/server.example.toml`.
+
+- Token shape and placeholder rejection
+- Misspelled keys, duplicate tokens and a zero `max_subs` refused
+- Relative paths resolved against the config directory
+- An authenticated client cannot exceed its token's cross-connection subscription quota or raise priority
+- Off-board, oversized or unbounded requests constrained before KataGo, with only allow-listed overrides forwarded
+- Silent pre-auth and blocked error writes release session slots
+- Cancellation stops the search even when its stream is not read, and `STOP_SENDING` alone stops a search that is not reporting
+- A pipelined burst is answered in full, while a peer that stops reading its control stream loses its searches
+- Oversized/compressed Hello refused without logging secrets
+
+### `mirai`
+
+`cargo test -p mirai`. Display-free projections and dispatch only; nothing is drawn, and what the window looks like is §5.
+
+- A comment or mark does not run the `Tree` refresh and one move projects once
+- A returning remote link re-requests analysis, only for the window's current engine
+- A score overlay is drawn on the real position, never a pinned variation
+- A pick is never faded
+- Config merge and discovery order
+- A missing Human model does not overwrite the saved strength
+- Handicap only where the board has points
+- Cache power 0 or at least 2^14
+- Clear Board keeps size/rules/komi
+- The slider spans the line through the cursor
+- Widget geometry lifted out of `snapshot()`
+- Harness grammar
+- A server's reply is taken only from a 2xx, within its size cap (a loopback libsoup server)
+- The record search history keeps one search per server and query, most recent first, drops the oldest past its limit, and round-trips through its file
+- `EnginePool` sharing, stranding and teardown
 
 ## 3. Testing philosophy
 
@@ -365,7 +448,9 @@ export SGF=$PWD/crates/mirai-core/tests/data/katago-selfplay.sgf
 export RUST_LOG=info,mirai=debug
 ```
 
-**Isolation — a harness run must not touch the developer's session.**
+#### Isolation
+
+A harness run must not touch the developer's session.
 The unique `GApplication` otherwise forwards a second launch to the existing
 window. Config writes and autosaves use the active XDG directories; a scripted
 window can also steal keyboard focus.
@@ -402,6 +487,12 @@ rm -rf "$scratch"
 sets the window size: `0 0` keeps the size mirai asked for (needs a window rule that floats
 the harness id), a nonzero size floats the window and forces that size.
 
+Do not use `dbus-run-session` for a second instance: it can leave the login
+session's accessibility bus socket without a listener. Debug harness runs
+already set `NON_UNIQUE`.
+
+#### Sound
+
 `tools/ui/record-sound.sh "<script>" [args…]` uses isolated XDG directories, but writes
 `engine_profile = []` instead of copying your profiles and routes mirai's audio to a private
 null sink. It prints one line per sound onset, so a missing or extra stone sound shows up
@@ -421,12 +512,9 @@ pw-play /tmp/mirai-sounds/clip0.wav                     # placement; clip2 = 1-s
 Keep every peak under 1.0 and the first drop 1.5–4 dB under the placement; if a timbre
 change moves the drops' loudness, bring it back with `CLINK`.
 
-Do not use `dbus-run-session` for a second instance: it can leave the login
-session's accessibility bus socket without a listener. Debug harness runs
-already set `NON_UNIQUE`.
+#### (a) Load an SGF, navigate, live analysis, screenshot
 
-**(a) Load an SGF, navigate, live analysis, screenshot.** A positional path is
-opened through `connect_open`.
+A positional path is opened through `connect_open`.
 
 ```sh
 MIRAI_HARNESS="wait:2000,action:win.next10,action:win.next10,action:win.toggle-analysis,wait:12000,shot:/tmp/mirai-a.png,quit" \
@@ -443,8 +531,10 @@ to move. Insert `action:win.toggle-candidate-details` to show Loss and Prior,
 and `stack:Moves` for the branch graph: main line down from the root, variations
 to the right, cursor wearing an accent ring.
 
-**(b) Ownership overlay — the INV-1 canary.** Live analysis always requests
-`Want::OWNERSHIP`. `win.toggle-ownership` only switches drawing on.
+#### (b) Ownership overlay — the INV-1 canary
+
+Live analysis always requests `Want::OWNERSHIP`. `win.toggle-ownership` only switches
+drawing on.
 
 ```sh
 MIRAI_HARNESS="wait:2000,action:win.last,action:win.toggle-analysis,wait:15000,action:win.toggle-ownership,wait:1500,shot:/tmp/mirai-own.png,quit" \
@@ -458,7 +548,7 @@ diagonal.
 A vertical flip is subtler: right shape, reflected top-to-bottom. Either way the
 giveaway is shading that does not touch the stones it belongs to.
 
-**(c) New game, engine reply, undo, score estimate.**
+#### (c) New game, engine reply, undo, score estimate
 
 ```sh
 MIRAI_HARNESS="wait:8000,action:win.new-game,wait:800,press:Start Game,wait:1200,action:win.pass,wait:12000,shot:/tmp/mirai-play1.png,action:win.undo,wait:1200,shot:/tmp/mirai-play2.png,action:win.score,wait:20000,shot:/tmp/mirai-score.png,quit" \
@@ -473,9 +563,11 @@ to the human's turn. `win.score` opens the ownership-based result dialog.
 the preceding `wait:`. `win.score` logging `DISABLED` means KataGo was not
 ready yet, or never came up; check the log directory (§7).
 
-**(d) Whole-game analysis.** `win.analyse-game` is `BatchAnalysis::start`. Each
-node is analysed to `analysis.batch_visits` (100 by default), with twice
-`numAnalysisThreads` queries in flight, at most sixteen (`mirai_client::batch::in_flight`).
+#### (d) Whole-game analysis
+
+`win.analyse-game` is `BatchAnalysis::start`. Each node is analysed to
+`analysis.batch_visits` (100 by default), with twice `numAnalysisThreads` queries in flight,
+at most sixteen (`mirai_client::batch::in_flight`).
 
 ```sh
 MIRAI_HARNESS="wait:2000,action:win.analyse-game,wait:90000,shot:/tmp/mirai-batch.png,shot:/tmp/mirai-blunders.png=blunder_expander,quit" \
@@ -485,8 +577,10 @@ MIRAI_HARNESS="wait:2000,action:win.analyse-game,wait:90000,shot:/tmp/mirai-batc
 Expect a filled graph, blunder marks and rows; the second capture isolates the
 list. If progress is still running, lengthen the wait.
 
-**(e) Clean shutdown.** `close-window` calls `gtk::Window::close` on the active
-window, the same path as the title-bar button. `dispose` is the backstop.
+#### (e) Clean shutdown
+
+`close-window` calls `gtk::Window::close` on the active window, the same path as the
+title-bar button. `dispose` is the backstop.
 
 ```sh
 rm -f "$XDG_DATA_HOME/mirai"/autosave-*.sgf
@@ -505,9 +599,10 @@ drops `Ui` once; its `Drop` handles release (INV-8).
 `kill -9` bypasses both close and dispose. A loaded record leaves its autosave,
 and the next start offers it. That asymmetry is intentional.
 
-**(f) Two windows, one KataGo.** Do **not** set `MIRAI_HARNESS` here: `NON_UNIQUE`
-would start a second engine, which is the opposite of the proof. Match `pgrep`
-to the binary this profile actually starts.
+#### (f) Two windows, one KataGo
+
+Do **not** set `MIRAI_HARNESS` here: `NON_UNIQUE` would start a second engine, which is
+the opposite of the proof. Match `pgrep` to the binary this profile actually starts.
 
 ```sh
 ./target/debug/mirai "$SGF" &                       # scratch XDG dirs, as above
@@ -517,8 +612,9 @@ sleep 10; pgrep -af 'katago analysis' | wc -l       # still 1
 sleep 30; ls "$XDG_DATA_HOME/mirai"                 # two autosave files: two live windows
 ```
 
-**(g) Local-engine editor — managed and custom analysis config.** The icon
-button on a profile row is matched by its tooltip.
+#### (g) Local-engine editor — managed and custom analysis config
+
+The icon button on a profile row is matched by its tooltip.
 
 ```sh
 s=/tmp/mirai-ui; mkdir -p "$s/config/mirai" "$s/data"
@@ -538,8 +634,9 @@ changes a number and puts it back. Undo on the toast restores the previous
 value; profiles are not reset. Use short paths, or the rows grow wider than the
 captured window.
 
-**(h) No engine, and cached analysis without one.** Write the empty list. Do not
-omit the file.
+#### (h) No engine, and cached analysis without one
+
+Write the empty list. Do not omit the file.
 
 ```sh
 printf 'engine_profile = []\n' > "$scratch/config/mirai/config.toml"
@@ -567,7 +664,7 @@ Black's `…%`. The sidebar percentage is the side to move.
 This is the loopback and cancellation runbook. §4 only diffs a `[final]` block
 once the server is already up.
 
-**Bring up a server.**
+### Bring up a server
 
 ```sh
 cargo run -q -p mirai-server -- --generate-token        # 64 hex chars; needs no config file
@@ -591,7 +688,7 @@ INFO mirai-server listening listen=127.0.0.1:9678 engines=1 tokens=1
 INFO certificate fingerprint (compare this with the client before trusting) sha256=<colon-grouped hex>
 ```
 
-**Point a client at it.**
+### Point a client at it
 
 `probe --remote` is the fastest check (§4). For the GUI, add a remote profile
 (`url`, `token`, optional `engine`) to the isolated `config.toml`; the fields are
@@ -602,7 +699,7 @@ persists nothing. Compare it with the server's startup log (the same grouping;
 `--print-fingerprint` is the raw hex) before accepting. Switch engines with
 `action:win.set-engine=<profile>`.
 
-**Confirm a subscription opened.**
+### Confirm a subscription opened
 
 ```text
 INFO connection open session=1 peer=127.0.0.1:53412
@@ -615,7 +712,7 @@ INFO subscription done session=1 sub=1 visits=6500
 Priority identifies the caller — live analysis 4, whole-game analysis 0, score
 estimate 8 — each clamped into the served band.
 
-**Prove cancellation.**
+### Prove cancellation
 
 ```sh
 # terminal 1
@@ -652,36 +749,63 @@ that a dropped local subscription stopped KataGo.
 Symptom, cause or guard, and location. Rendering mechanics live in
 [`RENDERING.md`](RENDERING.md); black external grabs are covered in §5.
 
+### Window and widgets
+
 | Symptom | Cause / protection | Where |
 |---|---|---|
 | A `notify::` handler or `bind_property` target silently stopped firing | `explicit_notify` on a **derive-generated** setter. It disables automatic `notify::`. It belongs only on a property whose hand-written setter emits the signal itself. Three properties name a custom setter: `live_analysis`, `ownership_overlay`, `policy_overlay` | `app.rs`, the `#[properties]` block on `imp::AppState` |
 | A widget will not shrink, or one pane eats the window | `gtk::Paned` resize/shrink flags, or a hardcoded position. The graph wants `resize-end-child: false` and no fixed split. An unset paned sizes the graph by its *minimum* request and clips a shrinkable child instead of shrinking it, which is why the graph pins its remembered height as the minimum until the first layout | `window.blp` content paned (`resize-end-child: false`, `shrink-end-child: false`); `WinrateGraph::pin` / `release` |
 | The first window leaves bare background beside or under the board | `fit_default_size` measured the chrome wrong, or the window is tiled: niri ignores the default size unless a window rule floats mirai | `window::fit_default_size`; `mirai::window` debug log `default window size` |
 | The sidebar page switcher is missing, and a stray `✕` sits in its place | `adw::HeaderBar::show_title(false)` hides the *title widget*. That widget **is** the `InlineViewSwitcher`. The `✕` is a second set of window controls | `window.blp` sidebar header: `show-start-title-buttons` / `show-end-title-buttons` false, `show-title` left on |
+| Editing tools are missing | They start revealed, but a game closes them and they stay closed afterwards; so does `win.toggle-editor` or the nav button. A non-Play tool expands them. Active play forces them shut and disables the toggle | `set_editor_visible`; `window.blp` `editor_revealer` |
+| Loss and Prior columns are gone | Hidden until `win.toggle-candidate-details`. Hiding the column that is the current sort returns the sort to `#` first. The objects still hold the values | `AnalysisPanel::set_detailed_columns` |
+
+### Engine and analysis
+
+| Symptom | Cause / protection | Where |
+|---|---|---|
 | An engine connects, then vanishes seconds later; the server logs a connection with no subscription | Activation race. `activate_profile` is async and a local KataGo takes seconds, so an older activation can finish last | The activation counter in `AppState::activate_profile`. `discarding a superseded engine activation` at debug means the guard worked |
 | Live analysis restarts, but reports keep arriving for the old position | `generation`, bumped by `restart_analysis` and checked before a report is applied | `app.rs` `restart_analysis` |
-| "mirai did not shut down cleanly" on every start | The autosave is deleted by dropping the window's `Ui`. Either the process was killed, or a leftover from an earlier crash has not been answered | `Drop for Ui`, `window::collect_stale_autosaves` |
-| The restore prompt offers an empty board | `GameTree::has_content` regressed. An autosave with no move, setup, mark, to-play override or comment is neither written nor offered | `tree.rs` |
-| Engine and runtime survive window close | A long-lived callback owns the window, or shutdown never took the `Ui`. There is no `Ui::shutdown`. `close-request`, `dispose` and `ApplicationImpl::shutdown` all call `MiraiWindow::shutdown`, which `take_ui`s once. `Drop for Ui` aborts tasks, flushes the comment, cancels batch, play and analysis, saves config, clears the engine, and drops the autosave | `MiraiWindow::shutdown`, `Drop for Ui`, weak-window callbacks in `window.rs`, `play.rs`, `batch.rs` |
 | Sidebar says **No Engine Configured**, and that is treated as a failed open | No profile, no live report, and the current node has no cached analysis. The window is up. The StatusPage button is `win.preferences`; `present` does not open the dialog. A *missing* file may still seed a discovered engine once `Config::seeded` finishes on the blocking pool. An explicit `engine_profile = []` is the empty case | `update_analysis_page`, `prefs::no_engine_status_page`. Recipe (h) |
 | Cached numbers missing on an SGF that has them, or a fake live speed with no engine | The panel is shown when the *current* node has analysis, even with an empty profile list. Speed is attached only to a live report | `update_analysis_page`, `AnalysisPanel::refresh` |
 | Sidebar reads 9.9% while the graph reads `90.1%` | Not a double conversion. The sidebar is the side to move (`winrate_for`). The graph is always Black | `AnalysisPanel::refresh`; `WinrateGraph` cursor text and tooltip |
-| Editing tools are missing | They start revealed, but a game closes them and they stay closed afterwards; so does `win.toggle-editor` or the nav button. A non-Play tool expands them. Active play forces them shut and disables the toggle | `set_editor_visible`; `window.blp` `editor_revealer` |
-| Loss and Prior columns are gone | Hidden until `win.toggle-candidate-details`. Hiding the column that is the current sort returns the sort to `#` first. The objects still hold the values | `AnalysisPanel::set_detailed_columns` |
 | Overlay shading in the wrong place | Someone remapped indices. INV-1: ownership and policy index identically to the board | `decode.rs`, then recipe (b) |
 | Win rates inverted for one side, on *both* the sidebar and the graph | INV-2 violated: a conversion applied somewhere other than display | `winrate_for` / `score_lead_for` are the sanctioned sites |
 | Territory totals low by the prisoner count, margin right | The "territory minus prisoners you lost" formula. Each side scores territory **plus the prisoners it holds** | `score.rs` |
 | Engine will not start, no useful message in the GUI | KataGo's own log | `$XDG_DATA_HOME/mirai/katago-logs` (GUI, `Config::data_dir`; also `mirai-server` when an `[[engine]]` has no `log_dir`), `$TMPDIR/mirai-katago-logs` (`LocalEngineConfig` default), or `log_dir` in `server.toml`. `PermissionDenied … refusing` means the directory for a generated config, or a directory on its path, is another user's or writable by others — group write counts unless the directory is yours and in your own primary group (`atomic::private_dir`) |
 | `Startup(…)` mentioning `logDir` or a config key | A comma in a path. KataGo splits `-override-config` on commas | `local.rs` `override_config` |
+| Whole-game analysis sits at 0/N and then completes in one jump | A loop that awaits a permit per position dispatches the *whole* plan before it joins anything, so the first result arrives only once all but `concurrency` searches are done. Refill the `JoinSet` inside the join loop. `running.len() < concurrency` is the whole cap | `mirai_client::batch::sweep` |
+
+### Shutdown and autosave
+
+| Symptom | Cause / protection | Where |
+|---|---|---|
+| "mirai did not shut down cleanly" on every start | The autosave is deleted by dropping the window's `Ui`. Either the process was killed, or a leftover from an earlier crash has not been answered | `Drop for Ui`, `window::collect_stale_autosaves` |
+| The restore prompt offers an empty board | `GameTree::has_content` regressed. An autosave with no move, setup, mark, to-play override or comment is neither written nor offered | `tree.rs` |
+| Engine and runtime survive window close | A long-lived callback owns the window, or shutdown never took the `Ui`. There is no `Ui::shutdown`. `close-request`, `dispose` and `ApplicationImpl::shutdown` all call `MiraiWindow::shutdown`, which `take_ui`s once. `Drop for Ui` aborts tasks, flushes the comment, cancels batch, play and analysis, saves config, clears the engine, and drops the autosave | `MiraiWindow::shutdown`, `Drop for Ui`, weak-window callbacks in `window.rs`, `play.rs`, `batch.rs` |
+
+### Remote engine
+
+| Symptom | Cause / protection | Where |
+|---|---|---|
 | Client cannot connect though the server is up | Fingerprint mismatch after a regenerated cert, wrong token, or wrong `[[engine]]` name | `--print-fingerprint` versus `cert_sha256`. §6 |
 | Cancellation looks like 30 s | The client was `kill -9`'d. UDP has no FIN. Ctrl-C through `probe`'s `ctrl_c` arm is the measurement | §6 |
+
+### Rendering
+
+| Symptom | Cause / protection | Where |
+|---|---|---|
 | A `queue_draw` inside `snapshot()` does nothing | Use a tick callback for the next frame | [`RENDERING.md` §6](RENDERING.md#6-candidate-labels) |
 | `size_allocate` goes quiet during a fold | A plateau needs no new allocation; do not use allocation as the text-deferral signal | [`RENDERING.md` §6](RENDERING.md#6-candidate-labels) |
 | Board text stutters only in one fold direction | Defer text only while `Layout::cell` changes | [`RENDERING.md` §6](RENDERING.md#6-candidate-labels) |
 | A one-frame geometry repeat makes text flicker | Wait for two repeats (`CELL_SETTLED`) | [`RENDERING.md` §6](RENDERING.md#6-candidate-labels) |
 | The frame bug appears only on an idle machine | Check `/proc/loadavg` and frames per fold; a `shot:` cannot measure this | [`RENDERING.md` §6](RENDERING.md#6-candidate-labels) |
 | Frames drop during search; GPU is at 99% | Keep list objects stable and mutate in place, not a model splice per report | [`RENDERING.md` §7](RENDERING.md#7-a-report-cost-a-layout-and-it-was-never-the-gpu) |
-| Whole-game analysis sits at 0/N and then completes in one jump | A loop that awaits a permit per position dispatches the *whole* plan before it joins anything, so the first result arrives only once all but `concurrency` searches are done. Refill the `JoinSet` inside the join loop. `running.len() < concurrency` is the whole cap | `mirai_client::batch::sweep` |
+
+### Input, translation and the harness
+
+| Symptom | Cause / protection | Where |
+|---|---|---|
 | Typing in a comment passes, deletes a branch or toggles analysis; Ctrl+Z in a field undoes the record | The key was made an application accelerator. Those run in the window's capture phase, before the focused field. Only combinations no text field uses may be `KeyScope::Global`; check with `focus:comment` and `tools/ui/type-keys.sh` | `window::SHORTCUTS`, `view_shortcuts` |
 | `harness: action … -> MISSING` | No such action on the active window, or a typo. `app.*` goes to the application | `harness::activate`, `window::install_actions` |
 | `harness: screenshot failed: nothing was drawn` | The window never mapped, or a modal grabbed before `present()` | Lengthen the preceding `wait:` |
