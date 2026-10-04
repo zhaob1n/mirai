@@ -12,6 +12,8 @@
 //! that was shown. A click while the probe is still running, or after a newer connect
 //! has replaced the one on screen, is ignored: it must not authorise a certificate
 //! the user has not seen. The engine is not reachable until they do.
+//! A pinned handshake is not itself a usable link: initial and later transport statuses
+//! both gate engine publication, including an outage immediately after the handshake.
 //!
 //! There are no locks here. The state lives in one task; everything else is a channel.
 
@@ -241,7 +243,7 @@ impl Engine for Session {
     }
 }
 
-/// First and last four hex characters, which is what a user compares.
+/// First and last eight hex characters, which is what a user compares.
 fn short(fingerprint: &str) -> String {
     if fingerprint.len() <= 12 {
         return fingerprint.to_string();
@@ -378,9 +380,12 @@ async fn run(
                     (Some(Inflight::Probe { .. }), Attempt::Probe(Err(e))) => {
                         let _ = state.send(SessionState::Failed(e.to_string()));
                     }
-                    (Some(Inflight::Connect { .. }), Attempt::Connect(Ok(fresh))) => {
-                        let _ = engine.send(Some(fresh.engine.clone()));
-                        let _ = state.send(fold(&fresh.status.borrow(), &fresh.peer));
+                    (Some(Inflight::Connect { .. }), Attempt::Connect(Ok(mut fresh))) => {
+                        // The transport can fail between its handshake and publication.
+                        // Gate the initial engine exactly as subsequent status changes.
+                        let next = fold(&fresh.status.borrow_and_update(), &fresh.peer);
+                        let _ = engine.send(next.is_usable().then(|| fresh.engine.clone()));
+                        let _ = state.send(next);
                         link = Some(fresh);
                     }
                     (Some(Inflight::Connect { .. }), Attempt::Connect(Err(e))) => {
@@ -403,15 +408,7 @@ async fn run(
                 let next = fold(&l.status.borrow(), &l.peer);
                 // A dropped link must not keep dispatching: withdraw the engine while the
                 // transport is retrying, so requests fail fast instead of queueing.
-                match &next {
-                    SessionState::Connected(_) => {
-                        let _ = engine.send(Some(l.engine.clone()));
-                    }
-                    SessionState::Reconnecting { .. } | SessionState::Failed(_) => {
-                        let _ = engine.send(None);
-                    }
-                    _ => {}
-                }
+                let _ = engine.send(next.is_usable().then(|| l.engine.clone()));
                 let _ = state.send(next);
             }
         }
@@ -640,6 +637,37 @@ mod tests {
         until(&session, SessionState::is_usable).await;
         let _sub = session.subscribe(a_request());
         assert_eq!(dispatched(&mut seen), 1);
+    }
+
+    #[tokio::test]
+    async fn a_link_already_down_when_connected_is_not_published() {
+        for status in [
+            RemoteStatus::Reconnecting { attempt: 1 },
+            RemoteStatus::Failed("link failed".into()),
+        ] {
+            let (backend, mut seen) = fake();
+            backend.status.send_replace(status);
+            let session = Session::new(backend.clone());
+            session.connect(SessionConfig {
+                pin: Some("a".repeat(64)),
+                ..Default::default()
+            });
+            until(&session, |s| {
+                matches!(
+                    s,
+                    SessionState::Reconnecting { .. } | SessionState::Failed(_)
+                )
+            })
+            .await;
+            assert_eq!(session.describe().name, "");
+            let mut sub = session.subscribe(a_request());
+            assert!(matches!(sub.next().await, Some(SubEvent::Failed(_))));
+            assert_eq!(dispatched(&mut seen), 0);
+            backend.status.send(RemoteStatus::Connected).unwrap();
+            until(&session, SessionState::is_usable).await;
+            let _sub = session.subscribe(a_request());
+            assert_eq!(dispatched(&mut seen), 1);
+        }
     }
 
     #[tokio::test]
