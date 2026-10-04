@@ -426,7 +426,12 @@ impl SubStreamDecoder {
         self.plain.clear();
         let mut input = InBuffer::around(payload);
         loop {
-            spare(&mut self.plain, 16 * 1024);
+            if self.plain.len() == self.plain.capacity() {
+                // `reserve` can double past the limit before we check the output. Grow
+                // geometrically, but give zstd at most one byte past the plaintext cap.
+                let capacity = (self.plain.capacity() * 2).clamp(16 * 1024, MAX_FRAME + 1);
+                self.plain.reserve_exact(capacity - self.plain.len());
+            }
             let pos = self.plain.len();
             let mut out = OutBuffer::around_pos(&mut self.plain, pos);
             self.zstd.run(&mut input, &mut out)?;
@@ -728,14 +733,17 @@ mod tests {
 
     #[test]
     fn a_sub_stream_chunk_cannot_inflate_past_max_frame() {
-        let bomb = foreign_sub_frame(&vec![0u8; MAX_FRAME + 1], SUB_WINDOW_LOG);
+        let bomb = foreign_sub_frame(&vec![0u8; 4 * MAX_FRAME], SUB_WINDOW_LOG);
         assert!(
             bomb.len() < 4096,
             "not much of a bomb: {} bytes",
             bomb.len()
         );
         let r: Result<u32, _> = SubStreamDecoder::new().unwrap().decode(&bomb);
-        assert!(matches!(r, Err(FrameError::TooLarge(_))), "got {r:?}");
+        assert!(
+            matches!(r, Err(FrameError::TooLarge(n)) if n == MAX_FRAME as u64 + 1),
+            "inflation did not stop at the plaintext bound: {r:?}"
+        );
     }
 
     /// The window is the decoder's memory: a stream may not make a client hold more.
