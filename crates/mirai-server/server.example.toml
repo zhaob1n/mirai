@@ -33,15 +33,26 @@ model  = "/opt/katago/model.bin.gz"
 
 # Tuning. With a generated config these are written into it; with a custom one, only the
 # two thread values are applied as overrides on top of the file.
-analysis_threads = 4               # numAnalysisThreads: positions searched concurrently
-search_threads   = 16              # numSearchThreadsPerAnalysisThread
-# nn_max_batch_size = 64           # nnMaxBatchSize; wants to be at least the product above
-# nn_cache_size_power_of_two = 20  # nnCacheSizePowerOfTwo: 2^N evaluations, ~3 KiB each
-# log_dir = "katago-logs"          # KataGo's logDir, also where a generated config goes;
-#                                  # defaults to ~/.local/share/mirai/katago-logs. Must be
-#                                  # yours, and neither it nor a directory above it writable by
-#                                  # other users, or the server refuses to use it
-# startup_timeout_s = 180          # raise this if first-run OpenCL tuning times out
+
+# numAnalysisThreads: positions searched concurrently.
+analysis_threads = 4
+
+# numSearchThreadsPerAnalysisThread.
+search_threads = 16
+
+# nnMaxBatchSize; wants to be at least the product of the two thread counts above.
+# nn_max_batch_size = 64
+
+# nnCacheSizePowerOfTwo: 2^N evaluations, ~3 KiB each.
+# nn_cache_size_power_of_two = 20
+
+# KataGo's logDir, also where a generated config goes; defaults to
+# ~/.local/share/mirai/katago-logs. Must be yours, and neither it nor a directory above
+# it writable by other users, or the server refuses to use it.
+# log_dir = "katago-logs"
+
+# Raise this if first-run OpenCL tuning times out.
+# startup_timeout_s = 180
 
 # One [[token]] block per client. A token is a bearer secret compared in constant time;
 # generate one with `mirai-server --generate-token`. With no [[token]] block at all the
@@ -50,6 +61,7 @@ search_threads   = 16              # numSearchThreadsPerAnalysisThread
 [[token]]
 value    = "0000000000000000000000000000000000000000000000000000000000000000"
 name     = "laptop"
-max_subs = 64                      # requests this token may have queued or running, across every
-                                   # connection. KataGo runs numAnalysisThreads at once and queues
-                                   # the rest by priority, then arrival; this only stops a runaway client
+# Requests this token may have queued or running, across every connection. KataGo runs
+# numAnalysisThreads at once and queues the rest by priority, then arrival; this only
+# stops a runaway client.
+max_subs = 64
