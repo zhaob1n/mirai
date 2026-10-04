@@ -5,7 +5,7 @@ using Gtk 4.0;
 using Adw 1;
 
 template $MiraiProfileEditorPage : Adw.NavigationPage {
-  child: Adw.ToolbarView {
+  child: Adw.ToolbarView toolbar {
     [top]
     Adw.HeaderBar {
       [end]
@@ -19,9 +19,5 @@ template $MiraiProfileEditorPage : Adw.NavigationPage {
     Adw.Banner banner {
       title: _("The profile could not be saved");
     }
-
-    content: Adw.PreferencesPage content {
-      title: _("Engine Profile");
-    };
   };
 }

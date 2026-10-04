@@ -132,7 +132,7 @@ boundaries are [§1](#1-the-system). User settings and shortcuts are in
 | blunder colour, or the list row | `crates/mirai/src/widgets/winrate.rs`, `crates/mirai/src/panels/analysis.rs` | `severity_of_drop`, `update_blunder_row` |
 | the analysis sidebar | `crates/mirai/src/panels/analysis.rs`, `crates/mirai/src/panels/analysis.blp` | `refresh`, `set_detailed_columns`, `set_blunders` |
 | the static window, or another Blueprint template | `crates/mirai/src/window.blp`, `crates/mirai/src/window_shell.rs` | `MiraiWindow` template |
-| preferences, including automatic tuning in the editor | `crates/mirai/src/prefs.rs`, `crates/mirai/src/preferences.blp` | `present`, `CalibrationRun` |
+| preferences, including automatic tuning in the editor | `crates/mirai/src/prefs.rs`, `crates/mirai/src/preferences.blp`, `crates/mirai/src/profile_editor.rs` | `present`, `CalibrationRun` |
 | a score, fingerprint, new-game, or label dialog | `crates/mirai/src/dialogs.rs`, `crates/mirai/src/new_game.rs`, `crates/mirai/src/label_editor.rs` | `show_score_with`, `confirm_fingerprint`, `present` |
 | drive the real GUI, or count frames | `crates/mirai/src/harness.rs`, `crates/mirai/src/render_probe.rs` | [TESTING §5](TESTING.md#5-testing-the-gui) |
 | process lifetime, the runtime, or shutdown | `crates/mirai/src/main.rs`, `crates/mirai/src/application_shell.rs` | `MiraiApplication` |

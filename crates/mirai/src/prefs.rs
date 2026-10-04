@@ -25,7 +25,7 @@ use crate::config::{
 };
 use crate::i18n::{self, gettext, gettext_f, ngettext_f, pgettext};
 use crate::preferences_shell::{PreferencesDialog, PreferencesWidgets};
-use crate::profile_editor::ProfileEditorPage;
+use crate::profile_editor::{LocalProfileForm, ProfileEditorPage, RemoteProfileForm};
 use mirai_engine::{
     CalibrationConfig, CalibrationProgress, CalibrationResult, EngineTuning, TuningOverrides,
 };
@@ -413,15 +413,13 @@ fn confirm_delete(
 /// bar, a Save button and an inline error banner.
 struct Editor {
     page: adw::NavigationPage,
-    content: adw::PreferencesPage,
     save: gtk::Button,
     banner: adw::Banner,
 }
 
-fn editor_shell(title: &str) -> Editor {
-    let page = ProfileEditorPage::new(title);
+fn editor_shell(title: &str, content: &impl IsA<gtk::Widget>) -> Editor {
+    let page = ProfileEditorPage::new(title, content);
     Editor {
-        content: page.content(),
         save: page.save_button(),
         banner: page.banner(),
         page: page.upcast(),
@@ -448,39 +446,25 @@ fn open_editor(
     dialog.push_subpage(&page);
 }
 
-/// A read-only row showing a chosen path, with a button that opens a `gtk::FileDialog` and
-/// a slot for a chooser over discovered candidates. The slot starts empty when discovery
-/// has not finished; [`show_discovered`] fills it.
-fn file_row(
-    title: &str,
-    chooser_title: &str,
+/// Wires a declared file row: the subtitle shows `initial`, `slot` takes a chooser over
+/// discovered candidates, and the button opens a `gtk::FileDialog`. The slot starts empty
+/// when discovery has not finished; [`show_discovered`] fills it.
+fn wire_file_row(
+    row: &adw::ActionRow,
+    button: &gtk::Button,
+    slot: &gtk::Box,
     initial: PathBuf,
     candidates: Vec<PathBuf>,
+    chooser_title: &str,
     dialog: &adw::PreferencesDialog,
-) -> (adw::ActionRow, Rc<RefCell<PathBuf>>, gtk::Box) {
+) -> Rc<RefCell<PathBuf>> {
     let cell = Rc::new(RefCell::new(initial));
-
-    let row = adw::ActionRow::builder()
-        .title(title)
-        .subtitle(path_subtitle(&cell.borrow()))
-        .build();
-    row.set_use_markup(false);
-    row.set_subtitle_lines(3);
-
-    // Before the file button, so the discovered list is the first thing reached.
-    let slot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    row.add_suffix(&slot);
-    if let Some(chooser) = discovered_button(candidates, &row, &cell) {
+    row.set_subtitle(&path_subtitle(&cell.borrow()));
+    if let Some(chooser) = discovered_button(candidates, row, &cell) {
         slot.append(&chooser);
     }
 
-    let button = gtk::Button::from_icon_name("document-open-symbolic");
-    button.set_valign(gtk::Align::Center);
-    button.set_tooltip_text(Some(&gettext("Choose a File")));
-    button.add_css_class("flat");
-    row.add_suffix(&button);
-    row.set_activatable_widget(Some(&button));
-
+    let row = row.clone();
     let prompt = chooser_title.to_string();
     let cell_for_click = cell.clone();
     button.connect_clicked(clone!(
@@ -516,7 +500,7 @@ fn file_row(
         }
     ));
 
-    (row, cell, slot)
+    cell
 }
 
 fn path_subtitle(path: &Path) -> String {
@@ -675,15 +659,25 @@ fn candidate_labels(candidates: &[PathBuf]) -> Vec<(String, Option<String>)> {
         .collect()
 }
 
-/// `0` means "use the default": mirai's own when it generates the analysis config, or
-/// whatever the file says when the user supplies one.
-fn tuned_row(title: &str, subtitle: &str, value: u32, max: f64) -> adw::SpinRow {
-    let row = adw::SpinRow::with_range(0.0, max, 1.0);
-    row.set_title(title);
-    row.set_subtitle(subtitle);
-    row.set_value(value as f64);
-    hide_steppers(&row);
-    row
+/// Configures a declared spin row. `0` means "use the default": mirai's own when it
+/// generates the analysis config, or whatever the file says when the user supplies one.
+///
+/// The range stays in Rust: blueprint rejects an adjustment's step, and the maximum is an
+/// [`EngineTuning`] constant.
+fn configure_tuned(row: &adw::SpinRow, value: u32, max: f64) {
+    row.configure(
+        Some(&gtk::Adjustment::new(
+            f64::from(value),
+            0.0,
+            max,
+            1.0,
+            10.0,
+            0.0,
+        )),
+        1.0,
+        0,
+    );
+    hide_steppers(row);
 }
 
 fn spin_value_u16(row: &adw::SpinRow) -> Option<u16> {
@@ -892,102 +886,84 @@ fn local_editor(
     } else {
         gettext("Add Local Engine")
     };
-    let editor = editor_shell(&title);
+    let form = LocalProfileForm::new();
+    let editor = editor_shell(&title, &form);
 
-    let identity = adw::PreferencesGroup::new();
-    let name_row = adw::EntryRow::builder().title(gettext("Name")).build();
+    let name_row = form.name_row();
     name_row.set_text(editing.as_deref().unwrap_or(""));
-    identity.add(&name_row);
-    editor.content.add(&identity);
 
-    let paths = adw::PreferencesGroup::builder()
-        .title(gettext("KataGo"))
-        .description(gettext("Both must exist before the profile can be saved."))
-        .build();
-    let (katago_row, katago_path, _) = file_row(
-        &gettext("KataGo Binary"),
-        &gettext("Select the KataGo Binary"),
+    let katago_path = wire_file_row(
+        &form.katago_row(),
+        &form.katago_button(),
+        &form.katago_slot(),
         katago,
         Vec::new(),
+        &gettext("Select the KataGo Binary"),
         dialog,
     );
-    let (model_row, model_path, model_slot) = file_row(
-        &gettext("Neural Network Model"),
-        &gettext("Select the Neural Network Model"),
+    let model_row = form.model_row();
+    let model_slot = form.model_slot();
+    let model_path = wire_file_row(
+        &model_row,
+        &form.model_button(),
+        &model_slot,
         model,
         Vec::new(),
+        &gettext("Select the Neural Network Model"),
         dialog,
     );
-    paths.add(&katago_row);
-    paths.add(&model_row);
-    editor.content.add(&paths);
 
     // KataGo will not start without a `-config`, but mirai can write that file itself —
     // it needs three keys the user has no reason to care about. A custom file stays
     // available for anyone who does.
-    let source = adw::PreferencesGroup::builder()
-        .title(gettext("Configuration"))
-        .build();
-    let managed = gettext("Managed by mirai");
-    let custom_file = gettext("Custom file");
-    let mode = adw::ComboRow::builder()
-        .title(gettext("Analysis Config"))
-        .model(&gtk::StringList::new(&[&managed, &custom_file]))
-        .selected(u32::from(custom))
-        .build();
-    let (config_row, config_path, config_slot) = file_row(
-        &gettext("Custom Analysis Config"),
-        &gettext("Select the Custom Analysis Config"),
+    let mode = form.mode_row();
+    mode.set_selected(u32::from(custom));
+    let config_row = form.config_row();
+    let config_slot = form.config_slot();
+    let config_path = wire_file_row(
+        &config_row,
+        &form.config_button(),
+        &config_slot,
         suggested_config,
         Vec::new(),
+        &gettext("Select the Custom Analysis Config"),
         dialog,
     );
-    source.add(&mode);
-    source.add(&config_row);
-    editor.content.add(&source);
 
-    // Translators: noun, the search-thread settings, not the verb.
-    let search_title = pgettext("noun", "Search");
-    let threads = adw::PreferencesGroup::builder()
-        .title(&search_title)
-        .build();
-    let analysis_row = tuned_row(
-        &gettext("Positions in Parallel"),
-        "",
+    let analysis_row = form.analysis_row();
+    configure_tuned(
+        &analysis_row,
         u32::from(analysis_threads.unwrap_or(0)),
         f64::from(EngineTuning::MAX_ANALYSIS_THREADS),
     );
-    let search_row = tuned_row(
-        &gettext("Threads per Position"),
-        "",
+    let search_row = form.search_row();
+    configure_tuned(
+        &search_row,
         u32::from(search_threads.unwrap_or(0)),
         f64::from(EngineTuning::MAX_SEARCH_THREADS),
     );
-    threads.add(&analysis_row);
-    threads.add(&search_row);
-    editor.content.add(&threads);
 
     // A custom file has to carry these two itself — KataGo will not start without
     // `nnMaxBatchSize` — so there is nothing for mirai to override.
-    let memory = adw::PreferencesGroup::builder()
-        .title(gettext("Batching and Memory"))
-        .build();
+    let memory = form.memory_group();
     let batch_default = defaults.nn_max_batch_size.to_string();
     // Translators: nnMaxBatchSize is a KataGo setting name; leave it untranslated. {size} is that default.
     let batch_subtitle = gettext_f(
         "nnMaxBatchSize — 0 uses mirai's default ({size}). Wants to be at least positions × threads.",
         &[("size", &batch_default)],
     );
-    let batch_row = tuned_row(
-        &gettext("GPU Batch Size"),
-        &batch_subtitle,
+    let batch_row = form.batch_row();
+    batch_row.set_subtitle(&batch_subtitle);
+    configure_tuned(
+        &batch_row,
         u32::from(batch.unwrap_or(0)),
         f64::from(EngineTuning::MAX_BATCH_SIZE),
     );
     let cache_shown = snap_cache_power(0, cache.unwrap_or(0));
-    let cache_row = tuned_row(
-        &gettext("Neural-Net Cache"),
-        &cache_subtitle(cache_shown),
+    let cache_row = form.cache_row();
+    cache_row.set_subtitle(&cache_subtitle(cache_shown));
+    configure_tuned(
+        &cache_row,
         u32::from(cache_shown),
         f64::from(EngineTuning::MAX_CACHE_POWER),
     );
@@ -1003,9 +979,6 @@ fn local_editor(
         cache_previous.set(snapped);
         row.set_subtitle(&cache_subtitle(snapped));
     });
-    memory.add(&batch_row);
-    memory.add(&cache_row);
-    editor.content.add(&memory);
 
     // -- automatic tuning ---------------------------------------------------------------
     //
@@ -1013,28 +986,9 @@ fn local_editor(
     // GPU does with them is not something mirai can predict from the model file or the
     // driver version. The run needs the machine to itself, hence the engine shutdown and
     // the refusal to start with a second window open.
-    let auto = adw::PreferencesGroup::builder()
-        .title(gettext("Automatic Tuning"))
-        .description(gettext(
-            "Times KataGo on this machine at a series of thread settings and fills in the \
-             values above. It starts KataGo once per setting, so allow a few minutes.",
-        ))
-        .build();
-    let tune_row = adw::ActionRow::builder()
-        .title(gettext("Measure This Machine"))
-        .subtitle(gettext(
-            "Uses the binary and model chosen above, and stops the running engine while \
-             it works.",
-        ))
-        .build();
-    tune_row.set_use_markup(false);
-    tune_row.set_subtitle_lines(3);
-    let tune = gtk::Button::with_label(&gettext("Tune…"));
-    tune.set_valign(gtk::Align::Center);
-    tune_row.add_suffix(&tune);
-    tune_row.set_activatable_widget(Some(&tune));
-    auto.add(&tune_row);
-    editor.content.add(&auto);
+    let auto = form.tuning_group();
+    let tune_row = form.tune_row();
+    let tune = form.tune_button();
 
     let tune_state = state.clone();
     let tune_banner = editor.banner.clone();
@@ -1418,58 +1372,24 @@ fn remote_editor(
     } else {
         gettext("Add Remote Engine")
     };
-    let editor = editor_shell(&title);
+    let form = RemoteProfileForm::new();
+    let editor = editor_shell(&title, &form);
 
-    let identity = adw::PreferencesGroup::new();
-    let name_row = adw::EntryRow::builder().title(gettext("Name")).build();
+    let name_row = form.name_row();
     name_row.set_text(editing.as_deref().unwrap_or(""));
-    identity.add(&name_row);
-    editor.content.add(&identity);
 
-    let server = adw::PreferencesGroup::builder()
-        .title(gettext("Server"))
-        .description(gettext(
-            "For example 192.168.1.10, or 192.168.1.10:9678. The port defaults to 9678.",
-        ))
-        .build();
     // Only the address is shown and typed. mirai speaks one protocol, so its scheme says
     // nothing to the user; `entered_url` puts it back.
-    let url_row = adw::EntryRow::builder()
-        .title(gettext("Server Address"))
-        .build();
+    let url_row = form.url_row();
     url_row.set_text(url.strip_prefix(mirai_proto::URL_SCHEME).unwrap_or(&url));
-    let token_row = adw::PasswordEntryRow::builder()
-        .title(gettext("Token"))
-        .build();
+    let token_row = form.token_row();
     token_row.set_text(&token);
-    let engine_row = adw::EntryRow::builder()
-        .title(gettext("Engine Name (Optional)"))
-        .build();
+    let engine_row = form.engine_row();
     engine_row.set_text(&engine);
-    server.add(&url_row);
-    server.add(&token_row);
-    server.add(&engine_row);
-    editor.content.add(&server);
 
-    let trust = adw::PreferencesGroup::builder()
-        .title(gettext("Certificate"))
-        .description(gettext(
-            "mirai checks the certificate before sending the token. \
-             Test the connection and compare the fingerprint with the one \
-             mirai-server printed at startup.",
-        ))
-        .build();
-    let trust_row = adw::ActionRow::builder()
-        .title(gettext("Pinned Fingerprint"))
-        .subtitle(fingerprint_subtitle(&pin.borrow()))
-        .build();
-    trust_row.set_use_markup(false);
-    trust_row.set_subtitle_lines(3);
-    let test = gtk::Button::with_label(&gettext("Test Connection"));
-    test.set_valign(gtk::Align::Center);
-    trust_row.add_suffix(&test);
-    trust.add(&trust_row);
-    editor.content.add(&trust);
+    let trust_row = form.trust_row();
+    trust_row.set_subtitle(&fingerprint_subtitle(&pin.borrow()));
+    let test = form.test_button();
 
     // -- test connection ------------------------------------------------------------
     // The check in flight: re-testing replaces it, and leaving the editor drops it —

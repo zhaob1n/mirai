@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: mirai\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaob1n/mirai/issues\n"
-"POT-Creation-Date: 2026-10-05 01:56+0800\n"
+"POT-Creation-Date: 2026-10-05 02:08+0800\n"
 "PO-Revision-Date: 2026-09-28 06:00+0800\n"
 "Last-Translator: Huang Zhaobin <zhaob1n@foxmail.com>\n"
 "Language-Team: Chinese (China) <i18n-zh@googlegroups.com>\n"
@@ -843,10 +843,6 @@ msgid "Deleted “{name}”"
 msgstr "已删除“{name}”"
 
 #: crates/mirai/src/prefs.rs
-msgid "Choose a File"
-msgstr "选择文件"
-
-#: crates/mirai/src/prefs.rs
 msgid "Not chosen"
 msgstr "未选择"
 
@@ -900,107 +896,21 @@ msgid "Add Local Engine"
 msgstr "添加本地引擎"
 
 #: crates/mirai/src/prefs.rs
-msgid "Name"
-msgstr "名称"
-
-#: crates/mirai/src/prefs.rs
-msgid "KataGo"
-msgstr "KataGo"
-
-#: crates/mirai/src/prefs.rs
-msgid "Both must exist before the profile can be saved."
-msgstr "两者都存在时才能保存配置。"
-
-#: crates/mirai/src/prefs.rs
-msgid "KataGo Binary"
-msgstr "KataGo 程序"
-
-#: crates/mirai/src/prefs.rs
 msgid "Select the KataGo Binary"
 msgstr "选择 katago 程序"
-
-#: crates/mirai/src/prefs.rs
-msgid "Neural Network Model"
-msgstr "神经网络模型"
 
 #: crates/mirai/src/prefs.rs
 msgid "Select the Neural Network Model"
 msgstr "选择神经网络模型"
 
 #: crates/mirai/src/prefs.rs
-msgid "Configuration"
-msgstr "配置文件"
-
-#: crates/mirai/src/prefs.rs
-msgid "Managed by mirai"
-msgstr "由 mirai 管理"
-
-#: crates/mirai/src/prefs.rs
-msgid "Custom file"
-msgstr "自定义文件"
-
-#: crates/mirai/src/prefs.rs
-msgid "Analysis Config"
-msgstr "分析配置"
-
-#: crates/mirai/src/prefs.rs
-msgid "Custom Analysis Config"
-msgstr "自定义分析配置"
-
-#: crates/mirai/src/prefs.rs
 msgid "Select the Custom Analysis Config"
 msgstr "选择自定义分析配置"
-
-#. Translators: noun, the search-thread settings, not the verb.
-#: crates/mirai/src/prefs.rs
-msgctxt "noun"
-msgid "Search"
-msgstr "搜索"
-
-#: crates/mirai/src/prefs.rs
-msgid "Positions in Parallel"
-msgstr "并行局面数"
-
-#: crates/mirai/src/prefs.rs
-msgid "Threads per Position"
-msgstr "每局面线程数"
-
-#: crates/mirai/src/prefs.rs
-msgid "Batching and Memory"
-msgstr "批处理与内存"
 
 #: crates/mirai/src/prefs.rs
 #, rust-format
 msgid "nnMaxBatchSize — 0 uses mirai's default ({size}). Wants to be at least positions × threads."
 msgstr "nnMaxBatchSize——0 表示使用 mirai 的默认值（{size}）。应不小于局面数 × 线程数。"
-
-#: crates/mirai/src/prefs.rs
-msgid "GPU Batch Size"
-msgstr "GPU 批大小"
-
-#: crates/mirai/src/prefs.rs
-msgid "Neural-Net Cache"
-msgstr "神经网络缓存"
-
-#: crates/mirai/src/prefs.rs
-msgid "Automatic Tuning"
-msgstr "自动调优"
-
-#: crates/mirai/src/prefs.rs
-msgid "Times KataGo on this machine at a series of thread settings and fills in the values above. It starts KataGo once per setting, so allow a few minutes."
-msgstr "在本机上以一系列线程设置为 KataGo 计时，并填入上面的数值。每种设置都会单独启动一次 KataGo，请预留几分钟。"
-
-#: crates/mirai/src/prefs.rs
-msgid "Measure This Machine"
-msgstr "测量本机"
-
-#: crates/mirai/src/prefs.rs
-msgid "Uses the binary and model chosen above, and stops the running engine while it works."
-msgstr "使用上面选择的程序和模型；运行期间会停止当前的引擎。"
-
-#: crates/mirai/src/prefs.rs
-msgid "Tune…"
-msgstr "调优…"
 
 #: crates/mirai/src/prefs.rs
 msgid "Choose the KataGo binary before tuning."
@@ -1075,42 +985,6 @@ msgstr "编辑远程引擎"
 msgid "Add Remote Engine"
 msgstr "添加远程引擎"
 
-#: crates/mirai/src/prefs.rs crates/mirai/src/kifu_picker.blp
-msgid "Server"
-msgstr "服务器"
-
-#: crates/mirai/src/prefs.rs
-msgid "For example 192.168.1.10, or 192.168.1.10:9678. The port defaults to 9678."
-msgstr "例如 192.168.1.10 或 192.168.1.10:9678。端口默认为 9678。"
-
-#: crates/mirai/src/prefs.rs
-msgid "Server Address"
-msgstr "服务器地址"
-
-#: crates/mirai/src/prefs.rs
-msgid "Token"
-msgstr "令牌"
-
-#: crates/mirai/src/prefs.rs
-msgid "Engine Name (Optional)"
-msgstr "引擎名称（可选）"
-
-#: crates/mirai/src/prefs.rs
-msgid "Certificate"
-msgstr "证书"
-
-#: crates/mirai/src/prefs.rs
-msgid "mirai checks the certificate before sending the token. Test the connection and compare the fingerprint with the one mirai-server printed at startup."
-msgstr "mirai 会在发送令牌之前检查证书。请测试连接，并将指纹与 mirai-server 启动时打印的指纹进行比对。"
-
-#: crates/mirai/src/prefs.rs
-msgid "Pinned Fingerprint"
-msgstr "已固定指纹"
-
-#: crates/mirai/src/prefs.rs
-msgid "Test Connection"
-msgstr "测试连接"
-
 #: crates/mirai/src/prefs.rs
 msgid "Enter the server address first."
 msgstr "请先输入服务器地址。"
@@ -1118,6 +992,10 @@ msgstr "请先输入服务器地址。"
 #: crates/mirai/src/prefs.rs
 msgid "Checking…"
 msgstr "正在检查…"
+
+#: crates/mirai/src/prefs.rs crates/mirai/src/remote_profile_form.blp
+msgid "Test Connection"
+msgstr "测试连接"
 
 #: crates/mirai/src/prefs.rs
 #, rust-format
@@ -1621,6 +1499,10 @@ msgstr[0] "已粘贴一局 {moves} 手的棋谱"
 msgid "The clipboard holds no game record"
 msgstr "剪贴板中没有棋谱"
 
+#: crates/mirai/src/kifu_picker.blp crates/mirai/src/remote_profile_form.blp
+msgid "Server"
+msgstr "服务器"
+
 #: crates/mirai/src/kifu_picker.blp
 msgctxt "verb"
 msgid "Search"
@@ -1684,6 +1566,102 @@ msgstr "标签文字"
 #: crates/mirai/src/label_editor.blp
 msgid "Leave empty to remove the label"
 msgstr "留空则删除标签"
+
+#: crates/mirai/src/local_profile_form.blp
+#: crates/mirai/src/remote_profile_form.blp
+msgid "Engine Profile"
+msgstr "引擎配置"
+
+#: crates/mirai/src/local_profile_form.blp
+#: crates/mirai/src/remote_profile_form.blp
+msgid "Name"
+msgstr "名称"
+
+#: crates/mirai/src/local_profile_form.blp
+msgid "KataGo"
+msgstr "KataGo"
+
+#: crates/mirai/src/local_profile_form.blp
+msgid "Both must exist before the profile can be saved."
+msgstr "两者都存在时才能保存配置。"
+
+#: crates/mirai/src/local_profile_form.blp
+msgid "KataGo Binary"
+msgstr "KataGo 程序"
+
+#: crates/mirai/src/local_profile_form.blp
+msgid "Choose a File"
+msgstr "选择文件"
+
+#: crates/mirai/src/local_profile_form.blp
+msgid "Neural Network Model"
+msgstr "神经网络模型"
+
+#: crates/mirai/src/local_profile_form.blp
+msgid "Configuration"
+msgstr "配置文件"
+
+#: crates/mirai/src/local_profile_form.blp
+msgid "Analysis Config"
+msgstr "分析配置"
+
+#: crates/mirai/src/local_profile_form.blp
+msgid "Managed by mirai"
+msgstr "由 mirai 管理"
+
+#: crates/mirai/src/local_profile_form.blp
+msgid "Custom file"
+msgstr "自定义文件"
+
+#: crates/mirai/src/local_profile_form.blp
+msgid "Custom Analysis Config"
+msgstr "自定义分析配置"
+
+#. Translators: noun, the search-thread settings, not the verb.
+#: crates/mirai/src/local_profile_form.blp
+msgctxt "noun"
+msgid "Search"
+msgstr "搜索"
+
+#: crates/mirai/src/local_profile_form.blp
+msgid "Positions in Parallel"
+msgstr "并行局面数"
+
+#: crates/mirai/src/local_profile_form.blp
+msgid "Threads per Position"
+msgstr "每局面线程数"
+
+#: crates/mirai/src/local_profile_form.blp
+msgid "Batching and Memory"
+msgstr "批处理与内存"
+
+#: crates/mirai/src/local_profile_form.blp
+msgid "GPU Batch Size"
+msgstr "GPU 批大小"
+
+#: crates/mirai/src/local_profile_form.blp
+msgid "Neural-Net Cache"
+msgstr "神经网络缓存"
+
+#: crates/mirai/src/local_profile_form.blp
+msgid "Automatic Tuning"
+msgstr "自动调优"
+
+#: crates/mirai/src/local_profile_form.blp
+msgid "Times KataGo on this machine at a series of thread settings and fills in the values above. It starts KataGo once per setting, so allow a few minutes."
+msgstr "在本机上以一系列线程设置为 KataGo 计时，并填入上面的数值。每种设置都会单独启动一次 KataGo，请预留几分钟。"
+
+#: crates/mirai/src/local_profile_form.blp
+msgid "Measure This Machine"
+msgstr "测量本机"
+
+#: crates/mirai/src/local_profile_form.blp
+msgid "Uses the binary and model chosen above, and stops the running engine while it works."
+msgstr "使用上面选择的程序和模型；运行期间会停止当前的引擎。"
+
+#: crates/mirai/src/local_profile_form.blp
+msgid "Tune…"
+msgstr "调优…"
 
 #: crates/mirai/src/new_game.blp
 msgid "Start Game"
@@ -1973,9 +1951,33 @@ msgstr "保存配置"
 msgid "The profile could not be saved"
 msgstr "无法保存配置"
 
-#: crates/mirai/src/profile_editor.blp
-msgid "Engine Profile"
-msgstr "引擎配置"
+#: crates/mirai/src/remote_profile_form.blp
+msgid "For example 192.168.1.10, or 192.168.1.10:9678. The port defaults to 9678."
+msgstr "例如 192.168.1.10 或 192.168.1.10:9678。端口默认为 9678。"
+
+#: crates/mirai/src/remote_profile_form.blp
+msgid "Server Address"
+msgstr "服务器地址"
+
+#: crates/mirai/src/remote_profile_form.blp
+msgid "Token"
+msgstr "令牌"
+
+#: crates/mirai/src/remote_profile_form.blp
+msgid "Engine Name (Optional)"
+msgstr "引擎名称（可选）"
+
+#: crates/mirai/src/remote_profile_form.blp
+msgid "Certificate"
+msgstr "证书"
+
+#: crates/mirai/src/remote_profile_form.blp
+msgid "mirai checks the certificate before sending the token. Test the connection and compare the fingerprint with the one mirai-server printed at startup."
+msgstr "mirai 会在发送令牌之前检查证书。请测试连接，并将指纹与 mirai-server 启动时打印的指纹进行比对。"
+
+#: crates/mirai/src/remote_profile_form.blp
+msgid "Pinned Fingerprint"
+msgstr "已固定指纹"
 
 #: crates/mirai/src/restore_dialog.blp
 msgid "Restore the Last Game?"
