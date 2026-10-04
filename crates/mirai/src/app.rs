@@ -2,9 +2,10 @@
 // Copyright (C) 2026 Huang Zhaobin
 //! `AppState` — the single source of truth every widget observes.
 //!
-//! It is a `glib::Object` subclass so display toggles can be bound with `notify::`, and it
-//! emits a handful of custom signals for structural changes. Widgets never reach into each
-//! other; they read `AppState` and listen to its signals.
+//! It is a `glib::Object` subclass so display toggles can be bound with `notify::`. Everything
+//! else reaches the window as a [`Change`], through the one dispatcher installed with
+//! [`AppState::set_change_hook`] (INV-7). Widgets never reach into each other; they read
+//! `AppState` and are handed its projections.
 
 use std::cell::{Cell, OnceCell, Ref, RefCell, RefMut};
 use std::path::{Path, PathBuf};
@@ -212,9 +213,6 @@ mod imp {
         /// An engine operation is in flight (starting, connecting, batch analysing).
         #[property(get, set)]
         pub busy: Cell<bool>,
-        /// The file the current game came from, for plain Save.
-        #[property(get, set)]
-        pub file_path: RefCell<String>,
         /// Set when the tree has unsaved edits.
         #[property(get, set)]
         pub modified: Cell<bool>,
@@ -274,7 +272,6 @@ mod imp {
                 engine_label: RefCell::new(crate::i18n::gettext("No Engine")),
                 status: RefCell::new(String::new()),
                 busy: Cell::new(false),
-                file_path: RefCell::new(String::new()),
                 modified: Cell::new(false),
                 session: RefCell::new(GameSession::blank()),
                 engine_state: RefCell::new(EngineState::None),
@@ -345,12 +342,6 @@ mod imp {
 
 glib::wrapper! {
     pub struct AppState(ObjectSubclass<imp::AppState>);
-}
-
-impl Default for AppState {
-    fn default() -> Self {
-        glib::Object::new()
-    }
 }
 
 impl AppState {
@@ -612,19 +603,9 @@ impl AppState {
             .set_analysis_at(id, expected_position_revision, analysis)
     }
 
-    /// Mirrors the record's own dirty flag and Save target onto the GObject properties the
-    /// title bar and the close handler are bound to.
-    fn sync_record_flags(&self) {
-        let (path, modified) = {
-            let session = self.imp().session.borrow();
-            (
-                session.file_path().unwrap_or_default().to_string(),
-                session.modified(),
-            )
-        };
-        if self.file_path() != path {
-            self.set_file_path(path);
-        }
+    /// Mirrors the record's own dirty flag onto the GObject property the title bar follows.
+    fn sync_modified(&self) {
+        let modified = self.imp().session.borrow().modified();
         if self.modified() != modified {
             self.set_modified(modified);
         }
@@ -681,7 +662,7 @@ impl AppState {
             if positions_changed || cursor_changed {
                 self.imp().report.replace(None);
             }
-            self.sync_record_flags();
+            self.sync_modified();
             self.changed(Change::Edit {
                 positions_changed,
                 structure_changed,
@@ -759,7 +740,7 @@ impl AppState {
     /// Records that the tree was written to `path`.
     pub fn saved_to(&self, path: String) {
         self.imp().session.borrow_mut().saved_to(path);
-        self.sync_record_flags();
+        self.sync_modified();
     }
 
     pub fn cursor(&self) -> NodeId {

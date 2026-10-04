@@ -440,6 +440,8 @@ cannot silently switch the client to a different one.
 `AppState` owns each window's `GameSession`, config, engine, last report and analysis pump.
 Widgets consume its state and notifications; they do not own sibling widgets. A shared value
 belongs on `AppState`, and widget operations go through its methods or `win.*` actions (INV-7).
+The session's dirty flag is projected as `modified` for the title bar. The window keeps the
+native `PathBuf` Save target; the session's string path is not copied into an unused property.
 
 `live-analysis`, `ownership-overlay` and `policy-overlay` have hand-written setters that call
 `notify_*()`; only these setters use `explicit_notify`. Applying it to a derive-generated setter
