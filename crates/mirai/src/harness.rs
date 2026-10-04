@@ -997,11 +997,16 @@ fn shot(app: &adw::Application, path: &str, region: Option<&str>) -> Result<(), 
         Some(name) => {
             let target =
                 find_named(window.upcast_ref(), name).ok_or(format!("no widget id {name:?}"))?;
+            // A hidden widget keeps its last allocation, so its bounds alone would crop
+            // whatever now covers that spot: the folded sidebar's list came out blank.
+            if !target.is_mapped() {
+                return Err(format!("{name:?} is not mapped"));
+            }
             let bounds = target
                 .compute_bounds(&window)
                 .ok_or(format!("{name:?} has no bounds in the window"))?;
             if bounds.width() < 1.0 || bounds.height() < 1.0 {
-                return Err(format!("{name:?} is not mapped yet"));
+                return Err(format!("{name:?} is not laid out yet"));
             }
             Some(bounds)
         }

@@ -430,9 +430,9 @@ grabbed before `present()`.
 **Cropping.** `shot:/tmp/x.png=blunder_expander` renders the *window* and passes
 the widget's bounds as the viewport. A `WidgetPaintable` of the widget alone
 draws no ancestor background. Ids resolve by `GtkWidget:name` or buildable id.
-`no widget id "x"` means the id is wrong; `"x" is not mapped yet` means the
-widget is hidden — the blunder expander is invisible until a sweep finds
-something.
+`no widget id "x"` means the id is wrong; `"x" is not mapped` means the widget
+or an ancestor is hidden — the blunder expander is invisible until a sweep finds
+something, and the candidate list goes with a folded sidebar.
 
 **Menus need focus.** A context popover is an xdg_popup with a grab, and the
 compositor refuses the grab for a window without keyboard focus: the popover
