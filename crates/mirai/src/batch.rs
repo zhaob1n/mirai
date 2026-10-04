@@ -90,10 +90,7 @@ pub struct BatchAnalysis {
 
 impl BatchAnalysis {
     pub fn new(state: &AppState, window: &MiraiWindow) -> BatchAnalysis {
-        let banner = adw::Banner::builder()
-            .revealed(false)
-            .button_label(i18n::gettext("Cancel"))
-            .build();
+        let banner = window.batch_banner();
         let this = BatchAnalysis {
             state: state.clone(),
             window: window.downgrade(),
@@ -115,10 +112,6 @@ impl BatchAnalysis {
             }
         });
         this
-    }
-
-    pub fn banner(&self) -> &adw::Banner {
-        &self.banner
     }
 
     pub fn start(&self) {

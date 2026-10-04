@@ -106,8 +106,11 @@ template $MiraiWindow: Adw.ApplicationWindow {
             hexpand: true;
             vexpand: true;
 
-            Gtk.Box banner_slot {
-              orientation: vertical;
+            Adw.Bin banner_slot {
+              Adw.Banner batch_banner {
+                button-label: _("Cancel");
+                revealed: false;
+              }
             }
 
             Gtk.Revealer editor_revealer {
@@ -520,7 +523,77 @@ template $MiraiWindow: Adw.ApplicationWindow {
             };
           }
 
-          content: Adw.ViewStack sidebar_stack {};
+          content: Adw.ViewStack sidebar_stack {
+            Adw.ViewStackPage {
+              name: "analysis";
+              title: _("Analysis");
+              icon-name: "view-list-symbolic";
+
+              child: Adw.ViewStack analysis_stack {
+                vexpand: true;
+
+                // Visible until Rust adds the analysis panel and picks the page. An empty
+                // profile list stays here; a configured engine or cached analysis does not.
+                Adw.ViewStackPage {
+                  name: "empty";
+
+                  child: Adw.StatusPage {
+                    icon-name: "application-x-executable-symbolic";
+                    title: _("No Engine Configured");
+                    description: _("Add a local KataGo or a remote mirai-server in Preferences.");
+
+                    child: Gtk.Button {
+                      label: _("Preferences");
+                      action-name: "win.preferences";
+                      halign: center;
+
+                      styles [
+                        "pill",
+                        "suggested-action",
+                      ]
+                    };
+                  };
+                }
+              };
+            }
+
+            Adw.ViewStackPage {
+              name: "moves";
+              title: _("Moves");
+              icon-name: "view-grid-symbolic";
+
+              child: Gtk.ScrolledWindow tree_scroller {
+                hexpand: true;
+                vexpand: true;
+                hscrollbar-policy: automatic;
+                vscrollbar-policy: automatic;
+              };
+            }
+
+            Adw.ViewStackPage {
+              name: "comment";
+              icon-name: "text-editor-symbolic";
+              /* Translators: the sidebar tab for the note on this position, not the verb. */
+              title: C_("noun", "Comment");
+
+              child: Gtk.ScrolledWindow {
+                vexpand: true;
+
+                child: Gtk.TextView comment {
+                  name: "comment";
+                  wrap-mode: word_char;
+                  left-margin: 8;
+                  right-margin: 8;
+                  top-margin: 8;
+                  bottom-margin: 8;
+
+                  buffer: Gtk.TextBuffer {
+                    enable-undo: true;
+                  };
+                };
+              };
+            }
+          };
         };
       };
     };

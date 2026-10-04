@@ -132,7 +132,7 @@ boundaries are [§1](#1-the-system). User settings and shortcuts are in
 | blunder colour, or the list row | `crates/mirai/src/widgets/winrate.rs`, `crates/mirai/src/panels/analysis.rs` | `severity_of_drop`, `update_blunder_row` |
 | the analysis sidebar | `crates/mirai/src/panels/analysis.rs`, `crates/mirai/src/panels/analysis.blp` | `refresh`, `set_detailed_columns`, `set_blunders` |
 | the static window, or another Blueprint template | `crates/mirai/src/window.blp`, `crates/mirai/src/window_shell.rs` | `MiraiWindow` template |
-| preferences, including automatic tuning in the editor | `crates/mirai/src/prefs.rs`, `crates/mirai/src/preferences.blp` | `present`, `CalibrationRun` |
+| preferences, including automatic tuning in the editor | `crates/mirai/src/prefs.rs`, `crates/mirai/src/preferences.blp`, `crates/mirai/src/profile_editor.rs` | `present`, `CalibrationRun` |
 | a score, fingerprint, new-game, or label dialog | `crates/mirai/src/dialogs.rs`, `crates/mirai/src/new_game.rs`, `crates/mirai/src/label_editor.rs` | `show_score_with`, `confirm_fingerprint`, `present` |
 | drive the real GUI, or count frames | `crates/mirai/src/harness.rs`, `crates/mirai/src/render_probe.rs` | [TESTING §5](TESTING.md#5-testing-the-gui) |
 | process lifetime, the runtime, or shutdown | `crates/mirai/src/main.rs`, `crates/mirai/src/application_shell.rs` | `MiraiApplication` |
@@ -490,6 +490,13 @@ show one value in two perspectives.
 Static layout is [`crates/mirai/src/window.blp`](../../crates/mirai/src/window.blp). The user's
 map of regions and mouse behaviour is [GUIDE §3](../user/GUIDE.md#3-the-interface).
 
+A Blueprint file is a template when it has a widget class carrying Rust state
+(`CompositeTemplate`). A fixed dialog with no class of its own — the restore and tuning
+alerts — is listed in `BUILDER_UI` in `crates/mirai/build.rs`, compiled to `$OUT_DIR/ui`, and
+built on demand with `gtk::Builder::from_string`. Values that come from Rust constants or
+enums (spin ranges, the rule list) and the keyboard shortcuts dialog, which reads
+`window::SHORTCUTS`, stay in Rust.
+
 Board navigation and the play bar sit beneath the board, not across the window; the
 sidebar reaches the bottom. `editor_revealer` starts revealed. `set_editor_visible` is
 its only writer: a non-Play tool reveals it, returning to Play does not undo a user's
@@ -601,8 +608,9 @@ projection/cache state; it does not borrow `AppState` or replay the game tree.
 1. Create `mirai/src/panels/<name>.rs`; a `gtk::Box` subclass built from stock widgets is enough
    (INV-9 applies only to the custom-drawn widgets).
 2. Re-export it from `panels/mod.rs`.
-3. Construct it in `window::present` with the `AppState`, and add it to the sidebar `ViewStack`
-   with `add_titled_with_icon`.
+3. Add an `Adw.ViewStackPage` to `sidebar_stack` in `window.blp` (name, title, icon). Construct
+   the panel in `window::present` with the `AppState` and, if it is a Rust widget, insert it
+   into that page — the analysis panel is added to `analysis_stack` with `add_named`.
 4. Add its refresh call to the appropriate arm of `window::handle_change`; do not install a
    second AppState dispatcher or accept references to sibling widgets (INV-7). Widget-internal
    selection hooks still route through the window.

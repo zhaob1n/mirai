@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Huang Zhaobin
+// Not a template: `prefs::tuning_progress` builds it with gtk::Builder; build.rs compiles it.
+// The modal a calibration runs behind: one bar for the candidates, one line naming the
+// setting being timed, and a response that stops the run.
+using Gtk 4.0;
+using Adw 1;
+
+Adw.AlertDialog dialog {
+  heading: _("Tuning KataGo");
+  body: _("Every setting is timed in its own KataGo, so this takes a few minutes. Your engine stays stopped until the run ends.");
+  default-response: "cancel";
+  close-response: "cancel";
+
+  extra-child: Gtk.Box {
+    orientation: vertical;
+    spacing: 12;
+
+    Gtk.ProgressBar bar {
+      show-text: true;
+      text: _("Starting…");
+    }
+
+    Gtk.Label caption {
+      label: _("Waiting for the current engine to let go of the GPU…");
+      wrap: true;
+
+      styles [
+        "dim-label",
+      ]
+    }
+  };
+
+  responses [
+    cancel: _("Stop Tuning"),
+  ]
+}

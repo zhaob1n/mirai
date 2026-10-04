@@ -1,0 +1,139 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Huang Zhaobin
+
+using Gtk 4.0;
+using Adw 1;
+
+template $MiraiLocalProfileForm : Adw.PreferencesPage {
+  title: _("Engine Profile");
+
+  Adw.PreferencesGroup {
+    Adw.EntryRow name_row {
+      title: _("Name");
+    }
+  }
+
+  Adw.PreferencesGroup {
+    title: _("KataGo");
+    description: _("Both must exist before the profile can be saved.");
+
+    Adw.ActionRow katago_row {
+      title: _("KataGo Binary");
+      use-markup: false;
+      subtitle-lines: 3;
+      activatable-widget: katago_button;
+
+      [suffix]
+      Gtk.Box katago_slot {
+        orientation: horizontal;
+      }
+
+      [suffix]
+      Gtk.Button katago_button {
+        icon-name: "document-open-symbolic";
+        valign: center;
+        tooltip-text: _("Choose a File");
+        styles ["flat"]
+      }
+    }
+
+    Adw.ActionRow model_row {
+      title: _("Neural Network Model");
+      use-markup: false;
+      subtitle-lines: 3;
+      activatable-widget: model_button;
+
+      [suffix]
+      Gtk.Box model_slot {
+        orientation: horizontal;
+      }
+
+      [suffix]
+      Gtk.Button model_button {
+        icon-name: "document-open-symbolic";
+        valign: center;
+        tooltip-text: _("Choose a File");
+        styles ["flat"]
+      }
+    }
+  }
+
+  Adw.PreferencesGroup {
+    title: _("Configuration");
+
+    Adw.ComboRow mode_row {
+      title: _("Analysis Config");
+      model: Gtk.StringList {
+        strings [ _("Managed by mirai"), _("Custom file") ]
+      };
+    }
+
+    Adw.ActionRow config_row {
+      title: _("Custom Analysis Config");
+      use-markup: false;
+      subtitle-lines: 3;
+      activatable-widget: config_button;
+
+      [suffix]
+      Gtk.Box config_slot {
+        orientation: horizontal;
+      }
+
+      [suffix]
+      Gtk.Button config_button {
+        icon-name: "document-open-symbolic";
+        valign: center;
+        tooltip-text: _("Choose a File");
+        styles ["flat"]
+      }
+    }
+  }
+
+  Adw.PreferencesGroup {
+    /* Translators: noun, the search-thread settings, not the verb. */
+    title: C_("noun", "Search");
+
+    Adw.SpinRow analysis_row {
+      title: _("Positions in Parallel");
+      numeric: true;
+    }
+
+    Adw.SpinRow search_row {
+      title: _("Threads per Position");
+      numeric: true;
+    }
+  }
+
+  Adw.PreferencesGroup memory_group {
+    title: _("Batching and Memory");
+
+    Adw.SpinRow batch_row {
+      title: _("GPU Batch Size");
+      numeric: true;
+    }
+
+    Adw.SpinRow cache_row {
+      title: _("Neural-Net Cache");
+      numeric: true;
+    }
+  }
+
+  Adw.PreferencesGroup tuning_group {
+    title: _("Automatic Tuning");
+    description: _("Times KataGo on this machine at a series of thread settings and fills in the values above. It starts KataGo once per setting, so allow a few minutes.");
+
+    Adw.ActionRow tune_row {
+      title: _("Measure This Machine");
+      subtitle: _("Uses the binary and model chosen above, and stops the running engine while it works.");
+      use-markup: false;
+      subtitle-lines: 3;
+      activatable-widget: tune_button;
+
+      [suffix]
+      Gtk.Button tune_button {
+        label: _("Tune…");
+        valign: center;
+      }
+    }
+  }
+}

@@ -30,7 +30,7 @@ workspace suite with the lockfile — the checks every commit owes.
 | Changed | Check |
 |---|---|
 | Rust | `cargo fmt --all --check`. Avoid `cargo clippy --fix`: it rewrites files you have not reviewed |
-| Blueprint | `blueprint-compiler lint crates/mirai/src/{window,preferences,new_game,kifu_picker,label_editor,profile_editor}.blp crates/mirai/src/panels/analysis.blp` |
+| Blueprint | `blueprint-compiler lint crates/mirai/src/*.blp crates/mirai/src/panels/*.blp` |
 | Documentation | `python tools/docs/check-links.py`: local files and heading anchors, and it refuses a source file cited with a line number — cite a symbol or a section, which survives the next edit. The optional adjacent `mirai-ohos` link is reported separately |
 | Translations | the GUI build script runs `msgfmt --check` over the catalogues in `po/LINGUAS` (`crates/mirai/build.rs`) |
 | Desktop entry, metainfo | run `desktop-file-validate` and `appstreamcli validate` on what `just install` wrote |
@@ -766,7 +766,7 @@ Symptom, cause or guard, and location. Rendering mechanics live in
 |---|---|---|
 | An engine connects, then vanishes seconds later; the server logs a connection with no subscription | Activation race. `activate_profile` is async and a local KataGo takes seconds, so an older activation can finish last | The activation counter in `AppState::activate_profile`. `discarding a superseded engine activation` at debug means the guard worked |
 | Live analysis restarts, but reports keep arriving for the old position | `generation`, bumped by `restart_analysis` and checked before a report is applied | `app.rs` `restart_analysis` |
-| Sidebar says **No Engine Configured**, and that is treated as a failed open | No profile, no live report, and the current node has no cached analysis. The window is up. The StatusPage button is `win.preferences`; `present` does not open the dialog. A *missing* file may still seed a discovered engine once `Config::seeded` finishes on the blocking pool. An explicit `engine_profile = []` is the empty case | `update_analysis_page`, `prefs::no_engine_status_page`. Recipe (h) |
+| Sidebar says **No Engine Configured**, and that is treated as a failed open | No profile, no live report, and the current node has no cached analysis. The window is up. The StatusPage button is `win.preferences`; `present` does not open the dialog. A *missing* file may still seed a discovered engine once `Config::seeded` finishes on the blocking pool. An explicit `engine_profile = []` is the empty case | `update_analysis_page`, the empty page of `analysis_stack` in `window.blp`. Recipe (h) |
 | Cached numbers missing on an SGF that has them, or a fake live speed with no engine | The panel is shown when the *current* node has analysis, even with an empty profile list. Speed is attached only to a live report | `update_analysis_page`, `AnalysisPanel::refresh` |
 | Sidebar reads 9.9% while the graph reads `90.1%` | Not a double conversion. The sidebar is the side to move (`winrate_for`). The graph is always Black | `AnalysisPanel::refresh`; `WinrateGraph` cursor text and tooltip |
 | Overlay shading in the wrong place | Someone remapped indices. INV-1: ownership and policy index identically to the board | `decode.rs`, then recipe (b) |
