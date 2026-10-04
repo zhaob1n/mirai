@@ -22,6 +22,7 @@ use mirai_proto::types::{AnalyzeReq, EngineDesc, PROTO_VERSION};
 use quinn::{Connection, Incoming, SendStream, VarInt};
 use subtle::ConstantTimeEq;
 use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 /// Reported in `Welcome.server`.
@@ -449,11 +450,10 @@ async fn session_loop(
         // Dropping this map cancels every subscription of this connection: each entry is the
         // sending half of its pump task's cancel channel.
         let mut subs: HashMap<u32, oneshot::Sender<()>> = HashMap::new();
-        // Permits this connection has taken and not yet released. The semaphore itself is
-        // the token's, shared with every other connection, so it cannot tell a cancelled
-        // query of *this* connection from a live query of another.
-        let mut holding = 0usize;
-        let (release_tx, mut release_rx) = mpsc::unbounded_channel();
+        // Pump tasks that have not finished. A cancelled one still holds its permit until
+        // it has dropped its query, and the semaphore is the token's, shared with every
+        // other connection, so it cannot tell that query from a live one of another.
+        let mut pumps: Vec<JoinHandle<()>> = Vec::new();
 
         loop {
             let msg = match frame::read_msg::<_, ClientMsg>(&mut rx, &mut rbuf).await {
@@ -484,11 +484,9 @@ async fn session_loop(
                 } => {
                     // Finished pumps drop their cancel receiver; reap them before checking ids.
                     subs.retain(|_, cancel| !cancel.is_closed());
-                    // Drained after the reap, so a search that ended on its own is not
+                    // Reaped after `subs`, so a search that ended on its own is not
                     // mistaken below for a cancelled one still stopping.
-                    while release_rx.try_recv().is_ok() {
-                        holding = holding.saturating_sub(1);
-                    }
+                    pumps.retain(|pump| !pump.is_finished());
 
                     if subs.contains_key(&sub) {
                         enqueue_error(
@@ -506,7 +504,7 @@ async fn session_loop(
                         // takes the pump a scheduler turn, and a client that cancels and reopens
                         // at its limit must not lose the race to it. Another connection's live
                         // query is not that race: refuse it at once.
-                        Err(_) if holding > subs.len() => {
+                        Err(_) if pumps.len() > subs.len() => {
                             tokio::time::timeout(CANCEL_GRACE, Arc::clone(&slots).acquire_owned())
                                 .await
                                 .ok()
@@ -560,17 +558,12 @@ async fn session_loop(
                     let (cancel_tx, cancel_rx) = oneshot::channel();
                     subs.insert(sub, cancel_tx);
                     enqueue(&out_tx, ServerMsg::Opened { sub }).await?;
-                    holding += 1;
                     let conn = conn.clone();
-                    let slot = PumpSlot {
-                        permit: Some(slot),
-                        released: release_tx.clone(),
-                    };
-                    tokio::spawn(async move {
+                    pumps.push(tokio::spawn(async move {
                         pump(conn, session, sub, subscription, cancel_rx).await;
                         // Only now is the query gone: `pump` has dropped the subscription.
                         drop(slot);
-                    });
+                    }));
                 }
             }
         }
@@ -580,21 +573,6 @@ async fn session_loop(
     // drops the send stream, and `serve` closes the connection.
     writer.abort();
     outcome
-}
-
-/// A pump's share of its token's quota. Dropped when the pump ends — or unwinds — it
-/// returns the permit first and then tells its session, so the session's count of the
-/// permits it holds never stays high.
-struct PumpSlot {
-    permit: Option<tokio::sync::OwnedSemaphorePermit>,
-    released: mpsc::UnboundedSender<()>,
-}
-
-impl Drop for PumpSlot {
-    fn drop(&mut self) {
-        drop(self.permit.take());
-        let _ = self.released.send(());
-    }
 }
 
 /// Streams one subscription's events down its own unidirectional stream.
