@@ -231,7 +231,7 @@ impl ConfigError {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum ProfileKind {
     Local {
@@ -293,7 +293,7 @@ impl ProfileKind {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EngineProfile {
     pub name: String,
     #[serde(flatten)]
