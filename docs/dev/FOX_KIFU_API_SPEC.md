@@ -14,12 +14,7 @@
 
 已有 uid 则直接取列表，否则先用昵称查 uid；从列表的 `chessid` 逐局取 SGF。
 
-建议请求头（移动端 UA 兼容性最好）：
-
-```
-User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1
-Accept: application/json,text/plain,*/*
-```
+共用 HTTP 约定见 [§7](#7-错误处理与调用约定)，弈城与弈客也沿用。
 
 ## 2. 账号查询 `QueryUserInfoPanel`
 
@@ -206,13 +201,12 @@ SGF 使用野狐方言；供通用 SGF 解析器读取前，需处理以下规�
 
 - JSON 的 `result=0` 表示成功；账号接口还可能返回 `errcode`，非零亦为错误。错误文案在 `resultstr` 或 `errmsg`。
 - HTTP 200 不代表业务成功；非 JSON、截断或缺失 `chess` 的响应均按失败处理。
-- 建议超时 25 秒、最多请求 3 次，退避 350ms × 尝试次数；抓取多局时串行，每局间隔 ≥0.5 秒，避免公共接口限流。
+- UA 用 [`kifu::user_agent()`](../../crates/mirai-client/src/kifu.rs) 的返回值，不另存副本。[GTK 的 `Soup` 传输](../../crates/mirai/src/kifu.rs) 只显式设置 UA，不额外设置 `Accept`；超时和重试以该传输为准。运行这三份 spec 的 curl 示例前，将 shell 变量 `UA` 设为该函数返回值。
+- 批量抓取建议串行，每局间隔 ≥ 0.5 秒，避免公共接口限流；这不是 GTK 传输自动施加的间隔。
 
 ## 8. 最小调用示例
 
 ```bash
-UA='Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
-
 # 1) 昵称 -> uid
 curl -s -A "$UA" --get --data-urlencode 'username=柯洁' \
   'https://newframe.foxwq.com/cgi/QueryUserInfoPanel?srcuid=0'

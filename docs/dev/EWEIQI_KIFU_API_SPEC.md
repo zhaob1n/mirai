@@ -6,12 +6,7 @@
 
 `https://client.eweiqi.com` 的证书主机名不匹配，一律用 `http://client.eweiqi.com`。`https://client.tygem.com` 是同一套 PHP 的韩国入口。
 
-建议请求头：
-
-```
-User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1
-Accept: application/json,text/plain,*/*
-```
+共用 HTTP 约定见 [野狐 spec §7](FOX_KIFU_API_SPEC.md#7-错误处理与调用约定)。
 
 不需要 Cookie 或签名。`lang=cn` 决定分类名；不传时分类列表是韩文，id 空间不同。
 
@@ -104,7 +99,7 @@ STO 0 3 2 3 3
 | `BNation` / `WNation` | `2` 中国、`1` 日本、`0` 韩国。`4` 出现过一次，未对照 |
 | `GameResult` | 见 §4.2。`0` 不是和棋 |
 | `Susun` | 手数，与棋谱 `TCNT` 一致 |
-| `Date` | `yyyy-MM-dd HH:mm:ss`，无时区。比棋谱 `GDATE` 晚数小时，见 §5.4 |
+| `Date` | `yyyy-MM-dd HH:mm:ss`，无时区。比棋谱 `GDATE` 晚数小时，见 §5.2 |
 | `CateName` / `SubCateName` | 赛事名，trim 后用空格接起来 |
 | `chisu` | 样本全是 `0`。让子没有活样本 |
 
@@ -148,9 +143,9 @@ STO 0 {序号} {颜色} {x} {y}
 
 `SKI` 是 pass，轮到「上一手不是自己」的一方：无让子时先黑，让子后先白。行内的颜色字节不可靠。qGo 还把 `WIT` 当悔棋、`SUR` 当认输、`REM` 当终局提子；这五局主线里都没出现。
 
-让子：`INI 0 1 {n}` 的第 4 个字段（从 0 数）在 `2`～`9` 时，按 Sabaki `gib.js` 的 `getHandicapPlacement(n, {tygem:true})` 放座子，角的顺序与 mirai 的 `fixed_handicap` 相同。这是源码对照，不是活样本：本次 `chisu` 全是 `0`，主线 `INI` 的这个字段全是 `0`。
+让子：`INI 0 1 {n}` 的第 4 个字段（零基索引 3）在 `2`～`9` 时，按 Sabaki `gib.js` 的 `getHandicapPlacement(n, {tygem:true})` 放座子，角的顺序与 mirai 的 `fixed_handicap` 相同。这是源码对照，不是活样本：本次 `chisu` 全是 `0`，主线 `INI` 的这个字段全是 `0`。
 
-贴目 `GONGJE/10`。`75` → 7.5。结果按 §4.2 的 `GRLT` / `ZIPSU`，不要用列表里的 `0` 覆盖。段位按 §4.1。`GDATE` 取前 10 位作 `yyyy-MM-dd`。
+`GDATE` 取前 10 位作 `yyyy-MM-dd`。
 
 ### 5.1 解说与变化图
 
@@ -200,16 +195,14 @@ STO 0 2 1 15 3
 
 ## 7. 错误处理与调用约定
 
-- 目录：先去 BOM。空 BOM 是没查到。能解析且有 `list` 数组才是成功。
+- 目录：先去 BOM。空 BOM 是没查到。非空正文须能按目录结构解析为 JSON；mirai 将缺失的 `list` 当作空列表，存在但不是数组时按失败处理。
 - 棋谱：去 BOM 后 `\HS` 为成功，`[Error]` 为失败。`(2)` 是 id 不在目录。没有 `(2)` 的「没有数据」多半是 `mode=my`。
 - `id` 按字符串保存。样本远小于 2^53，仍不要解析后重新拼接。
-- 超时 25 秒。多局串行，间隔 ≥ 0.5 秒。列表顺序不稳定，入库以 `id` 去重。
+- 列表顺序不稳定，入库以 `id` 去重。
 
 ## 8. 最小调用示例
 
 ```bash
-UA='Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
-
 curl -s -A "$UA" --get --data-urlencode 'sword=柯洁' \
   'http://client.eweiqi.com/gibo/gibo_load_list.php?type=5&lang=cn'
 
@@ -219,4 +212,4 @@ curl -s -A "$UA" \
 
 ## 9. 合规提醒
 
-数据归弈城围棋及棋手所有。只取公开目录，不要对 `*_new.php` 猜口令，不要批量扫 `sword` 或全部分类。串行，间隔 ≥ 0.5 秒。
+数据归弈城围棋及棋手所有。只取公开目录，不要对 `*_new.php` 猜口令，不要批量扫 `sword` 或全部分类。

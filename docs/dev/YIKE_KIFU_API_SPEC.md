@@ -6,12 +6,7 @@
 
 mirai 只带手机 UA，不带签名头。以下端点于 2026-10-04 用该 UA、无其它头复测通过。棋手库示例为柯洁（pid `1195`）。账号示例为沈尧（id `1`，弈客号 `CGF00001`）。
 
-建议请求头：
-
-```
-User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1
-Accept: application/json,text/plain,*/*
-```
+共用 HTTP 约定见 [野狐 spec §7](FOX_KIFU_API_SPEC.md#7-错误处理与调用约定)。
 
 ## 1. 接口总览
 
@@ -199,8 +194,8 @@ accesstoken  = fe7f02285cbe1c0b6501b77c37afaa3e
 - 棋手搜索无命中：空 `matches`。棋谱无命中：`code==1`。都是 HTTP 200。
 - 账号接口 `Status==1200` 才是成功。用户不存在也是 1200，看 `name==null`。
 - `friend/search` 匿名、`Platform=H5`、匿名对弈 JWT 都是 `1404 invalid user token`。
-- 超时 25 秒，间隔 ≥ 0.5 秒。`api-new` 连打会 `Frequent Request`。
+- `api-new` 连打会 `Frequent Request`。
 
 ## 11. 合规
 
-数据归弈客围棋及棋手所有。只取公开对局。用户 1 的 `hide_game_history` 为 0，列表匿名可取；没有 `value=1` 的对照，不要假设匿名列表会绕过隐藏，也不要枚举 id 或扫 `reguser/search` 的前缀。`reguser/search` 的邮箱和生日不要落盘。
+数据归弈客围棋及棋手所有。只取公开对局。用户 1 的 `hide_game_history` 为 0，列表匿名可取；没有 `value=1` 的对照，不要假设匿名列表会绕过隐藏，也不要枚举 id 或扫 `reguser/search` 的前缀。
