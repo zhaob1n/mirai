@@ -138,32 +138,34 @@ fn which(name: &str) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-/// Every `*.bin.gz` directly inside `dir`, newest first.
-fn network_files(dir: &Path) -> Vec<PathBuf> {
+/// Every regular file directly inside `dir` whose name `wanted` accepts, newest first.
+fn files_newest_first(dir: &Path, wanted: impl Fn(&str) -> bool) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
-    let mut files = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.to_str().is_some_and(|s| s.ends_with(".bin.gz")) {
-            continue;
-        }
-        let Ok(metadata) = std::fs::metadata(&path) else {
-            continue;
-        };
-        if !metadata.is_file() {
-            continue;
-        }
-        let Ok(modified) = metadata.modified() else {
-            continue;
-        };
-        files.push((modified, path));
-    }
+    let mut files: Vec<_> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if !wanted(path.file_name()?.to_str()?) {
+                return None;
+            }
+            // `fs::metadata` rather than the entry's own, so a symlink counts as its target.
+            let metadata = std::fs::metadata(&path)
+                .ok()
+                .filter(std::fs::Metadata::is_file)?;
+            Some((metadata.modified().ok()?, path))
+        })
+        .collect();
     files.sort_by(|(a_time, a_path), (b_time, b_path)| {
         b_time.cmp(a_time).then_with(|| a_path.cmp(b_path))
     });
     files.into_iter().map(|(_, path)| path).collect()
+}
+
+/// Every `*.bin.gz` directly inside `dir`, newest first.
+fn network_files(dir: &Path) -> Vec<PathBuf> {
+    files_newest_first(dir, |name| name.ends_with(".bin.gz"))
 }
 
 /// Every analysis `*.cfg` directly inside `dir`.
@@ -171,39 +173,17 @@ fn network_files(dir: &Path) -> Vec<PathBuf> {
 /// The conventional `analysis.cfg` comes first, then other matching files newest first. A
 /// plain `gtp.cfg` is never offered for `katago analysis`.
 fn analysis_config_files(dir: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut files = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(OsStr::to_str) else {
-            continue;
-        };
+    let mut files = files_newest_first(dir, |name| {
         let name = name.to_ascii_lowercase();
-        if !name.contains("analysis") || !name.ends_with(".cfg") {
-            continue;
-        }
-        let Ok(metadata) = std::fs::metadata(&path) else {
-            continue;
-        };
-        if !metadata.is_file() {
-            continue;
-        }
-        let Ok(modified) = metadata.modified() else {
-            continue;
-        };
-        files.push((name == "analysis.cfg", modified, path));
-    }
-    files.sort_by(
-        |(a_conventional, a_time, a_path), (b_conventional, b_time, b_path)| {
-            b_conventional
-                .cmp(a_conventional)
-                .then_with(|| b_time.cmp(a_time))
-                .then_with(|| a_path.cmp(b_path))
-        },
-    );
-    files.into_iter().map(|(_, _, path)| path).collect()
+        name.contains("analysis") && name.ends_with(".cfg")
+    });
+    // A stable sort, so the rest stay newest first.
+    files.sort_by_key(|path| {
+        !path
+            .file_name()
+            .is_some_and(|name| name.eq_ignore_ascii_case("analysis.cfg"))
+    });
+    files
 }
 
 #[derive(Debug, thiserror::Error)]
