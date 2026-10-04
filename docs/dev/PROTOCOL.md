@@ -168,7 +168,7 @@ zstd level 1 and window 2^19 on control streams; subscription windows are 2^16.
 
 | # | Rule | Level |
 |---|---|---|
-| 1 | Never emit `len > MAX_FRAME`. | MUST NOT |
+| 1 | Never emit `len > MAX_FRAME` or a postcard plaintext larger than `MAX_FRAME`, even if it compresses below the wire limit. | MUST NOT |
 | 2 | Read the 5-byte header first and reject `len > MAX_FRAME` **before** reading or allocating the body. | MUST |
 | 3 | Bound each frame's decompressed size to `MAX_FRAME`; abort inflation as soon as it would exceed the bound. Do not trust the zstd content-size field. A receiver MAY use a smaller plaintext limit where appropriate ([§9.3](#93-limits)). A control-frame sender MUST declare a zstd window no larger than 2^19; the receiver MUST refuse a larger one, which would be allocated from its header before the plaintext bound applies. | MUST |
 | 4 | Reject a `flags` value the stream does not allow. | MUST |

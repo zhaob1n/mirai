@@ -16,8 +16,8 @@
 //! reports before it: consecutive reports of one search differ in a few numbers.
 //!
 //! Generic over `AsyncRead + AsyncWrite`, so the same codec serves the QUIC transport and
-//! any future TCP fallback. Buffers are reused across frames, so steady-state framing does
-//! not allocate.
+//! any future TCP fallback. Plaintext and wire buffers are reused across frames; the
+//! subscription codec also reuses its zstd context.
 
 use std::io;
 
@@ -94,9 +94,9 @@ impl FrameBuf {
     }
 }
 
-/// Bounds a compressed frame being encoded to [`MAX_FRAME`].
+/// Bounds a compressed payload to [`MAX_FRAME`], plus its header already in `out`.
 fn bounded(out: &mut Vec<u8>) -> BoundedWriter<'_> {
-    BoundedWriter::new(out, MAX_FRAME, "frame")
+    BoundedWriter::new(out, MAX_FRAME + 5, "frame")
 }
 
 /// Encodes `msg` into `buf.wire` as a complete frame and returns it.
@@ -106,6 +106,9 @@ pub fn encode<'b, T: Serialize + ?Sized>(
 ) -> Result<&'b [u8], FrameError> {
     buf.plain.clear();
     postcard::to_io(msg, &mut buf.plain).map_err(|e| FrameError::Codec(e.to_string()))?;
+    if buf.plain.len() > MAX_FRAME {
+        return Err(FrameError::TooLarge(buf.plain.len() as u64));
+    }
 
     buf.wire.clear();
     buf.wire.extend_from_slice(&[0; 5]);
@@ -590,6 +593,16 @@ mod tests {
         assert_eq!(frame[4], FLAG_ZSTD, "a max-size frame was stored raw");
         let back: Vec<u8> = decode(&mut FrameBuf::new(), &frame).unwrap();
         assert_eq!(back, plain);
+    }
+
+    #[test]
+    fn an_encoder_refuses_plaintext_its_receiver_would_reject() {
+        let msg = vec![0u8; MAX_FRAME];
+        let result = encode(&mut FrameBuf::new(), &msg).map(|frame| frame.len());
+        assert!(
+            matches!(result, Err(FrameError::TooLarge(_))),
+            "oversized plaintext was sent: {result:?}"
+        );
     }
 
     #[tokio::test]
