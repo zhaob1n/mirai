@@ -65,20 +65,20 @@ Do not modify this section without explicit approval.
 | Why is it built this way? What already went wrong? | [`docs/archive/RETROSPECTIVE.md`](docs/archive/RETROSPECTIVE.md) — decisions, obstacles, defects found |
 | What was originally specified, before any code | [`docs/archive/PLAN.md`](docs/archive/PLAN.md) — historical; the code, not the plan, is authoritative |
 | What does the application do, from a user's seat | [`docs/user/GUIDE.md`](docs/user/GUIDE.md); `GUIDE.zh-CN.md` beside it is the Simplified Chinese translation — change both |
-| Project front page and install | [`README.md`](README.md) — product, and Requirements (build dependencies and commands); `README.zh-CN.md` is its translation — change both |
+| Project front page and install | [`README.md`](README.md) — product, and Installing (AUR, build dependencies and commands); `README.zh-CN.md` is its translation — change both |
 | Client settings, including a hand-edited config | [`docs/user/GUIDE.md`](docs/user/GUIDE.md#8-settings-reference) |
 
 Search user-facing questions in `README.md docs/user/` and implementation questions in
 `AGENTS.md docs/dev/`; search `docs/archive/` only when tracing history.
 
-```
-crates/mirai-core     geometry, rules, scoring, game tree, SGF     no I/O, no GUI
-crates/mirai-proto    MRP types, frame codec, QUIC transport       knows nothing about KataGo
-crates/mirai-engine   Engine trait, LocalEngine, RemoteEngine      knows nothing about GTK
-crates/mirai-client   shared analysis, session, play, records      no GTK, no files
-crates/mirai-server   headless host sharing KataGo across clients
-crates/mirai          the GTK application                          the only crate that links GTK
-```
+| Crate | Owns | Rule |
+|---|---|---|
+| `crates/mirai-core` | geometry, rules, scoring, game tree, SGF | no I/O, no GUI |
+| `crates/mirai-proto` | MRP types, frame codec, QUIC transport | knows nothing about KataGo |
+| `crates/mirai-engine` | `Engine` trait, `LocalEngine`, `RemoteEngine` | knows nothing about GTK |
+| `crates/mirai-client` | shared analysis, session, play, records | no GTK, no files |
+| `crates/mirai-server` | headless host sharing KataGo across clients | |
+| `crates/mirai` | the GTK application | the only crate that links GTK |
 
 That layering is a rule, not an observation. A `use gtk::` in `mirai-engine`, or a KataGo JSON
 key in `mirai-proto`, is a design break — fix the design, not the import.
@@ -278,5 +278,5 @@ user-supplied `analysis.cfg` stays available and then owns every setting except 
 counts and what mirai forces on every config: Black-perspective reporting and logging. A
 measured calibration — timing a few thread combinations against the real model and
 keeping the winner — is an explicit opt-in per profile, never something that runs on its own.
-Why a reported device memory or a model-name table is not a substitute is
+The decision and where it lives in the source are
 [`docs/dev/ARCHITECTURE.md`](docs/dev/ARCHITECTURE.md#22-mirai-generates-katagos-analysis-config).
