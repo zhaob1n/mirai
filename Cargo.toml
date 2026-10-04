@@ -37,7 +37,7 @@ soup = { package = "soup3", version = "0.9.0" }
 # Only what every consumer needs: an executor, channels, timers and `select!`. Features
 # used by one crate are declared there instead, so a remote-only consumer (the HarmonyOS
 # client) does not build the subprocess machinery.
-tokio = { version = "1.53.1", features = [
+tokio = { version = "1.53.2", features = [
     "rt-multi-thread",
     "macros",
     "sync",
