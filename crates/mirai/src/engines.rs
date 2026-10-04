@@ -37,7 +37,7 @@ use std::sync::{Arc, Weak};
 
 use gtk::glib;
 use mirai_engine::remote::RemoteStatus;
-use mirai_engine::{Engine, EngineError, TuningOverrides};
+use mirai_engine::{Engine, EngineError, EngineTuning, TuningOverrides};
 use tokio::sync::{oneshot, watch};
 
 use crate::config::{EngineProfile, ProfileKind};
@@ -252,9 +252,9 @@ async fn start(
 async fn build(profile: EngineProfile, log_dir: PathBuf) -> Result<Built, EngineError> {
     match profile.kind {
         ProfileKind::Local {
-            ref katago,
-            ref model,
-            ref config,
+            katago,
+            model,
+            config,
             analysis_threads,
             search_threads,
             nn_max_batch_size,
@@ -271,25 +271,22 @@ async fn build(profile: EngineProfile, log_dir: PathBuf) -> Result<Built, Engine
             // file is the only source of the four keys.
             let custom = config.is_some();
             let config = match config {
-                Some(path) => path.clone(),
-                None => profile.kind.tuning().write_to(&log_dir).map_err(|e| {
-                    // Translators: {dir} is a directory path; {error} is the operating-system's own message.
-                    EngineError::Startup(crate::i18n::gettext_f(
-                        "could not write the analysis config into {dir}: {error}",
-                        &[
-                            ("dir", &log_dir.display().to_string()),
-                            ("error", &e.to_string()),
-                        ],
-                    ))
-                })?,
+                Some(path) => path,
+                None => EngineTuning::with_overrides(overrides)
+                    .write_to(&log_dir)
+                    .map_err(|e| {
+                        // Translators: {dir} is a directory path; {error} is the operating-system's own message.
+                        EngineError::Startup(crate::i18n::gettext_f(
+                            "could not write the analysis config into {dir}: {error}",
+                            &[
+                                ("dir", &log_dir.display().to_string()),
+                                ("error", &e.to_string()),
+                            ],
+                        ))
+                    })?,
             };
 
-            let mut cfg = mirai_engine::LocalEngineConfig::new(
-                profile.name.clone(),
-                katago.clone(),
-                model.clone(),
-                config,
-            );
+            let mut cfg = mirai_engine::LocalEngineConfig::new(profile.name, katago, model, config);
             cfg.log_dir = log_dir;
             cfg.apply_config_overrides(custom, overrides);
             let engine = mirai_engine::LocalEngine::spawn(cfg).await?;

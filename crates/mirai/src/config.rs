@@ -6,7 +6,6 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use mirai_core::RuleSet;
-use mirai_engine::{EngineTuning, TuningOverrides};
 use serde::{Deserialize, Serialize};
 
 /// The user-specific XDG root and the ordered system roots are kept separate because
@@ -265,32 +264,6 @@ pub enum ProfileKind {
         #[serde(skip_serializing_if = "Option::is_none", default)]
         cert_sha256: Option<String>,
     },
-}
-
-impl ProfileKind {
-    /// The tuning a local profile runs with: mirai's defaults, with whatever the user
-    /// changed in Preferences applied over them.
-    ///
-    /// Meaningful only for a profile with no custom `config`; with one, KataGo reads the
-    /// user's file and only the two thread values are passed as overrides.
-    pub fn tuning(&self) -> EngineTuning {
-        let ProfileKind::Local {
-            analysis_threads,
-            search_threads,
-            nn_max_batch_size,
-            nn_cache_size_power_of_two,
-            ..
-        } = self
-        else {
-            return EngineTuning::default();
-        };
-        EngineTuning::with_overrides(TuningOverrides {
-            analysis_threads: *analysis_threads,
-            search_threads: *search_threads,
-            nn_max_batch_size: *nn_max_batch_size,
-            nn_cache_size_power_of_two: *nn_cache_size_power_of_two,
-        })
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
