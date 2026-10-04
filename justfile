@@ -9,7 +9,7 @@
 #
 # `cargo install` can place only binaries, not the desktop entry, metainfo and icons, so
 # installation lives here. Packages call the same recipes with DESTDIR and PREFIX set
-# (packaging/aur/PKGBUILD). The install recipes never build: under sudo they would leave a
+# (packaging/aur/*/PKGBUILD). The install recipes never build: under sudo they would leave a
 # root-owned target/.
 
 prefix := env("PREFIX", "/usr/local")

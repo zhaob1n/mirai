@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Huang Zhaobin
 #
-# Builds packaging/aur/PKGBUILD in a clean devtools chroot, installs the packages into a
-# fresh copy of that chroot (no makedepends, so a missing `depends` shows), smoke-runs both
+# Builds each PKGBUILD in packaging/aur/ in its own clean devtools chroot, which holds only
+# that package's makedepends (so mirai-server-git building against GTK fails here),
+# installs the packages into a fresh copy of that chroot (no makedepends, so a missing
+# `depends` shows; mirai-server first, which must not pull GTK in), smoke-runs both
 # binaries there, and runs namcap. Builds HEAD of this checkout (makepkg-local.sh), not the
 # working tree, and not GitHub.
 #
@@ -35,8 +37,9 @@ if [[ ${1:-} == --as-root ]]; then
             -M /usr/share/devtools/makepkg.conf.d/x86_64.conf \
             -c "$chroots/pkgcache" "$base/root" base-devel
     fi
-    cd "$work"
-    makechrootpkg -c -r "$base"
+    for pkg in "$work"/*/; do
+        (cd "$pkg" && makechrootpkg -c -r "$base")
+    done
 
     test=$base/pkgtest
     delete "$test"
@@ -47,7 +50,10 @@ if [[ ${1:-} == --as-root ]]; then
         binds+=(--bind-ro="$wayland:/run/mirai-test/wayland-0")
     fi
     arch-nspawn "$test" "${binds[@]}" sh -euc '
-        pacman -U --noconfirm $(ls /pkgs/*.pkg.tar.zst | grep -v -- -debug-)
+        pkgs=$(ls /pkgs/*/*.pkg.tar.zst | grep -v -- -debug-)
+        pacman -U --noconfirm $(echo "$pkgs" | grep /mirai-server-git/)
+        if pacman -Q gtk4 2>/dev/null; then echo "mirai-server-git pulled in GTK"; exit 1; fi
+        pacman -U --noconfirm $(echo "$pkgs" | grep /mirai-git/)
         if ldd /usr/bin/mirai /usr/bin/mirai-server | grep "not found"; then exit 1; fi
         mirai-server --help >/dev/null
         echo "mirai-server --help: ok"
@@ -67,9 +73,11 @@ if [[ -n ${WAYLAND_DISPLAY:-} && -n ${XDG_RUNTIME_DIR:-} ]]; then
     wayland=$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY
 fi
 
-"$repo/tools/packaging/makepkg-local.sh" --prepare "$work"
+for pkg in mirai-git mirai-server-git; do
+    "$repo/tools/packaging/makepkg-local.sh" "$pkg" --prepare "$work/$pkg"
+done
 mkdir -p "$chroots"
 ${SUDO:-sudo} env SUDO_USER="$USER" "$(realpath "$0")" --as-root "$work" "$chroots" "$wayland"
 
-namcap "$work/PKGBUILD" "$work"/*.pkg.tar.zst
+namcap "$work"/*/PKGBUILD "$work"/*/*.pkg.tar.zst
 echo "packages and logs: $work"

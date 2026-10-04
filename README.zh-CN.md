@@ -49,7 +49,7 @@ sudo just install        # 两者都装；或 `just install mirai` / `just insta
 sudo just uninstall      # 同上
 ```
 
-这会把 `mirai`、`mirai-server`、桌面文件、元信息、图标和翻译安装到 `/usr/local`；`just prefix=$HOME/.local install` 不需要 root 权限。在 Arch 上，也可以用 [`packaging/aur/`](packaging/aur/) 中的 PKGBUILD 构建 `mirai-git` 和 `mirai-server-git`（尚未发布到 AUR）。`tools/packaging/makepkg-local.sh` 会从当前检出的最新提交而不是 GitHub 构建；如果 cargo 来自 rustup，请加上 `-d`，然后执行 `sudo pacman -U target/archpkg/*.pkg.tar.zst`。
+这会把 `mirai`、`mirai-server`、桌面文件、元信息、图标和翻译安装到 `/usr/local`；`just prefix=$HOME/.local install` 不需要 root 权限。在 Arch 上，可以改用 [`packaging/aur/`](packaging/aur/) 下的各个 PKGBUILD 构建 `mirai-git` 和 `mirai-server-git`（尚未发布到 AUR）。
 
 ---
 

@@ -79,11 +79,9 @@ sudo just uninstall      # likewise
 ```
 
 This installs `mirai`, `mirai-server`, the desktop entry, metainfo, icons and translations
-under `/usr/local`; `just prefix=$HOME/.local install` needs no root. On Arch, the PKGBUILD in
-[`packaging/aur/`](packaging/aur/) builds `mirai-git` and `mirai-server-git` instead (not
-published yet). `tools/packaging/makepkg-local.sh` builds it from this checkout's last
-commit rather than from GitHub; add `-d` when cargo comes from rustup, then
-`sudo pacman -U target/archpkg/*.pkg.tar.zst`.
+under `/usr/local`; `just prefix=$HOME/.local install` needs no root. On Arch, the PKGBUILDs in
+[`packaging/aur/`](packaging/aur/) build `mirai-git` and `mirai-server-git` instead (not
+published yet).
 
 ---
 
