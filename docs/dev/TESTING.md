@@ -12,10 +12,11 @@ candidate-colour ramp is [`CANDIDATE_COLOUR.md`](CANDIDATE_COLOUR.md).
 Wayland root grabs are black. Use the in-process harness (§5) for screenshots;
 `shot:` proves what is drawn, not frame time. For per-frame changes or observed
 stutter, measure with `MIRAI_FRAMES=1` and `tools/perf/` as in
-[`RENDERING.md`](RENDERING.md); `tools/perf/ui-survey.sh` runs every surface through the
-harness and prints frames over the display's budget, step by step. A glitch that costs no
-time shows only on the screen: `tools/perf/dialog-settle.py` records a dialog opening with
-gpu-screen-recorder and prints how far its last frames are from rest.
+[`RENDERING.md`](RENDERING.md); `tools/perf/ui-survey.sh` runs the `dialogs`, `fox` and
+`main` scenarios by default (request live analysis with `--engine analysis`), and prints frames
+over the display's budget, step by step. A glitch that costs no time shows only on the
+screen: `tools/perf/dialog-settle.py` records a dialog opening with gpu-screen-recorder
+and prints how far its last frames are from rest.
 
 ## 1. Quick reference
 
@@ -35,9 +36,10 @@ or a section, which survives the next edit. The optional adjacent `mirai-ohos` l
 reported separately. For Rust, run `cargo fmt --all --check`; for Blueprint, run
 `blueprint-compiler lint crates/mirai/src/{window,preferences,new_game,kifu_picker,label_editor,profile_editor}.blp crates/mirai/src/panels/analysis.blp`.
 Avoid `cargo clippy --fix`: it rewrites files you have not reviewed.
-`harness.rs` and `probe.rs` have prose examples, not doc-tests. Every build runs
-`msgfmt --check` over `po/` (`crates/mirai/build.rs`); for the data templates,
-`desktop-file-validate` and `appstreamcli validate` on what `just install` merged.
+`harness.rs` and `probe.rs` have prose examples, not doc-tests. The GUI build script runs
+`msgfmt --check` over the catalogues in `po/LINGUAS` (`crates/mirai/build.rs`). For the merged
+desktop entry and metainfo, run `desktop-file-validate` and `appstreamcli validate` on
+what `just install` wrote.
 
 ## 2. What is covered where
 
@@ -400,9 +402,10 @@ rm -rf "$scratch"
 sets the window size: `0 0` keeps the size mirai asked for (needs a window rule that floats
 the harness id), a nonzero size floats the window and forces that size.
 
-`tools/ui/record-sound.sh "<script>" [args…]` is the same isolated run with mirai's audio
-routed to a private null sink: it prints one line per sound onset, so a missing or extra
-stone sound shows up as a line, without playing anything aloud. It proves timing, not level:
+`tools/ui/record-sound.sh "<script>" [args…]` uses isolated XDG directories, but writes
+`engine_profile = []` instead of copying your profiles and routes mirai's audio to a private
+null sink. It prints one line per sound onset, so a missing or extra stone sound shows up
+as a line, without playing anything aloud. It proves timing, not level:
 the null sink did not show a replayed stream losing its first 10–25 ms, which the real device
 did (see `crates/mirai/src/sound.rs`). Compare loudness on `$(pactl get-default-sink).monitor` instead.
 
@@ -707,7 +710,7 @@ Run §1; choose evidence for the surface changed:
 | Remote engine or server | Compare both probe modes and check subscription/cancellation (§6) |
 | Drawn output | Inspect a harness PNG; use recipe (b) for point, ownership or policy changes |
 | Per-frame drawing | Measure `MIRAI_FRAMES=1` with a finished search during a sidebar fold; use `tools/perf/frame-stats.py` and [`RENDERING.md` §§6–9](RENDERING.md) |
-| Opening or closing a dialog, or anything that should hold 144 Hz | `tools/perf/ui-survey.sh` on the fast output: `over` per step, `action:<name>` for work between frames, and `tools/perf/frame-profile.py` for a slow frame's clock and stack; `tools/perf/dialog-settle.py` for how the text settles as the open ends ([`RENDERING.md` §8](RENDERING.md#8-dialogs-lists-and-a-160-hz-budget)) |
+| Opening or closing a dialog, or anything that should hold 144 Hz | `tools/perf/ui-survey.sh` on the fast output for the scenarios above; for an uncovered surface, use its own `MIRAI_HARNESS` script with `MIRAI_FRAMES=1` and `tools/perf/frame-stats.py`. Read `over` per step, `action:<name>` for work between frames, and `tools/perf/frame-profile.py` for a slow frame's clock and stack; `tools/perf/dialog-settle.py` for how the text settles as the open ends ([`RENDERING.md` §8](RENDERING.md#8-dialogs-lists-and-a-160-hz-budget)) |
 | Signals, properties, capture or teardown | Recipe (e): exit 0, no autosave or orphaned KataGo |
 | New action | Drive `action:` and confirm `ok`, not `MISSING` |
 | User-visible text | `tools/i18n/update-po.sh`, translate the new messages, and look at the window with `LANGUAGE=zh_CN` ([`TRANSLATING.md`](TRANSLATING.md)) |

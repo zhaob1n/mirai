@@ -30,11 +30,6 @@ the move; the graph instead plots the root mean. Mirai stores and transmits thes
 as Black-perspective values (INV-2). The list follows `order` because that is
 KataGo's play menu; play mode also uses its play-selection weights.
 
-The board and list colour each searched move by its side-to-move **mean utility
-loss against `moves[0]`**. Below `TRUSTED_VISITS` (10), the loss is too uncertain
-to colour, so the move is grey. Search depth controls opacity, not hue. See
-[§5](#5-what-shipped) for the shipped rule and the MRAI v1 fallback.
-
 ---
 
 ## 2. How KataGo computes `order`

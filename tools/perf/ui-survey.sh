@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Huang Zhaobin
 #
-# Drives each UI surface through the harness with MIRAI_FRAMES=1 and prints per-step frame
+# Drives the scenarios below through the harness with MIRAI_FRAMES=1 and prints per-step frame
 # statistics (tools/perf/frame-stats.py), so a dialog that drops frames shows up as a row
 # rather than as a feeling.
 #

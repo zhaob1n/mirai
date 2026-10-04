@@ -9,11 +9,6 @@ Measurements and rationale for drawing mirai's custom widgets with quads instead
 of paths. [architecture](ARCHITECTURE.md) · [testing](TESTING.md) ·
 [AGENTS.md](../../AGENTS.md).
 
-**Rule (INV-9):** in `snapshot()`, use colour, border or rounded-clip nodes
-instead of fill/stroke paths for shapes they can draw. Keep necessary paths
-(curves and diagonal marks) small or cached. Use the helpers in
-[`widgets/paint.rs`](../../crates/mirai/src/widgets/paint.rs).
-
 ---
 
 ## 1. The symptom
@@ -90,8 +85,7 @@ The board's historical ablations isolated wood (~10 ms), grid and border
 (~12 ms), and per-stone paths (90–120 ms on a full board). Header, list and
 other GTK controls did not account for this paint cost.
 
-**The last experiment names the mechanism.** `MIRAI_SPIN` redraws an *unchanging* scene every
-frame:
+`MIRAI_SPIN` redraws an *unchanging* scene every frame:
 
 | scene, before the fix | paint median | frame interval |
 |---|---|---|
@@ -108,11 +102,9 @@ against 4 ms for the new one.
 
 ## 4. The fix
 
-[`widgets/paint.rs`](../../crates/mirai/src/widgets/paint.rs) provides discs
-as rounded clips and colour nodes, outlines as border nodes, lines as colour
-rectangles, and `over()` for pre-blending. Wood, grid, stones, marks, tree
-elbows and graph guides now use these primitives rather than freshly built
-fill/stroke paths.
+Wood, grid, stones, circle and square marks, tree elbows and graph guides use
+[`widgets/paint.rs`](../../crates/mirai/src/widgets/paint.rs) primitives rather
+than freshly built fill/stroke paths.
 
 Two pixel constraints matter: opaque grid ink must be pre-blended against wood
 to prevent double-blending where rectangles overlap; the tree uses one trunk
@@ -120,8 +112,7 @@ per parent for the same reason. Stone shadow discs do not overlap because
 stones are 0.96 cells across.
 
 The win-rate and score-lead curves, dashed 50 % line, triangle and cross marks
-remain paths: they need curves, dashes or diagonals. Marks cover one stone;
-the plot-wide curve is cached and rebuilt only when its data changes (INV-9).
+remain paths: they need curves, dashes or diagonals.
 
 ## 5. After
 
@@ -396,8 +387,7 @@ What remains:
 
 ## 9. Keeping it
 
-- Use `paint.rs` primitives; keep unavoidable paths' bounds and segment
-  counts small, then measure them with `MIRAI_FRAMES=1`.
+- Measure a new path with `MIRAI_FRAMES=1`.
 - For per-intersection text, defer only while `cell` changes, wait two repeats
   and repaint via a tick callback (§6).
 - `MIRAI_SPIN` on a dense board should paint in single-digit milliseconds;

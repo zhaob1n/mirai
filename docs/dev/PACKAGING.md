@@ -70,18 +70,12 @@ never collide.
 building `mirai-server` on a headless host would install GTK.
 
 **`just install`, not a package per distribution.** `cargo install` places only binaries,
-not the desktop entry, metainfo and icons, so the install lives in a `justfile`. Debian,
-Ubuntu and Fedora build from source with it into `/usr/local`; a `.deb` or `.rpm` would be
-worth its upkeep only once there are releases and users on those systems. The install
+not the desktop entry, metainfo and icons, so the install lives in a `justfile`. The install
 recipes never build, so `sudo just install` does not leave a root-owned `target/`, and they
-refresh an existing icon cache, which would otherwise hide the new icon. The translated
-desktop entry, metainfo and catalogues are merged with `msgfmt` into a scratch directory
-and installed from there, which keeps that promise.
+refresh an existing icon cache, which would otherwise hide the new icon.
 
-**The locale directory is found at run time, not built in.** `mirai` looks for its
-catalogues in `<prefix>/share/locale` beside its own `<prefix>/bin`, so the one release build
-works under whatever `PREFIX` it is later installed to, `just prefix=$HOME/.local install`
-included.
+**One release build serves any `PREFIX`.** Catalogues are resolved at run time from the
+install prefix; see [TRANSLATING.md](TRANSLATING.md#how-a-build-finds-its-catalogues).
 
 **No Flatpak.** A manifest is parked, unmaintained, on the `flatpak` branch. Granting the GPU
 (`--device=dri`) is not enough: the runtime carries Mesa, rusticl OpenCL included, but not
@@ -90,9 +84,6 @@ it outside through `flatpak-spawn --host`, which Flathub rejects as a sandbox es
 bundled OpenCL KataGo does run inside; measured on an RX 6800 XT (b10 network, 16 threads,
 400 visits) it managed 123 visits/s against 472 for the host's ROCm build.
 
-**Fox lookup talks to libsoup directly.** `kifu.rs` used to fetch through
-`gio::File::for_uri`, but GIO serves `https://` only through GVfs's daemon — itself
-libsoup — which a Linux desktop need not install, and the Arch package never depended on.
-Calling libsoup keeps the request on the GLib main context and the desktop's proxy
-settings; the price is libsoup's own dependencies, among them nghttp2, libpsl and sqlite3
-for its cookie and HSTS databases, which no build option removes.
+**Kifu lookup talks to libsoup directly.** Fox, eWeiqi and Yike requests use libsoup because
+GIO's `https://` support requires GVfs, which a Linux desktop need not install. libsoup brings
+nghttp2, libpsl and sqlite3 with it; no build option removes them.
