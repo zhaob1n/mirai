@@ -109,7 +109,7 @@ needed, `cargo test -p <crate> -- --list`.
 `cargo test -p mirai-server`. Example: `crates/mirai-server/server.example.toml`.
 
 - Token shape and placeholder rejection
-- Misspelled keys, duplicate tokens and a zero `max_subs` refused
+- Misspelled keys, duplicate or overlong tokens and a zero `max_subs` refused
 - Relative paths resolved against the config directory
 - An authenticated client cannot exceed its token's cross-connection subscription quota or raise priority
 - Off-board, oversized or unbounded requests constrained before KataGo, with only allow-listed overrides forwarded
