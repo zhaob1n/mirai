@@ -563,6 +563,11 @@ opening cost ([RENDERING §8](RENDERING.md#8-dialogs-lists-and-a-160-hz-budget))
 | `config.toml` | `Config::save_merged` applies only the window's diff to the current file, avoiding stale writes over another window's changes. A missing file is an empty base; other read/parse errors leave it untouched. `engine_profile` merges by name; an untouched profile keeps the file's copy, and for simultaneous edits of one name the last save wins. Debounced saves run on `spawn_blocking`; `flush_config` runs synchronously on close and before another window loads config. |
 | Autosave | Each window uses `autosave-<pid>-<start>-<n>.sgf`. Clean close waits for writes then deletes it; startup offers remaining crash files most recent first. Scans, writes and SGF opening/parsing use the blocking pool. |
 
+Each window's config writes share a sequence-fenced gate: a close-time flush supersedes
+older queued writes, and merges against the last snapshot actually written even if GTK has
+not consumed its result yet. Reverting settings during a pending write must still flush.
+Superseded writes do not advance the GUI's merge base: a failed flush must remain retryable.
+
 ### Async result identity
 
 Async work targeting the tree must carry the starting `position_revision` as well as `NodeRef`,

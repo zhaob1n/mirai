@@ -11,7 +11,7 @@ use std::cell::{Cell, OnceCell, Ref, RefCell, RefMut};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
@@ -45,6 +45,8 @@ pub struct ConfigSave {
     started: Cell<u64>,
     /// The latest save whose result became the base.
     applied: Cell<u64>,
+    /// Serialises this window's disk writes, including the synchronous exit-time flush.
+    write: Arc<Mutex<ConfigWrite>>,
 }
 
 impl ConfigSave {
@@ -52,6 +54,40 @@ impl ConfigSave {
         let seq = self.started.get() + 1;
         self.started.set(seq);
         seq
+    }
+}
+
+/// Disk-side state: a flush may run before a queued write, or after it finished but before
+/// GTK consumed its result. Keep both the sequence fence and the actual merge base here.
+#[derive(Default)]
+struct ConfigWrite {
+    latest: u64,
+    written: Option<Config>,
+}
+
+enum ConfigWriteOutcome {
+    Saved,
+    Superseded,
+}
+
+impl ConfigWrite {
+    fn save(
+        &mut self,
+        seq: u64,
+        config: &Config,
+        base: &Config,
+        path: &Path,
+    ) -> Result<ConfigWriteOutcome, ConfigError> {
+        if seq < self.latest {
+            return Ok(ConfigWriteOutcome::Superseded);
+        }
+        self.latest = seq;
+        let base = self.written.as_ref().unwrap_or(base);
+        if config != base {
+            config.save_merged(base, path)?;
+        }
+        self.written = Some(config.clone());
+        Ok(ConfigWriteOutcome::Saved)
     }
 }
 
@@ -449,11 +485,13 @@ impl AppState {
             imp.config.borrow().clone(),
             imp.config_base.borrow().clone(),
         );
-        if config == base {
-            return;
-        }
         let seq = imp.config_save.next_seq();
-        let result = config.save_merged(&base, self.config_path());
+        let result = imp
+            .config_save
+            .write
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .save(seq, &config, &base, self.config_path());
         self.finish_config_save(seq, config, result);
     }
 
@@ -483,8 +521,12 @@ impl AppState {
         imp.config_save.in_flight.set(true);
         let seq = imp.config_save.next_seq();
         let path = self.config_path().to_path_buf();
+        let write = Arc::clone(&imp.config_save.write);
         let job = self.runtime().spawn_blocking(move || {
-            let result = config.save_merged(&base, &path);
+            let result = write
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .save(seq, &config, &base, &path);
             (config, result)
         });
         let weak = self.downgrade();
@@ -509,15 +551,22 @@ impl AppState {
     /// unless a later save already finished: a flush on close can overtake a write still on
     /// the pool, and restoring the older base would re-apply keys another window has since
     /// changed.
-    fn finish_config_save(&self, seq: u64, written: Config, result: Result<(), ConfigError>) {
+    fn finish_config_save(
+        &self,
+        seq: u64,
+        written: Config,
+        result: Result<ConfigWriteOutcome, ConfigError>,
+    ) {
         let imp = self.imp();
         match result {
-            Ok(()) => {
+            Ok(ConfigWriteOutcome::Saved) => {
                 if seq > imp.config_save.applied.get() {
                     imp.config_save.applied.set(seq);
                     *imp.config_base.borrow_mut() = written;
                 }
             }
+            // A skipped write never became a merge base, even if its replacing flush failed.
+            Ok(ConfigWriteOutcome::Superseded) => {}
             Err(e) => {
                 tracing::warn!(%e, "could not save the configuration");
                 self.toast(i18n::gettext_f(
@@ -1415,6 +1464,82 @@ fn session_dispatch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_config_flush_supersedes_older_saves() {
+        glib::MainContext::new().block_on(async {
+            let baseline = Config::default().analysis.live_max_visits;
+            for (latest, finish_first, fail_flush) in [
+                (456, false, false),
+                (baseline, false, false),
+                (baseline, true, false),
+                (123, false, true),
+            ] {
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(1)
+                    .max_blocking_threads(1)
+                    .build()
+                    .expect("runtime");
+                let path = std::env::temp_dir().join(format!(
+                    "mirai-config-flush-{}-{}.toml",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .expect("clock")
+                        .as_nanos()
+                ));
+                let config = Config::default();
+                let baseline_text = toml::to_string_pretty(&config).expect("serialise");
+                std::fs::write(&path, &baseline_text).expect("baseline");
+                let state = AppState::new(
+                    config,
+                    path.clone(),
+                    runtime.handle().clone(),
+                    Rc::new(EnginePool::default()),
+                );
+                // Occupy the only blocking worker so the old snapshot cannot begin yet.
+                let (started, wait_started) = std::sync::mpsc::sync_channel(0);
+                let (release, wait_release) = std::sync::mpsc::sync_channel(0);
+                let blocker = runtime.spawn_blocking(move || {
+                    started.send(()).expect("started");
+                    wait_release.recv().expect("released");
+                });
+                wait_started.recv().expect("worker occupied");
+                state.config_mut().analysis.live_max_visits = 123;
+                state.start_config_save();
+                state.config_mut().analysis.live_max_visits = latest;
+                if finish_first {
+                    release.send(()).expect("release");
+                    // Let the old write finish, without pumping GTK to consume its result.
+                    let (finished, wait_finished) = std::sync::mpsc::sync_channel(0);
+                    runtime.spawn_blocking(move || finished.send(()).expect("finished"));
+                    wait_finished.recv().expect("older write finished");
+                }
+                if fail_flush {
+                    std::fs::write(&path, "[").expect("malformed configuration");
+                }
+                state.flush_config();
+                if !finish_first {
+                    release.send(()).expect("release");
+                }
+                blocker.await.expect("blocking worker");
+                while state.imp().config_save.in_flight.get() {
+                    glib::timeout_future(Duration::from_millis(10)).await;
+                }
+                if fail_flush {
+                    // Repair the file after the old job has reported its skipped write.
+                    std::fs::write(&path, &baseline_text).expect("repair configuration");
+                    state.flush_config();
+                }
+                let loaded = Config::load(&path).expect("saved config");
+                std::fs::remove_file(path).expect("cleanup");
+                assert_eq!(
+                    loaded.analysis.live_max_visits, latest,
+                    "finish_first={finish_first}, fail_flush={fail_flush}"
+                );
+            }
+        });
+    }
 
     /// `Change` is the one window dispatcher. Comments and marks must not run its
     /// expensive Tree arm; a new move must project once, while replaying a child

@@ -799,6 +799,8 @@ Symptom, cause or guard, and location. Rendering mechanics live in
 
 | Symptom | Cause / protection | Where |
 |---|---|---|
+| Settings saved on close revert afterwards | A queued debounced write ran after `flush_config`, or a revert to the loaded base skipped compensation for a write already completed off-thread. The per-window gate fences old sequences and keeps the actual disk-side base | `app.rs` `ConfigWrite`; `a_config_flush_supersedes_older_saves` |
+| Settings are not persisted after repairing a malformed file | A superseded write was reported as successful after its replacing flush failed, making an unwritten snapshot the merge base. Superseded outcomes leave the last successful base intact | `app.rs` `ConfigWriteOutcome`; `a_config_flush_supersedes_older_saves` failing-flush case |
 | "mirai did not shut down cleanly" on every start | The autosave is deleted by dropping the window's `Ui`. Either the process was killed, or a leftover from an earlier crash has not been answered | `Drop for Ui`, `window::collect_stale_autosaves` |
 | The restore prompt offers an empty board | `GameTree::has_content` regressed. An autosave with no move, setup, mark, to-play override or comment is neither written nor offered | `tree.rs` |
 | Engine and runtime survive window close | A long-lived callback owns the window, or shutdown never took the `Ui`. There is no `Ui::shutdown`. `close-request`, `dispose` and `ApplicationImpl::shutdown` all call `MiraiWindow::shutdown`, which `take_ui`s once. `Drop for Ui` aborts tasks, flushes the comment, cancels batch, play and analysis, saves config, clears the engine, and drops the autosave | `MiraiWindow::shutdown`, `Drop for Ui`, weak-window callbacks in `window.rs`, `play.rs`, `batch.rs` |
