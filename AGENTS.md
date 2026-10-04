@@ -25,6 +25,7 @@ Do not modify this section without explicit approval.
 - Keep documentation short. When the project changes, update it: a new
   reader should recover the decisions and the scars from these files, the
   comments, and the Git history.
+- Unicode is encouraged to enrich user documents.
 - Prefer mermaid over ASCII diagrams.
 
 ### Development
