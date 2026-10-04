@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: mirai\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaob1n/mirai/issues\n"
-"POT-Creation-Date: 2026-10-05 02:16+0800\n"
+"POT-Creation-Date: 2026-10-05 03:33+0800\n"
 "PO-Revision-Date: 2026-09-28 06:00+0800\n"
 "Last-Translator: Huang Zhaobin <zhaob1n@foxmail.com>\n"
 "Language-Team: Chinese (China) <i18n-zh@googlegroups.com>\n"
@@ -370,8 +370,8 @@ msgstr "弈客"
 
 #: crates/mirai/src/kifu.rs
 #, rust-format
-msgid "Could not reach {server}: request failed"
-msgstr "无法连接{server}：请求失败"
+msgid "Could not reach {server}: {error}"
+msgstr "无法连接{server}：{error}"
 
 #: crates/mirai/src/kifu.rs
 #, rust-format
@@ -387,11 +387,6 @@ msgstr "无法连接{server}：响应意外过大"
 #, rust-format
 msgid "Could not reach {server}: request timed out"
 msgstr "无法连接{server}：请求超时"
-
-#: crates/mirai/src/kifu.rs
-#, rust-format
-msgid "Could not reach {server}: {error}"
-msgstr "无法连接{server}：{error}"
 
 #: crates/mirai/src/kifu.rs
 #, rust-format
