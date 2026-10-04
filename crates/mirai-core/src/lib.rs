@@ -18,7 +18,7 @@ pub mod score;
 pub mod sgf;
 pub mod tree;
 
-pub use board::{Board, Captured, IllegalMove};
+pub use board::{Board, IllegalMove};
 pub use clock::{TimeControl, clock_text, think_budget};
 pub use handicap::fixed_handicap;
 pub use point::{COLUMNS, Color, MAX_DIM, MIN_DIM, Point, Size};
