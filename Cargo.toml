@@ -28,7 +28,7 @@ mirai-client = { path = "crates/mirai-client", version = "0.1.0" }
 
 gtk = { package = "gtk4", version = "0.11.5", features = ["blueprint", "gnome_50"] }
 adw = { package = "libadwaita", version = "0.9.2", features = ["v1_9"] }
-glib = { version = "0.22.10", features = ["futures"] }
+glib = "0.22.10"
 glib-build-tools = "0.22.8"
 # Fox lookup's HTTP client. GIO alone reaches `https://` only through GVfs's daemon, which
 # is libsoup underneath and is absent on desktops without GVfs.
