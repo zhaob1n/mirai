@@ -228,7 +228,7 @@ impl EngineCfg {
             nn_cache_size_power_of_two: self.nn_cache_size_power_of_two,
         };
         // No config file given: write the one mirai would generate, with this block's
-        // tuning applied over the defaults. A user-supplied file owns every setting
+        // tuning applied over the defaults. A user-supplied file keeps its own tuning
         // but the two thread counts.
         let custom = self.config.is_some();
         let config = match &self.config {

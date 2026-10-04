@@ -274,8 +274,9 @@ weighed against the maintenance surface, not accepted by default.
 
 **In scope, decided:** mirai owns the KataGo analysis config. It writes the file itself from
 one set of static defaults (`mirai-engine/src/tuning.rs`), editable in Preferences; a
-user-supplied `analysis.cfg` stays available and then owns every setting but the two thread
-counts. A measured calibration — timing a few thread combinations against the real model and
+user-supplied `analysis.cfg` stays available and then owns every setting except the two thread
+counts and what mirai forces on every config: Black-perspective reporting and logging. A
+measured calibration — timing a few thread combinations against the real model and
 keeping the winner — is an explicit opt-in per profile, never something that runs on its own.
 Why a reported device memory or a model-name table is not a substitute is
 [`docs/dev/ARCHITECTURE.md`](docs/dev/ARCHITECTURE.md#22-mirai-generates-katagos-analysis-config).

@@ -26,8 +26,9 @@ model  = "/opt/katago/model.bin.gz"
 
 # A KataGo analysis config. Leave it out and the server writes one into log_dir from the
 # settings below — the same file the desktop application generates. Point it at your own
-# file to take full control instead, in which case that file owns every KataGo setting
-# except the two thread counts.
+# file to take control instead, in which case that file owns every KataGo setting except
+# the two thread counts and what mirai-server always forces: Black-perspective reporting
+# and logging.
 # config = "/opt/katago/analysis.cfg"
 
 # Tuning. With a generated config these are written into it; with a custom one, only the

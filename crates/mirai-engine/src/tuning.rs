@@ -45,7 +45,7 @@ const CACHE_ENTRY_BYTES: u64 = 3 * 1024;
 /// Optional replacements for the four keys a generated analysis config writes.
 ///
 /// `None` keeps [`EngineTuning::default`] for that key. This is not what a
-/// user-supplied analysis.cfg gets: that file owns every setting but the two
+/// user-supplied analysis.cfg gets: that file keeps its own tuning but the two
 /// thread counts, which are applied by [`crate::LocalEngineConfig::apply_config_overrides`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TuningOverrides {

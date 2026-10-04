@@ -71,9 +71,10 @@ impl LocalEngineConfig {
 
     /// Which tuning keys may be forced with `-override-config`.
     ///
-    /// A user-supplied analysis.cfg (`custom`) owns every setting but the two
+    /// A user-supplied analysis.cfg (`custom`) keeps its own tuning but the two
     /// thread counts. A generated config already contains every key; overriding
-    /// them again would give one value two sources of truth.
+    /// them again would give one value two sources of truth. Either way,
+    /// `override_config` forces the reporting perspective and logging.
     pub fn apply_config_overrides(&mut self, custom: bool, overrides: TuningOverrides) {
         (self.analysis_threads, self.search_threads) = if custom {
             (overrides.analysis_threads, overrides.search_threads)
@@ -794,7 +795,7 @@ mod tests {
         assert!(lines.try_recv().is_err());
     }
 
-    /// A user-supplied file owns every setting but the two thread counts; cache size
+    /// A user-supplied file keeps its own tuning but the two thread counts; cache size
     /// and batch size named by the caller must not reach `-override-config`. A
     /// generated file is the only source of its keys, so it gets no thread override.
     #[test]

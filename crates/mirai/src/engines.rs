@@ -274,7 +274,7 @@ async fn build(profile: EngineProfile, log_dir: PathBuf) -> Result<Built, Engine
                 nn_max_batch_size,
                 nn_cache_size_power_of_two,
             };
-            // A custom config is the user's file. It owns every setting but the two
+            // A custom config is the user's file. It keeps its own tuning but the two
             // thread counts. Otherwise mirai writes one next to the logs, and that
             // file is the only source of the four keys.
             let custom = config.is_some();
