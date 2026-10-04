@@ -699,6 +699,19 @@ persists nothing. Compare it with the server's startup log (the same grouping;
 `--print-fingerprint` is the raw hex) before accepting. Switch engines with
 `action:win.set-engine=<profile>`.
 
+To check that editing does not discard a pin just trusted through the profile list, start
+with an unpinned profile and no `active_engine` in the isolated config. With the server up:
+
+```sh
+MIRAI_HARNESS="wait:3000,action:win.preferences,wait:1000,press:desktop,wait:2500,press:Trust,wait:2500,press:Edit This Profile,wait:1200,shot:/tmp/mirai-pinned-editor.png,press:Save Profile,wait:600,quit" \
+  ./target/debug/mirai
+```
+
+Use the profile's name instead of `desktop`, and compare the prompted fingerprint with the
+server before trusting it. The editor must show that fingerprint, not **Not pinned yet**,
+and `cert_sha256` must remain in `config.toml` after Save. The row's Edit handler reads the
+current saved profile: activating it pins the certificate without rebuilding the list.
+
 ### Confirm a subscription opened
 
 ```text

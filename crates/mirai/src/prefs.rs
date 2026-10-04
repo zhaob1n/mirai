@@ -295,21 +295,21 @@ fn refresh_profiles(
         edit.set_tooltip_text(Some(&gettext("Edit This Profile")));
         edit.add_css_class("flat");
         let edit_state = state.clone();
-        let edit_profile = profile.clone();
+        let edit_name = name.clone();
         edit.connect_clicked(clone!(
             #[weak]
             dialog,
             #[weak]
             group,
             move |_| {
-                let remote = !edit_profile.is_local();
-                open_editor(
-                    &dialog,
-                    &group,
-                    &edit_state,
-                    Some(edit_profile.clone()),
-                    remote,
-                );
+                // Read now, not when the row was built: selecting a remote profile here
+                // pins its certificate without rebuilding the rows, and an editor opened on
+                // the older copy would save the pin away again.
+                let Some(profile) = edit_state.config().profile(&edit_name).cloned() else {
+                    return;
+                };
+                let remote = !profile.is_local();
+                open_editor(&dialog, &group, &edit_state, Some(profile), remote);
             }
         ));
         row.add_suffix(&edit);
