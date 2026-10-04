@@ -367,12 +367,14 @@ Scale constants are normative (`types.rs`): `LCB_SCALE` 16384.0 · `UTILITY_SCAL
 `SCORE_SCALE` 32.0 · `STDEV_SCALE` 32.0 · `POLICY_ILLEGAL` 65535 · `RAW_VAR_TIME_SCALE` 4.0.
 
 `round(x)` is round-half-away-from-zero; `clamp(x, lo, hi)` is `min(max(x, lo), hi)`.
+Every codec encodes NaN as 0. Infinities saturate at the codec's bounds, except that
+negative infinity in `q_policy` is illegal, like any other negative input.
 
 | Codec | Encode | Decode | Behaviour at the edges |
 |---|---|---|---|
 | `q16` / `dq16` — probabilities | `u16 = trunc(clamp(v, 0, 1) * 65535 + 0.5)` | `v = u / 65535` | input clamped to `[0,1]` before scaling |
-| `qs` / `dqs` — signed scalars | `i16 = clamp(round(v * scale), -32767, 32767)`; **NaN → 0** | `v = i / scale` | saturates at ±32767; `-32768` never produced |
-| `qu` / `dqu` — non-negative scalars | `u16 = clamp(round(v * scale), 0, 65535)`; **NaN → 0** | `v = u / scale` | negatives clamp to 0 |
+| `qs` / `dqs` — signed scalars | `i16 = clamp(round(v * scale), -32767, 32767)` | `v = i / scale` | saturates at ±32767; `-32768` never produced |
+| `qu` / `dqu` — non-negative scalars | `u16 = clamp(round(v * scale), 0, 65535)` | `v = u / scale` | negatives clamp to 0 |
 | `q_own` / `dq_own` — ownership | `i8 = clamp(round(v * 127), -127, 127)` | `v = i / 127` | saturates at ±127; `-128` never produced |
 | `q_policy` / `dq_policy` — policy | `v < 0` → `65535`; else `u16 = clamp(round(v * 65534), 0, 65534)` | `65535` → *illegal, no value*; else `v = u / 65534` | KataGo reports `-1` for illegal moves |
 
@@ -433,8 +435,10 @@ between requests.
 ### 7.4 Komi
 
 INV-5: komi travels as `komi_x2: i16` — komi × 2 — because KataGo accepts only integer and
-half-integer komi. `komi = komi_x2 / 2.0`; `komi_x2 = round(komi * 2)`. Examples: 7.5 → 15,
-6.5 → 13, 0 → 0, −0.5 → −1. As an `i16` it is zigzag-then-varint: 15 → `0x1E`, −1 → `0x01`.
+half-integer komi. `komi = komi_x2 / 2.0`;
+`komi_x2 = clamp(round(komi * 2), -32768, 32767)`, with NaN encoded as 0 and infinities
+saturating. Examples: 7.5 → 15, 6.5 → 13, 0 → 0, −0.5 → −1. As an `i16` it is
+zigzag-then-varint: 15 → `0x1E`, −1 → `0x01`.
 
 ### 7.5 `RuleSet`
 
