@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: mirai\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaob1n/mirai/issues\n"
-"POT-Creation-Date: 2026-10-04 01:31+0800\n"
+"POT-Creation-Date: 2026-10-04 23:55+0800\n"
 "PO-Revision-Date: 2026-09-28 06:00+0800\n"
 "Last-Translator: Huang Zhaobin <zhaob1n@foxmail.com>\n"
 "Language-Team: Chinese (China) <i18n-zh@googlegroups.com>\n"
@@ -1096,16 +1096,12 @@ msgid "Server"
 msgstr "服务器"
 
 #: crates/mirai/src/prefs.rs
-msgid "For example mirai://192.168.1.10:9678"
-msgstr "例如 mirai://192.168.1.10:9678"
+msgid "For example 192.168.1.10, or 192.168.1.10:9678. The port defaults to 9678."
+msgstr "例如 192.168.1.10 或 192.168.1.10:9678。端口默认为 9678。"
 
 #: crates/mirai/src/prefs.rs
 msgid "Server URL"
 msgstr "服务器地址"
-
-#: crates/mirai/src/prefs.rs
-msgid "mirai://host:9678"
-msgstr "mirai://host:9678"
 
 #: crates/mirai/src/prefs.rs
 msgid "Token"
@@ -1162,8 +1158,9 @@ msgid "Enter the server URL."
 msgstr "请输入服务器地址。"
 
 #: crates/mirai/src/prefs.rs
-msgid "The URL must start with mirai://."
-msgstr "地址必须以 mirai:// 开头。"
+#, rust-format
+msgid "The server address is not valid: {error}"
+msgstr "服务器地址无效：{error}"
 
 #: crates/mirai/src/prefs.rs
 msgid "Not pinned yet"

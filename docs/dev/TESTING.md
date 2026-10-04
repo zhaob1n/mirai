@@ -789,6 +789,7 @@ Symptom, cause or guard, and location. Rendering mechanics live in
 | Symptom | Cause / protection | Where |
 |---|---|---|
 | Client cannot connect though the server is up | Fingerprint mismatch after a regenerated cert, wrong token, or wrong `[[engine]]` name | `--print-fingerprint` versus `cert_sha256`. §6 |
+| Selecting a profile asks to trust a fingerprint the editor's Test Connection just trusted | Save compared the pinned URL as text, so `box` and `mirai://box` dropped the pin. `pin_for` compares parsed endpoints | `prefs.rs` |
 | Cancellation looks like 30 s | The client was `kill -9`'d. UDP has no FIN. Ctrl-C through `probe`'s `ctrl_c` arm is the measurement | §6 |
 
 ### Rendering

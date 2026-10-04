@@ -1442,13 +1442,15 @@ fn remote_editor(
 
     let server = adw::PreferencesGroup::builder()
         .title(gettext("Server"))
-        .description(gettext("For example mirai://192.168.1.10:9678"))
+        .description(gettext(
+            "For example 192.168.1.10, or 192.168.1.10:9678. The port defaults to 9678.",
+        ))
         .build();
     let url_row = adw::EntryRow::builder()
         .title(gettext("Server URL"))
         .build();
-    url_row.set_text(&url);
-    url_row.set_tooltip_text(Some(&gettext("mirai://host:9678")));
+    add_scheme_prefix(&url_row);
+    url_row.set_text(url.strip_prefix(mirai_proto::URL_SCHEME).unwrap_or(&url));
     let token_row = adw::PasswordEntryRow::builder()
         .title(gettext("Token"))
         .build();
@@ -1515,11 +1517,10 @@ fn remote_editor(
         #[weak]
         trust_row,
         move |button| {
-            let url = test_url.text().trim().to_string();
-            if url.is_empty() {
+            let Some(url) = entered_url(&test_url) else {
                 complain(&test_banner, gettext("Enter the server URL first."));
                 return;
-            }
+            };
             let token = test_token.text().to_string();
             let engine = {
                 let e = test_engine.text().trim().to_string();
@@ -1622,18 +1623,25 @@ fn remote_editor(
         group,
         move |_| {
             let name = name_row.text().trim().to_string();
-            let url = url_row.text().trim().to_string();
+            let url = entered_url(&url_row);
 
             if let Err(message) = check_name(&save_state, &name, editing.as_deref()) {
                 complain(&banner, message);
                 return;
             }
-            if url.is_empty() {
+            let Some(url) = url else {
                 complain(&banner, gettext("Enter the server URL."));
                 return;
-            }
-            if !url.starts_with("mirai://") {
-                complain(&banner, gettext("The URL must start with mirai://."));
+            };
+            if let Err(e) = mirai_proto::parse_url(&url) {
+                complain(
+                    &banner,
+                    // Translators: {error} says what is wrong with the address, in English.
+                    gettext_f(
+                        "The server address is not valid: {error}",
+                        &[("error", &e.reason)],
+                    ),
+                );
                 return;
             }
 
@@ -1641,13 +1649,9 @@ fn remote_editor(
                 let e = engine_row.text().trim().to_string();
                 (!e.is_empty()).then_some(e)
             };
-            // Keep the pin only if it was obtained from this URL. A different URL is
+            // Keep the pin only if it was obtained from this server. A different one is
             // unpinned, and selecting the profile probes again before sending the token.
-            let cert_sha256 = pin
-                .borrow()
-                .as_ref()
-                .filter(|(pinned, _)| *pinned == url)
-                .map(|(_, fingerprint)| fingerprint.clone());
+            let cert_sha256 = pin_for(&pin.borrow(), &url);
 
             let profile = EngineProfile {
                 name: name.clone(),
@@ -1665,6 +1669,78 @@ fn remote_editor(
     ));
 
     editor.page
+}
+
+/// Fixes `mirai://` beside the address rather than having it typed: every address is a
+/// mirai one.
+///
+/// A plain prefix is centred on the row and so sits between the floating title and the
+/// text. The editable area stacks the title, 3 px (libadwaita's `TITLE_SPACING`) and the
+/// text, centred as one block; the prefix stacks a blank line in the title's style above
+/// the scheme, so the scheme lands on the text's line. While the row is empty and
+/// unfocused the title is one centred line, and without the blank line the scheme reads
+/// on that line instead.
+fn add_scheme_prefix(row: &adw::EntryRow) {
+    let spacer = gtk::Label::builder()
+        .label(" ")
+        .css_classes(["subtitle"])
+        .accessible_role(gtk::AccessibleRole::Presentation)
+        .build();
+    let scheme = gtk::Label::builder()
+        .label(mirai_proto::URL_SCHEME)
+        .css_classes(["dim-label"])
+        .build();
+    let column = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(3)
+        .valign(gtk::Align::Center)
+        .build();
+    column.append(&spacer);
+    column.append(&scheme);
+    row.add_prefix(&column);
+    row.add_css_class("mirai-url");
+    // An address reads left to right in every locale; mirrored, the scheme would follow it.
+    row.set_direction(gtk::TextDirection::Ltr);
+
+    // libadwaita's own test, minus its private `text_changed`: the row adds `focused`
+    // while its text has focus.
+    let sync = move |row: &adw::EntryRow| {
+        spacer.set_visible(!row.text().is_empty() || row.has_css_class("focused"));
+    };
+    sync(row);
+    let on_text = sync.clone();
+    row.connect_changed(move |row| on_text(row));
+    row.connect_notify_local(Some("css-classes"), move |row, _| sync(row));
+}
+
+/// The server URL in `row`, with the scheme the row shows beside it. A pasted
+/// `mirai://host` is taken as it is rather than doubled.
+fn entered_url(row: &adw::EntryRow) -> Option<String> {
+    let text = row.text();
+    let text = text.trim();
+    let address = text.strip_prefix(mirai_proto::URL_SCHEME).unwrap_or(text);
+    (!address.is_empty()).then(|| format!("{}{address}", mirai_proto::URL_SCHEME))
+}
+
+/// The fingerprint in `pin` if it was obtained from the server `url` names.
+///
+/// Endpoints are compared, not strings: the port defaults and a hand-edited config may
+/// omit the scheme, so `box`, `mirai://box:9678` and `mirai://box/` are one server, as are
+/// two spellings of one IP address. Comparing the text dropped a pin taken on `box` once
+/// the user added `mirai://`, and the profile asked to trust the same certificate again
+/// the moment it was selected. An IPv6 zone names an interface and keeps its case.
+fn pin_for(pin: &Option<(String, String)>, url: &str) -> Option<String> {
+    let (pinned_url, fingerprint) = pin.as_ref()?;
+    let endpoint = |url: &str| {
+        let (host, port) = mirai_proto::parse_url(url).ok()?;
+        let (addr, zone) = host.split_once('%').unwrap_or((&host, ""));
+        let addr = match addr.parse::<std::net::IpAddr>() {
+            Ok(ip) => ip.to_string(),
+            Err(_) => addr.to_ascii_lowercase(),
+        };
+        Some((addr, zone.to_string(), port))
+    };
+    (endpoint(pinned_url)? == endpoint(url)?).then(|| fingerprint.clone())
 }
 
 fn fingerprint_subtitle(pin: &Option<(String, String)>) -> String {
@@ -2451,6 +2527,40 @@ fn hide_steppers(row: &adw::SpinRow) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pin trusted through Test Connection survives Save however the address is spelled,
+    /// and never carries over to another server.
+    #[test]
+    fn a_pin_follows_the_server_not_the_spelling() {
+        let pin = Some(("192.168.1.10".to_string(), "ab".repeat(32)));
+        for same in [
+            "192.168.1.10",
+            "192.168.1.10:9678",
+            "mirai://192.168.1.10",
+            "mirai://192.168.1.10:9678/",
+        ] {
+            assert_eq!(pin_for(&pin, same), Some("ab".repeat(32)), "{same}");
+        }
+        let named = Some(("mirai://Box.local".to_string(), "cd".repeat(32)));
+        assert_eq!(pin_for(&named, "box.local:9678"), Some("cd".repeat(32)));
+        let v6 = Some(("mirai://[FE80:0::1%eth0]".to_string(), "ef".repeat(32)));
+        assert_eq!(pin_for(&v6, "[fe80::1%eth0]:9678"), Some("ef".repeat(32)));
+        assert_eq!(
+            pin_for(&v6, "[fe80::1%ETH0]"),
+            None,
+            "a zone is case-sensitive"
+        );
+        assert_eq!(pin_for(&v6, "[fe80::1%eth1]"), None);
+        for other in [
+            "192.168.1.11",
+            "192.168.1.10:9679",
+            "mirai://192.168.1.10:1",
+            "192.168.1.10/x",
+        ] {
+            assert_eq!(pin_for(&pin, other), None, "{other}");
+        }
+        assert_eq!(pin_for(&None, "192.168.1.10"), None);
+    }
 
     /// The chooser is useless if two candidates read the same, and noisy if every unique one
     /// drags its directory along.

@@ -452,17 +452,19 @@ live analysis goes ahead of a whole-game analysis, otherwise first come, first s
 
 ### On the laptop
 
-1. In **Preferences → Engines → Add Remote Engine**, enter a name, the server URL
-   (`mirai://192.168.1.10:9678`), and the generated token. If the server hosts several
-   engines, name one; otherwise leave **Engine name** blank to use the first.
+1. In **Preferences → Engines → Add Remote Engine**, enter a name, the server address
+   (`192.168.1.10`; the `mirai://` beside the entry is fixed, and the default port `:9678`
+   is optional), and the generated token. If the server hosts several engines, name one;
+   otherwise leave **Engine name** blank to use the first.
 2. Press **Test Connection** and compare the fingerprint in **Trust This Server?** with the
    one the server printed.
 3. If they match, press **Trust**, then **Save Profile**, and select it from the engine
    button. If they differ, cancel and investigate the network and address.
 
 The token is sent only after you trust the matching fingerprint. Selecting an unpinned
-profile asks the same question; cancelling leaves it unconnected. Changing the Server URL
-clears its old pin.
+profile asks the same question; cancelling leaves it unconnected. Pointing the Server URL at
+another server clears its old pin; respelling the same one (adding or dropping `:9678`)
+keeps it.
 
 ### If mirai later refuses to connect
 
@@ -475,7 +477,7 @@ clears its old pin.
 | The server's `cert.pem`/`key.pem` were deleted or regenerated, or the server was reinstalled | expected. Get the new value with `mirai-server --print-fingerprint`, then on the laptop edit the remote profile → **Test Connection** → check the selectable fingerprint → **Trust** → **Save Profile** |
 | Nothing changed on the server | do not trust it. Something is intercepting the connection; check the network and the address |
 
-For other connection failures, check the `mirai://` URL and UDP 9678, that the
+For other connection failures, check the server address and UDP 9678, that the
 server listens beyond `127.0.0.1`, and that its `[[token]]` value matches exactly.
 Without a token block the server starts but refuses every client.
 
