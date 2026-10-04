@@ -397,8 +397,9 @@ shows what the count would have been.
 
 ## 7. Using a remote engine
 
-`mirai-server` keeps KataGo on the desktop with the GPU while a laptop connects over
-the network. With both machines on your LAN, analysis stays on that network.
+`mirai-server` runs KataGo on another machine — one with more compute, or one you need to
+reach remotely — and mirai connects to it over the network. With both machines on your LAN,
+analysis stays on that network.
 
 > [!IMPORTANT]
 > The connection uses QUIC, so the firewall must allow UDP, not TCP.

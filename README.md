@@ -20,8 +20,8 @@ tells you at a glance how much it loses and how far to trust that number; a win-
 marks each blunder of a game; a move tree keeps every variation you try. Play the engine at
 any strength, or pull a game from Fox, eWeiqi or Yike and replay it with KataGo beside you.
 
-The engine does not have to be on the same computer. Run `mirai-server` on the machine with
-the GPU, and a laptop with none analyses just as well.
+The engine does not have to be on the same computer. When another machine has more compute,
+or you need to analyse remotely, run `mirai-server` there and connect over the network.
 
 ---
 
@@ -121,7 +121,7 @@ mirai follows your desktop language. To try another, start it with `LANGUAGE`, f
 
 ## Running over a network
 
-On the machine with the GPU:
+On the machine that runs KataGo:
 
 ```
 mirai-server --generate-token
