@@ -13,7 +13,7 @@
 # check the layout at a size mirai did not choose. Copies ~/.config/mirai/config.toml when
 # present, so the engine profile survives; set MIRAI_NO_CONFIG=1 for the empty case.
 set -eu
-[ $# -ge 3 ] || { sed -n '6,14p' "$0"; exit 2; }
+[ $# -ge 3 ] || { sed -n '5,14p' "$0"; exit 2; }
 width=$1 height=$2 script=$3
 shift 3
 
