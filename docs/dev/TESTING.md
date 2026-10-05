@@ -67,6 +67,9 @@ needed, `cargo test -p <crate> -- --list`.
 - Cert reuse
 - A mismatched pin refused as a mismatch, not as a generic failure
 - An openssl-style pin of the real certificate connects
+- A name resolving to `::1` first still reaches an IPv4-only server
+- A pinned address can succeed after another address rejects the pin; if every attempt fails,
+  fingerprint and handshake failures take precedence over silent timeouts
 - A probe returns the fingerprint and opens no stream
 
 ### `mirai-engine`

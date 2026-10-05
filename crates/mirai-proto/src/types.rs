@@ -351,7 +351,7 @@ pub struct RootInfo {
     pub score_stdev: u16,
     pub utility: i16,
     pub current_player: Color,
-    /// Raw (single-evaluation) net output; only present with [`Want::ROOT_RAW`].
+    /// Raw (single-evaluation) net output, present whenever the engine supplies it.
     pub raw_winrate: Option<u16>,
     pub raw_lead: Option<i16>,
     pub raw_var_time_left: Option<u16>,

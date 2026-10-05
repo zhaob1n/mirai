@@ -49,7 +49,8 @@ port      = 1*DIGIT                                       ; default 9678, at mos
 Parsing (`endpoint.rs` — `parse_url`), which a client MUST reproduce:
 
 1. Trim whitespace; strip an optional `mirai://` prefix; strip one trailing `/`. Any
-   other `/` is an error: there is no path.
+   other `/` is an error: there is no path. Reject `?`, `#` and `@` anywhere in the
+   remaining text: there is no query, fragment or userinfo, including inside an IPv6 zone.
 2. Empty host is an error, including a missing host before `:` and an empty `[]`.
 3. A leading `[` starts an IPv6 literal ending at the first `]`. The text inside must be
    an IPv6 address, optionally followed by `%` and a non-empty zone. An optional `:port`
@@ -62,7 +63,7 @@ Parsing (`endpoint.rs` — `parse_url`), which a client MUST reproduce:
 A link-local literal needs its zone, written as the interface name or index the resolver
 takes (`[fe80::1%eth0]`, not RFC 6874's `%25`). The zone stays part of the host.
 
-No path, query or userinfo. Credentials travel in `Hello.token`, never in the URL.
+No path, query, fragment or userinfo. Credentials travel in `Hello.token`, never in the URL.
 
 ---
 
@@ -89,6 +90,14 @@ QUIC transport parameters (`transport.rs` — `transport_config`), shared by bot
 | bidirectional streams | 1 per connection | A server MUST permit the control stream; a client MUST NOT open a second ([§3](#3-stream-topology)). |
 
 Other flow-control windows, migration and datagrams are implementation choices outside MRP.
+
+The reference client tries every address a hostname resolves to, starting attempts 250 ms
+apart until one handshake succeeds. A silent address must not prevent reaching a server on
+another address (for example, IPv4-only listening behind a dual-stack name). Each attempt
+checks its own certificate; for a pinned connect, only a handshake with the accepted pin can
+win. A mismatching address is never used or retried. If no address succeeds, the client
+reports a fingerprint mismatch in preference to a handshake rejection, and a rejection in
+preference to a timeout.
 
 ### 2.2 Certificates: trust on first use
 
@@ -160,7 +169,7 @@ zstd level 1 and window 2^19 on control streams; subscription windows are 2^16.
 
 | # | Rule | Level |
 |---|---|---|
-| 1 | Never emit `len > MAX_FRAME`. | MUST NOT |
+| 1 | Never emit `len > MAX_FRAME` or a postcard plaintext larger than `MAX_FRAME`, even if it compresses below the wire limit. | MUST NOT |
 | 2 | Read the 5-byte header first and reject `len > MAX_FRAME` **before** reading or allocating the body. | MUST |
 | 3 | Bound each frame's decompressed size to `MAX_FRAME`; abort inflation as soon as it would exceed the bound. Do not trust the zstd content-size field. A receiver MAY use a smaller plaintext limit where appropriate ([§9.3](#93-limits)). A control-frame sender MUST declare a zstd window no larger than 2^19; the receiver MUST refuse a larger one, which would be allocated from its header before the plaintext bound applies. | MUST |
 | 4 | Reject a `flags` value the stream does not allow. | MUST |
@@ -358,12 +367,14 @@ Scale constants are normative (`types.rs`): `LCB_SCALE` 16384.0 · `UTILITY_SCAL
 `SCORE_SCALE` 32.0 · `STDEV_SCALE` 32.0 · `POLICY_ILLEGAL` 65535 · `RAW_VAR_TIME_SCALE` 4.0.
 
 `round(x)` is round-half-away-from-zero; `clamp(x, lo, hi)` is `min(max(x, lo), hi)`.
+Every codec encodes NaN as 0. Infinities saturate at the codec's bounds, except that
+negative infinity in `q_policy` is illegal, like any other negative input.
 
 | Codec | Encode | Decode | Behaviour at the edges |
 |---|---|---|---|
 | `q16` / `dq16` — probabilities | `u16 = trunc(clamp(v, 0, 1) * 65535 + 0.5)` | `v = u / 65535` | input clamped to `[0,1]` before scaling |
-| `qs` / `dqs` — signed scalars | `i16 = clamp(round(v * scale), -32767, 32767)`; **NaN → 0** | `v = i / scale` | saturates at ±32767; `-32768` never produced |
-| `qu` / `dqu` — non-negative scalars | `u16 = clamp(round(v * scale), 0, 65535)`; **NaN → 0** | `v = u / scale` | negatives clamp to 0 |
+| `qs` / `dqs` — signed scalars | `i16 = clamp(round(v * scale), -32767, 32767)` | `v = i / scale` | saturates at ±32767; `-32768` never produced |
+| `qu` / `dqu` — non-negative scalars | `u16 = clamp(round(v * scale), 0, 65535)` | `v = u / scale` | negatives clamp to 0 |
 | `q_own` / `dq_own` — ownership | `i8 = clamp(round(v * 127), -127, 127)` | `v = i / 127` | saturates at ±127; `-128` never produced |
 | `q_policy` / `dq_policy` — policy | `v < 0` → `65535`; else `u16 = clamp(round(v * 65534), 0, 65534)` | `65535` → *illegal, no value*; else `v = u / 65534` | KataGo reports `-1` for illegal moves |
 
@@ -424,8 +435,10 @@ between requests.
 ### 7.4 Komi
 
 INV-5: komi travels as `komi_x2: i16` — komi × 2 — because KataGo accepts only integer and
-half-integer komi. `komi = komi_x2 / 2.0`; `komi_x2 = round(komi * 2)`. Examples: 7.5 → 15,
-6.5 → 13, 0 → 0, −0.5 → −1. As an `i16` it is zigzag-then-varint: 15 → `0x1E`, −1 → `0x01`.
+half-integer komi. `komi = komi_x2 / 2.0`;
+`komi_x2 = clamp(round(komi * 2), -32768, 32767)`, with NaN encoded as 0 and infinities
+saturating. Examples: 7.5 → 15, 6.5 → 13, 0 → 0, −0.5 → −1. As an `i16` it is
+zigzag-then-varint: 15 → `0x1E`, −1 → `0x01`.
 
 ### 7.5 `RuleSet`
 

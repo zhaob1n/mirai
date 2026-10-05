@@ -36,6 +36,12 @@ pub fn parse_url(url: &str) -> Result<(String, u16), AddressError> {
     if rest.contains('/') {
         return Err(AddressError::new(url, "a mirai URL has no path"));
     }
+    if rest.contains(['?', '#', '@']) {
+        return Err(AddressError::new(
+            url,
+            "a mirai URL has no query, fragment or userinfo",
+        ));
+    }
     if rest.is_empty() {
         return Err(AddressError::new(url, "empty host"));
     }
@@ -223,6 +229,20 @@ mod tests {
         ] {
             let err = parse_url(url).expect_err(url);
             assert_eq!(err.reason, "a mirai URL has no path", "{url}");
+        }
+    }
+
+    #[test]
+    fn credentials_queries_and_fragments_are_not_hosts_or_zones() {
+        for url in [
+            "mirai://token@box",
+            "box?token=secret",
+            "mirai://box#fragment",
+            "mirai://[fe80::1%eth0?query]",
+            "mirai://[fe80::1%eth0#fragment]",
+            "mirai://[fe80::1%user@eth0]",
+        ] {
+            assert!(parse_url(url).is_err(), "accepted {url}");
         }
     }
 

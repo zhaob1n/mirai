@@ -16,8 +16,8 @@
 //! reports before it: consecutive reports of one search differ in a few numbers.
 //!
 //! Generic over `AsyncRead + AsyncWrite`, so the same codec serves the QUIC transport and
-//! any future TCP fallback. Buffers are reused across frames, so steady-state framing does
-//! not allocate.
+//! any future TCP fallback. Plaintext and wire buffers are reused across frames; the
+//! subscription codec also reuses its zstd context.
 
 use std::io;
 
@@ -94,9 +94,9 @@ impl FrameBuf {
     }
 }
 
-/// Bounds a compressed frame being encoded to [`MAX_FRAME`].
+/// Bounds a compressed payload to [`MAX_FRAME`], plus its header already in `out`.
 fn bounded(out: &mut Vec<u8>) -> BoundedWriter<'_> {
-    BoundedWriter::new(out, MAX_FRAME, "frame")
+    BoundedWriter::new(out, MAX_FRAME + 5, "frame")
 }
 
 /// Encodes `msg` into `buf.wire` as a complete frame and returns it.
@@ -106,6 +106,9 @@ pub fn encode<'b, T: Serialize + ?Sized>(
 ) -> Result<&'b [u8], FrameError> {
     buf.plain.clear();
     postcard::to_io(msg, &mut buf.plain).map_err(|e| FrameError::Codec(e.to_string()))?;
+    if buf.plain.len() > MAX_FRAME {
+        return Err(FrameError::TooLarge(buf.plain.len() as u64));
+    }
 
     buf.wire.clear();
     buf.wire.extend_from_slice(&[0; 5]);
@@ -423,7 +426,12 @@ impl SubStreamDecoder {
         self.plain.clear();
         let mut input = InBuffer::around(payload);
         loop {
-            spare(&mut self.plain, 16 * 1024);
+            if self.plain.len() == self.plain.capacity() {
+                // `reserve` can double past the limit before we check the output. Grow
+                // geometrically, but give zstd at most one byte past the plaintext cap.
+                let capacity = (self.plain.capacity() * 2).clamp(16 * 1024, MAX_FRAME + 1);
+                self.plain.reserve_exact(capacity - self.plain.len());
+            }
             let pos = self.plain.len();
             let mut out = OutBuffer::around_pos(&mut self.plain, pos);
             self.zstd.run(&mut input, &mut out)?;
@@ -592,6 +600,16 @@ mod tests {
         assert_eq!(back, plain);
     }
 
+    #[test]
+    fn an_encoder_refuses_plaintext_its_receiver_would_reject() {
+        let msg = vec![0u8; MAX_FRAME];
+        let result = encode(&mut FrameBuf::new(), &msg).map(|frame| frame.len());
+        assert!(
+            matches!(result, Err(FrameError::TooLarge(_))),
+            "oversized plaintext was sent: {result:?}"
+        );
+    }
+
     #[tokio::test]
     async fn unknown_flag_bits_are_rejected_not_ignored() {
         // A reserved bit set by a future dialect must fail loudly. Postcard is positional,
@@ -715,14 +733,17 @@ mod tests {
 
     #[test]
     fn a_sub_stream_chunk_cannot_inflate_past_max_frame() {
-        let bomb = foreign_sub_frame(&vec![0u8; MAX_FRAME + 1], SUB_WINDOW_LOG);
+        let bomb = foreign_sub_frame(&vec![0u8; 4 * MAX_FRAME], SUB_WINDOW_LOG);
         assert!(
             bomb.len() < 4096,
             "not much of a bomb: {} bytes",
             bomb.len()
         );
         let r: Result<u32, _> = SubStreamDecoder::new().unwrap().decode(&bomb);
-        assert!(matches!(r, Err(FrameError::TooLarge(_))), "got {r:?}");
+        assert!(
+            matches!(r, Err(FrameError::TooLarge(n)) if n == MAX_FRAME as u64 + 1),
+            "inflation did not stop at the plaintext bound: {r:?}"
+        );
     }
 
     /// The window is the decoder's memory: a stream may not make a client hold more.
