@@ -355,6 +355,8 @@ Traps:
   `LANGUAGE=en`, or write the needles in the language you run.
 - Substring match is depth-first. Choose a needle unique to the control, or
   switch the page first when titles repeat.
+- `wait-status:`, `set:`, `select:` and `fill:` match mapped widgets, not a widget's
+  own `visible` flag: a hidden Preferences page keeps that flag on its children.
 - A popover lives on its own surface, so its contents never appear in a `shot`.
   Verify a chooser by what picking an entry *does*.
 - `press:` walks visible dialog controls, including mapped response buttons
@@ -392,14 +394,17 @@ Traps:
 | `scroll:<px>` | Scroll the first mapped `ScrolledWindow` that has room to scroll by that many pixels through its vertical adjustment, where the wheel and scrollbar end. Clamped to the range. `NOTHING TO SCROLL` when none is mapped or the content fits | 250 ms |
 | `size:<w>x<h>` | Ask for that window size with `set_default_size` (a floating window on niri honours it), then log what it got: `size 902x900 -> 902x900 collapsed=true sidebar=false board=902x603 side=603`. Sweep a width across the sidebar fold and `side` must not change | 500 ms |
 | `close-dialog` | Close the dialog presented over the active window through `adw::Dialog::close`, as its close button and Escape do; `NO DIALOG` when none is up | 250 ms |
-| `close-window` | Close only the active window through its normal shutdown path | 250 ms |
+| `close-window` | Close only the active window through its normal shutdown path, force-closing any dialog presented over it first (libadwaita would otherwise close the dialog and keep the window). `STILL OPEN` when the window survived; `NO WINDOW` when none remained | 250 ms |
 | `quit` | `app.quit()`, ending the script | — |
 
 Unknown or malformed steps fail the script, rather than silently skipping the
-step. Whitespace around steps is trimmed, so a script may wrap. `mod harness`
-is `#[cfg(debug_assertions)]` and `install` returns immediately when
-`MIRAI_HARNESS` is unset — **a release build ignores the variable. Always use
-a debug build.**
+step. Targets must be nonempty: `press:`, `wait-status:`, and `select:=2` are
+invalid, not requests to match the first control. Only `fill:` and a string
+action's value may be empty. Bare commands (`close-dialog`, `close-window`,
+`quit`) take no colon or argument. Whitespace around steps is trimmed, so a
+script may wrap. `mod harness` is `#[cfg(debug_assertions)]` and `install`
+returns immediately when `MIRAI_HARNESS` is unset — **a release build ignores
+the variable. Always use a debug build.**
 
 Every step logs to stderr:
 
@@ -410,7 +415,7 @@ harness: action win.next10 -> ok            # MISSING = no such window action
 harness: page "Analysis" -> ok              # NOT FOUND = dialog not up, or no such page
 harness: set "Maximum Visits"=2000 -> ok    # NOT FOUND = row hidden or title wrong
 harness: close-dialog -> ok                 # NO DIALOG = nothing presented
-harness: close-window -> ok                 # NO WINDOW = none remained
+harness: close-window -> ok                 # NO WINDOW = none remained; STILL OPEN = it did not close
 harness: wrote /tmp/mirai-a.png             # or: harness: screenshot failed: <reason>
 harness: quitting
 ```
@@ -425,9 +430,9 @@ grabbed before `present()`.
 **Cropping.** `shot:/tmp/x.png=blunder_expander` renders the *window* and passes
 the widget's bounds as the viewport. A `WidgetPaintable` of the widget alone
 draws no ancestor background. Ids resolve by `GtkWidget:name` or buildable id.
-`no widget id "x"` means the id is wrong; `"x" is not mapped yet` means the
-widget is hidden — the blunder expander is invisible until a sweep finds
-something.
+`no widget id "x"` means the id is wrong; `"x" is not mapped` means the widget
+or an ancestor is hidden — the blunder expander is invisible until a sweep finds
+something, and the candidate list goes with a folded sidebar.
 
 **Menus need focus.** A context popover is an xdg_popup with a grab, and the
 compositor refuses the grab for a window without keyboard focus: the popover

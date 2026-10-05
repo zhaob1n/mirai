@@ -34,11 +34,25 @@ const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 /// Why a request did not complete.
 #[derive(Debug)]
 enum TransportError {
-    RequestFailed,
+    /// The server answered with something other than a 2xx.
+    Status(i32),
     NotUtf8(String),
     TooLarge,
     TimedOut,
     Io(String),
+}
+
+impl TransportError {
+    /// Whether asking again may get another answer: the network or the server faltered.
+    /// A refusal, or a body too large or not text, comes back the same however often it
+    /// is asked for.
+    fn is_transient(&self) -> bool {
+        match self {
+            TransportError::TimedOut | TransportError::Io(_) => true,
+            TransportError::Status(status) => *status >= 500,
+            TransportError::NotUtf8(_) | TransportError::TooLarge => false,
+        }
+    }
 }
 
 type LookupError = kifu::Error<TransportError>;
@@ -58,9 +72,10 @@ fn error_message(server: Server, error: &LookupError) -> String {
     let name = server_name(server);
     let server = ("server", name.as_str());
     match error {
-        kifu::Error::Transport(TransportError::RequestFailed) => {
-            i18n::gettext_f("Could not reach {server}: request failed", &[server])
-        }
+        kifu::Error::Transport(TransportError::Status(status)) => i18n::gettext_f(
+            "Could not reach {server}: {error}",
+            &[server, ("error", &format!("HTTP {status}"))],
+        ),
         kifu::Error::Transport(TransportError::NotUtf8(detail)) => i18n::gettext_f(
             "Could not reach {server}: response was not UTF-8 ({error})",
             &[server, ("error", detail)],
@@ -363,8 +378,8 @@ fn saved_time(saved: i64) -> String {
         .unwrap_or_default()
 }
 
-/// libsoup as the servers' transport: GETs a URL as text, retrying a few times with a
-/// growing pause.
+/// libsoup as the servers' transport: GETs a URL as text, trying again a few times, with a
+/// growing pause, while the network or the server falters.
 ///
 /// libsoup rather than a Rust HTTP crate: its futures run on the GLib main context where
 /// the dialog lives, and it takes the desktop's proxy settings from GIO. Not
@@ -387,51 +402,38 @@ impl kifu::Fetch for Soup {
     type Error = TransportError;
 
     async fn get(&self, url: &str) -> Result<String, TransportError> {
-        let mut last_error = TransportError::RequestFailed;
-        for attempt in 1..=RETRIES {
-            match glib::future_with_timeout(REQUEST_TIMEOUT, fetch(&self.0, url)).await {
-                Ok(Ok(body)) => match String::from_utf8(body) {
-                    Ok(text) => return Ok(text),
-                    Err(error) => last_error = TransportError::NotUtf8(error.to_string()),
-                },
-                Ok(Err(BodyError::TooLarge)) => last_error = TransportError::TooLarge,
-                Ok(Err(BodyError::Status(status))) => {
-                    last_error = TransportError::Io(format!("HTTP {status}"));
+        let mut attempt = 1;
+        loop {
+            let result = glib::future_with_timeout(REQUEST_TIMEOUT, fetch(&self.0, url))
+                .await
+                .unwrap_or(Err(TransportError::TimedOut));
+            match result {
+                Err(error) if error.is_transient() && attempt < RETRIES => {
+                    glib::timeout_future(RETRY_BASE * attempt).await;
+                    attempt += 1;
                 }
-                Ok(Err(BodyError::Io(error))) => last_error = TransportError::Io(error),
-                Err(_) => last_error = TransportError::TimedOut,
-            }
-            if attempt < RETRIES {
-                glib::timeout_future(RETRY_BASE * attempt).await;
+                result => return result,
             }
         }
-        Err(last_error)
     }
 }
 
-#[derive(Debug)]
-enum BodyError {
-    TooLarge,
-    /// The server answered with something other than a 2xx.
-    Status(i32),
-    Io(String),
-}
-
-/// GETs `url` and reads its body, capped at [`MAX_RESPONSE_BYTES`].
-async fn fetch(session: &soup::Session, url: &str) -> Result<Vec<u8>, BodyError> {
+/// GETs `url` and reads its body as text, capped at [`MAX_RESPONSE_BYTES`].
+async fn fetch(session: &soup::Session, url: &str) -> Result<String, TransportError> {
     let message =
-        soup::Message::new("GET", url).map_err(|error| BodyError::Io(error.to_string()))?;
+        soup::Message::new("GET", url).map_err(|error| TransportError::Io(error.to_string()))?;
     let body = session
         .send_future(&message, glib::Priority::DEFAULT)
         .await
-        .map_err(|error| BodyError::Io(error.to_string()))?;
+        .map_err(|error| TransportError::Io(error.to_string()))?;
     // libsoup hands over the body whatever the status; an error page is not the server's
     // reply.
     let status = message.status().into_glib();
     if !(200..300).contains(&status) {
-        return Err(BodyError::Status(status));
+        return Err(TransportError::Status(status));
     }
-    read_capped(&body, MAX_RESPONSE_BYTES).await
+    let body = read_capped(&body, MAX_RESPONSE_BYTES).await?;
+    String::from_utf8(body).map_err(|error| TransportError::NotUtf8(error.to_string()))
 }
 
 /// Reads `stream` whole, giving up as soon as it has seen more than `cap` bytes.
@@ -439,19 +441,19 @@ async fn fetch(session: &soup::Session, url: &str) -> Result<Vec<u8>, BodyError>
 /// Streamed rather than read in one call (`send_and_read`), which buffers the entire body
 /// before its size can be checked: an endless or hostile response must cost at most `cap`
 /// bytes of memory.
-async fn read_capped(stream: &gio::InputStream, cap: usize) -> Result<Vec<u8>, BodyError> {
+async fn read_capped(stream: &gio::InputStream, cap: usize) -> Result<Vec<u8>, TransportError> {
     const CHUNK: usize = 64 * 1024;
     let mut body = Vec::new();
     loop {
         let chunk = stream
             .read_bytes_future(CHUNK, glib::Priority::DEFAULT)
             .await
-            .map_err(|error| BodyError::Io(error.to_string()))?;
+            .map_err(|error| TransportError::Io(error.to_string()))?;
         if chunk.is_empty() {
             return Ok(body);
         }
         if chunk.len() > cap - body.len() {
-            return Err(BodyError::TooLarge);
+            return Err(TransportError::TooLarge);
         }
         body.extend_from_slice(&chunk);
     }
@@ -1361,7 +1363,7 @@ mod tests {
     }
 
     /// Reads the file at `path` through [`read_capped`].
-    fn read_file_capped(path: &Path, cap: usize) -> Result<Vec<u8>, BodyError> {
+    fn read_file_capped(path: &Path, cap: usize) -> Result<Vec<u8>, TransportError> {
         glib::MainContext::new().block_on(async {
             let stream = gio::File::for_path(path)
                 .read_future(glib::Priority::DEFAULT)
@@ -1376,7 +1378,10 @@ mod tests {
         // `/dev/zero` never ends: buffering it whole before checking its size would run the
         // process out of memory. The capped reader must stop once it passes the cap.
         let result = read_file_capped(Path::new("/dev/zero"), 1024 * 1024);
-        assert!(matches!(result, Err(BodyError::TooLarge)), "{result:?}");
+        assert!(
+            matches!(result, Err(TransportError::TooLarge)),
+            "{result:?}"
+        );
     }
 
     #[test]
@@ -1388,20 +1393,24 @@ mod tests {
         let over = read_file_capped(&path, body.len() - 1);
         let _ = std::fs::remove_file(&path);
         assert_eq!(exact.expect("a body exactly at the cap is accepted"), body);
-        assert!(matches!(over, Err(BodyError::TooLarge)), "{over:?}");
+        assert!(matches!(over, Err(TransportError::TooLarge)), "{over:?}");
     }
 
-    #[test]
-    fn only_a_2xx_body_is_taken_for_the_reply() {
-        // libsoup hands over an error page's body like any other. Parsed as the server's
-        // JSON, a 503 would surface as a baffling parser message, or pass for an empty
-        // record list.
-        let reply = br#"{"result":0,"chesslist":[]}"#;
-        let (ok, busy) = glib::MainContext::new().block_on(async {
+    /// Serves `reply` on loopback under the status `status_of` gives each path, and runs
+    /// `client` against its base URI with a session no proxy intercepts. Returns what
+    /// `client` did, and every path asked for.
+    fn serve<T>(
+        reply: &'static [u8],
+        status_of: fn(&str) -> u32,
+        client: impl AsyncFnOnce(soup::Session, String) -> T,
+    ) -> (T, Vec<String>) {
+        let asked = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let result = glib::MainContext::new().block_on(async {
             let server = soup::Server::builder().build();
+            let log = asked.clone();
             server.add_handler(None, move |_, message, path, _| {
-                let status = if path == "/busy" { 503 } else { 200 };
-                message.set_status(status, None);
+                log.borrow_mut().push(path.to_string());
+                message.set_status(status_of(path), None);
                 message.set_response(Some("application/json"), soup::MemoryUse::Copy, reply);
             });
             server
@@ -1411,11 +1420,45 @@ mod tests {
             let session = soup::Session::new();
             // A proxy taken from the environment must not intercept a loopback request.
             session.set_proxy_resolver(None::<&gio::ProxyResolver>);
+            client(session, base).await
+        });
+        (result, asked.take())
+    }
+
+    #[test]
+    fn only_a_2xx_body_is_taken_for_the_reply() {
+        // libsoup hands over an error page's body like any other. Parsed as the server's
+        // JSON, a 503 would surface as a baffling parser message, or pass for an empty
+        // record list.
+        let reply = br#"{"result":0,"chesslist":[]}"#;
+        let status_of = |path: &str| if path == "/busy" { 503 } else { 200 };
+        let ((ok, busy), _) = serve(reply, status_of, async |session, base| {
             let ok = fetch(&session, &format!("{base}ok")).await;
             let busy = fetch(&session, &format!("{base}busy")).await;
             (ok, busy)
         });
-        assert_eq!(ok.expect("a 200 is the reply"), reply);
-        assert!(matches!(busy, Err(BodyError::Status(503))), "{busy:?}");
+        assert_eq!(ok.expect("a 200 is the reply").as_bytes(), reply);
+        assert!(matches!(busy, Err(TransportError::Status(503))), "{busy:?}");
+    }
+
+    #[test]
+    fn only_a_failure_another_attempt_may_cure_is_asked_again() {
+        // A refusal comes back the same however often it is asked for: asking it again
+        // only kept the picker on its spinner for another second. A server error may pass.
+        let status_of = |path: &str| if path == "/busy" { 503 } else { 404 };
+        let ((missing, busy), asked) = serve(b"{}", status_of, async |session, base| {
+            let soup = Soup(session);
+            let missing = kifu::Fetch::get(&soup, &format!("{base}missing")).await;
+            let busy = kifu::Fetch::get(&soup, &format!("{base}busy")).await;
+            (missing, busy)
+        });
+        assert!(
+            matches!(missing, Err(TransportError::Status(404))),
+            "{missing:?}"
+        );
+        assert!(matches!(busy, Err(TransportError::Status(503))), "{busy:?}");
+        let times = |path: &str| asked.iter().filter(|asked| *asked == path).count();
+        assert_eq!(times("/missing"), 1);
+        assert_eq!(times("/busy"), RETRIES as usize);
     }
 }

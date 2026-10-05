@@ -13,13 +13,8 @@
 //! MIRAI_HARNESS="wait:1500,action:win.toggle-analysis,wait:6000,shot:/tmp/a.png,quit"
 //! ```
 //!
-//! Steps run in order: `wait:<ms>`, `wait-status:<text>`, `action:<prefix.name>`,
-//! `action:<prefix.name>=<string arg>`, `press:<button text>`, `page:<preferences page>`,
-//! `stack:<view stack page>`, `select:<row title>=<index>`, `set:<row title>=<number>`,
-//! `fill:<entry placeholder>=<text>`, `size:<w>x<h>`, `shot:<path.png>`,
-//! `shot:<path.png>=<widget id>`,
-//! `board:<primary|secondary|hover>:<GTP>` enters the board's production hit-test path.
-//! `close-dialog`, `close-window`, `quit`.
+//! The complete step grammar and delays are in `docs/dev/TESTING.md` §5. Label-based
+//! steps need a nonempty target; a missing target must not match an arbitrary control.
 //!
 //! Label steps match the text on screen, which follows the locale: an English script
 //! needs `LANGUAGE=en`, or needles written in the language the process runs. A step
@@ -87,49 +82,62 @@ fn parse(script: &str) -> Vec<Step> {
             let (kind, rest) = step.split_once(':').unwrap_or((step, ""));
             match kind {
                 "wait" => rest.parse().ok().map(Step::Wait),
-                "wait-status" => Some(Step::WaitStatus(rest.to_string())),
+                "wait-status" if !rest.is_empty() => Some(Step::WaitStatus(rest.to_string())),
                 "board" => rest
                     .split_once(':')
                     .map(|(button, point)| Step::Board(button.into(), point.into())),
                 "tree" => rest
                     .split_once(':')
                     .map(|(button, cell)| Step::Tree(button.into(), cell.into())),
-                "focus" => Some(Step::Focus(rest.to_string())),
-                "shot" => Some(match rest.rsplit_once('=') {
-                    Some((path, region)) => Step::Shot(path.to_string(), Some(region.to_string())),
-                    None => Step::Shot(rest.to_string(), None),
-                }),
-                "close-dialog" => Some(Step::CloseDialog),
-                "close-window" => Some(Step::CloseWindow),
-                "quit" => Some(Step::Quit),
-                "press" => Some(Step::Press(rest.to_string())),
-                "page" => Some(Step::Page(rest.to_string())),
-                "stack" => Some(Step::Stack(rest.to_string())),
+                "focus" if !rest.is_empty() => Some(Step::Focus(rest.to_string())),
+                "shot" if !rest.is_empty() => match rest.rsplit_once('=') {
+                    Some((path, region)) if !path.is_empty() && !region.is_empty() => {
+                        Some(Step::Shot(path.to_string(), Some(region.to_string())))
+                    }
+                    None => Some(Step::Shot(rest.to_string(), None)),
+                    _ => None,
+                },
+                "close-dialog" if step == kind => Some(Step::CloseDialog),
+                "close-window" if step == kind => Some(Step::CloseWindow),
+                "quit" if step == kind => Some(Step::Quit),
+                "press" if !rest.is_empty() => Some(Step::Press(rest.to_string())),
+                "page" if !rest.is_empty() => Some(Step::Page(rest.to_string())),
+                "stack" if !rest.is_empty() => Some(Step::Stack(rest.to_string())),
                 "divider" => rest.parse().ok().map(Step::Divider),
                 "scroll" => rest.parse().ok().map(Step::Scroll),
                 "size" => rest
                     .split_once('x')
                     .and_then(|(w, h)| Some(Step::Size(w.parse().ok()?, h.parse().ok()?))),
-                "sort" => Some(Step::Sort(rest.to_string())),
-                "select" => rest.rsplit_once('=').and_then(|(title, index)| {
-                    index
-                        .parse()
-                        .ok()
-                        .map(|index| Step::Select(title.to_string(), index))
-                }),
-                "set" => rest.rsplit_once('=').and_then(|(title, value)| {
-                    value
-                        .parse()
-                        .ok()
-                        .map(|value| Step::Set(title.to_string(), value))
-                }),
+                "sort" if !rest.is_empty() => Some(Step::Sort(rest.to_string())),
+                "select" => rest
+                    .rsplit_once('=')
+                    .filter(|(title, _)| !title.is_empty())
+                    .and_then(|(title, index)| {
+                        index
+                            .parse()
+                            .ok()
+                            .map(|index| Step::Select(title.to_string(), index))
+                    }),
+                "set" => rest
+                    .rsplit_once('=')
+                    .filter(|(title, _)| !title.is_empty())
+                    .and_then(|(title, value)| {
+                        value
+                            .parse()
+                            .ok()
+                            .map(|value| Step::Set(title.to_string(), value))
+                    }),
                 "fill" => rest
                     .split_once('=')
+                    .filter(|(field, _)| !field.is_empty())
                     .map(|(field, text)| Step::Fill(field.to_string(), text.to_string())),
-                "action" => Some(match rest.split_once('=') {
-                    Some((name, arg)) => Step::Action(name.to_string(), Some(arg.to_string())),
-                    None => Step::Action(rest.to_string(), None),
-                }),
+                "action" if !rest.is_empty() => match rest.split_once('=') {
+                    Some((name, arg)) if !name.is_empty() => {
+                        Some(Step::Action(name.to_string(), Some(arg.to_string())))
+                    }
+                    None => Some(Step::Action(rest.to_string(), None)),
+                    _ => None,
+                },
                 _ => None,
             }
             .or_else(|| Some(Step::Invalid(step.to_string())))
@@ -410,17 +418,11 @@ pub fn install(app: &adw::Application) {
                     glib::timeout_future(Duration::from_millis(250)).await;
                 }
                 Step::CloseWindow => {
-                    let done = app.active_window().is_some_and(|window| {
-                        window.close();
-                        true
-                    });
-                    if !done {
+                    let outcome = close_window(&app);
+                    if outcome != "ok" {
                         mark_failed();
                     }
-                    eprintln!(
-                        "harness: close-window -> {}",
-                        if done { "ok" } else { "NO WINDOW" }
-                    );
+                    eprintln!("harness: close-window -> {outcome}");
                     glib::timeout_future(Duration::from_millis(250)).await;
                 }
                 Step::Quit => {
@@ -434,6 +436,33 @@ pub fn install(app: &adw::Application) {
             }
         }
     });
+}
+
+/// Closes the active window through `gtk::Window::close`, the title-bar button's path,
+/// and says whether it went: `ok`, `NO WINDOW`, or `STILL OPEN`.
+///
+/// libadwaita answers a window's close request by closing its presented dialog instead;
+/// with Preferences up the window stayed, and the script ran on against it. A script asks
+/// for the window, so its dialogs are dismissed first with `force_close`, which skips
+/// their own `can-close` veto.
+fn close_window(app: &adw::Application) -> &'static str {
+    let Some(window) = app.active_window() else {
+        return "NO WINDOW";
+    };
+    if let Some(adw_window) = window.downcast_ref::<adw::ApplicationWindow>() {
+        while let Some(dialog) = adw_window.visible_dialog() {
+            dialog.force_close();
+            if adw_window.visible_dialog().as_ref() == Some(&dialog) {
+                return "STILL OPEN";
+            }
+        }
+    }
+    window.close();
+    if app.windows().contains(&window) {
+        "STILL OPEN"
+    } else {
+        "ok"
+    }
 }
 
 async fn wait_status(app: &adw::Application, needle: &str) -> bool {
@@ -450,7 +479,8 @@ async fn wait_status(app: &adw::Application, needle: &str) -> bool {
 }
 
 fn find_label(widget: &gtk::Widget, needle: &str) -> bool {
-    if widget.is_visible()
+    // A hidden page's children still have visible=true; only mapped includes ancestors.
+    if widget.is_mapped()
         && let Some(label) = widget.downcast_ref::<gtk::Label>()
         && label.text().contains(needle)
     {
@@ -775,7 +805,7 @@ fn sort_by_column(app: &adw::Application, needle: &str) -> bool {
 /// Selects the first visible `adw::ComboRow` whose title contains `needle`.
 fn select(app: &adw::Application, needle: &str, index: u32) -> bool {
     fn walk(w: &gtk::Widget, needle: &str, index: u32) -> bool {
-        if w.is_visible()
+        if w.is_mapped()
             && let Some(row) = w.downcast_ref::<adw::ComboRow>()
             && row.title().contains(needle)
         {
@@ -803,7 +833,7 @@ fn select(app: &adw::Application, needle: &str, index: u32) -> bool {
 /// how a script changes one.
 fn set_spin(app: &adw::Application, needle: &str, value: f64) -> bool {
     fn walk(w: &gtk::Widget, needle: &str, value: f64) -> bool {
-        if w.is_visible()
+        if w.is_mapped()
             && let Some(row) = w.downcast_ref::<adw::SpinRow>()
             && row.title().contains(needle)
         {
@@ -828,7 +858,7 @@ fn set_spin(app: &adw::Application, needle: &str, value: f64) -> bool {
 /// Fills the first visible Entry or SearchEntry whose placeholder contains `needle`.
 fn fill(app: &adw::Application, needle: &str, text: &str) -> bool {
     fn walk(w: &gtk::Widget, needle: &str, text: &str) -> bool {
-        if w.is_visible()
+        if w.is_mapped()
             && let Some(entry) = w.downcast_ref::<gtk::SearchEntry>()
             && entry
                 .placeholder_text()
@@ -837,7 +867,7 @@ fn fill(app: &adw::Application, needle: &str, text: &str) -> bool {
             entry.set_text(text);
             return true;
         }
-        if w.is_visible()
+        if w.is_mapped()
             && let Some(entry) = w.downcast_ref::<gtk::Entry>()
             && entry
                 .placeholder_text()
@@ -988,11 +1018,16 @@ fn shot(app: &adw::Application, path: &str, region: Option<&str>) -> Result<(), 
         Some(name) => {
             let target =
                 find_named(window.upcast_ref(), name).ok_or(format!("no widget id {name:?}"))?;
+            // A hidden widget keeps its last allocation, so its bounds alone would crop
+            // whatever now covers that spot: the folded sidebar's list came out blank.
+            if !target.is_mapped() {
+                return Err(format!("{name:?} is not mapped"));
+            }
             let bounds = target
                 .compute_bounds(&window)
                 .ok_or(format!("{name:?} has no bounds in the window"))?;
             if bounds.width() < 1.0 || bounds.height() < 1.0 {
-                return Err(format!("{name:?} is not mapped yet"));
+                return Err(format!("{name:?} is not laid out yet"));
             }
             Some(bounds)
         }
@@ -1082,5 +1117,32 @@ mod tests {
         assert!(matches!(&steps[2], Step::Invalid(s) if s == "board:D4"));
         assert!(matches!(&steps[3], Step::Invalid(s) if s == "set:Visits=many"));
         assert!(matches!(steps[4], Step::Wait(10)));
+    }
+
+    #[test]
+    fn missing_targets_and_arguments_to_bare_commands_are_invalid() {
+        for script in [
+            "wait-status:",
+            "press:",
+            "page:",
+            "stack:",
+            "sort:",
+            "focus:",
+            "action:",
+            "action:=local",
+            "fill:=text",
+            "select:=2",
+            "set:=3",
+            "shot:",
+            "shot:/tmp/x.png=",
+            "close-dialog:ignored",
+            "close-window:ignored",
+            "quit:ignored",
+        ] {
+            assert!(
+                matches!(parse(script).as_slice(), [Step::Invalid(_)]),
+                "{script:?} must not match an arbitrary control or ignore an argument",
+            );
+        }
     }
 }

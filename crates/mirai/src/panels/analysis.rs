@@ -65,11 +65,9 @@ mod candidate_imp {
         #[property(get, set)]
         pub filled: Cell<bool>,
 
-        /// Not a GObject property: the plain point behind `mv`.
-        pub point: Cell<u16>,
         /// `(width, height, point)` last written into `mv`. `None` until the first
-        /// apply: a fresh object's point is 0, which is a real intersection, and
-        /// [`Point::PASS`] is the other end of `u16`, so neither can be the unset mark.
+        /// apply: intersection 0 and [`Point::PASS`] are both real inputs, so neither
+        /// can be the unset mark.
         pub mv_key: Cell<Option<(u8, u8, u16)>>,
         /// The first move of the PV, which is what activating the row plays.
         pub pv_first: Cell<u16>,
@@ -97,13 +95,8 @@ impl Default for CandidateObject {
 }
 
 impl CandidateObject {
-    /// The move this row stands for.
-    pub fn point(&self) -> Point {
-        Point(self.imp().point.get())
-    }
-
-    /// The first move of this row's PV — the same point as [`CandidateObject::point`]
-    /// unless the engine sent a PV that starts elsewhere.
+    /// The first move of this row's PV — the candidate's move unless the engine sent a
+    /// PV that starts elsewhere.
     pub fn pv_first(&self) -> Point {
         Point(self.imp().pv_first.get())
     }
@@ -167,7 +160,6 @@ impl Row {
         if object.loss() != self.loss as f64 {
             object.set_loss(self.loss as f64);
         }
-        object.imp().point.set(self.point.0);
         object.imp().pv_first.set(self.pv_first.0);
         // Last: a blank row's cells re-format on this one notify, already from the new
         // numbers, rather than once per number from the move it showed before.
@@ -1133,14 +1125,12 @@ mod tests {
         }
     }
 
-    /// A fresh `CandidateObject` stores point 0, which is also the top-left intersection.
-    /// Comparing that cell before the first apply would skip the GTP string. [`Point::PASS`]
-    /// is `u16::MAX`, so it is the other value a sentinel must not collide with.
+    /// The top-left intersection and [`Point::PASS`] are both valid moves: neither can
+    /// stand for an object whose coordinate has not been set yet.
     #[test]
     fn a_fresh_row_is_not_already_showing_its_move() {
         let size = Size::square(19);
         let object = CandidateObject::default();
-        assert_eq!(object.imp().point.get(), 0);
         assert!(object.mv().is_empty());
 
         row(size.point(0, 0)).apply(&object, size);
