@@ -63,11 +63,12 @@ Blueprint templates use `_("…")` and `C_("context", "…")`.
   play"); `i18n::color_name` is for a colour standing alone.
 - Leave untranslated: identifiers, config keys, log lines, `expect` messages, and the details
   of an error from another crate or the OS, which go into a translated sentence as a value.
-- `mirai-core` and `mirai-client` link no GTK and so no gettext. Their English (`RuleSet::label`,
-  `Color::name`, `play::result_phrase`, `Play::summary`) is for the HarmonyOS client; the GTK
-  window words the same values through `i18n::rules_label`, `i18n::result_phrase` and the
-  structured `Play::end`, `Play::count` and `PlayError`. A new user-visible value from those
-  crates needs the same treatment: expose it as data, word it in `crates/mirai`.
+- `mirai-core` and `mirai-client` link no GTK and so no gettext, and they word nothing for a
+  window: a value leaves them as data. The GTK window words it through `i18n::rules_label`,
+  `i18n::result_phrase` and the structured `play::outcome`, `Play::end`, `Play::count` and
+  `PlayError`; the HarmonyOS client words the same data in its own resources. A new
+  user-visible value from those crates needs the same treatment: expose it as data, word it
+  in `crates/mirai`.
 - Text drawn in `snapshot()` is translated when the data changes, not per frame (INV-9).
 
 ## How a build finds its catalogues

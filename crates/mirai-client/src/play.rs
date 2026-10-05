@@ -220,23 +220,12 @@ fn seed_from_clock() -> u64 {
         .unwrap_or(0x5EED)
 }
 
-/// Why a game stopped before it was counted. A frontend words it; [`Play::summary`] is
-/// the English.
+/// Why a game stopped before it was counted. Each frontend words it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GameEnd {
     BothPassed,
     Resigned(Color),
     LostOnTime(Color),
-}
-
-impl GameEnd {
-    fn english(self) -> String {
-        match self {
-            GameEnd::BothPassed => "Both players passed.".to_string(),
-            GameEnd::Resigned(c) => format!("{} resigned.", c.name()),
-            GameEnd::LostOnTime(c) => format!("{} lost on time.", c.name()),
-        }
-    }
 }
 
 /// The board as last counted, whatever a resignation or a time loss decided.
@@ -286,20 +275,6 @@ pub fn outcome(result: &str) -> Outcome<'_> {
         "T" | "t" => Outcome::Time(who),
         "F" | "f" => Outcome::Forfeit(who),
         m => Outcome::Points(who, m),
-    }
-}
-
-/// [`outcome`] as English prose, for a frontend that does not localise.
-pub fn result_phrase(result: &str) -> String {
-    match outcome(result) {
-        Outcome::None => "No result".to_string(),
-        Outcome::Draw => "Jigo — a draw".to_string(),
-        Outcome::Resignation(c) => format!("{} wins by resignation", c.name()),
-        Outcome::Time(c) => format!("{} wins on time", c.name()),
-        Outcome::Forfeit(c) => format!("{} wins by forfeit", c.name()),
-        Outcome::Points(c, m) => format!("{} wins by {m}", c.name()),
-        Outcome::Win(c) => format!("{} wins", c.name()),
-        Outcome::Other(text) => text.to_string(),
     }
 }
 
@@ -425,39 +400,6 @@ impl Play {
 
     pub fn human(&self) -> Option<Color> {
         self.session.as_ref().and_then(|s| s.human)
-    }
-
-    /// [`end`](Play::end), [`result`](Play::result) and [`count`](Play::count) as English
-    /// prose; empty before the count.
-    pub fn summary(&self) -> String {
-        let Some(s) = self.session.as_ref() else {
-            return String::new();
-        };
-        let Some(count) = &s.count else {
-            return String::new();
-        };
-        let reason = s.end.map(GameEnd::english).unwrap_or_default();
-        match &s.forced_result {
-            Some(forced) => format!(
-                "{reason}\n\n{}\n\nCount without the resignation: {} ({:.1} — {:.1}{})",
-                result_phrase(forced),
-                result_phrase(&count.result),
-                count.black,
-                count.white,
-                if count.approximate { ", estimated" } else { "" },
-            ),
-            None => format!(
-                "{reason}\n\n{}\n\nBlack {:.1} — White {:.1}{}",
-                result_phrase(&count.result),
-                count.black,
-                count.white,
-                if count.approximate {
-                    " (estimated)"
-                } else {
-                    ""
-                },
-            ),
-        }
     }
 
     pub fn clocks(&self) -> Option<(String, String)> {
