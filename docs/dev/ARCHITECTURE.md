@@ -440,6 +440,8 @@ cannot silently switch the client to a different one.
 `AppState` owns each window's `GameSession`, config, engine, last report and analysis pump.
 Widgets consume its state and notifications; they do not own sibling widgets. A shared value
 belongs on `AppState`, and widget operations go through its methods or `win.*` actions (INV-7).
+The session's dirty flag is projected as `modified` for the title bar. The window keeps the
+native `PathBuf` Save target; the session's string path is not copied into an unused property.
 
 `live-analysis`, `ownership-overlay` and `policy-overlay` have hand-written setters that call
 `notify_*()`; only these setters use `explicit_notify`. Applying it to a derive-generated setter
@@ -462,7 +464,7 @@ refresh. This avoids several independently ordered signal callbacks observing ha
 | `Samples` | stored analysis changed | refresh graph samples, retaining unchanged GSK base |
 | `StoneVolume` | Stone Sounds slider | mute at once; otherwise rebuild the clips 250 ms after the slider rests |
 | `Engine` | engine or profile change | refresh engine menu, panel and subtitle; retry play if ready |
-| `Reconnected` | remote link restored | retry stalled play turn |
+| `Reconnected` | remote link restored, even when the status watch coalesced the outage away | retry stalled play turn |
 | `Toast(String)` | toast request | show one toast |
 | `Play` | play state changed | refresh clocks and controls; lock editor during play |
 | `BatchProgress` | sweep progress | throttle graph/blunder refresh to 250 ms; final `Tree` refresh on exit |
@@ -560,6 +562,11 @@ opening cost ([RENDERING §8](RENDERING.md#8-dialogs-lists-and-a-160-hz-budget))
 | Engines | `EnginePool` keys entries by full `EngineProfile` and owns starts. Windows join an in-flight start; dropping one waiter cannot strand the entry. Entries are weak so KataGo exits after the last user. Remote entries retain a status receiver for every window following reconnect. Application shutdown drops the pool before the runtime, aborting in-flight starts cleanly. |
 | `config.toml` | `Config::save_merged` applies only the window's diff to the current file, avoiding stale writes over another window's changes. A missing file is an empty base; other read/parse errors leave it untouched. `engine_profile` merges by name; an untouched profile keeps the file's copy, and for simultaneous edits of one name the last save wins. Debounced saves run on `spawn_blocking`; `flush_config` runs synchronously on close and before another window loads config. |
 | Autosave | Each window uses `autosave-<pid>-<start>-<n>.sgf`. Clean close waits for writes then deletes it; startup offers remaining crash files most recent first. Scans, writes and SGF opening/parsing use the blocking pool. |
+
+Each window's config writes share a sequence-fenced gate: a close-time flush supersedes
+older queued writes, and merges against the last snapshot actually written even if GTK has
+not consumed its result yet. Reverting settings during a pending write must still flush.
+Superseded writes do not advance the GUI's merge base: a failed flush must remain retryable.
 
 ### Async result identity
 
