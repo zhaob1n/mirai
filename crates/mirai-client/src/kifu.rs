@@ -335,7 +335,9 @@ pub async fn download<F: Fetch>(fetch: &F, record: &Record) -> Result<GameTree, 
         }
         Source::Eweiqi => {
             let body = get(fetch, &eweiqi::record_url(&record.id)).await?;
-            eweiqi::parse_record(&body).map_err(Error::Invalid)?
+            let mut tree = eweiqi::parse_record(&body).map_err(Error::Invalid)?;
+            catalogue_names(&mut tree.info, record);
+            tree
         }
         Source::YikeLibrary => {
             let body = get(fetch, &yike::library_sgf_url(&record.id)).await?;
@@ -348,6 +350,19 @@ pub async fn download<F: Fetch>(fetch: &F, record: &Record) -> Result<GameTree, 
     };
     fill(&mut tree.info, record);
     Ok(tree)
+}
+
+/// eWeiqi keeps each name in a record as bytes in its uploader's code page, and the server
+/// converts them to UTF-8 assuming the other one: 柯洁 arrives as `온썅` (GBK read as CP949),
+/// 신진서 as `脚柳辑` (CP949 read as GBK). The catalogue's display names arrive intact, so
+/// for an eWeiqi record they win over the record's own.
+fn catalogue_names(info: &mut GameInfo, record: &Record) {
+    for (player, name) in info.players.iter_mut().zip([&record.black, &record.white]) {
+        let name = name.trim();
+        if !name.is_empty() {
+            player.name = name.to_string();
+        }
+    }
 }
 
 /// Fills what the record's root left empty from its row in the list.
@@ -531,5 +546,32 @@ mod tests {
         let found = run(players(&fetch, Server::Fox, "6757425")).expect("a UID");
         assert_eq!(found[0].id, "6757425");
         assert_eq!(fetch.asked.borrow().len(), 1);
+    }
+
+    /// Game 209302 as the server sends it: both names mis-decoded, the catalogue's intact.
+    #[test]
+    fn an_eweiqi_record_takes_its_names_from_the_catalogue() {
+        let mut fetch = Canned::default();
+        fetch.replies.insert(
+            eweiqi::record_url("209302"),
+            "\\HS\n\\[GAMEINFOMAIN=GBKIND:2,GRLT:4,ZIPSU:0,GONGJE:75,TCNT:1,LINE:19\\]\n\
+             \\[BUSERINFO=BID:죔禱붐 ,BLV:35,BNICK:LYH122O\\]\n\
+             \\[WUSERINFO=WID:온썅 ,WLV:35,WNICK:KeJie\\]\n\\HE\n\\GS\n2 1 0\nINI 0 1 0 &4\n\
+             STO 0 2 1 15 3\n\\GE\n"
+                .into(),
+        );
+        let row = Record {
+            id: "209302".into(),
+            black: "廖元赫".into(),
+            white: "柯洁".into(),
+            ..record()
+        };
+        let tree = run(download(&fetch, &row)).expect("the record");
+        assert_eq!(tree.info.players[0].name, "廖元赫");
+        assert_eq!(tree.info.players[1].name, "柯洁");
+        assert_eq!(
+            tree.info.players[1].rank, "P9",
+            "the rest of the record is its own"
+        );
     }
 }
