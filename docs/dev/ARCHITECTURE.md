@@ -383,7 +383,9 @@ it to quit. The *reader* line-splits stdout into `Inner::handle`, holding only a
 exits when the engine handle drops. The *supervisor* selects on process exit and a shutdown
 oneshot: on handle drop it waits a short grace period and then kills, and on exit it marks the
 engine dead under the subscription mutex and fails every live subscription. The *stderr drain*
-logs each line and keeps a bounded ring for error messages.
+logs each line and keeps a bounded ring for error messages. Startup and exit errors wait for
+that drain before taking the tail: process exit or stdout EOF can precede its final read.
+The wait is capped at 250 ms in case a wrapper leaves the stderr pipe open.
 
 **Routing.** One mutex guards a map from monotonic query ids to report senders and decode
 parameters; no lock spans `.await`. At about ten reports/s per live query, a plain mutex

@@ -19,6 +19,7 @@ use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter, Lines};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot, watch};
+use tokio::task::JoinHandle;
 
 use crate::decode::{RawResponse, decode_report};
 use crate::query::{action_query, build_query, terminate_query};
@@ -27,6 +28,9 @@ use crate::{CancelGuard, Engine, EngineError, SubEvent, Subscription};
 
 /// How many stderr lines to keep for diagnosing a failed start.
 const STDERR_TAIL: usize = 64;
+
+/// A wrapper may leave stderr open after KataGo exits; diagnostics must not wait forever.
+const STDERR_DRAIN_GRACE: Duration = Duration::from_millis(250);
 
 /// How long a dropped local engine may take to shut down before it is killed.
 pub const LOCAL_ENGINE_SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
@@ -157,7 +161,7 @@ impl LocalEngine {
         };
 
         let tail: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::new()));
-        tokio::spawn(drain_stderr(stderr, Arc::clone(&tail)));
+        let stderr_done = tokio::spawn(drain_stderr(stderr, Arc::clone(&tail)));
 
         let (to_engine, from_client) = mpsc::unbounded_channel::<String>();
         tokio::spawn(write_lines(stdin, from_client));
@@ -169,20 +173,17 @@ impl LocalEngine {
 
         let mut lines = BufReader::new(stdout).lines();
         let hello = match tokio::time::timeout(cfg.startup_timeout, handshake(&mut lines)).await {
-            Ok(Ok(hello)) => hello,
-            Ok(Err(e)) => {
-                let _ = child.start_kill();
-                return Err(startup_error(e, &tail));
-            }
-            Err(_) => {
-                let _ = child.start_kill();
-                return Err(startup_error(
-                    format!(
-                        "katago did not answer within {}s",
-                        cfg.startup_timeout.as_secs()
-                    ),
-                    &tail,
-                ));
+            Ok(hello) => hello,
+            Err(_) => Err(format!(
+                "katago did not answer within {}s",
+                cfg.startup_timeout.as_secs()
+            )),
+        };
+        let hello = match hello {
+            Ok(hello) => hello,
+            Err(e) => {
+                let _ = child.kill().await;
+                return Err(EngineError::Startup(with_tail(e, &tail, stderr_done).await));
             }
         };
 
@@ -226,6 +227,7 @@ impl LocalEngine {
             shutdown_rx,
             shutdown_complete_tx,
             tail,
+            stderr_done,
         ));
 
         Ok(LocalEngine {
@@ -484,6 +486,7 @@ async fn supervise(
     shutdown: oneshot::Receiver<()>,
     shutdown_complete: oneshot::Sender<()>,
     tail: Arc<Mutex<VecDeque<String>>>,
+    stderr_done: JoinHandle<()>,
 ) {
     let status = tokio::select! {
         status = child.wait() => status,
@@ -506,7 +509,7 @@ async fn supervise(
         Err(e) => format!("could not wait for katago: {e}"),
     };
     if let Some(inner) = engine.upgrade() {
-        let err = EngineError::EngineExited(with_tail(reason.clone(), &tail));
+        let err = EngineError::EngineExited(with_tail(reason.clone(), &tail, stderr_done).await);
         if inner.kill(err) {
             tracing::error!(reason, "katago exited with live analyses");
         }
@@ -640,11 +643,19 @@ fn file_name(path: &Path) -> String {
         .into_owned()
 }
 
-fn startup_error(msg: String, tail: &Mutex<VecDeque<String>>) -> EngineError {
-    EngineError::Startup(with_tail(msg, tail))
-}
-
-fn with_tail(msg: String, tail: &Mutex<VecDeque<String>>) -> String {
+async fn with_tail(
+    msg: String,
+    tail: &Mutex<VecDeque<String>>,
+    mut stderr_done: JoinHandle<()>,
+) -> String {
+    // Process exit and stdout EOF do not imply the stderr task has drained its pipe.
+    // Let it reach EOF before taking the diagnostic snapshot, including the last line.
+    if tokio::time::timeout(STDERR_DRAIN_GRACE, &mut stderr_done)
+        .await
+        .is_err()
+    {
+        stderr_done.abort();
+    }
     let tail = tail.lock().expect("stderr tail poisoned");
     if tail.is_empty() {
         msg
@@ -823,11 +834,10 @@ mod tests {
         );
     }
 
-    /// Exercises the real subprocess reader and supervisor, not just `Inner::handle`:
-    /// a KataGo process dying mid-query must fail its subscriber and refuse new work.
+    /// A shell script standing in for `katago`, in a fresh directory, and a config that
+    /// starts it. Remove the directory when done.
     #[cfg(unix)]
-    #[tokio::test]
-    async fn subprocess_exit_fails_live_and_future_subscriptions() {
+    fn fake_katago(body: &str) -> (PathBuf, LocalEngineConfig) {
         use std::os::unix::fs::PermissionsExt;
         use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -839,31 +849,65 @@ mod tests {
             std::env::temp_dir().join(format!("mirai-fake-katago-{}-{nonce}", std::process::id()));
         std::fs::create_dir(&dir).unwrap();
         let script = dir.join("katago");
-        std::fs::write(
-            &script,
-            "#!/bin/sh\nread -r version\nread -r models\n\
-             printf '%s\\n' '{\"id\":\"v0\",\"action\":\"query_version\",\"version\":\"fake\"}' \
-             '{\"id\":\"m0\",\"action\":\"query_models\",\"models\":[]}'\n\
-             read -r query\nexit 17\n",
-        )
-        .unwrap();
+        std::fs::write(&script, format!("#!/bin/sh\n{body}")).unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
 
         let mut cfg =
             LocalEngineConfig::new("fake", &script, dir.join("model"), dir.join("config"));
         cfg.log_dir = dir.clone();
         cfg.startup_timeout = Duration::from_secs(2);
+        (dir, cfg)
+    }
+
+    /// Exercises the real subprocess reader and supervisor, not just `Inner::handle`:
+    /// a KataGo process dying mid-query must fail its subscriber, say why, and refuse
+    /// new work. The diagnosis reaches stderr only after the exit, as it can when the
+    /// drain has not caught up with the pipe yet.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn subprocess_exit_fails_live_and_future_subscriptions() {
+        let (dir, cfg) = fake_katago(
+            "read -r version\nread -r models\n\
+             printf '%s\\n' '{\"id\":\"v0\",\"action\":\"query_version\",\"version\":\"fake\"}' \
+             '{\"id\":\"m0\",\"action\":\"query_models\",\"models\":[]}'\n\
+             read -r query\n(sleep 0.05; echo 'CUDA error: out of memory' >&2) &\nexit 17\n",
+        );
         let engine = LocalEngine::spawn(cfg).await.unwrap();
         let err = tokio::time::timeout(Duration::from_secs(2), engine.subscribe(req()).finish())
             .await
             .expect("subprocess did not exit")
             .unwrap_err();
-        assert!(matches!(err, EngineError::EngineExited(message) if message.contains("17")));
+        assert!(
+            matches!(&err, EngineError::EngineExited(message)
+                if message.contains("17") && message.contains("out of memory")),
+            "{err}"
+        );
         assert!(matches!(
             engine.subscribe(req()).current(),
             SubEvent::Failed(EngineError::EngineExited(_))
         ));
         engine.shutdown().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// KataGo prints why it cannot start and exits. Its stdout can end before the drain
+    /// has read that last stderr line; the startup error must still carry it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_failed_start_reports_what_katago_printed_last() {
+        let (dir, cfg) = fake_katago(
+            "echo 'loading model' >&2\n\
+             (exec 1>&-; sleep 0.05; echo 'Error: could not open model file' >&2) &\nexit 1\n",
+        );
+        let err = LocalEngine::spawn(cfg)
+            .await
+            .err()
+            .expect("a katago that exits cannot start");
+        assert!(
+            matches!(&err, EngineError::Startup(message)
+                if message.contains("could not open model file")),
+            "{err}"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

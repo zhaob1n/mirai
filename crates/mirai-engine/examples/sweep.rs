@@ -26,9 +26,7 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use mirai_core::{Color, Point, sgf};
-use mirai_engine::{
-    AnalyzeReq, Engine, EngineTuning, LocalEngine, LocalEngineConfig, SubEvent, Want,
-};
+use mirai_engine::{AnalyzeReq, Engine, EngineTuning, LocalEngine, LocalEngineConfig, Want};
 
 #[derive(Parser, Debug)]
 #[command(about = "Dump per-candidate win-rate and score-lead losses for a whole record")]
@@ -146,15 +144,11 @@ async fn run() -> Result<ExitCode> {
         req.want = Want::empty();
         let to_play = req.to_play();
 
-        let mut sub = engine.subscribe(req);
-        let report = loop {
-            match sub.next().await {
-                Some(SubEvent::Done(r)) => break r,
-                Some(SubEvent::Failed(e)) => bail!("analysis failed at move {i}: {e}"),
-                Some(_) => {}
-                None => bail!("subscription closed at move {i}"),
-            }
-        };
+        let report = engine
+            .subscribe(req)
+            .finish()
+            .await
+            .with_context(|| format!("analysis failed at move {i}"))?;
 
         let Some(best) = report.moves.first() else {
             eprintln!("move {i}: no candidates");
@@ -162,12 +156,7 @@ async fn run() -> Result<ExitCode> {
         };
         let (bw, bp) = (best.winrate_for(to_play), best.score_lead_for(to_play));
         let (bu, blcb) = (best.utility_for(to_play), best.utility_lcb_for(to_play));
-        let root_win = report.root.winrate_f32();
-        let root_win = if to_play == Color::Black {
-            root_win
-        } else {
-            1.0 - root_win
-        };
+        let root_win = report.root.winrate_for(to_play);
         for (rank, m) in report.moves.iter().enumerate() {
             let (w, p) = (m.winrate_for(to_play), m.score_lead_for(to_play));
             println!(
