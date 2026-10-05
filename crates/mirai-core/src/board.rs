@@ -27,24 +27,6 @@ pub enum IllegalMove {
     OffBoard,
 }
 
-/// Stones removed by a move.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Captured {
-    pub points: SmallVec<[Point; 8]>,
-}
-
-impl Captured {
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.points.is_empty()
-    }
-
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.points.len()
-    }
-}
-
 /// The largest board KataGo's stock binary supports, and therefore ours.
 const MAX_POINTS: usize = 361;
 
@@ -84,59 +66,17 @@ impl Bits {
     }
 }
 
-/// Minimal stack interface so the flood fill can run on the board's reusable scratch
-/// buffer (`&mut self` paths) or on an inline array (`&self` paths) without allocating.
-trait Stack {
-    fn clear(&mut self);
-    fn push(&mut self, v: u16);
-    fn pop(&mut self) -> Option<u16>;
-}
-
-impl Stack for Vec<u16> {
-    #[inline]
-    fn clear(&mut self) {
-        Vec::clear(self)
-    }
-    #[inline]
-    fn push(&mut self, v: u16) {
-        Vec::push(self, v)
-    }
-    #[inline]
-    fn pop(&mut self) -> Option<u16> {
-        Vec::pop(self)
-    }
-}
-
-/// `&self` fills cannot borrow [`Board`]'s scratch `Vec`. A chain is at most
-/// [`MAX_POINTS`] stones and each stone is pushed once, so this never spills.
-/// `SmallVec` only has an inline buffer up to 64, which a large group overflowed
-/// on the hover path that asks every frame.
-type FillStack = ArrayVec<u16, MAX_POINTS>;
-
-impl Stack for FillStack {
-    #[inline]
-    fn clear(&mut self) {
-        ArrayVec::clear(self)
-    }
-    #[inline]
-    fn push(&mut self, v: u16) {
-        ArrayVec::push(self, v)
-    }
-    #[inline]
-    fn pop(&mut self) -> Option<u16> {
-        ArrayVec::pop(self)
-    }
-}
+/// Each stone is enqueued once, so the queue is also the complete chain when a fill
+/// finishes. Even the largest board fits inline; captures need no second member buffer.
+type Chain = ArrayVec<Point, MAX_POINTS>;
 
 #[derive(Clone, Debug)]
 pub struct Board {
     pub size: Size,
     stones: Box<[Option<Color>]>,
-    pub captures: [u16; 2],
+    pub captures: [u32; 2],
     zobrist: u64,
     ko_ban: Option<Point>,
-    /// Flood-fill stack, kept across moves so `play` allocates nothing.
-    scratch: Vec<u16>,
 }
 
 impl Board {
@@ -148,7 +88,6 @@ impl Board {
             captures: [0; 2],
             zobrist: 0,
             ko_ban: None,
-            scratch: Vec::with_capacity(n),
         }
     }
 
@@ -210,13 +149,12 @@ impl Board {
 
     /// All stones connected to `p` (empty when `p` is empty or off the board).
     pub fn chain(&self, p: Point) -> SmallVec<[Point; 32]> {
-        let mut members = SmallVec::new();
         if !self.size.contains(p) {
-            return members;
+            return SmallVec::new();
         }
-        let mut stack = FillStack::new();
-        walk(&self.stones, self.size, p, &mut stack, &mut members);
-        members
+        let mut chain = Chain::new();
+        fill(&self.stones, self.size, p, &mut chain, u32::MAX);
+        chain.into_iter().collect()
     }
 
     /// Liberty count of the chain at `p` (0 when `p` is empty or off the board).
@@ -224,8 +162,8 @@ impl Board {
         if !self.size.contains(p) {
             return 0;
         }
-        let mut stack = FillStack::new();
-        count_liberties(&self.stones, self.size, p, &mut stack, u32::MAX)
+        let mut chain = Chain::new();
+        fill(&self.stones, self.size, p, &mut chain, u32::MAX)
     }
 
     /// Non-mutating legality test, equivalent to `play` succeeding. Does not consider
@@ -243,7 +181,7 @@ impl Board {
         // Hover asks this every frame. Two liberties decide it: the point being
         // played is already one liberty of each adjacent chain, and neither check
         // needs the stones themselves.
-        let mut stack = FillStack::new();
+        let mut chain = Chain::new();
         let mut friendly_neighbor = false;
         for nb in self.size.neighbors(p) {
             match self.stones[nb.index()] {
@@ -252,13 +190,13 @@ impl Board {
                 None => return true,
                 Some(c) if c == color => {
                     friendly_neighbor = true;
-                    if count_liberties(&self.stones, self.size, nb, &mut stack, 2) >= 2 {
+                    if fill(&self.stones, self.size, nb, &mut chain, 2) >= 2 {
                         return true;
                     }
                 }
                 Some(_) => {
                     // An enemy chain whose only liberty is `p` is captured.
-                    if count_liberties(&self.stones, self.size, nb, &mut stack, 2) == 1 {
+                    if fill(&self.stones, self.size, nb, &mut chain, 2) == 1 {
                         return true;
                     }
                 }
@@ -269,19 +207,14 @@ impl Board {
         rules.multi_stone_suicide && friendly_neighbor
     }
 
-    /// Plays a move, updating captures, the position hash and the ko ban.
+    /// Plays a move, updating captures, the position hash and the ko ban. An illegal move
+    /// leaves the board untouched.
     ///
     /// `Point::PASS` is always legal, captures nothing and clears the ko ban.
-    pub fn play(
-        &mut self,
-        color: Color,
-        point: Point,
-        rules: &Rules,
-    ) -> Result<Captured, IllegalMove> {
-        let mut captured = Captured::default();
+    pub fn play(&mut self, color: Color, point: Point, rules: &Rules) -> Result<(), IllegalMove> {
         if point.is_pass() {
             self.ko_ban = None;
-            return Ok(captured);
+            return Ok(());
         }
         if !self.size.contains(point) {
             return Err(IllegalMove::OffBoard);
@@ -293,43 +226,39 @@ impl Board {
             return Err(IllegalMove::Ko);
         }
 
-        // Borrow the scratch stack out of `self` so the fill can run against `&self.stones`
-        // while the board is being mutated. `take` leaves an empty Vec, so no allocation.
-        let mut stack = std::mem::take(&mut self.scratch);
-        let mut members: SmallVec<[Point; 32]> = SmallVec::new();
+        let mut members = Chain::new();
 
         self.put(point, Some(color));
 
+        let mut captured = 0;
+        let mut last_captured = point;
         for nb in self.size.neighbors(point) {
             if self.stones[nb.index()] == Some(color.other())
-                && walk(&self.stones, self.size, nb, &mut stack, &mut members) == 0
+                && fill(&self.stones, self.size, nb, &mut members, 1) == 0
             {
-                self.captures[color.index()] += members.len() as u16;
-                for i in 0..members.len() {
-                    let m = members[i];
-                    self.put(m, None);
-                    captured.points.push(m);
+                captured += members.len();
+                last_captured = nb;
+                for &p in &members {
+                    self.put(p, None);
                 }
             }
         }
+        self.captures[color.index()] += captured as u32;
 
-        let liberties = walk(&self.stones, self.size, point, &mut stack, &mut members);
+        // Two liberties are enough to rule out both suicide and a simple-ko reply.
+        // A zero-liberty fill always visits every member needed for self-capture.
+        let liberties = fill(&self.stones, self.size, point, &mut members, 2);
         let mut result = Ok(());
-        if !captured.points.is_empty() {
+        if captured > 0 {
             // A capture that takes exactly one stone with a single-stone, single-liberty
             // reply is the classic ko shape; nothing else can repeat immediately.
-            self.ko_ban = if captured.points.len() == 1 && members.len() == 1 && liberties == 1 {
-                Some(captured.points[0])
-            } else {
-                None
-            };
+            self.ko_ban =
+                (captured == 1 && members.len() == 1 && liberties == 1).then_some(last_captured);
         } else if liberties == 0 {
             if rules.multi_stone_suicide && members.len() > 1 {
-                self.captures[color.other().index()] += members.len() as u16;
-                for i in 0..members.len() {
-                    let m = members[i];
-                    self.put(m, None);
-                    captured.points.push(m);
+                self.captures[color.other().index()] += members.len() as u32;
+                for &p in &members {
+                    self.put(p, None);
                 }
                 self.ko_ban = None;
             } else {
@@ -341,8 +270,7 @@ impl Board {
             self.ko_ban = None;
         }
 
-        self.scratch = stack;
-        result.map(|()| captured)
+        result
     }
 
     #[inline]
@@ -359,81 +287,36 @@ impl Board {
     }
 }
 
-/// Explicit-stack flood fill over the chain at `start`.
-///
-/// Returns the liberty count, stopping once `limit` distinct liberties have been
-/// seen (`min(actual, limit)`). `members`, when `Some`, receives every stone; capture
-/// and [`Board::chain`] need the whole list and pass `u32::MAX`. Both buffers are
-/// cleared first.
-fn fill<S: Stack>(
-    stones: &[Option<Color>],
-    size: Size,
-    start: Point,
-    stack: &mut S,
-    mut members: Option<&mut SmallVec<[Point; 32]>>,
-    limit: u32,
-) -> u32 {
-    if let Some(members) = members.as_mut() {
-        members.clear();
-    }
-    stack.clear();
+/// Flood fill over the chain at `start`, using one inline queue for both the worklist
+/// and the result. Returns `min(actual liberties, limit)`. `chain` is cleared first
+/// and contains every member unless the liberty limit ends the fill early.
+fn fill(stones: &[Option<Color>], size: Size, start: Point, chain: &mut Chain, limit: u32) -> u32 {
+    chain.clear();
     let Some(color) = stones[start.index()] else {
         return 0;
     };
     let mut seen = Bits::EMPTY;
-    let mut libs = Bits::EMPTY;
-    let mut n_libs = 0u32;
+    let mut liberties = 0;
     seen.insert(start.index());
-    stack.push(start.0);
-    while let Some(cur) = stack.pop() {
-        let cur = Point(cur);
-        if let Some(members) = members.as_mut() {
-            members.push(cur);
-        }
+    chain.push(start);
+    let mut next = 0;
+    while next < chain.len() {
+        let cur = chain[next];
+        next += 1;
         for nb in size.neighbors(cur) {
             match stones[nb.index()] {
-                None => {
-                    if libs.insert(nb.index()) {
-                        n_libs += 1;
-                        if n_libs >= limit {
-                            return n_libs;
-                        }
+                None if seen.insert(nb.index()) => {
+                    liberties += 1;
+                    if liberties >= limit {
+                        return liberties;
                     }
                 }
-                Some(c) if c == color => {
-                    if seen.insert(nb.index()) {
-                        stack.push(nb.0);
-                    }
-                }
-                Some(_) => {}
+                Some(c) if c == color && seen.insert(nb.index()) => chain.push(nb),
+                _ => {}
             }
         }
     }
-    n_libs
-}
-
-/// Liberty count of the chain at `start`, stopping at `limit`. Allocates nothing
-/// beyond `stack`.
-#[inline]
-fn count_liberties<S: Stack>(
-    stones: &[Option<Color>],
-    size: Size,
-    start: Point,
-    stack: &mut S,
-    limit: u32,
-) -> u32 {
-    fill(stones, size, start, stack, None, limit)
-}
-
-/// Fills `members` with the chain at `start` and returns its liberty count.
-fn walk<S: Stack>(
-    stones: &[Option<Color>],
-    size: Size,
-    start: Point,
-    stack: &mut S,
-    members: &mut SmallVec<[Point; 32]>,
-) -> u32 {
-    fill(stones, size, start, stack, Some(members), u32::MAX)
+    liberties
 }
 
 #[cfg(test)]
@@ -445,7 +328,7 @@ mod tests {
         Board::new(Size::square(9))
     }
 
-    fn play(board: &mut Board, rules: &Rules, color: Color, gtp: &str) -> Captured {
+    fn play(board: &mut Board, rules: &Rules, color: Color, gtp: &str) {
         let p = board.size.from_gtp(gtp).expect("coordinate");
         assert!(
             board.is_legal(color, p, rules),
@@ -465,8 +348,7 @@ mod tests {
         play(&mut board, &rules, Color::White, "A1");
         play(&mut board, &rules, Color::Black, "E3");
         play(&mut board, &rules, Color::White, "A2");
-        let captured = play(&mut board, &rules, Color::Black, "D2");
-        assert_eq!(captured.points.len(), 1);
+        play(&mut board, &rules, Color::Black, "D2");
         assert_eq!(board.at(board.size.from_gtp("D3").unwrap()), None);
         assert_eq!(board.captures[Color::Black.index()], 1);
         assert_ne!(board.zobrist(), empty);
@@ -490,8 +372,9 @@ mod tests {
         assert_eq!(board.liberties(target), 1);
 
         assert!(board.is_legal(Color::Black, take, &rules));
-        let taken = board.play(Color::Black, take, &rules).expect("capture");
-        assert_eq!(&taken.points[..], &[target]);
+        board.play(Color::Black, take, &rules).expect("capture");
+        assert_eq!(board.at(target), None);
+        assert_eq!(board.captures, [1, 0]);
         assert_eq!(board.ko_ban(), Some(target));
 
         // White may not take back immediately...
@@ -504,8 +387,9 @@ mod tests {
         play(&mut board, &rules, Color::White, "A9");
         assert_eq!(board.ko_ban(), None);
         assert!(board.is_legal(Color::White, target, &rules));
-        let retaken = board.play(Color::White, target, &rules).expect("recapture");
-        assert_eq!(&retaken.points[..], &[take]);
+        board.play(Color::White, target, &rules).expect("recapture");
+        assert_eq!(board.at(take), None);
+        assert_eq!(board.captures, [1, 1]);
     }
 
     #[test]
@@ -549,8 +433,12 @@ mod tests {
             let mut board = build();
             let a2 = board.size.from_gtp("A2").unwrap();
             assert!(board.is_legal(Color::Black, a2, &rules), "{rs:?}");
-            let captured = board.play(Color::Black, a2, &rules).expect("legal");
-            assert_eq!(captured.points.len(), 2, "{rs:?} must remove both stones");
+            board.play(Color::Black, a2, &rules).expect("legal");
+            assert_eq!(
+                board.stone_count(Color::Black),
+                0,
+                "{rs:?} must remove both stones"
+            );
             assert_eq!(board.at(a2), None);
             assert_eq!(board.captures[Color::White.index()], 2);
         }
@@ -572,8 +460,8 @@ mod tests {
         let rules = RuleSet::Chinese.rules();
         let mut board = b9();
         let before = board.zobrist();
-        let captured = board.play(Color::Black, Point::PASS, &rules).expect("pass");
-        assert!(captured.is_empty());
+        board.play(Color::Black, Point::PASS, &rules).expect("pass");
+        assert_eq!(board.captures, [0, 0]);
         assert_eq!(board.zobrist(), before);
         assert_eq!(board.ko_ban(), None);
     }

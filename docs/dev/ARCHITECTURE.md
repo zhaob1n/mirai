@@ -161,6 +161,10 @@ incremental and `Board::play` never rehashes. Turn parity is folded in at read t
 `situational_hash(to_play)` is the positional hash, XOR `WHITE_TO_MOVE_HASH` for White — so both
 superko histories come off one hash pipeline.
 
+Flood fills use one inline queue as both worklist and chain membership, with an early
+liberty limit for legality and capture checks. `Board::play` returns only success or
+an illegal-move error; callers inspect the updated board and 32-bit prisoner counts.
+
 Superko is split deliberately across two levels:
 
 | ko rule | enforced by | how |

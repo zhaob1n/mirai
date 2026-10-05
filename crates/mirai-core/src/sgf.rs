@@ -415,8 +415,22 @@ const fn utf8_len(lead: u8) -> usize {
 
 // ------------------------------------------------------------------- raw tree -> GameTree
 
-/// SGF point lists admit `aa:cc` rectangles; both forms land in `out`.
+/// SGF point lists admit `aa:cc` rectangles; both forms land in `out`, each point once.
+///
+/// Hostile files repeat whole-board rectangles: without the dedup a few KiB of
+/// `[aa:ss]` became hundreds of thousands of points, kept and written back on save.
 fn points(size: Size, values: &[String], out: &mut Vec<Point>) {
+    let mut seen = [0u64; 6];
+    for p in out.iter() {
+        seen[p.index() / 64] |= 1 << (p.index() % 64);
+    }
+    let mut add = |p: Point| {
+        let (word, bit) = (p.index() / 64, 1u64 << (p.index() % 64));
+        if seen[word] & bit == 0 {
+            seen[word] |= bit;
+            out.push(p);
+        }
+    };
     for v in values {
         let b = v.as_bytes();
         if let Some(colon) = b.iter().position(|&c| c == b':')
@@ -429,7 +443,7 @@ fn points(size: Size, values: &[String], out: &mut Vec<Point>) {
             let (x1, y1) = size.xy(to);
             for y in y0.min(y1)..=y0.max(y1) {
                 for x in x0.min(x1)..=x0.max(x1) {
-                    out.push(size.point(x, y));
+                    add(size.point(x, y));
                 }
             }
             continue;
@@ -438,7 +452,7 @@ fn points(size: Size, values: &[String], out: &mut Vec<Point>) {
         if let Some(p) = size.from_sgf(b)
             && !p.is_pass()
         {
-            out.push(p);
+            add(p);
         }
     }
 }
@@ -1143,6 +1157,26 @@ mod tests {
         assert_eq!(games[1].len(), 2);
     }
 
+    #[test]
+    fn replay_keeps_prisoners_beyond_u16() {
+        let text = format!(
+            "(;SZ[19]RU[japanese]KM[0]{})",
+            ";AE[aa]AW[ba:ss][ab:as]B[aa]".repeat(183)
+        );
+        let mut tree = parse_str(&text).unwrap().remove(0);
+        let last = *tree.main_line().last().unwrap();
+        let board = &tree.position(last).board;
+        assert_eq!(u64::from(board.captures[0]), 183 * 360);
+        let counted = crate::score(
+            board,
+            &RuleSet::Japanese.rules(),
+            0.0,
+            0,
+            &crate::DeadSet::default(),
+        );
+        assert_eq!(counted.black, 183.0 * 360.0 + 360.0);
+    }
+
     /// FF[4] point lists compress a rectangle to `ul:lr`, and the parser accepts the two
     /// corners in either order. Every point inside is one entry.
     #[test]
@@ -1164,6 +1198,22 @@ mod tests {
         let mut triangles = node.marks.of(MarkKind::Triangle).to_vec();
         triangles.sort_by_key(|p| p.0);
         assert_eq!(triangles, points(&[(1, 0), (2, 0), (1, 1), (2, 1)]));
+    }
+
+    #[test]
+    fn overlapping_point_rectangles_do_not_amplify_the_board_lists() {
+        let rectangles = "[aa:ss]".repeat(1024);
+        let text = format!("(;SZ[19]AB{rectangles}AB[aa][ss]TR{rectangles}TR[aa])");
+        let tree = parse_str(&text).unwrap().remove(0);
+        let node = tree.node(tree.root());
+        let expected: Vec<Point> = (0..361).map(Point).collect();
+        assert_eq!(node.setup.add_black, expected);
+        assert_eq!(node.marks.triangle, expected);
+        let written = write(&tree, false);
+        assert!(
+            written.len() < 4000,
+            "duplicate rectangles must not expand on save"
+        );
     }
 
     #[test]

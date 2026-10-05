@@ -94,9 +94,9 @@ impl DeadSet {
 
 /// A scored position.
 ///
-/// `territory` holds `Some(color)` for every point that counts for that colour without
-/// carrying one of its live stones — empty points and the points under dead stones — and
-/// `None` for neutral points and for points holding live stones.
+/// `territory` holds `Some(color)` for every owned empty point and the points under dead
+/// stones, including eyes whose points seki tax removes from the total. It holds `None`
+/// for neutral points and points carrying live stones.
 #[derive(Clone, Debug)]
 pub struct ScoreResult {
     pub black: f32,
@@ -147,11 +147,10 @@ const MAX_EYE: u32 = 2;
 /// sit in. White gets `komi`, plus the handicap compensation named by [`Rules::whb`].
 ///
 /// Under **territory** scoring each colour gets the regions only its live stones border
-/// (which already include the points freed by removing the opponent's dead stones) minus
-/// its own dead stones and the prisoners it lost during the game. That is the
-/// conventional Japanese count with both scores shifted down by the same constant — the
-/// total number of prisoners on the board — so [`ScoreResult::margin`] and
-/// [`ScoreResult::result_string`] are exactly conventional.
+/// (including points freed by removing dead stones), plus the opponent's dead stones and
+/// the prisoners it captured during the game. Both scoring modes exclude eye points in
+/// seki when [`Rules::tax`] requires it. [`Tax::All`] uses that same heuristic seki count
+/// and reports an estimate rather than implementing the full two-point group tax.
 pub fn score(
     board: &Board,
     rules: &Rules,
@@ -256,21 +255,19 @@ pub fn score(
         })
         .collect();
 
-    // Japanese and Korean rules give no territory for an eye inside a seki. KataGo models
-    // that as one point of tax per eye-space group, which is what we apply.
-    let taxing = rules.tax != Tax::None && rules.scoring == Scoring::Territory;
+    // Seki eyes contribute no points, regardless of their size or the scoring mode.
+    // Tax::All deliberately uses this seki-only approximation, not a full group tax.
+    let taxing = rules.tax != Tax::None;
 
     let mut stone_pts = [0f32; 2];
     let mut region_pts = [0f32; 2];
-    let mut tax = [0f32; 2];
     for (id, c) in comps.iter().enumerate() {
         match c.color {
             Some(col) => stone_pts[col.index()] += c.size as f32,
             None => {
                 let Some(col) = owner[id] else { continue };
-                region_pts[col.index()] += c.size as f32;
-                if taxing && c.adjacent.iter().all(|&a| in_seki[a as usize]) {
-                    tax[col.index()] += 1.0;
+                if !taxing || !c.adjacent.iter().all(|&a| in_seki[a as usize]) {
+                    region_pts[col.index()] += c.size as f32;
                 }
             }
         }
@@ -299,10 +296,10 @@ pub fn score(
         // No handicap compensation: it is an area-scoring correction, and the territory
         // rulesets all specify `Whb::Zero` anyway.
         Scoring::Territory => (
-            region_pts[0] - tax[0]
+            region_pts[0]
                 + dead_count[Color::White.index()] as f32
                 + board.captures[Color::Black.index()] as f32,
-            region_pts[1] - tax[1]
+            region_pts[1]
                 + dead_count[Color::Black.index()] as f32
                 + board.captures[Color::White.index()] as f32,
         ),
@@ -671,5 +668,27 @@ mod tests {
             scored.territory[b.size.point(5, 1).index()],
             Some(Color::White)
         );
+    }
+
+    #[test]
+    fn seki_tax_removes_every_eye_point_under_both_scoring_modes() {
+        let b = board_from(&[
+            "X X X X . O O O O",
+            "X . . X . O . . O",
+            "X X X X . O O O O",
+        ]);
+        for ruleset in [RuleSet::Japanese, RuleSet::StoneScoring] {
+            let scored = score(&b, &ruleset.rules(), 0.0, 0, &DeadSet::default());
+            let expected = if ruleset == RuleSet::Japanese {
+                0.0
+            } else {
+                10.0
+            };
+            assert_eq!(scored.black, expected, "{ruleset:?}");
+            assert_eq!(scored.white, expected, "{ruleset:?}");
+        }
+        // No seki tax under ordinary area rules: both eyes count in full.
+        let chinese = score(&b, &RuleSet::Chinese.rules(), 0.0, 0, &DeadSet::default());
+        assert_eq!((chinese.black, chinese.white), (12.0, 12.0));
     }
 }
