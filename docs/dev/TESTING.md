@@ -423,12 +423,15 @@ harness: wrote /tmp/mirai-a.png             # or: harness: screenshot failed: <r
 harness: quitting
 ```
 
-**The retry loop.** `WidgetPaintable::snapshot` yields no render node if the
-window has not drawn since the last change, so `shot` `queue_draw()`s and
-retries twelve times at 120 ms. A `shot:` costs 120 ms at best and about 1.4 s
-at worst. `screenshot failed: nothing was drawn` after all twelve means the
-window never mapped — usually a too-short preceding `wait:`, or a modal that
-grabbed before `present()`.
+**When a shot is taken.** `WidgetPaintable::snapshot` presents the window's last
+render node, and any redraw request discards it until the next frame paints.
+Live analysis redraws the board about ten times a second while niri may paint an
+unshown window once a second, so a polled shot kept finding nothing. `shot` takes
+the picture at once if the node is there, and otherwise from the next frame's
+`after-paint`, waiting up to 3 s; it never requests a redraw itself.
+`screenshot failed: nothing was drawn, after waiting 3s for a frame` means no
+frame painted at all — usually the window never mapped (a too-short preceding
+`wait:`, or a modal that grabbed before `present()`).
 
 **Cropping.** `shot:/tmp/x.png=blunder_expander` renders the *window* and passes
 the widget's bounds as the viewport. A `WidgetPaintable` of the widget alone
@@ -833,7 +836,7 @@ Symptom, cause or guard, and location. Rendering mechanics live in
 |---|---|---|
 | Typing in a comment passes, deletes a branch or toggles analysis; Ctrl+Z in a field undoes the record | The key was made an application accelerator. Those run in the window's capture phase, before the focused field. Only combinations no text field uses may be `KeyScope::Global`; check with `focus:comment` and `tools/ui/type-keys.sh` | `window::SHORTCUTS`, `view_shortcuts` |
 | `harness: action … -> MISSING` | No such action on the active window, or a typo. `app.*` goes to the application | `harness::activate`, `window::install_actions` |
-| `harness: screenshot failed: nothing was drawn` | The window never mapped, or a modal grabbed before `present()` | Lengthen the preceding `wait:` |
+| `harness: screenshot failed: nothing was drawn, after waiting 3s for a frame` | No frame painted: the window never mapped, or a modal grabbed before `present()` | Lengthen the preceding `wait:` |
 | A string stays English in a translated window | Not passed to a gettext function as a literal, so `xgettext` never saw it; or `po/` not updated since. A string from `mirai-core`/`mirai-client` is English by design and must be worded in `crates/mirai` | `tools/i18n/update-po.sh`, then `msgfmt --statistics`; [`TRANSLATING.md`](TRANSLATING.md) |
 | The harness does nothing at all | Release build (`#[cfg(debug_assertions)]`), `MIRAI_HARNESS` unset, or every step malformed | `harness::install` |
 

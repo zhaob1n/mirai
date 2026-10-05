@@ -21,6 +21,8 @@
 //! that does not land or does not parse makes the process exit 1 once the application
 //! has shut down normally (`main` checks [`failed`] after `run`).
 
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::time::Duration;
 
 use adw::prelude::*;
@@ -381,20 +383,7 @@ pub fn install(app: &adw::Application) {
                     glib::timeout_future(Duration::from_millis(120)).await;
                 }
                 Step::Shot(path, region) => {
-                    // `WidgetPaintable::snapshot` yields nothing if the window has not
-                    // drawn since the last change, so nudge it and retry a few frames.
-                    let mut result = Err("not attempted".to_string());
-                    for _ in 0..12 {
-                        if let Some(w) = app.active_window() {
-                            w.queue_draw();
-                        }
-                        glib::timeout_future(Duration::from_millis(120)).await;
-                        result = shot(&app, &path, region.as_deref());
-                        if result.is_ok() {
-                            break;
-                        }
-                    }
-                    match result {
+                    match shot_when_painted(&app, &path, region.as_deref()).await {
                         Ok(()) => eprintln!("harness: wrote {path}"),
                         Err(e) => {
                             mark_failed();
@@ -1000,16 +989,74 @@ fn menu_text(button: &gtk::MenuButton) -> Option<String> {
         .or_else(|| button.tooltip_text().map(|t| t.to_string()))
 }
 
-/// Renders the active window through its live `gsk` renderer and writes a PNG, optionally
-/// cropped to one widget.
+/// How long [`shot_when_painted`] waits for a frame. A compositor may deliver frames to a
+/// window it does not show about once a second.
+const SHOT_DEADLINE: Duration = Duration::from_secs(3);
+
+/// [`shot`] of the window active when the step starts, taken at a moment it has something
+/// to show.
+///
+/// `WidgetPaintable` presents the window's last render node, and every redraw request
+/// discards that node until the next frame paints. Live analysis invalidates the board
+/// about ten times a second, while niri paints a window it does not show about once a
+/// second, so polling found nothing for whole seconds at a time. Shoot at once if the node
+/// is there; otherwise shoot from `after-paint`, when the frame has just rebuilt it. No
+/// redraw is requested here: a missing node already has a frame queued, and asking for
+/// another would only throw away a valid one.
+async fn shot_when_painted(
+    app: &adw::Application,
+    path: &str,
+    region: Option<&str>,
+) -> Result<(), String> {
+    let window = app.active_window().ok_or("no active window")?;
+    let first = shot(&window, path, region);
+    if first.is_ok() {
+        return first;
+    }
+    let clock = window
+        .frame_clock()
+        .ok_or("the window has no frame clock")?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let tx = Cell::new(Some(tx));
+    let last = Rc::new(RefCell::new(first));
+    let handler = clock.connect_after_paint({
+        let window = window.downgrade();
+        let (path, region) = (path.to_owned(), region.map(str::to_owned));
+        let last = Rc::clone(&last);
+        move |_| {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            let Some(sender) = tx.take() else { return };
+            match shot(&window, &path, region.as_deref()) {
+                Ok(()) => {
+                    let _ = sender.send(());
+                }
+                Err(e) => {
+                    tx.set(Some(sender));
+                    *last.borrow_mut() = Err(e);
+                }
+            }
+        }
+    });
+    let painted = glib::future_with_timeout(SHOT_DEADLINE, rx).await.is_ok();
+    clock.disconnect(handler);
+    if painted {
+        return Ok(());
+    }
+    last.replace(Ok(()))
+        .map_err(|e| format!("{e}, after waiting {SHOT_DEADLINE:?} for a frame"))
+}
+
+/// Renders `window` through its live `gsk` renderer and writes a PNG, optionally cropped
+/// to one widget.
 ///
 /// `region` is a widget id — Blueprint's, or `GtkWidget:name`. The window is always the node
 /// that gets rendered and the region only narrows the *viewport*: a `WidgetPaintable` of the
 /// widget alone draws no ancestor background, so a list came out as dark text on transparent
 /// black. Cropping to one widget is not a nicety — reviewing a list row otherwise means
 /// cutting it out of a 1486x1634 window PNG by hand every time.
-fn shot(app: &adw::Application, path: &str, region: Option<&str>) -> Result<(), String> {
-    let window = app.active_window().ok_or("no active window")?;
+fn shot(window: &gtk::Window, path: &str, region: Option<&str>) -> Result<(), String> {
     let (w, h) = (window.width(), window.height());
     if w <= 0 || h <= 0 {
         return Err(format!("window is not mapped yet ({w}x{h})"));
@@ -1024,7 +1071,7 @@ fn shot(app: &adw::Application, path: &str, region: Option<&str>) -> Result<(), 
                 return Err(format!("{name:?} is not mapped"));
             }
             let bounds = target
-                .compute_bounds(&window)
+                .compute_bounds(window)
                 .ok_or(format!("{name:?} has no bounds in the window"))?;
             if bounds.width() < 1.0 || bounds.height() < 1.0 {
                 return Err(format!("{name:?} is not laid out yet"));
@@ -1034,7 +1081,7 @@ fn shot(app: &adw::Application, path: &str, region: Option<&str>) -> Result<(), 
         None => None,
     };
 
-    let paintable = gtk::WidgetPaintable::new(Some(&window));
+    let paintable = gtk::WidgetPaintable::new(Some(window));
     let snapshot = gtk::Snapshot::new();
     paintable.snapshot(&snapshot, w as f64, h as f64);
     let node = snapshot.to_node().ok_or("nothing was drawn")?;
