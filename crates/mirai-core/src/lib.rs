@@ -10,6 +10,7 @@
 //!   side-to-move at display time. Utility and `utilityLcb` flip by sign, like score lead.
 
 pub mod board;
+pub mod branches;
 pub mod clock;
 pub mod handicap;
 pub mod point;
@@ -19,6 +20,7 @@ pub mod sgf;
 pub mod tree;
 
 pub use board::{Board, IllegalMove};
+pub use branches::{BranchGraph, Placed};
 pub use clock::{TimeControl, clock_text, think_budget};
 pub use handicap::fixed_handicap;
 pub use point::{COLUMNS, Color, MAX_DIM, MIN_DIM, Point, Size};
