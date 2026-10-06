@@ -9,7 +9,9 @@ purpose-built remote-analysis protocol — from an empty directory to a working 
 It is written for the next person who has to touch this code, and it is deliberately honest
 about what went wrong.
 
-Final shape: 5 crates, ~17.9k lines of Rust, 139 tests, `clippy -D warnings` clean.
+Final shape when the plan's thirteen steps were done: 5 crates, ~17.9k lines of Rust,
+139 tests, `clippy -D warnings` clean. `mirai-client`, the sixth crate, was extracted later,
+which is why the table below has five rows.
 
 | crate | lines | what it is |
 |---|---:|---|
