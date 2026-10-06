@@ -7,10 +7,6 @@
 **Go analysis, review and play with KataGo, made for the GNOME desktop.**
 
 English | [简体中文](README.zh-CN.md)
-
-✨ [Highlights](#highlights) · 📦 [Installing](#installing) · 🚀 [Getting started](#getting-started) ·
-🌐 [Over a network](#running-over-a-network) · 💬 [Feedback](#feedback) · 📖 [Documentation](#documentation)
-
 </div>
 
 ![mirai reviewing a game with live KataGo analysis](https://github.com/zhaob1n/mirai/releases/download/readme-assets/preview.png)
@@ -25,7 +21,7 @@ or you need to analyse remotely, run `mirai-server` there and connect over the n
 
 ---
 
-## Highlights
+## ✨ Highlights
 
 - 🎯 **Readable analysis.** Each candidate shows win rate, score lead and visits. Its colour is
   what it loses against the engine's pick, from cyan through green and yellow to red; how
@@ -54,9 +50,7 @@ or you need to analyse remotely, run `mirai-server` there and connect over the n
   KataGo, and autosave brings your record back after a crash.
 - 🌏 **In your language.** English and Simplified Chinese so far; translations are welcome.
 
----
-
-## Installing
+## 📦 Installing
 
 ### Arch Linux
 
@@ -90,17 +84,11 @@ sudo just uninstall      # likewise
 This installs `mirai`, `mirai-server`, the desktop entry, metainfo, icons and translations
 under `/usr/local`; `just prefix=$HOME/.local install` needs no root.
 
-### KataGo
+For stone sounds, install GStreamer's good plugins (`gst-plugins-good` on Arch,
+`gstreamer1.0-plugins-good` on Debian/Ubuntu, `gstreamer1-plugins-good` on Fedora),
+which GTK plays audio through; without them mirai runs silently.
 
-Every install needs a KataGo binary and network model, run in its JSON analysis mode, not
-GTP; mirai does not download them. The [user guide](docs/user/GUIDE.md#what-you-need-from-katago)
-says what to get. For stone sounds, install GStreamer's good plugins (`gst-plugins-good` on
-Arch, `gstreamer1.0-plugins-good` on Debian/Ubuntu), which GTK plays audio through; without
-them mirai runs silently.
-
----
-
-## Getting started
+## 🚀 Getting started
 
 ```
 mirai
@@ -109,17 +97,25 @@ mirai game.sgf
 
 From a source checkout, `cargo run -p mirai -- game.sgf` does the same.
 
-If KataGo and a model are found, mirai starts analysing right away; otherwise add them in
-Preferences. Open a record and press <kbd>Space</kbd> for live analysis, <kbd>Ctrl</kbd>+<kbd>A</kbd>
-to analyse the whole game. The [user guide](docs/user/GUIDE.md#2-first-run) covers setup and
-first-run behaviour.
+### Engine setup
+
+To analyse or play against the AI, mirai connects to KataGo — either locally or over the
+network via [`mirai-server`](#-running-over-a-network).
+
+For local analysis, supply a KataGo binary (JSON analysis mode, not GTP) and a neural
+network model (`*.bin.gz`); mirai does not download them. If `katago` is in your `PATH`
+and a model is in standard locations (`~/.local/share/katago/models/` or `~/.katago/models/`),
+mirai detects them and starts analysing right away. Otherwise, add them in
+**Preferences → Engines**. The [user guide](docs/user/GUIDE.md#what-you-need-from-katago) covers
+recommended setups and first-run behaviour.
+
+Open a record and press <kbd>Space</kbd> for live analysis, or <kbd>Ctrl</kbd>+<kbd>A</kbd>
+to analyse the whole game.
 
 mirai follows your desktop language. To try another, start it with `LANGUAGE`, for example
 `LANGUAGE=zh_CN mirai`.
 
----
-
-## Running over a network
+## 🌐 Running over a network
 
 On the machine that runs KataGo:
 
@@ -131,9 +127,7 @@ mirai-server --config server.toml
 For the token, UDP port, server configuration and certificate verification, see
 the [remote-engine guide](docs/user/GUIDE.md#7-using-a-remote-engine).
 
----
-
-## Feedback
+## 💬 Feedback
 
 mirai is young and moving quickly, and there are no releases yet: build it from this
 repository. Bugs, rough edges and ideas are all welcome as
@@ -141,16 +135,12 @@ repository. Bugs, rough edges and ideas are all welcome as
 expected and what happened instead; for an engine problem, the newest file in
 `~/.local/share/mirai/katago-logs/` usually says why.
 
----
-
-## Documentation
+## 📖 Documentation
 
 - Users: [docs/user/GUIDE.md](docs/user/GUIDE.md) — first run, the window, analysis, online
   records, playing, remote engines, settings and keys.
 - Translators: [docs/dev/TRANSLATING.md](docs/dev/TRANSLATING.md).
 - Contributors and agents: [AGENTS.md](AGENTS.md).
-
----
 
 ## License
 

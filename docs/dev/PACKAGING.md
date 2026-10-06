@@ -1,7 +1,7 @@
 # Packaging
 
 Every install goes through the `justfile`; the Arch packages call it too. User-facing
-commands are in the [README](../../README.md#installing).
+commands are in the [README](../../README.md#-installing).
 
 ## Installing with `just`
 

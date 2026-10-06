@@ -8,9 +8,6 @@
 
 [English](README.md) | 简体中文
 
-✨ [亮点](#亮点) · 📦 [安装](#安装) · 🚀 [快速上手](#快速上手) ·
-🌐 [通过网络使用引擎](#通过网络使用引擎) · 💬 [反馈](#反馈) · 📖 [文档](#文档)
-
 </div>
 
 ![mirai 正在用 KataGo 实时分析一局棋](https://github.com/zhaob1n/mirai/releases/download/readme-assets/preview.png)
@@ -21,7 +18,7 @@ mirai 把 KataGo 的计算结果放到一块原生 Linux 棋盘上。每个候�
 
 ---
 
-## 亮点
+## ✨ 亮点
 
 - 🎯 **一目了然的分析。** 每个候选手都标出胜率、目差和计算量。颜色表示它比引擎首选亏了多少：从青色经过绿色、黄色一直到红色；色块越实，背后的计算越充分。鼠标悬停在候选手上，就能在棋盘上看到它的变化，而不会改动棋谱。
 - 📈 **全盘复盘。** 一个按键就能分析整条主线。胜率和目差曲线随之补全，图下方的问题手条从落子一方的角度标出每一步失误，问题手列表可以直接跳到那一手。
@@ -33,9 +30,7 @@ mirai 把 KataGo 的计算结果放到一块原生 Linux 棋盘上。每个候�
 - ⚡ **原生、流畅。** 基于 GTK 4 和 libadwaita，支持浅色和深色样式，界面渲染经过专门调优，在高刷新率屏幕上同样流畅。多个窗口共用一个 KataGo；程序意外退出后，自动保存会把你的棋谱找回来。
 - 🌏 **说你的语言。** 目前支持英文和简体中文，欢迎贡献更多翻译。
 
----
-
-## 安装
+## 📦 安装
 
 ### Arch Linux
 
@@ -64,13 +59,9 @@ sudo just uninstall      # 同上
 
 这会把 `mirai`、`mirai-server`、桌面文件、元信息、图标和翻译安装到 `/usr/local`；`just prefix=$HOME/.local install` 不需要 root 权限。
 
-### KataGo
+如需落子与吃子音效，还要安装 GStreamer 的 good 插件（Arch 上为 `gst-plugins-good`，Debian/Ubuntu 上为 `gstreamer1.0-plugins-good`，Fedora 上为 `gstreamer1-plugins-good`），GTK 通过它播放声音；缺少时 mirai 可以正常运行，只是没有声音。
 
-无论哪种安装方式，都需要 KataGo 程序和神经网络模型，以 JSON 分析模式运行，不是 GTP；mirai 不会替你下载。需要准备什么见[用户指南](docs/user/GUIDE.zh-CN.md#需要从-katago-准备什么)。如需落子音效，还要安装 GStreamer 的 good 插件（Arch 上为 `gst-plugins-good`，Debian/Ubuntu 上为 `gstreamer1.0-plugins-good`），GTK 通过它播放声音；没有它 mirai 也能运行，只是没有声音。
-
----
-
-## 快速上手
+## 🚀 快速上手
 
 ```
 mirai
@@ -79,13 +70,17 @@ mirai game.sgf
 
 在源码目录里，用 `cargo run -p mirai -- game.sgf` 效果相同。
 
-如果找到了 KataGo 和模型，mirai 会立即开始分析；否则请在首选项中添加。打开一份棋谱，按 <kbd>Space</kbd> 开始实时分析，按 <kbd>Ctrl</kbd>+<kbd>A</kbd> 进行全盘分析。设置方法和首次运行的行为见[用户指南](docs/user/GUIDE.zh-CN.md#2-首次运行)。
+### 引擎配置
+
+进行实时分析或对弈需要对接 KataGo——可以在本地运行，也可以通过网络连接 [`mirai-server`](#-通过网络使用引擎)。
+
+若在本地分析，需要准备 KataGo 程序和神经网络模型（`*.bin.gz`），以 JSON 分析模式运行（不支持 GTP）；mirai 不会自动下载。若 `katago` 在系统的 `PATH` 中且模型位于标准路径（如 `~/.local/share/katago/models/` 或 `~/.katago/models/`），mirai 会自动检测并开始分析；否则请在**首选项 → 引擎**中手动添加。具体准备方法与首次运行说明见[用户指南](docs/user/GUIDE.zh-CN.md#需要从-katago-准备什么)。
+
+打开一份棋谱，按 <kbd>Space</kbd> 开始实时分析，按 <kbd>Ctrl</kbd>+<kbd>A</kbd> 进行全盘分析。
 
 mirai 跟随桌面的语言设置。想换一种语言试试，可以用 `LANGUAGE` 启动，例如 `LANGUAGE=zh_CN mirai`。
 
----
-
-## 通过网络使用引擎
+## 🌐 通过网络使用引擎
 
 在运行 KataGo 的机器上：
 
@@ -96,21 +91,15 @@ mirai-server --config server.toml
 
 令牌、UDP 端口、服务器配置和证书验证的详细说明见[远程引擎指南](docs/user/GUIDE.zh-CN.md#7-使用远程引擎)。
 
----
-
-## 反馈
+## 💬 反馈
 
 mirai 还很年轻，变化很快，目前还没有正式版本：请从本仓库构建。欢迎把 bug、不顺手的地方和各种想法提到 [issues](https://github.com/zhaob1n/mirai/issues)。请写明你在做什么、期望发生什么、实际发生了什么；如果是引擎的问题，`~/.local/share/mirai/katago-logs/` 里最新的日志通常能说明原因。
 
----
-
-## 文档
+## 📖 文档
 
 - 用户：[docs/user/GUIDE.zh-CN.md](docs/user/GUIDE.zh-CN.md) —— 首次运行、界面、分析、网络棋谱、对弈、远程引擎、设置和快捷键。
 - 译者：[docs/dev/TRANSLATING.md](docs/dev/TRANSLATING.md)（英文）。
 - 贡献者和智能体：[AGENTS.md](AGENTS.md)（英文）。
-
----
 
 ## 许可证
 

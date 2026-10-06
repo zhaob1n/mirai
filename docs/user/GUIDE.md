@@ -5,18 +5,12 @@ English | [简体中文](GUIDE.zh-CN.md)
 A Go board for Linux that talks to KataGo: live analysis, SGF review and editing, and games
 against the computer. The engine can run on the same machine or on another one on your network.
 
-📦 [Installing](#1-installing) · 🚀 [First run](#2-first-run) · 🪟 [The interface](#3-the-interface) ·
-🔍 [Analysing](#4-analysing-a-position) · 📈 [Reviewing](#5-reviewing-a-game) ·
-⚫ [Playing](#6-playing) · 🌐 [Remote engine](#7-using-a-remote-engine) ·
-⚙️ [Settings](#8-settings-reference) · ⌨️ [Keys](#9-keyboard-reference) ·
-📁 [Files](#10-files-mirai-writes) · 🩺 [Troubleshooting](#11-troubleshooting)
-
 ---
 
-## 1. Installing
+## 1. KataGo and prerequisites
 
 Installing from the AUR or from source is covered in the
-[README](../../README.md#installing). `mirai` is the board. `mirai-server` is optional and only
+[README](../../README.md#-installing). `mirai` is the board. `mirai-server` is optional and only
 needed to put the engine on another machine ([section 7](#7-using-a-remote-engine)).
 
 ### What you need from KataGo
@@ -34,7 +28,9 @@ If you already run KataGo under Lizzie, KaTrain or Sabaki, point mirai at the sa
 network; nothing of yours is copied or modified. Boards from 2×2 to 19×19, matching a stock
 KataGo build.
 
----
+For stone placement and capture sounds, GTK requires GStreamer's good plugins (`gst-plugins-good`
+on Arch, `gstreamer1.0-plugins-good` on Debian/Ubuntu, `gstreamer1-plugins-good` on Fedora);
+without them mirai runs silently.
 
 ## 2. First run
 
@@ -78,8 +74,6 @@ The first profile added starts immediately; later profiles do not change the act
 selection. Switch with the engine button. Deleting a profile removes only its settings,
 not its binary, network or config files.
 
----
-
 ## 3. The interface
 
 | Part | What it does |
@@ -109,8 +103,6 @@ numbers are on). SGF triangle, square, circle, cross and text labels are drawn. 
 | Scroll wheel | browse back / forward one move without deleting anything |
 | Hover a candidate blob | preview its variation. Non-Play tools clear this preview |
 | Hover an intersection (Play or setup tool) | show a translucent stone where a left-click would place one: the side to play on a legal point, or the setup colour on an empty point. During a game it appears only on your turn |
-
----
 
 ## 4. Analysing a position
 
@@ -198,8 +190,6 @@ on turns the other off.
 <kbd>Ctrl</kbd>+<kbd>E</kbd> runs a short 400-visit search, derives the dead stones from the
 ownership map, counts the board under the game's own rules and komi, and shows the count
 next to KataGo's Black-positive score lead. Works whether or not live analysis is on.
-
----
 
 ## 5. Reviewing a game
 
@@ -309,8 +299,6 @@ away, leave the field or save the record; the typing session is one undo. A seco
 the same mark removes it; a different mark replaces it. Empty label text deletes a label.
 The eraser removes marks and labels, not stones.
 
----
-
 ## 6. Playing
 
 <kbd>Ctrl</kbd>+<kbd>N</kbd> or the **New Game** button. To wipe the current record back to
@@ -392,8 +380,6 @@ engine query; use it to correct a misjudged group or seki.
 
 A resignation or a lost flag settles the result on its own; mirai still counts the board and
 shows what the count would have been.
-
----
 
 ## 7. Using a remote engine
 
@@ -481,8 +467,6 @@ dropping `:9678`) keeps it.
 For other connection failures, check the server address and UDP 9678, that the
 server listens beyond `127.0.0.1`, and that its `[[token]]` value matches exactly.
 Without a token block the server starts but refuses every client.
-
----
 
 ## 8. Settings reference
 
@@ -633,8 +617,6 @@ token = "…"
 Leave `engine` out unless the server has several and you want one by name. Autosave, KataGo's
 logs and the generated analysis config live under `$XDG_DATA_HOME/mirai/`.
 
----
-
 ## 9. Keyboard reference
 
 The same tables are in the application under Main Menu → *Keyboard Shortcuts*.
@@ -698,8 +680,6 @@ as everywhere in GNOME.
 No dedicated accelerator: switching engine profile, *Preferences*, *Keyboard Shortcuts*,
 *About mirai* and *Editing Tools*. These remain reachable with standard keyboard focus.
 
----
-
 ## 10. Files mirai writes
 
 | Path | What |
@@ -725,16 +705,15 @@ No dedicated accelerator: switching engine profile, *Preferences*, *Keyboard Sho
 Nothing else is written; your own KataGo installation, model and any analysis config you
 supplied are never modified.
 
----
-
 ## 11. Troubleshooting
 
 ### The engine will not start
 
 If the profile fails and the engine button reads “*name* Unavailable”, check that the
 binary and model still exist in **Preferences → Engines**. It must be KataGo's JSON
-analysis engine, not GTP ([setup](#1-installing)). For GPU errors or a mismatched model,
-read `~/.local/share/mirai/katago-logs/`; use a binary and model that work together.
+analysis engine, not GTP ([setup](#1-katago-and-prerequisites)). For GPU errors or a
+mismatched model, read `~/.local/share/mirai/katago-logs/`; use a binary and model that
+work together.
 
 ### The very first start takes minutes
 
@@ -750,7 +729,7 @@ Possibly ending in `katago did not answer within 180s`.
 ### Analysis does not appear
 
 Press <kbd>Space</kbd> to start [live analysis](#4-analysing-a-position). If no profile
-is configured, use **Preferences** on the Analysis page. Stored results show without an
+is configured, add one in **Preferences → Engines**. Stored results show without an
 engine; an overlay needs at least one report. If search stops quickly or candidates
 are missing, check **Maximum Visits** and **Suggestions Shown** in [settings](#analysis).
 While waiting for the first report, the page says *Analysing…*; an engine startup
@@ -776,6 +755,12 @@ windows were open, new windows offer their autosaves, most recent first.
 | Some annotations are not drawn | unsupported properties are preserved, even if mirai does not display them |
 | Result or komi looks odd | the file's own values are used as written |
 | Will not open at all | not SGF, or damaged; the toast names the problem |
+
+### No stone sounds
+
+GTK plays stone placement and capture audio through GStreamer; the plugins it needs are in
+[section 1](#1-katago-and-prerequisites). Then check that the **Stone Sounds** slider in
+Preferences → General is not muted.
 
 ---
 
