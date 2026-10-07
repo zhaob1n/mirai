@@ -25,6 +25,7 @@ Do not modify this section without explicit approval.
 - Keep documentation short. When the project changes, update it: a new
   reader should recover the decisions and the scars from these files, the
   comments, and the Git history.
+- Write down non-trivial findings, especially from online/offline search.
 - Unicode is encouraged to enrich user documents.
 - Prefer mermaid over ASCII diagrams.
 
@@ -38,6 +39,8 @@ Do not modify this section without explicit approval.
   A topic branch holding one commit off the current tip fast-forwards — an
   empty `Merge branch 'x'` carries no information and should not exist.
 - Follow Linus Torvalds' code taste.
+- Prefer self-explanatory code over verbose comments. Comments should be non-obvious.
+- Avoid trivial, meaningless test.
 - Launch a reviewer subagent before a branch is merged into main.
 - Helper scripts and tools that paid for themselves stay in the tree so
   the next task can reuse them.
