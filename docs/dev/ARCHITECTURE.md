@@ -210,6 +210,13 @@ and move tree available after the live `Report` is gone. `analysis_of` converts 
 stale. `last_report` remains quantised and is discarded on cursor or position changes. Marks
 and comments do not bump `position_revision`.
 
+`GameSession` also holds an optional per-node wire-report cache for synchronous reads:
+`cache_report` retains the engine's `Arc`, keyed by `NodeId` and guarded by epoch and
+position revision. Navigation, marks and comments keep it; position edits and record
+replacement drop it. `cached_position` returns that exact node's raw report, otherwise its
+stored summary, otherwise nothing. The cache changes no dirty/revision state and is not
+written to SGF; it keeps quantised policy, which `NodeAnalysis` does not persist.
+
 ```mermaid
 flowchart LR
     json["KataGo JSON"] -->|"decode_report"| report["Report — quantised, Black"]

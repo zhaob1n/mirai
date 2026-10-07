@@ -12,11 +12,14 @@
 
 mod history;
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use mirai_core::{
     Color, GameInfo, GameTree, IllegalMove, MarkKind, Marks, Node, NodeAnalysis, NodeId, Point,
     RuleSet, Setup, Size, sgf,
 };
-use mirai_engine::{AnalyzeReq, Want};
+use mirai_engine::{AnalyzeReq, Report, Want};
 
 use crate::analysis;
 use history::{Edit, EditKind, History};
@@ -40,6 +43,13 @@ pub struct GameSession {
     next_doc: u64,
     saved: Option<u64>,
     position_revision: u64,
+    /// Wire reports for a synchronous overlay read. Not part of the record: dropped when
+    /// the epoch or position revision moves, never written to SGF. Values are the engine's
+    /// `Arc`, not a rebuilt [`NodeAnalysis`].
+    reports: HashMap<NodeId, Arc<Report>>,
+    /// `(epoch, position_revision)` `reports` was last aligned to.
+    report_epoch: u64,
+    report_revision: u64,
     history: History,
 }
 
@@ -57,6 +67,9 @@ impl GameSession {
             next_doc: 1,
             saved: Some(0),
             position_revision: 0,
+            reports: HashMap::new(),
+            report_epoch: 0,
+            report_revision: 0,
             history: History::new(),
         }
     }
@@ -73,13 +86,14 @@ impl GameSession {
     /// Mutable access for the cases a method here cannot express — game info edits, setup
     /// stones. Marks the record dirty, because the caller is about to change it.
     ///
-    /// Drops undo/redo, assigns a new document token, bumps [`Self::position_revision`] and
-    /// drops the position cache. Does not strip cached analysis from nodes.
+    /// Drops undo/redo, assigns a new document token, bumps [`Self::position_revision`],
+    /// drops the position cache and the transient report cache. Does not strip cached
+    /// [`NodeAnalysis`] from nodes.
     pub fn tree_mut(&mut self) -> &mut GameTree {
         self.history.clear();
         self.doc = self.next_doc;
         self.next_doc += 1;
-        self.position_revision += 1;
+        self.bump_position_revision();
         self.tree.invalidate_position();
         self.revision += 1;
         &mut self.tree
@@ -303,7 +317,7 @@ impl GameSession {
             before
         };
         let detached = self.tree.detach_branch(id).expect("id was live");
-        self.position_revision += 1;
+        self.bump_position_revision();
         self.commit(
             EditKind::Branch {
                 root: id,
@@ -363,7 +377,7 @@ impl GameSession {
             return false;
         };
         if history::apply(&mut self.tree, &mut edit) {
-            self.position_revision += 1;
+            self.bump_position_revision();
         }
         self.cursor = edit.before_cursor;
         self.doc = edit.before_doc;
@@ -377,7 +391,7 @@ impl GameSession {
             return false;
         };
         if history::apply(&mut self.tree, &mut edit) {
-            self.position_revision += 1;
+            self.bump_position_revision();
         }
         self.cursor = edit.after_cursor;
         self.doc = edit.after_doc;
@@ -470,6 +484,7 @@ impl GameSession {
         self.position_revision = self.position_revision.saturating_add(1);
         self.revision += 1;
         self.epoch += 1;
+        self.discard_report_cache();
     }
 
     /// Replaces the record from crash-recovery data.
@@ -526,6 +541,50 @@ impl GameSession {
         true
     }
 
+    /// Drops every cached wire report and aligns the cache stamp with the session.
+    fn discard_report_cache(&mut self) {
+        self.reports.clear();
+        self.report_epoch = self.epoch;
+        self.report_revision = self.position_revision;
+    }
+
+    /// A position change. Reports stamped with the old revision must not land, and a
+    /// cursor read must not show a map from the position that just moved.
+    fn bump_position_revision(&mut self) {
+        self.position_revision += 1;
+        self.discard_report_cache();
+    }
+
+    pub(crate) fn insert_report(
+        &mut self,
+        node: NodeId,
+        epoch: u64,
+        position_revision: u64,
+        report: Arc<Report>,
+    ) -> bool {
+        if self.epoch != epoch
+            || self.position_revision != position_revision
+            || !self.tree.contains(node)
+        {
+            return false;
+        }
+        // A missed clear must not leave another stamp's reports beside this one.
+        if self.report_epoch != epoch || self.report_revision != position_revision {
+            self.reports.clear();
+            self.report_epoch = epoch;
+            self.report_revision = position_revision;
+        }
+        self.reports.insert(node, report);
+        true
+    }
+
+    pub(crate) fn report_at_cursor(&self) -> Option<&Arc<Report>> {
+        if self.report_epoch != self.epoch || self.report_revision != self.position_revision {
+            return None;
+        }
+        self.reports.get(&self.cursor)
+    }
+
     /// The request for one node of this record.
     pub fn request_for(&mut self, id: NodeId, want: Want, max_visits: u32) -> AnalyzeReq {
         analysis::request_for_node(&mut self.tree, id, want, max_visits)
@@ -538,7 +597,7 @@ impl GameSession {
     }
 
     fn finish_new_branch(&mut self, before: NodeId, id: NodeId) {
-        self.position_revision += 1;
+        self.bump_position_revision();
         self.commit(
             EditKind::Branch {
                 root: id,
@@ -618,7 +677,7 @@ impl GameSession {
             return false;
         }
         self.tree.swap_setup(id, &mut setup, &mut pl);
-        self.position_revision += 1;
+        self.bump_position_revision();
         self.commit(
             EditKind::Setup {
                 id,
@@ -649,7 +708,7 @@ impl GameSession {
             pl = if color == natural { None } else { Some(color) };
         }
         self.tree.swap_setup(id, &mut setup, &mut pl);
-        self.position_revision += 1;
+        self.bump_position_revision();
         self.commit(
             EditKind::Branch {
                 root: id,

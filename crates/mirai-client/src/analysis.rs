@@ -1,17 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! Turning "the position the user is looking at" into an [`AnalyzeReq`], and measuring how
-//! fast the answer is coming back.
+//! Turning "the position the user is looking at" into an [`AnalyzeReq`], measuring how
+//! fast the answer is coming back, and keeping the engine's report for a synchronous read.
 //!
 //! Both frontends need exactly this and nothing frontend-shaped is involved, so it lives
-//! here rather than twice.
+//! here rather than twice. A live stream stores the wire [`Report`] with [`cache_report`]
+//! rather than rebuilding a [`NodeAnalysis`] on every packet.
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use mirai_core::{
     Board, Candidate, Color, DeadSet, GameTree, NodeAnalysis, NodeId, Point, Scoring,
 };
 use mirai_engine::{AnalyzeReq, Report, Want, dq_own};
+
+use crate::game::GameSession;
 
 /// How many principal-variation moves to ask for. Long enough to read a sequence out on the
 /// board, short enough that the reports stay small at 10 Hz.
@@ -153,6 +157,69 @@ pub fn analysis_of(report: &Report, max_candidates: usize) -> NodeAnalysis {
             .as_ref()
             .map(|o| o.clone().into_boxed_slice()),
     }
+}
+
+/// Stores `report` on `node` for a later synchronous read of that position.
+///
+/// `report` is the engine's `Arc`. This does not build a [`NodeAnalysis`], so a live
+/// stream does not allocate candidates, principal variations or maps on the way into
+/// the cache, and a deeper evaluation already stored on the node is left alone.
+///
+/// Refuses a report whose `epoch` or `position_revision` is not the session's, or whose
+/// `node` is gone. Navigation may move the cursor; it does not invalidate `node`. A
+/// refused report does not replace what the current stamp holds.
+///
+/// Returns whether the report was stored. Does not dirty the record, bump any
+/// revision, or change what SGF would write.
+pub fn cache_report(
+    game: &mut GameSession,
+    node: NodeId,
+    epoch: u64,
+    position_revision: u64,
+    report: Arc<Report>,
+) -> bool {
+    game.insert_report(node, epoch, position_revision, report)
+}
+
+/// The wire report cached for the cursor, if this position has one.
+///
+/// `None` when the cursor's node has no cached report. A report cached for another
+/// node is not returned: moving off an analysed position does not keep showing it.
+/// Record replacement and position edits drop the cache. Navigation, marks and
+/// comments do not.
+///
+/// The borrow is the session. Clone the `Arc` — not the [`Report`] — if the report
+/// is needed after the session lock is released. A shared borrow is enough: reading
+/// does not refresh or evict.
+pub fn cached_report_at_cursor(game: &GameSession) -> Option<&Arc<Report>> {
+    game.report_at_cursor()
+}
+
+/// What a synchronous read of the cursor can show, raw report first.
+///
+/// Both variants are this exact node, still Black-perspective. A raw report is not
+/// copied into the summary, and a summary is not invented from another node's report.
+#[derive(Debug)]
+pub enum CachedPosition<'a> {
+    /// The engine's `Arc` for this node.
+    Report(&'a Arc<Report>),
+    /// Persisted evaluation, when no raw report is cached. No transient policy map.
+    Summary(&'a NodeAnalysis),
+}
+
+/// Prefers the cursor's raw report, then its stored [`NodeAnalysis`].
+///
+/// `None` only when this node has neither. Does not overwrite the stored evaluation.
+pub fn cached_position(game: &GameSession) -> Option<CachedPosition<'_>> {
+    if let Some(report) = cached_report_at_cursor(game) {
+        return Some(CachedPosition::Report(report));
+    }
+    let id = game.cursor();
+    game.tree()
+        .node(id)
+        .analysis
+        .as_ref()
+        .map(CachedPosition::Summary)
 }
 
 /// Measures how fast a search is running, in visits per second.
@@ -476,5 +543,395 @@ mod tests {
             m.sample(visits, at);
         }
         assert!((m.rate().unwrap() - 200.0).abs() < 20.0, "{:?}", m.rate());
+    }
+
+    fn wire(visits: u32, player: Color, policy: Option<Vec<u16>>) -> Arc<Report> {
+        let mut report = Report::empty(1, player);
+        report.root.visits = visits;
+        report.root.winrate = 50_000;
+        report.policy = policy;
+        Arc::new(report)
+    }
+
+    /// The cache is the engine allocation, still Black-perspective on the wire. Policy is
+    /// not flipped, and storing it does not write an evaluation or look like an edit.
+    #[test]
+    fn a_cached_report_is_the_wire_arc_and_not_an_evaluation() {
+        let mut game = GameSession::blank();
+        let root = game.cursor();
+        let epoch = game.epoch();
+        let revision = game.position_revision();
+        let structure = game.tree().structure_revision();
+        let tree_revision = game.tree().revision();
+        let session_revision = game.revision();
+        let policy = vec![0, 65535, 32_767, 65_534];
+        let report = wire(40, Color::White, Some(policy.clone()));
+        assert_eq!(Arc::strong_count(&report), 1);
+
+        assert!(cache_report(
+            &mut game,
+            root,
+            epoch,
+            revision,
+            Arc::clone(&report)
+        ));
+        assert_eq!(
+            Arc::strong_count(&report),
+            2,
+            "the cache retains the engine arc"
+        );
+        assert!(
+            !cache_report(
+                &mut game,
+                NodeId(99),
+                epoch,
+                revision,
+                wire(1, Color::Black, None)
+            ),
+            "a deleted or unknown node is not a place to store a report"
+        );
+
+        let cached = cached_report_at_cursor(&game).expect("cursor report");
+        assert!(Arc::ptr_eq(cached, &report));
+        assert_eq!(cached.root.current_player, Color::White);
+        assert_eq!(cached.root.winrate, 50_000);
+        assert_ne!(
+            cached.root.winrate_for(Color::White),
+            cached.root.winrate_f32(),
+            "the cache must not convert out of Black's perspective"
+        );
+        assert_eq!(cached.policy.as_deref(), Some(policy.as_slice()));
+        assert!(game.tree().node(root).analysis.is_none());
+        assert!(
+            !game.to_sgf(true).contains("MRAI"),
+            "a raw report is not an SGF field"
+        );
+        assert!(!game.modified());
+        assert_eq!(game.epoch(), epoch);
+        assert_eq!(game.position_revision(), revision);
+        assert_eq!(game.revision(), session_revision);
+        assert_eq!(game.tree().revision(), tree_revision);
+        assert_eq!(game.tree().structure_revision(), structure);
+
+        assert!(!cache_report(
+            &mut game,
+            root,
+            epoch + 1,
+            revision,
+            wire(1, Color::Black, None)
+        ));
+        assert!(Arc::ptr_eq(
+            cached_report_at_cursor(&game).expect("untouched"),
+            &report
+        ));
+    }
+
+    /// Sibling variations share a move number and must not share a cache slot.
+    #[test]
+    fn two_nodes_at_the_same_move_number_keep_distinct_reports() {
+        let mut game = GameSession::blank();
+        let size = game.tree().info.size;
+        let main = game.play(size.point(3, 3)).unwrap();
+        game.go_back(1);
+        let alt = game.play_variation(size.point(15, 15)).unwrap();
+        assert_ne!(main, alt);
+        assert_eq!(game.tree().move_number(main), game.tree().move_number(alt));
+        let epoch = game.epoch();
+        let revision = game.position_revision();
+        let main_report = wire(20, Color::White, Some(vec![1, 65535]));
+        let alt_report = wire(21, Color::White, Some(vec![2, 65535]));
+        assert!(cache_report(
+            &mut game,
+            main,
+            epoch,
+            revision,
+            Arc::clone(&main_report)
+        ));
+        assert!(cache_report(
+            &mut game,
+            alt,
+            epoch,
+            revision,
+            Arc::clone(&alt_report)
+        ));
+        assert_eq!(Arc::strong_count(&main_report), 2);
+        assert_eq!(Arc::strong_count(&alt_report), 2);
+
+        assert!(Arc::ptr_eq(
+            cached_report_at_cursor(&game).expect("alt is the cursor"),
+            &alt_report
+        ));
+        game.go_to(main);
+        assert_eq!(game.position_revision(), revision);
+        assert!(Arc::ptr_eq(
+            cached_report_at_cursor(&game).expect("main"),
+            &main_report
+        ));
+        assert_eq!(
+            Arc::strong_count(&alt_report),
+            2,
+            "leaving the node must not release it"
+        );
+        game.go_to(alt);
+        assert!(Arc::ptr_eq(
+            cached_report_at_cursor(&game).expect("alt again"),
+            &alt_report
+        ));
+    }
+
+    /// A sweep can finish with `Report::empty`: no visits and no policy. That is still
+    /// this position's report, and a missing map is not a reason to drop it.
+    #[test]
+    fn an_empty_report_without_policy_is_cached_when_the_stamp_matches() {
+        let mut game = GameSession::blank();
+        let root = game.cursor();
+        let report = Arc::new(Report::empty(0, Color::Black));
+        let epoch = game.epoch();
+        let revision = game.position_revision();
+        assert_eq!(report.root.visits, 0);
+        assert!(report.policy.is_none());
+        assert!(cache_report(
+            &mut game,
+            root,
+            epoch,
+            revision,
+            Arc::clone(&report)
+        ));
+        assert_eq!(Arc::strong_count(&report), 2);
+        let cached = cached_report_at_cursor(&game).expect("empty report");
+        assert!(Arc::ptr_eq(cached, &report));
+        assert_eq!(cached.root.visits, 0);
+        assert!(cached.policy.is_none());
+    }
+
+    #[test]
+    fn the_cursor_read_prefers_the_raw_report_and_otherwise_the_stored_summary() {
+        let mut game = GameSession::blank();
+        let root = game.cursor();
+        assert!(cached_position(&game).is_none());
+
+        let stored = NodeAnalysis {
+            visits: 1000,
+            winrate: 0.2,
+            score_lead: 3.0,
+            score_stdev: 1.0,
+            candidates: Vec::new(),
+            ownership: None,
+        };
+        game.set_analysis(root, Some(stored));
+        match cached_position(&game) {
+            Some(CachedPosition::Summary(summary)) => assert_eq!(summary.visits, 1000),
+            other => panic!("stored summary should show when no raw report exists: {other:?}"),
+        }
+
+        let child = game.play(game.tree().info.size.point(3, 3)).unwrap();
+        let epoch = game.epoch();
+        let revision = game.position_revision();
+        let before = game.to_sgf(true);
+        let child_report = wire(9, Color::White, Some(vec![9, 65535]));
+        assert!(cache_report(
+            &mut game,
+            child,
+            epoch,
+            revision,
+            Arc::clone(&child_report)
+        ));
+        assert_eq!(
+            game.to_sgf(true),
+            before,
+            "caching a report must not change SGF"
+        );
+        game.go_to(root);
+        match cached_position(&game) {
+            Some(CachedPosition::Summary(summary)) => assert_eq!(summary.visits, 1000),
+            other => panic!("another node's report must not stand in for this one: {other:?}"),
+        }
+
+        game.go_to(child);
+        match cached_position(&game) {
+            Some(CachedPosition::Report(report)) => {
+                assert!(Arc::ptr_eq(report, &child_report));
+                assert_eq!(Arc::strong_count(&child_report), 2);
+            }
+            other => panic!("raw report wins over a missing summary: {other:?}"),
+        }
+        assert_eq!(
+            game.tree().node(root).analysis.as_ref().map(|a| a.visits),
+            Some(1000),
+            "preferring the raw report must not rewrite the stored evaluation"
+        );
+    }
+
+    #[test]
+    fn navigation_keeps_a_nodes_report_and_an_edit_or_adoption_drops_it() {
+        let mut game = GameSession::blank();
+        let size = game.tree().info.size;
+        let root = game.cursor();
+        let child = game.play(size.point(3, 3)).unwrap();
+        let epoch = game.epoch();
+        let revision = game.position_revision();
+        let report = wire(12, Color::White, Some(vec![4, 65535]));
+        assert!(cache_report(
+            &mut game,
+            child,
+            epoch,
+            revision,
+            Arc::clone(&report)
+        ));
+
+        game.go_back(1);
+        assert_eq!(game.cursor(), root);
+        assert_eq!(game.position_revision(), revision);
+        assert!(
+            cached_report_at_cursor(&game).is_none(),
+            "the root has no report of its own"
+        );
+        // Replaying the move is navigation: the child, and its report, are the same.
+        assert_eq!(game.play(size.point(3, 3)).unwrap(), child);
+        assert_eq!(game.position_revision(), revision);
+        assert!(Arc::ptr_eq(
+            cached_report_at_cursor(&game).expect("child report"),
+            &report
+        ));
+
+        game.set_comment("note");
+        game.toggle_mark(mirai_core::MarkKind::Triangle, size.point(2, 2));
+        assert_eq!(game.position_revision(), revision);
+        assert_eq!(
+            Arc::strong_count(&report),
+            2,
+            "a mark or comment must not drop the arc"
+        );
+        assert!(Arc::ptr_eq(
+            cached_report_at_cursor(&game).expect("a comment or mark is not a position"),
+            &report
+        ));
+
+        let branch = game.play(size.point(4, 4)).unwrap();
+        assert!(game.position_revision() > revision);
+        assert!(cached_report_at_cursor(&game).is_none());
+        assert!(!cache_report(
+            &mut game,
+            child,
+            epoch,
+            revision,
+            Arc::clone(&report)
+        ));
+        game.go_to(child);
+        assert!(
+            cached_report_at_cursor(&game).is_none(),
+            "an edited position must not show the report from before the edit"
+        );
+
+        game.go_to(branch);
+        let gone = branch;
+        assert!(game.delete_branch());
+        assert!(!game.tree().contains(gone));
+        let epoch = game.epoch();
+        let revision = game.position_revision();
+        assert!(!cache_report(
+            &mut game,
+            gone,
+            epoch,
+            revision,
+            wire(1, Color::Black, None)
+        ));
+
+        let root_report = wire(3, Color::Black, Some(vec![65535]));
+        let adopted_from = game.epoch();
+        let adopted_revision = game.position_revision();
+        let current = game.cursor();
+        assert!(cache_report(
+            &mut game,
+            current,
+            adopted_from,
+            adopted_revision,
+            Arc::clone(&root_report)
+        ));
+        game.adopt(GameTree::new(GameInfo::default()), None);
+        assert_ne!(game.epoch(), adopted_from);
+        assert!(
+            cached_report_at_cursor(&game).is_none(),
+            "a new record reuses node ids and must not show the previous report"
+        );
+        let current = game.cursor();
+        assert!(!cache_report(
+            &mut game,
+            current,
+            adopted_from,
+            adopted_revision,
+            root_report
+        ));
+    }
+
+    #[test]
+    fn a_live_snapshot_does_not_clobber_a_deeper_stored_evaluation() {
+        let mut game = GameSession::blank();
+        let root = game.cursor();
+        let stored = NodeAnalysis {
+            visits: 1000,
+            winrate: 0.2,
+            score_lead: 3.0,
+            score_stdev: 1.0,
+            candidates: Vec::new(),
+            ownership: None,
+        };
+        game.set_analysis(root, Some(stored.clone()));
+        let epoch = game.epoch();
+        let revision = game.position_revision();
+        let live = wire(8, Color::Black, Some(vec![9, 65535]));
+
+        assert!(cache_report(
+            &mut game,
+            root,
+            epoch,
+            revision,
+            Arc::clone(&live)
+        ));
+        assert_eq!(game.tree().node(root).analysis, Some(stored.clone()));
+        assert!(Arc::ptr_eq(
+            cached_report_at_cursor(&game).expect("live snapshot"),
+            &live
+        ));
+
+        // The latest snapshot replaces the cache. It still does not rewrite the node.
+        let later = wire(2000, Color::Black, Some(vec![1, 65535]));
+        assert!(cache_report(
+            &mut game,
+            root,
+            epoch,
+            revision,
+            Arc::clone(&later)
+        ));
+        assert!(Arc::ptr_eq(
+            cached_report_at_cursor(&game).expect("latest"),
+            &later
+        ));
+        assert_eq!(
+            Arc::strong_count(&live),
+            1,
+            "a newer snapshot releases the previous arc"
+        );
+        assert_eq!(game.tree().node(root).analysis, Some(stored));
+
+        // A finished sweep stores both: the wire arc for the overlay, and a persisted
+        // evaluation only through the existing write. The arc is not rebuilt.
+        let swept = wire(1500, Color::Black, Some(vec![7, 65535, 2]));
+        assert!(cache_report(
+            &mut game,
+            root,
+            epoch,
+            revision,
+            Arc::clone(&swept)
+        ));
+        assert!(game.set_analysis_at(root, revision, Some(analysis_of(&swept, 4))));
+        assert_eq!(
+            game.tree().node(root).analysis.as_ref().map(|a| a.visits),
+            Some(1500)
+        );
+        let cached = cached_report_at_cursor(&game).expect("sweep report");
+        assert!(Arc::ptr_eq(cached, &swept));
+        assert_eq!(Arc::strong_count(&later), 1);
+        assert_eq!(cached.policy.as_deref(), Some(&[7, 65535, 2][..]));
     }
 }

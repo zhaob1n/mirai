@@ -84,6 +84,10 @@ impl Planned {
 }
 
 /// What one planned position produced.
+///
+/// [`Analysed::result`] is already the engine's [`Arc`]. A caller that keeps a
+/// synchronous overlay cache should [`crate::cache_report`] that arc, and write
+/// [`NodeAnalysis`] separately. Do not rebuild the report to store it.
 pub struct Analysed {
     pub node: NodeId,
     pub turn: u16,

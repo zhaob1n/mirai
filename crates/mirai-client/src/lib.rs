@@ -9,7 +9,8 @@
 //!
 //! Nothing here draws, allocates a widget, or touches a file. Frontends supply those.
 //!
-//! * [`analysis`] — position to [`AnalyzeReq`](mirai_engine::AnalyzeReq), and search speed.
+//! * [`analysis`] — position to [`AnalyzeReq`](mirai_engine::AnalyzeReq), search speed,
+//!   and the transient per-node report cache.
 //! * [`batch`] — planning and running a whole-game sweep with bounded concurrency.
 //! * [`game`] — the record the user is editing: cursor, navigation, variations, comments.
 //! * [`kifu`] — searching Fox, eWeiqi and Yike for public records, over a frontend's HTTP;
@@ -29,7 +30,10 @@ pub mod session;
 pub mod sound;
 pub mod yike;
 
-pub use analysis::{PV_LEN, SpeedMeter, analysis_of, dead_from_ownership, request_for_node};
+pub use analysis::{
+    CachedPosition, PV_LEN, SpeedMeter, analysis_of, cache_report, cached_position,
+    cached_report_at_cursor, dead_from_ownership, request_for_node,
+};
 pub use batch::{Analysed, Blunder, Flow, Planned, blunders, in_flight, plan_mainline, sweep};
 pub use game::GameSession;
 pub use play::{GameSetup, Play, PlayState, Strength};
