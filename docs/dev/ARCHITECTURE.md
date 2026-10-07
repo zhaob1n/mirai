@@ -126,7 +126,7 @@ boundaries are [§1](#1-the-system). User settings and shortcuts are in
 | an ownership or policy heat map | `crates/mirai/src/widgets/board.rs`, `crates/mirai/src/widgets/paint.rs` | `ownership_texture`, `policy_texture`, `fill_disc` |
 | a shortcut, or what an action does | `crates/mirai/src/window.rs` | `install_actions`; [user reference](../user/GUIDE.md#9-keyboard-reference) |
 | show or hide the editor toolbar | `crates/mirai/src/window.blp`, `crates/mirai/src/window.rs` | `editor_revealer`, `set_editor_visible` |
-| the move-tree layout | `crates/mirai/src/widgets/tree.rs` | `lay_out` |
+| the move-tree layout | `crates/mirai-core/src/branches.rs` (lanes, shared with the HarmonyOS client), `crates/mirai/src/widgets/tree.rs` (axes, trunks) | `GameTree::branch_graph`, `lay_out` |
 | the move-tree node menu (main line, delete branch) | `crates/mirai/src/widgets/tree.rs` | `MoveTreeView::show_menu_at` |
 | the win-rate graph | `crates/mirai/src/widgets/winrate.rs` | `WinrateGraph::refresh` |
 | blunder colour, or the list row | `crates/mirai/src/widgets/winrate.rs`, `crates/mirai/src/panels/analysis.rs` | `severity_of_drop`, `update_blunder_row` |
