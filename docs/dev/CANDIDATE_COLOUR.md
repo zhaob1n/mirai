@@ -187,7 +187,7 @@ signal, and the two are allowed to disagree.
 
 The tail is **unknown**: below 10 visits the blob is grey (`UNKNOWN_RGB`) and the
 badge (class `mirai-grade-unknown`) a faint neutral chip rather than a grey fill. The
-engine's pick is exempt — `palette::is_known` takes the rank, so no caller can paint the
+engine's pick is exempt — `mirai_core::candidate_grade::is_known` takes the rank, so no caller can paint the
 reference grey.
 
 Among searched moves the loss is **pick `utility` − candidate `utility`**,
@@ -196,6 +196,10 @@ win rate). `UTILITY_AT` uses KataGo utility (0.04 = `wideRootNoise`, 0.20 =
 `fpuReductionMax`, 0.50 = half a win), not a win-rate table. §6 compares these
 stops to the earlier tables. MRAI v2 stores `utility` on `Candidate`; v1 records
 still load and fall back to `grade_means`.
+
+Loss tables and grading live in `mirai-core::candidate_grade`, shared with the HarmonyOS
+client without a GTK dependency. RGB/CSS and this desktop's first-candidate exemption stay
+frontend choices; HarmonyOS uses its own palette and applies the ten-visit floor to every candidate.
 
 **Hue measures loss; opacity measures search depth.** `TRUSTED_VISITS` (10) is
 also the threshold for figures and full opacity, so faded candidates are grey

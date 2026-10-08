@@ -16,7 +16,7 @@ use gtk::pango;
 use gtk::subclass::prelude::*;
 use gtk::{CompositeTemplate, gio, glib, glib::clone};
 
-use mirai_core::{Color, Point, Size};
+use mirai_core::{Color, Point, Size, candidate_grade};
 
 use crate::app::{AppState, EngineState};
 use crate::batch::Blunder;
@@ -181,8 +181,8 @@ fn grade_rows(rows: &mut [Row]) {
             _ => f32::INFINITY,
         };
         let g = match row.loss.is_finite() {
-            true => crate::palette::grade(row.loss),
-            false => crate::palette::grade_means(winrate - row.winrate, score - row.score),
+            true => candidate_grade::grade(row.loss),
+            false => candidate_grade::grade_means(winrate - row.winrate, score - row.score),
         };
         row.grade = crate::palette::colour_level(g, i, row.visits);
     }

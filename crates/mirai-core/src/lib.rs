@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-//! Board geometry, rules, scoring, game tree and SGF for mirai.
+//! Board geometry, rules, scoring, game tree, SGF and principal-variation replay for mirai.
 //!
 //! Conventions that hold across the whole workspace:
 //!
@@ -11,9 +11,11 @@
 
 pub mod board;
 pub mod branches;
+pub mod candidate_grade;
 pub mod clock;
 pub mod handicap;
 pub mod point;
+pub mod pv;
 pub mod rules;
 pub mod score;
 pub mod sgf;

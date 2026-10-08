@@ -122,7 +122,9 @@ boundaries are [§1](#1-the-system). User settings and shortcuts are in
 | per-window state, or which `Change` fires | `crates/mirai/src/app.rs`, `crates/mirai/src/window.rs` | `AppState`, `Change`, `handle_change` |
 | share one KataGo across windows | `crates/mirai/src/engines.rs` | `EnginePool::acquire` |
 | client settings on disk | `crates/mirai/src/config.rs` | `Config::load`, `AnalysisSettings`; [user reference](../user/GUIDE.md#8-settings-reference) |
-| candidate colour, visit grey-out, or the rank badge | `crates/mirai/src/palette.rs` | `colour`, `GRADE_RAMP`, `TRUSTED_VISITS`; [rationale](CANDIDATE_COLOUR.md) |
+| candidate loss severity or trust floor | `crates/mirai-core/src/candidate_grade.rs` | `grade`, `grade_means`, `TRUSTED_VISITS`, `is_known`; shared with HarmonyOS |
+| replay a PV without editing the record | `crates/mirai-core/src/pv.rs` | `pv::replay`; passes clear simple ko, captures and sequence numbers shared with HarmonyOS |
+| desktop candidate colour or rank badge | `crates/mirai/src/palette.rs` | `colour`, `GRADE_RAMP`; [rationale](CANDIDATE_COLOUR.md) |
 | an ownership or policy heat map | `crates/mirai/src/widgets/board.rs`, `crates/mirai/src/widgets/paint.rs` | `ownership_texture`, `policy_texture`, `fill_disc` |
 | a shortcut, or what an action does | `crates/mirai/src/window.rs` | `install_actions`; [user reference](../user/GUIDE.md#9-keyboard-reference) |
 | show or hide the editor toolbar | `crates/mirai/src/window.blp`, `crates/mirai/src/window.rs` | `editor_revealer`, `set_editor_visible` |

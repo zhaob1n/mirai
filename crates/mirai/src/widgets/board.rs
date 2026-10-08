@@ -16,7 +16,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use mirai_core::{
-    Board, COLUMNS, Color, DeadSet, GameTree, MarkKind, Marks, NodeId, Point, Position, Rules, Size,
+    Board, COLUMNS, Color, DeadSet, GameTree, MarkKind, Marks, NodeId, Point, Position, Rules,
+    Size, candidate_grade,
 };
 use mirai_proto::types::dq_policy;
 
@@ -135,7 +136,7 @@ impl Layout {
 ///
 /// Hue is how much the move loses ([`crate::palette`]), or grey when there is not enough search
 /// for that loss to mean anything. Opacity is how much search stands behind the reading, and it
-/// reaches the ceiling at [`crate::palette::TRUSTED_VISITS`] — the same visit where the blob
+/// reaches the ceiling at [`candidate_grade::TRUSTED_VISITS`] — the same visit where the blob
 /// stops being grey and starts carrying figures. So the fade only ever applies to a move that
 /// has no colour yet: once a candidate is worth a hue it is drawn at full strength, and how
 /// much search it actually got is then a number in the label and in the list's Visits column,
@@ -153,9 +154,9 @@ const BLOB_ALPHA_MAX: f32 = 0.85;
 
 /// Below this many visits the numbers are noise, and unreadable through a faint blob. The
 /// engine's own choice and the record's next move keep theirs whatever their search. Same
-/// floor as [`crate::palette::TRUSTED_VISITS`]: an estimate not worth printing is not a
+/// floor as [`candidate_grade::TRUSTED_VISITS`]: an estimate not worth printing is not a
 /// colour either, and not worth drawing at full strength.
-const LABEL_MIN_VISITS: u32 = crate::palette::TRUSTED_VISITS;
+const LABEL_MIN_VISITS: u32 = candidate_grade::TRUSTED_VISITS;
 
 /// How many times `Layout::cell` must repeat before the board draws text again.
 ///
@@ -170,13 +171,13 @@ const CELL_SETTLED: u8 = 2;
 /// How opaque the blob for a candidate with this much search behind it is drawn.
 ///
 /// A known candidate — the engine's pick, or any move with
-/// [`crate::palette::TRUSTED_VISITS`] — is full strength. Fading is only for a move
-/// that has no colour yet ([`crate::palette::is_known`]).
+/// [`candidate_grade::TRUSTED_VISITS`] — is full strength. Fading is only for a move
+/// that has no colour yet ([`candidate_grade::is_known`]).
 fn blob_alpha(rank: usize, visits: u32) -> f32 {
-    if crate::palette::is_known(rank, visits) {
+    if candidate_grade::is_known(rank, visits) {
         return BLOB_ALPHA_MAX;
     }
-    let t = (visits as f32 / crate::palette::TRUSTED_VISITS as f32).min(1.0);
+    let t = (visits as f32 / candidate_grade::TRUSTED_VISITS as f32).min(1.0);
     BLOB_ALPHA_MIN + (BLOB_ALPHA_MAX - BLOB_ALPHA_MIN) * t
 }
 
@@ -326,36 +327,6 @@ struct CachedPv {
     proj: u64,
     board: Board,
     numbers: Box<[u16]>,
-}
-
-/// Replays `pv` from `to_play` onto a clone of `board`.
-///
-/// A pass advances the colour and the count but occupies nothing. An off-board or
-/// illegal move stops the line; stones already placed stay, which is what a reviewer
-/// sees when the reading runs into the position.
-fn preview_board(
-    board: &Board,
-    to_play: Color,
-    rules: &Rules,
-    pv: &[Point],
-) -> (Board, Box<[u16]>) {
-    let size = board.size;
-    let mut board = board.clone();
-    let mut color = to_play;
-    let mut seq = vec![0u16; size.points()];
-    let mut n = 0u16;
-    for &p in pv {
-        n += 1;
-        if p.is_pass() {
-            color = color.other();
-        } else if !size.contains(p) || board.play(color, p, rules).is_err() {
-            break;
-        } else {
-            seq[p.index()] = n;
-            color = color.other();
-        }
-    }
-    (board, seq.into_boxed_slice())
 }
 
 mod imp {
@@ -1021,7 +992,7 @@ mod imp {
                 let (cx, cy) = l.xy(x, y);
                 let rgb = match pick_utility {
                     Some(p) => crate::palette::colour(
-                        crate::palette::grade(p - info.utility_for(to_play)),
+                        candidate_grade::grade(p - info.utility_for(to_play)),
                         rank,
                         info.visits,
                     ),
@@ -1453,7 +1424,7 @@ impl BoardView {
             return Some(None);
         };
         let _t = crate::render_probe::Timer::new("board-pv");
-        let (board, numbers) = preview_board(
+        let preview = mirai_core::pv::replay(
             &projection.position.board,
             projection.position.to_play,
             &projection.rules,
@@ -1463,8 +1434,8 @@ impl BoardView {
             index,
             report: report_ptr,
             proj,
-            board,
-            numbers,
+            board: preview.board,
+            numbers: preview.numbers,
         }))
     }
 
@@ -1753,7 +1724,7 @@ mod tests {
 
     /// Opacity says how much search stands behind a blob's colour, so it rises with the visits
     /// themselves — not with their share of a search that may have run for ten seconds — and it
-    /// tops out at [`crate::palette::TRUSTED_VISITS`], the same visit at which the blob stops
+    /// tops out at [`candidate_grade::TRUSTED_VISITS`], the same visit at which the blob stops
     /// being grey and starts carrying figures. One threshold: a faded blob is always a grey
     /// one, and a coloured blob is always full strength. The pick is coloured from the first
     /// visit, so it is never faded.
@@ -1762,11 +1733,11 @@ mod tests {
         assert_eq!(blob_alpha(1, 0), BLOB_ALPHA_MIN);
         assert!(blob_alpha(1, 5) > blob_alpha(1, 1));
         assert!(blob_alpha(1, 9) > blob_alpha(1, 5));
-        let full = crate::palette::TRUSTED_VISITS;
+        let full = candidate_grade::TRUSTED_VISITS;
         assert!((blob_alpha(1, full) - BLOB_ALPHA_MAX).abs() < 1e-6);
         assert_eq!(blob_alpha(1, 50_000), blob_alpha(1, full));
         assert_eq!(LABEL_MIN_VISITS, full);
-        assert!(crate::palette::is_known(1, full) && !crate::palette::is_known(1, full - 1));
+        assert!(candidate_grade::is_known(1, full) && !candidate_grade::is_known(1, full - 1));
         assert!(blob_alpha(1, full - 1) < BLOB_ALPHA_MAX);
         assert_eq!(blob_alpha(0, 0), BLOB_ALPHA_MAX);
         assert_eq!(blob_alpha(0, 1), BLOB_ALPHA_MAX);
@@ -1948,74 +1919,5 @@ mod tests {
                 assert!(cell(fit - 1) < cell(fit), "{size:?} {coords} {height}");
             }
         }
-    }
-
-    /// The preview snapshot used to replay inside `snapshot`. A pass must advance the
-    /// count without occupying a point, and an illegal continuation must leave the
-    /// stones already placed — including a capture the rules actually take.
-    #[test]
-    fn pv_preview_numbers_passes_and_stops_when_the_line_becomes_illegal() {
-        let size = Size::square(9);
-        let rules = RuleSet::default().rules();
-        let board = Board::new(size);
-        let p = |x: u8, y: u8| size.point(x, y);
-
-        let (played, nums) = preview_board(
-            &board,
-            Color::Black,
-            &rules,
-            &[p(2, 2), Point::PASS, p(6, 6)],
-        );
-        assert_eq!(played.at(p(2, 2)), Some(Color::Black));
-        assert_eq!(nums[p(2, 2).index()], 1);
-        assert_eq!(
-            played.at(p(6, 6)),
-            Some(Color::Black),
-            "a pass flips the colour, so the third move is Black again"
-        );
-        assert_eq!(nums[p(6, 6).index()], 3, "the pass still consumes a number");
-        assert_eq!(
-            nums.iter().filter(|&&n| n == 2).count(),
-            0,
-            "a pass occupies nothing"
-        );
-
-        let (stopped, nums) =
-            preview_board(&board, Color::Black, &rules, &[p(2, 2), p(2, 2), p(4, 4)]);
-        assert_eq!(stopped.at(p(2, 2)), Some(Color::Black));
-        assert_eq!(nums[p(2, 2).index()], 1);
-        assert_eq!(
-            stopped.at(p(4, 4)),
-            None,
-            "an occupied point stops the line"
-        );
-        assert_eq!(nums[p(4, 4).index()], 0);
-
-        // White at tengen, surrounded. The last Black move captures; a painter that
-        // only dropped stones would leave White on the board.
-        let (captured, nums) = preview_board(
-            &board,
-            Color::Black,
-            &rules,
-            &[
-                p(3, 4),
-                p(4, 4),
-                p(5, 4),
-                Point::PASS,
-                p(4, 3),
-                Point::PASS,
-                p(4, 5),
-            ],
-        );
-        assert_eq!(
-            captured.at(p(4, 4)),
-            None,
-            "the surrounded stone is captured"
-        );
-        assert_eq!(captured.at(p(4, 5)), Some(Color::Black));
-        assert_eq!(nums[p(4, 5).index()], 7);
-        // The number is left in the vec; `draw_numbers` skips an empty point, which is
-        // what the old in-snapshot replay did too.
-        assert_eq!(nums[p(4, 4).index()], 2);
     }
 }
