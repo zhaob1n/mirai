@@ -3,7 +3,7 @@
 
 pkgname=mirai-git
 _repo=mirai
-pkgver=r390.37c474e
+pkgver=r470.c73dc75
 pkgrel=1
 pkgdesc='GTK4/libadwaita Go board for analysis, review and play with KataGo'
 arch=('x86_64' 'aarch64')
