@@ -38,7 +38,7 @@ enum Step {
     Board(String, String),
     /// Press a move-tree cell, `primary` or `secondary`, given as `depth:lane`.
     Tree(String, String),
-    /// Give keyboard focus to the widget with this Blueprint id or `GtkWidget:name`.
+    /// Give keyboard focus to the widget with this `GtkWidget:name`.
     Focus(String),
     /// Activate a matching button or enabled menu item in the active window.
     Press(String),
@@ -63,7 +63,7 @@ enum Step {
     /// Ask for a new window size through `set_default_size`, which a floating window on
     /// Wayland honours, and log what it got: the size, the sidebar fold and the board.
     Size(i32, i32),
-    /// Write a PNG of the whole window, or of the one widget whose Blueprint id is given —
+    /// Write a PNG of the whole window, or of the widget with the given name —
     /// a 300x100 strip of the list you changed instead of a 1500x1600 window.
     Shot(String, Option<String>),
     /// Close the dialog presented over the active window, through `adw::Dialog::close`: the
@@ -671,7 +671,7 @@ fn drag_divider(app: &adw::Application, height: i32) -> bool {
     else {
         return false;
     };
-    let paned = window.content_paned();
+    let paned = &window.widgets().content;
     let Some(graph) = paned.end_child().filter(|graph| graph.height() > 0) else {
         return false;
     };
@@ -693,8 +693,8 @@ fn layout_summary(app: &adw::Application) -> String {
     else {
         return "NO WINDOW".into();
     };
-    let split = window.split();
-    let board = window.content_paned().start_child();
+    let split = &window.widgets().split;
+    let board = window.widgets().content.start_child();
     let (bw, bh) = board.map_or((0, 0), |b| (b.width(), b.height()));
     format!(
         "{}x{} collapsed={} sidebar={} board={bw}x{bh} side={}",
@@ -1051,7 +1051,7 @@ async fn shot_when_painted(
 /// Renders `window` through its live `gsk` renderer and writes a PNG, optionally cropped
 /// to one widget.
 ///
-/// `region` is a widget id — Blueprint's, or `GtkWidget:name`. The window is always the node
+/// `region` is a `GtkWidget:name`. The window is always the node
 /// that gets rendered and the region only narrows the *viewport*: a `WidgetPaintable` of the
 /// widget alone draws no ancestor background, so a list came out as dark text on transparent
 /// black. Cropping to one widget is not a nicety — reviewing a list row otherwise means
@@ -1096,10 +1096,9 @@ fn shot(window: &gtk::Window, path: &str, region: Option<&str>) -> Result<(), St
         .map_err(|e| format!("{path}: {e}"))
 }
 
-/// The first widget whose Blueprint id — or `GtkWidget:name`, which is what CSS `#id` matches
-/// — is exactly `name`.
+/// The first widget with this `GtkWidget:name`, which is what CSS `#id` matches.
 fn find_named(widget: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
-    if widget.widget_name() == name || widget.buildable_id().is_some_and(|id| id == name) {
+    if widget.widget_name() == name {
         return Some(widget.clone());
     }
     let mut child = widget.first_child();

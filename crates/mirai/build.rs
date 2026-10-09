@@ -10,34 +10,6 @@ fn main() {
         "mirai.gresource",
     );
     compile_catalogues();
-    compile_builder_ui();
-}
-
-/// Blueprint files that are not templates: object trees with no widget class of their own,
-/// which their caller builds on demand with `gtk::Builder::from_string` over
-/// `$OUT_DIR/ui/<name>.ui`. A template compiles through `CompositeTemplate` instead; a file
-/// belongs here only when there is no class to hang it on, as with an alert dialog.
-const BUILDER_UI: &[&str] = &["restore_dialog", "tuning_dialog"];
-
-fn compile_builder_ui() {
-    let out = Path::new(&std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR")).join("ui");
-    std::fs::create_dir_all(&out).expect("OUT_DIR is writable");
-    for name in BUILDER_UI {
-        let source = Path::new("src").join(format!("{name}.blp"));
-        println!("cargo:rerun-if-changed={}", source.display());
-        let status = Command::new("blueprint-compiler")
-            .arg("compile")
-            .arg("--output")
-            .arg(out.join(format!("{name}.ui")))
-            .arg(&source)
-            .status()
-            .unwrap_or_else(|e| panic!("blueprint-compiler is needed to build mirai: {e}"));
-        assert!(
-            status.success(),
-            "blueprint-compiler refused {}",
-            source.display()
-        );
-    }
 }
 
 /// Compiles each language in `po/LINGUAS` into `$OUT_DIR/locale`, which a debug build run

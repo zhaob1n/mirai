@@ -117,7 +117,7 @@ boundaries are [§1](#1-the-system). User settings and shortcuts are in
 | choose an AI move, resign, or advance a clock | `crates/mirai-client/src/play.rs`, `crates/mirai/src/play.rs` | `select_move_index`, `resign_check`, `PlayController` |
 | search a server for public records: the steps, and the row every server's list becomes | `crates/mirai-client/src/kifu.rs` | `Fetch`, `players`, `games`, `download`, `Record`; a numeric query is an id, and only Yike can name several players |
 | one server's HTTP or SGF dialect | `crates/mirai-client/src/fox.rs`, `crates/mirai-client/src/eweiqi.rs`, `crates/mirai-client/src/yike.rs` | `normalize_fox_sgf`, `eweiqi::parse_record` (GIB), `yike::result_text`; the [Fox](FOX_KIFU_API_SPEC.md), [eWeiqi](EWEIQI_KIFU_API_SPEC.md) and [Yike](YIKE_KIFU_API_SPEC.md) specs |
-| the record picker | `crates/mirai/src/kifu.rs`, `crates/mirai/src/kifu_picker.rs`, `crates/mirai/src/kifu_picker.blp` | `present`, `KifuPickerDialog::show_page`, `SearchHistory`, `Soup` (the libsoup `Fetch`) |
+| the record picker | `crates/mirai/src/kifu.rs`, `crates/mirai/src/kifu_picker.rs` | `present`, `KifuPickerDialog::show_page`, `SearchHistory`, `Soup` (the libsoup `Fetch`) |
 | the headless server, or `server.toml` | `crates/mirai-server/src/main.rs`, `crates/mirai-server/src/session.rs`, `crates/mirai-server/src/config.rs`, `crates/mirai-server/server.example.toml` | `run`, `serve`, `ServerConfig::load` |
 | per-window state, or which `Change` fires | `crates/mirai/src/app.rs`, `crates/mirai/src/window.rs` | `AppState`, `Change`, `handle_change` |
 | share one KataGo across windows | `crates/mirai/src/engines.rs` | `EnginePool::acquire` |
@@ -127,14 +127,14 @@ boundaries are [§1](#1-the-system). User settings and shortcuts are in
 | desktop candidate colour or rank badge | `crates/mirai/src/palette.rs` | `colour`, `GRADE_RAMP`; [rationale](CANDIDATE_COLOUR.md) |
 | an ownership or policy heat map | `crates/mirai/src/widgets/board.rs`, `crates/mirai/src/widgets/paint.rs` | `ownership_texture`, `policy_texture`, `fill_disc` |
 | a shortcut, or what an action does | `crates/mirai/src/window.rs` | `install_actions`; [user reference](../user/GUIDE.md#9-keyboard-reference) |
-| show or hide the editor toolbar | `crates/mirai/src/window.blp`, `crates/mirai/src/window.rs` | `editor_revealer`, `set_editor_visible` |
+| show or hide the editor toolbar | `crates/mirai/src/window_shell.rs`, `crates/mirai/src/window.rs` | `WindowWidgets`, `set_editor_visible` |
 | the move-tree layout | `crates/mirai-core/src/branches.rs` (lanes, shared with the HarmonyOS client), `crates/mirai/src/widgets/tree.rs` (axes, trunks) | `GameTree::branch_graph`, `lay_out` |
 | the move-tree node menu (main line, delete branch) | `crates/mirai/src/widgets/tree.rs` | `MoveTreeView::show_menu_at` |
 | the win-rate graph | `crates/mirai/src/widgets/winrate.rs` | `WinrateGraph::refresh` |
 | blunder colour, or the list row | `crates/mirai/src/widgets/winrate.rs`, `crates/mirai/src/panels/analysis.rs` | `severity_of_drop`, `update_blunder_row` |
-| the analysis sidebar | `crates/mirai/src/panels/analysis.rs`, `crates/mirai/src/panels/analysis.blp` | `refresh`, `set_detailed_columns`, `set_blunders` |
-| the static window, or another Blueprint template | `crates/mirai/src/window.blp`, `crates/mirai/src/window_shell.rs` | `MiraiWindow` template |
-| preferences, including automatic tuning in the editor | `crates/mirai/src/prefs.rs`, `crates/mirai/src/preferences.blp`, `crates/mirai/src/profile_editor.rs` | `present`, `CalibrationRun` |
+| the analysis sidebar | `crates/mirai/src/panels/analysis.rs` | `refresh`, `set_detailed_columns`, `set_blunders` |
+| the fixed window layout | `crates/mirai/src/window_shell.rs` | `WindowWidgets`, `MiraiWindow` lifetime |
+| preferences, including automatic tuning in the editor | `crates/mirai/src/prefs.rs`, `crates/mirai/src/preferences_shell.rs`, `crates/mirai/src/profile_editor.rs` | `present`, `CalibrationRun` |
 | a score, fingerprint, new-game, or label dialog | `crates/mirai/src/dialogs.rs`, `crates/mirai/src/new_game.rs`, `crates/mirai/src/label_editor.rs` | `show_score_with`, `confirm_fingerprint`, `present` |
 | drive the real GUI, or count frames | `crates/mirai/src/harness.rs`, `crates/mirai/src/render_probe.rs` | [TESTING §5](TESTING.md#5-testing-the-gui) |
 | process lifetime, the runtime, or shutdown | `crates/mirai/src/main.rs`, `crates/mirai/src/application_shell.rs` | `MiraiApplication` |
@@ -504,15 +504,36 @@ show one value in two perspectives.
 
 ### Widget tree
 
-Static layout is [`crates/mirai/src/window.blp`](../../crates/mirai/src/window.blp). The user's
-map of regions and mouse behaviour is [GUIDE §3](../user/GUIDE.md#3-the-interface).
+Fixed layouts use Rust builders. The window's layout and menus are in
+[`crates/mirai/src/window_shell.rs`](../../crates/mirai/src/window_shell.rs); the user's map
+of regions and mouse behaviour is [GUIDE §3](../user/GUIDE.md#3-the-interface).
 
-A Blueprint file is a template when it has a widget class carrying Rust state
-(`CompositeTemplate`). A fixed dialog with no class of its own — the restore and tuning
-alerts — is listed in `BUILDER_UI` in `crates/mirai/build.rs`, compiled to `$OUT_DIR/ui`, and
-built on demand with `gtk::Builder::from_string`. Values that come from Rust constants or
-enums (spin ranges, the rule list) and the keyboard shortcuts dialog, which reads
-`window::SHORTCUTS`, stay in Rust.
+`MiraiWindow` owns `WindowWidgets` directly, constructed by `Default`, and exposes one
+borrowed widget set instead of a getter per control. New Game and the record picker also
+build their fixed controls during native object construction; only state-dependent structures
+such as the analysis panel's `Inner` need deferred initialisation. Preferences and the label
+editor use base libadwaita dialogs, not subclasses added merely to carry layout.
+
+Preferences owns one `Rc<PreferencesWidgets>`. Reload functions borrow it; reset, undo and
+strength handlers weak-capture it with [`glib::clone!`](https://docs.rs/glib-macros/0.22.9/glib_macros/macro.clone.html).
+Cloning a whole control bag into a signal handler also retains its emitter and creates a cycle.
+
+The gtk-rs 0.11 / glib 0.22 review found existing
+[typed builders](https://docs.rs/gtk4/0.11.5/gtk4/builders/struct.ButtonBuilder.html) and
+[`object_subclass` default construction](https://docs.rs/glib/0.22.10/glib/attr.object_subclass.html)
+sufficient; no UI DSL is needed.
+[`Properties`](https://docs.rs/glib/0.22.10/glib/derive.Properties.html) is for observable
+GObject state, not a reason to register internal controls just to generate accessors.
+
+Harness targets use `GtkWidget:name`. `AdwPreferencesPage:name` is a different property:
+use `set_widget_name` for a page's harness target. Some adwaita wrappers do not implement
+`IsA<gtk::Accessible>` directly; access that interface through their `gtk::Widget` base.
+
+The final six-template cutover reduced their Rust + Blueprint sources from 4,583 to 4,287
+physical lines; related caller changes cancel out. New Game alone grew by 54 lines because
+its choices and ranges are now explicit constructor properties. The benefit is removing the
+compiler dependency, pure-layout subclasses and extraction/forwarding layers, not a promise
+that every Rust layout is shorter or faster ([measurements](RENDERING.md#8-dialogs-lists-and-a-160-hz-budget)).
 
 Board navigation and the play bar sit beneath the board, not across the window; the
 sidebar reaches the bottom. `editor_revealer` starts revealed. `set_editor_visible` is
@@ -550,8 +571,8 @@ combinations no text field uses (Ctrl+S, Ctrl+O, F9). Everything else is `View`:
 `GtkShortcutController` on the window in the bubble phase, which a comment, label or search
 field pre-empts by using the key. Ctrl+Z and Ctrl+Shift+Z are swallowed while a text field
 has focus even when its own history is empty, so undo never falls through to the record. A
-menu item whose shortcut is `View` names it with an `accel` attribute in `window.blp`, since
-no accelerator exists for the menu to find. Pressing the board, graph or move tree clears the
+menu item whose shortcut is `View` gets an `accel` attribute from `window_shell::menu_item`,
+since no accelerator exists for the menu to find. Pressing the board, graph or move tree clears the
 window's focus (`widgets::release_focus`), handing the keys back after typing; they are not
 Tab stops, having no keys of their own.
 
@@ -630,9 +651,9 @@ projection/cache state; it does not borrow `AppState` or replay the game tree.
 1. Create `mirai/src/panels/<name>.rs`; a `gtk::Box` subclass built from stock widgets is enough
    (INV-9 applies only to the custom-drawn widgets).
 2. Re-export it from `panels/mod.rs`.
-3. Add an `Adw.ViewStackPage` to `sidebar_stack` in `window.blp` (name, title, icon). Construct
-   the panel in `window::present` with the `AppState` and, if it is a Rust widget, insert it
-   into that page — the analysis panel is added to `analysis_stack` with `add_named`.
+3. Add a titled page to `sidebar_stack` in `window_shell.rs` (name, title, icon). Construct
+   the panel in `window::present` with the `AppState` and insert it into the page — the
+   analysis panel is added to `analysis_stack` with `add_named`.
 4. Add its refresh call to the appropriate arm of `window::handle_change`; do not install a
    second AppState dispatcher or accept references to sibling widgets (INV-7). Widget-internal
    selection hooks still route through the window.

@@ -14,7 +14,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::pango;
 use gtk::subclass::prelude::*;
-use gtk::{CompositeTemplate, gio, glib, glib::clone};
+use gtk::{gio, glib, glib::clone};
 
 use mirai_core::{Color, Point, Size, candidate_grade};
 
@@ -190,7 +190,7 @@ fn grade_rows(rows: &mut [Row]) {
 
 // -- the panel --------------------------------------------------------------------------
 
-/// The widgets the panel has to reach back into after construction.
+/// Widgets reached after construction. Each builder `name` is the harness id (`focus:`, cropped shots).
 ///
 /// `pub` because it appears in a `pub` field of the `imp` struct, which the
 /// `ObjectSubclass` impl makes publicly reachable; its own fields stay private.
@@ -218,29 +218,8 @@ pub(crate) type PvHook = Box<dyn Fn(Option<usize>)>;
 mod imp {
     use super::*;
 
-    #[derive(Default, CompositeTemplate)]
-    #[template(file = "src/panels/analysis.blp")]
+    #[derive(Default)]
     pub struct AnalysisPanel {
-        #[template_child]
-        pub status: TemplateChild<gtk::Box>,
-        #[template_child]
-        pub to_move: TemplateChild<gtk::Label>,
-        #[template_child]
-        pub detail: TemplateChild<gtk::Label>,
-        #[template_child]
-        pub start_actions: TemplateChild<gtk::Box>,
-        #[template_child]
-        pub analyse_game_button: TemplateChild<gtk::Button>,
-        #[template_child]
-        pub column_menu: TemplateChild<gio::MenuModel>,
-        #[template_child]
-        pub columns: TemplateChild<gtk::ColumnView>,
-        #[template_child]
-        pub blunder_group: TemplateChild<gtk::Box>,
-        #[template_child]
-        pub blunder_expander: TemplateChild<gtk::Expander>,
-        #[template_child]
-        pub blunder_list: TemplateChild<gtk::ListBox>,
         pub state: OnceCell<AppState>,
         pub inner: OnceCell<super::Inner>,
         pub pv_hooks: RefCell<Vec<PvHook>>,
@@ -256,14 +235,6 @@ mod imp {
         const NAME: &'static str = "MiraiAnalysisPanel";
         type Type = super::AnalysisPanel;
         type ParentType = gtk::Box;
-
-        fn class_init(klass: &mut Self::Class) {
-            klass.bind_template();
-        }
-
-        fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
-            obj.init_template();
-        }
     }
 
     impl ObjectImpl for AnalysisPanel {}
@@ -279,7 +250,9 @@ glib::wrapper! {
 
 impl AnalysisPanel {
     pub fn new(state: &AppState) -> AnalysisPanel {
-        let this: AnalysisPanel = glib::Object::new();
+        let this: AnalysisPanel = glib::Object::builder()
+            .property("orientation", gtk::Orientation::Vertical)
+            .build();
         this.imp()
             .state
             .set(state.clone())
@@ -311,14 +284,102 @@ impl AnalysisPanel {
     // -- construction -------------------------------------------------------------------
 
     fn build(&self) {
-        let imp = self.imp();
-        let status = imp.status.get();
-        let to_move = imp.to_move.get();
-        let detail = imp.detail.get();
-        let columns = imp.columns.get();
-        let blunder_group = imp.blunder_group.get();
-        let blunder_expander = imp.blunder_expander.get();
-        let blunder_list = imp.blunder_list.get();
+        // The stone stays out of `detail` so dim-label does not fade it. Role img: AT reads
+        // the accessible name, not the emoji. Win rate is the graph's; the pick is row one.
+        let to_move = gtk::Label::builder()
+            .name("to_move")
+            .visible(false)
+            .accessible_role(gtk::AccessibleRole::Img)
+            .css_classes(["caption"])
+            .build();
+        let detail = gtk::Label::builder()
+            .name("detail")
+            .xalign(0.0)
+            .hexpand(true)
+            .wrap(true)
+            .wrap_mode(pango::WrapMode::WordChar)
+            .css_classes(["caption", "dim-label", "mirai-position"])
+            .build();
+        let status = gtk::Box::builder().name("status").spacing(4).build();
+        status.append(&to_move);
+        status.append(&detail);
+
+        // Stacked: side by side the labels need more than the 300 sp sidebar.
+        let analyse_position = gtk::Button::builder()
+            .label(i18n::gettext("Analyse Position"))
+            .action_name("win.toggle-analysis")
+            .tooltip_text(i18n::gettext(
+                "Analyse this position and each one you move to (Space)",
+            ))
+            .css_classes(["suggested-action"])
+            .build();
+        let analyse_game_button = gtk::Button::builder()
+            .name("analyse_game_button")
+            .label(i18n::gettext("Analyse Game"))
+            .action_name("win.analyse-game")
+            .tooltip_text(i18n::gettext(
+                "Analyse every move of the main line (Ctrl+A)",
+            ))
+            .build();
+        let start_actions = gtk::Box::builder()
+            .name("start_actions")
+            .visible(false)
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(6)
+            .margin_top(6)
+            .build();
+        start_actions.append(&analyse_position);
+        start_actions.append(&analyse_game_button);
+
+        let header = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .hexpand(true)
+            .margin_start(12)
+            .margin_end(12)
+            .margin_top(6)
+            .margin_bottom(6)
+            .build();
+        header.append(&status);
+        header.append(&start_actions);
+
+        let columns = gtk::ColumnView::builder()
+            .name("columns")
+            .vexpand(true)
+            .css_classes(["mirai-candidates"])
+            .build();
+        let columns_scroll = gtk::ScrolledWindow::builder()
+            .vexpand(true)
+            .child(&columns)
+            .build();
+
+        let blunder_list = gtk::ListBox::builder()
+            .name("blunder_list")
+            .selection_mode(gtk::SelectionMode::None)
+            .build();
+        let blunder_scroll = gtk::ScrolledWindow::builder()
+            .propagate_natural_height(true)
+            .max_content_height(240)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .child(&blunder_list)
+            .build();
+        let blunder_expander = gtk::Expander::builder()
+            .name("blunder_expander")
+            .label(i18n::gettext("Blunders"))
+            .expanded(true)
+            .css_classes(["mirai-blunders"])
+            .child(&blunder_scroll)
+            .build();
+        let blunder_group = gtk::Box::builder()
+            .name("blunder_group")
+            .visible(false)
+            .orientation(gtk::Orientation::Vertical)
+            .build();
+        blunder_group.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        blunder_group.append(&blunder_expander);
+
+        self.append(&header);
+        self.append(&columns_scroll);
+        self.append(&blunder_group);
 
         let store = gio::ListStore::new::<CandidateObject>();
         // The user's sort sits between the store and the selection, so the store stays in
@@ -417,7 +478,13 @@ impl AnalysisPanel {
         columns.append_column(&prior_column);
         // Which columns to show is a question about the columns, so it is asked on their
         // headers (right-click) as well as in Main Menu → View.
-        let column_menu = imp.column_menu.get();
+        let section = gio::Menu::new();
+        section.append(
+            Some(&i18n::gettext("_Loss and Prior Columns")),
+            Some("win.toggle-candidate-details"),
+        );
+        let column_menu = gio::Menu::new();
+        column_menu.append_section(None, &section);
         for column in columns.columns().iter::<gtk::ColumnViewColumn>().flatten() {
             column.set_header_menu(Some(&column_menu));
         }
@@ -475,8 +542,8 @@ impl AnalysisPanel {
             status,
             to_move,
             detail,
-            start_actions: imp.start_actions.get(),
-            analyse_game_button: imp.analyse_game_button.get(),
+            start_actions,
+            analyse_game_button,
             columns,
             rank_column,
             loss_column,

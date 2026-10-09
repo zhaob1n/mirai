@@ -153,13 +153,13 @@ pub fn install(window: &crate::window_shell::MiraiWindow) {
         return;
     }
     if flag("MIRAI_COLLAPSED") {
-        window.split().set_collapsed(true);
+        window.widgets().split.set_collapsed(true);
     }
     if flag("MIRAI_NO_BOARD") {
-        window.content_paned().set_start_child(gtk::Widget::NONE);
+        window.widgets().content.set_start_child(gtk::Widget::NONE);
     }
     if flag("MIRAI_NO_GRAPH") {
-        window.content_paned().set_end_child(gtk::Widget::NONE);
+        window.widgets().content.set_end_child(gtk::Widget::NONE);
     }
     if let Some(path) = std::env::var_os("MIRAI_DUMP_NODE") {
         // Two seconds in, so the board has its final allocation and the SGF has loaded.
@@ -180,7 +180,7 @@ pub fn install(window: &crate::window_shell::MiraiWindow) {
     // `MIRAI_SPIN` redraws an unchanging scene every frame. It separates two very different
     // costs: rasterising the same render nodes again (cheap if GSK caches by node) from
     // rasterising freshly built nodes, which is what a resize or a stone move produces.
-    let spin = flag("MIRAI_SPIN").then(|| window.content_paned().start_child());
+    let spin = flag("MIRAI_SPIN").then(|| window.widgets().content.start_child());
     let last = Cell::new(0i64);
     window.add_tick_callback(move |widget, clock| {
         let now = clock.frame_time();

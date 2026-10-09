@@ -760,7 +760,7 @@ impl KifuPickerDialog {
         if self.is_busy() {
             // Only the clear icon gets past a read-only entry; what is loading is still
             // what it read.
-            let entry = self.widgets().entry;
+            let entry = &self.widgets().entry;
             let text = self.busy_text();
             if entry.text() != text {
                 entry.set_text(&text);

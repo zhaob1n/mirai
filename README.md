@@ -62,16 +62,15 @@ should share its KataGo. Both build the latest commit.
 
 - The current stable Rust (edition 2024), which `rust-toolchain.toml` selects. No older
   compiler is supported.
-- GTK 4.22+, libadwaita 1.9+, libsoup 3 and Blueprint Compiler 0.22+, with their development
-  packages.
+- GTK 4.22+, libadwaita 1.9+ and libsoup 3, with their development packages.
 - GNU gettext, for the translations.
 - [`just`](https://github.com/casey/just), to install.
 
 |Distribution|Packages|
 |---|---|
-|Arch|`gtk4 libadwaita libsoup3 blueprint-compiler gettext just`|
-|Debian / Ubuntu|`libgtk-4-dev libadwaita-1-dev libsoup-3.0-dev blueprint-compiler gettext just`|
-|Fedora|`gtk4-devel libadwaita-devel libsoup3-devel blueprint-compiler gettext just`|
+|Arch|`gtk4 libadwaita libsoup3 gettext just`|
+|Debian / Ubuntu|`libgtk-4-dev libadwaita-1-dev libsoup-3.0-dev gettext just`|
+|Fedora|`gtk4-devel libadwaita-devel libsoup3-devel gettext just`|
 
 A distribution release older than GNOME 50 ships a GTK and libadwaita too old to build mirai.
 

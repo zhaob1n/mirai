@@ -273,55 +273,48 @@ pub fn present(
     let seed_job = seed.map(|load_failed| (load_failed, runtime.spawn_blocking(Config::seeded)));
     let state = AppState::new(config, config_path, runtime, pool);
     let window = MiraiWindow::new(app);
-    let toasts = window.toasts();
+    let widgets = window.widgets();
     let board = BoardView::new(&state);
     let winrate = WinrateGraph::new(&state);
     let move_tree = MoveTreeView::new(&state);
     let analysis = AnalysisPanel::new(&state);
-    let comment = window.comment();
     let play = PlayController::new(&state, &window);
     let batch = BatchAnalysis::new(&state, &window);
 
-    // The custom GPU-rendered views are stateful Rust widgets. Blueprint owns their static
-    // containers; Rust only inserts the dynamic instances.
     board.set_hexpand(true);
     board.set_vexpand(true);
     winrate.set_hexpand(true);
     let show_graph = state.config().ui.show_graph;
     winrate.set_visible(show_graph);
-    let content = window.content_paned();
-    content.set_start_child(Some(&board));
-    content.set_end_child(Some(&winrate));
-    move_tree.pack_into(&window.tree_scroller());
+    widgets.content.set_start_child(Some(&board));
+    widgets.content.set_end_child(Some(&winrate));
+    move_tree.pack_into(&widgets.tree_scroller);
 
-    // The empty page is the template's visible child. The panel has to be in the stack,
-    // and the visible child chosen, before the window is mapped — `update_analysis_page`
-    // runs before `present` — or a configured engine paints "No Engine Configured" first.
-    let analysis_stack = window.analysis_stack();
-    analysis_stack.add_named(&analysis, Some("panel"));
+    // Pick the analysis page before mapping; otherwise a configured engine first paints
+    // the empty state.
+    widgets.analysis_stack.add_named(&analysis, Some("panel"));
 
     // `win.toggle-analysis` drives the button's `active`; this only follows it.
     {
         let weak = window.downgrade();
-        window
-            .live_toggle()
+        widgets
+            .live_toggle
             .connect_active_notify(move |_| with_window_ui(&weak, sync_live_toggle));
     }
 
-    let engine_menu = window.engine_menu();
-    let engine_content = window.engine_content();
     state
-        .bind_property("engine-label", &engine_content, "label")
+        .bind_property("engine-label", &widgets.engine_content, "label")
         .sync_create()
         .build();
     let engine_label = state.engine_label();
-    engine_menu.set_tooltip_text(Some(&engine_tooltip(&engine_label)));
+    widgets
+        .engine_menu
+        .set_tooltip_text(Some(&engine_tooltip(&engine_label)));
 
-    let split = window.split();
-    set_candidate_sidebar_width(&split, false);
+    set_candidate_sidebar_width(&widgets.split, false);
     // One button for both directions: the check state is the only affordance the icon set
     // offers, so the tooltip carries the verb. `win.toggle-sidebar` drives `active`.
-    window.sidebar_toggle().connect_active_notify(|button| {
+    widgets.sidebar_toggle.connect_active_notify(|button| {
         let tip = if button.is_active() {
             gettext("Hide Sidebar (F9)")
         } else {
@@ -331,45 +324,34 @@ pub fn present(
     });
     install_sidebar_breakpoint(&window, &board);
 
-    let title = window.title_widget();
-    let clock_box = window.clock_box();
-    let clock_black = window.clock_black();
-    let clock_white = window.clock_white();
-    let play_controls = window.play_controls();
-    let pass_button = window.pass_button();
-    let undo_button = window.undo_button();
-    let retry_button = window.retry_button();
-    let resign_button = window.resign_button();
-    let move_scale = window.move_scale();
-    let move_position = window.move_position();
-    move_scale.set_increments(1.0, 10.0);
+    widgets.move_scale.set_increments(1.0, 10.0);
 
     window.install_ui(Ui {
         window: window.downgrade(),
         state: state.clone(),
-        toasts: toasts.clone(),
-        comment,
+        toasts: widgets.toasts.clone(),
+        comment: widgets.comment.clone(),
         play,
         batch,
         analysis: analysis.clone(),
-        move_position,
+        move_position: widgets.move_position.clone(),
         board: board.clone(),
         winrate: winrate.clone(),
         move_tree: move_tree.clone(),
-        move_scale,
-        engine_menu,
+        move_scale: widgets.move_scale.clone(),
+        engine_menu: widgets.engine_menu.clone(),
         file: RefCell::new(None),
-        title,
-        clock_box,
-        play_bar: window.play_bar(),
-        clock_black,
-        clock_white,
-        play_controls,
-        pass_button,
-        undo_button,
-        retry_button,
-        resign_button,
-        analysis_stack,
+        title: widgets.title.clone(),
+        clock_box: widgets.clock_box.clone(),
+        play_bar: widgets.play_bar.clone(),
+        clock_black: widgets.clock_black.clone(),
+        clock_white: widgets.clock_white.clone(),
+        play_controls: widgets.play_controls.clone(),
+        pass_button: widgets.pass_button.clone(),
+        undo_button: widgets.undo_button.clone(),
+        retry_button: widgets.retry_button.clone(),
+        resign_button: widgets.resign_button.clone(),
+        analysis_stack: widgets.analysis_stack.clone(),
         kifu_picker: RefCell::new(None),
         preferences: RefCell::new(None),
         new_game: RefCell::new(None),
@@ -639,7 +621,7 @@ fn win_simple(ui: &Ui, name: &str) -> Option<gio::SimpleAction> {
 }
 
 fn connect_editor_tools(window: &MiraiWindow, ui: &Ui) {
-    for group in [window.stone_tools(), window.mark_tools()] {
+    for group in [&window.widgets().stone_tools, &window.widgets().mark_tools] {
         let weak = ui.weak_window();
         group.connect_active_name_notify(move |group| {
             let Some(name) = group.active_name() else {
@@ -681,12 +663,12 @@ fn update_editor_actions(ui: &Ui) {
                 ),
             ),
         };
-        let button = window.play_tool();
-        window.play_tool_icon().set_icon_name(Some(icon));
+        let button = &window.widgets().play_tool;
+        window.widgets().play_tool_icon.set_icon_name(Some(icon));
         button.set_tooltip(&tooltip);
         button.set_label(Some(&label));
         let name = ui.state.editor_tool().as_str();
-        for group in [window.stone_tools(), window.mark_tools()] {
+        for group in [&window.widgets().stone_tools, &window.widgets().mark_tools] {
             group.set_sensitive(!active);
             group.set_active_name(group.toggle_by_name(name).map(|_| name));
         }
@@ -713,16 +695,16 @@ fn update_editor_actions(ui: &Ui) {
 
 fn set_editor_visible(ui: &Ui, visible: bool) {
     let Some(window) = ui.window() else { return };
-    let revealer = window.editor_revealer();
+    let revealer = &window.widgets().editor_revealer;
     if revealer.reveals_child() == visible {
         return;
     }
     if !visible {
         ui.state.set_editor_tool(EditorTool::Play);
         if gtk::prelude::GtkWindowExt::focus(&window)
-            .is_some_and(|focused| focused.is_ancestor(&window.editor_toolbar()))
+            .is_some_and(|focused| focused.is_ancestor(&window.widgets().editor_toolbar))
         {
-            window.editor_toggle().grab_focus();
+            window.widgets().editor_toggle.grab_focus();
         }
     }
     revealer.set_reveal_child(visible);
@@ -1088,7 +1070,7 @@ fn sync_live_toggle(ui: &Ui) {
     let Some(window) = ui.window() else {
         return;
     };
-    let button = window.live_toggle();
+    let button = &window.widgets().live_toggle;
     let available = win_simple(ui, "toggle-analysis").is_some_and(|a| a.is_enabled());
     let active = button.is_active();
     button.set_icon_name(if active {
@@ -1897,13 +1879,21 @@ impl Drop for ClearInFlight<'_> {
 }
 
 fn offer_restore(ui: &Ui, autosave: PathBuf) {
-    let builder = gtk::Builder::from_string(include_str!(concat!(
-        env!("OUT_DIR"),
-        "/ui/restore_dialog.ui"
-    )));
-    let dialog: adw::AlertDialog = builder
-        .object("dialog")
-        .expect("restore_dialog.blp defines dialog");
+    // Translators: mirai is the application name; do not translate it.
+    let body = gettext(
+        "mirai did not shut down cleanly. An autosaved copy of the game record you were looking at is available.",
+    );
+    let dialog = adw::AlertDialog::builder()
+        .heading(gettext("Restore the Last Game?"))
+        .body(body)
+        .default_response("restore")
+        .close_response("discard")
+        .build();
+    dialog.add_responses(&[
+        ("discard", &gettext("Discard")),
+        ("restore", &gettext("Restore")),
+    ]);
+    dialog.set_response_appearance("restore", adw::ResponseAppearance::Suggested);
     let weak = ui.weak_window();
     dialog.connect_response(None, move |_, response| {
         if response == "restore" {
@@ -2189,14 +2179,16 @@ fn set_candidate_sidebar_width(split: &adw::OverlaySplitView, detailed: bool) {
 /// wrapped toolbar would make the docked board shorter than the folded one: narrowing would
 /// fold at one width and widening dock at another, resizing the board both times.
 fn docked_width(window: &MiraiWindow, fit: i32) -> f64 {
-    let split = window.split();
+    let split = &window.widgets().split;
     let sidebar = adw::LengthUnit::Sp.to_px(split.max_sidebar_width(), Some(&window.settings()));
     let minimum = window
-        .board_view()
+        .widgets()
+        .board_view
         .measure(gtk::Orientation::Horizontal, -1)
         .0;
     let tools = window
-        .editor_toolbar()
+        .widgets()
+        .editor_toolbar
         .measure(gtk::Orientation::Horizontal, -1)
         .1;
     f64::from(fit.max(minimum).max(tools)) + sidebar
@@ -2219,7 +2211,7 @@ fn docked_width(window: &MiraiWindow, fit: i32) -> f64 {
 /// The board reports its fit from `size_allocate`, too late for this layout pass to see a
 /// changed condition, so the update waits for an idle and lands on the next frame.
 fn install_sidebar_breakpoint(window: &MiraiWindow, board: &BoardView) {
-    let split = window.split();
+    let split = &window.widgets().split;
     let condition = |window: &MiraiWindow, fit: i32| {
         // `max-width` applies at or below its value; the sidebar folds below the threshold.
         let threshold = docked_width(window, fit).ceil() - 1.0;
@@ -2320,12 +2312,14 @@ fn fit_default_size(window: &MiraiWindow, graph: &WinrateGraph) {
     };
     let height = (monitor_height * 17 / 20).min(DEFAULT_HEIGHT_CAP);
 
-    let board_view = window.board_view();
+    let board_view = &window.widgets().board_view;
     let board = window
-        .content_paned()
+        .widgets()
+        .content
         .start_child()
         .expect("present() packs the board first");
-    let chrome = natural(window.header_bar().upcast_ref()) + natural(board_view.upcast_ref())
+    let chrome = natural(window.widgets().header_bar.upcast_ref())
+        + natural(board_view.upcast_ref())
         - natural(&board);
 
     // A graph remembered from a taller screen may not fit this one: it gets at most a third
@@ -2373,7 +2367,7 @@ fn sync_play_layout(ui: &Ui) {
     let Some(window) = ui.window() else {
         return;
     };
-    let split = window.split();
+    let split = &window.widgets().split;
     // `play_layout` is what `sync_graph` and the sidebar guard read, so it changes first.
     let overlay_open = if playing {
         ui.play_layout
@@ -2383,7 +2377,7 @@ fn sync_play_layout(ui: &Ui) {
         ui.play_layout.take().unwrap_or(false)
     };
     sync_graph(ui, &window);
-    window.nav().set_visible(!playing);
+    window.widgets().nav.set_visible(!playing);
     // The sidebar is forced shut for the whole game (see `install_actions`), and the graph
     // hidden, so their toggles would be dead controls. Disabling the actions also disables
     // the header button that names one of them.
@@ -2414,7 +2408,7 @@ fn sync_graph(ui: &Ui, window: &MiraiWindow) {
         // The divider position was the board's height when the graph went away, and the
         // window may have been resized since; hand the graph its remembered height instead.
         ui.winrate.pin();
-        window.content_paned().set_property("position-set", false);
+        window.widgets().content.set_property("position-set", false);
     }
     ui.winrate.set_visible(visible);
 }
@@ -2510,7 +2504,7 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
         numbers.set_state(&state.show_move_numbers().to_variant());
     });
 
-    let split = window.split();
+    let split = &window.widgets().split;
     let sidebar = toggle(
         "toggle-sidebar",
         split.shows_sidebar(),
@@ -2521,7 +2515,7 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
             let Some(window) = ui.window() else {
                 return;
             };
-            let split = window.split();
+            let split = &window.widgets().split;
             split.set_show_sidebar(!split.shows_sidebar());
         }),
     );
@@ -2560,7 +2554,7 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
         }),
     );
 
-    let editor = window.editor_revealer();
+    let editor = &window.widgets().editor_revealer;
     let editor_action = toggle(
         "toggle-editor",
         editor.reveals_child(),
@@ -2568,7 +2562,7 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
             if !ui.play.is_active()
                 && let Some(window) = ui.window()
             {
-                set_editor_visible(ui, !window.editor_revealer().reveals_child());
+                set_editor_visible(ui, !window.widgets().editor_revealer.reveals_child());
             }
         }),
     );
@@ -2593,7 +2587,7 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
         with_window_ui(&weak_details, |ui| {
             ui.analysis.set_detailed_columns(detailed);
             if let Some(window) = ui.window() {
-                set_candidate_sidebar_width(&window.split(), detailed);
+                set_candidate_sidebar_width(&window.widgets().split, detailed);
             }
             action.set_state(value);
         });

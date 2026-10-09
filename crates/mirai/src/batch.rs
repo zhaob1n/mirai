@@ -90,11 +90,10 @@ pub struct BatchAnalysis {
 
 impl BatchAnalysis {
     pub fn new(state: &AppState, window: &MiraiWindow) -> BatchAnalysis {
-        let banner = window.batch_banner();
         let this = BatchAnalysis {
             state: state.clone(),
             window: window.downgrade(),
-            banner,
+            banner: window.widgets().batch_banner.clone(),
             running: Cell::new(false),
             task: RefCell::new(None),
             epoch: Cell::new(state.tree_epoch()),

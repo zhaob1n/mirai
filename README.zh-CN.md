@@ -39,15 +39,15 @@ mirai 把 KataGo 的计算结果放到一块原生 Linux 棋盘上。每个候�
 ### 从源码构建
 
 - 当前稳定版 Rust（2024 edition），由 `rust-toolchain.toml` 选定，不支持更旧的编译器。
-- GTK 4.22+、libadwaita 1.9+、libsoup 3 和 Blueprint Compiler 0.22+，以及它们的开发包。
+- GTK 4.22+、libadwaita 1.9+、libsoup 3，以及它们的开发包。
 - GNU gettext，用于编译翻译。
 - [`just`](https://github.com/casey/just)，用于安装。
 
 |发行版|软件包|
 |---|---|
-|Arch|`gtk4 libadwaita libsoup3 blueprint-compiler gettext just`|
-|Debian / Ubuntu|`libgtk-4-dev libadwaita-1-dev libsoup-3.0-dev blueprint-compiler gettext just`|
-|Fedora|`gtk4-devel libadwaita-devel libsoup3-devel blueprint-compiler gettext just`|
+|Arch|`gtk4 libadwaita libsoup3 gettext just`|
+|Debian / Ubuntu|`libgtk-4-dev libadwaita-1-dev libsoup-3.0-dev gettext just`|
+|Fedora|`gtk4-devel libadwaita-devel libsoup3-devel gettext just`|
 
 早于 GNOME 50 的发行版自带的 GTK 和 libadwaita 太旧，无法构建 mirai。
 

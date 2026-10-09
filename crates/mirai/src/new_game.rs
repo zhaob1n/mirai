@@ -7,7 +7,6 @@ use std::rc::Rc;
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use glib::clone;
-use gtk::{CompositeTemplate, glib};
 
 use mirai_core::{Color, RuleSet, Size, TimeControl, fixed_handicap};
 
@@ -29,52 +28,36 @@ const INCREMENT_SECONDS: f64 = 10.0;
 /// What Start Game hands the window: set again at each presentation.
 type StartHandler = Rc<dyn Fn(GameSetup)>;
 
+/// Harness ids are `GtkWidget:name`.
+struct Widgets {
+    cancel_button: gtk::Button,
+    start_button: gtk::Button,
+    page: adw::PreferencesPage,
+    size_row: adw::ComboRow,
+    custom_size_row: adw::SpinRow,
+    handicap_row: adw::ComboRow,
+    komi_row: adw::SpinRow,
+    rules_row: adw::ComboRow,
+    players_group: adw::PreferencesGroup,
+    colour_row: adw::ComboRow,
+    time_row: adw::ComboRow,
+    main_time_row: adw::SpinRow,
+    periods_row: adw::SpinRow,
+    period_seconds_row: adw::SpinRow,
+    increment_row: adw::SpinRow,
+    strength_group: adw::PreferencesGroup,
+    strength_row: adw::ComboRow,
+    visits_row: adw::SpinRow,
+    seconds_row: adw::SpinRow,
+    profile_row: adw::EntryRow,
+}
+
 mod imp {
     use super::*;
 
-    #[derive(Default, CompositeTemplate)]
-    #[template(file = "src/new_game.blp")]
     pub struct NewGameDialog {
-        #[template_child]
-        pub cancel_button: TemplateChild<gtk::Button>,
-        #[template_child]
-        pub start_button: TemplateChild<gtk::Button>,
-        #[template_child]
-        pub page: TemplateChild<adw::PreferencesPage>,
-        #[template_child]
-        pub size_row: TemplateChild<adw::ComboRow>,
-        #[template_child]
-        pub custom_size_row: TemplateChild<adw::SpinRow>,
-        #[template_child]
-        pub handicap_row: TemplateChild<adw::ComboRow>,
-        #[template_child]
-        pub komi_row: TemplateChild<adw::SpinRow>,
-        #[template_child]
-        pub rules_row: TemplateChild<adw::ComboRow>,
-        #[template_child]
-        pub players_group: TemplateChild<adw::PreferencesGroup>,
-        #[template_child]
-        pub colour_row: TemplateChild<adw::ComboRow>,
-        #[template_child]
-        pub time_row: TemplateChild<adw::ComboRow>,
-        #[template_child]
-        pub main_time_row: TemplateChild<adw::SpinRow>,
-        #[template_child]
-        pub periods_row: TemplateChild<adw::SpinRow>,
-        #[template_child]
-        pub period_seconds_row: TemplateChild<adw::SpinRow>,
-        #[template_child]
-        pub increment_row: TemplateChild<adw::SpinRow>,
-        #[template_child]
-        pub strength_group: TemplateChild<adw::PreferencesGroup>,
-        #[template_child]
-        pub strength_row: TemplateChild<adw::ComboRow>,
-        #[template_child]
-        pub visits_row: TemplateChild<adw::SpinRow>,
-        #[template_child]
-        pub seconds_row: TemplateChild<adw::SpinRow>,
-        #[template_child]
-        pub profile_row: TemplateChild<adw::EntryRow>,
+        toolbar: adw::ToolbarView,
+        pub(super) widgets: super::Widgets,
         pub syncing: Cell<bool>,
         pub coerced_strength: Cell<bool>,
         /// Whether the strength row was built for an engine with a human-like model.
@@ -92,16 +75,32 @@ mod imp {
         type Type = super::NewGameDialog;
         type ParentType = adw::Dialog;
 
-        fn class_init(klass: &mut Self::Class) {
-            klass.bind_template();
-        }
-
-        fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
-            obj.init_template();
+        fn new() -> Self {
+            let (toolbar, widgets) = super::Widgets::build();
+            Self {
+                toolbar,
+                widgets,
+                syncing: Cell::new(false),
+                coerced_strength: Cell::new(false),
+                human_model: Cell::new(false),
+                shown: Cell::new(false),
+                state: glib::WeakRef::default(),
+                on_start: RefCell::new(None),
+            }
         }
     }
 
     impl ObjectImpl for NewGameDialog {
+        fn constructed(&self) {
+            self.parent_constructed();
+            let dialog = self.obj();
+            dialog.set_title(&i18n::gettext("New Game"));
+            dialog.set_content_width(460);
+            dialog.set_content_height(620);
+            dialog.set_child(Some(&self.toolbar));
+            dialog.set_default_widget(Some(&self.widgets.start_button));
+        }
+
         fn dispose(&self) {
             self.on_start.take();
         }
@@ -120,78 +119,13 @@ glib::wrapper! {
 impl NewGameDialog {
     fn new(has_human_model: bool) -> Self {
         let dialog: Self = glib::Object::new();
-        dialog.build(has_human_model);
-        dialog.connect_dynamic_rows();
-        dialog.connect_buttons();
+        let imp = dialog.imp();
+        imp.human_model.set(has_human_model);
+        imp.widgets.offer_human(has_human_model);
+        imp.widgets.connect(&dialog);
+        dialog.connect_closed(|dialog| dialog.imp().shown.set(false));
         crate::widgets::sheet_texture::install(&dialog);
         dialog
-    }
-
-    /// What a reopen keeps: the choices each row offers, the spin ranges and steps, and
-    /// whether Human-like is on offer.
-    fn build(&self, has_human_model: bool) {
-        let imp = self.imp();
-        imp.human_model.set(has_human_model);
-
-        let custom = i18n::pgettext("size", "Custom");
-        set_items(
-            &imp.size_row,
-            &["9 × 9", "13 × 13", "19 × 19", custom.as_str()],
-        );
-        configure_spin(&imp.custom_size_row, 2.0, 19.0, 1.0, 0, 19.0);
-
-        let handicap = handicap_labels();
-        set_owned(&imp.handicap_row, &handicap);
-
-        configure_spin(&imp.komi_row, -150.0, 150.0, 0.5, 1, 0.0);
-        // KataGo accepts only an integer or half-integer komi. Snap arrow clicks
-        // and focus-out to that grid; `setup` still rounds a value that has not
-        // been committed yet.
-        imp.komi_row.set_numeric(true);
-        imp.komi_row.set_snap_to_ticks(true);
-
-        let labels: Vec<String> = RuleSet::ALL
-            .iter()
-            .copied()
-            .map(i18n::rules_label)
-            .collect();
-        set_owned(&imp.rules_row, &labels);
-
-        let colours = colour_labels();
-        set_owned(&imp.colour_row, &colours);
-        let times = time_labels();
-        set_owned(&imp.time_row, &times);
-        configure_spin(&imp.main_time_row, 0.0, 600.0, 1.0, 0, MAIN_MINUTES);
-        configure_spin(&imp.periods_row, 1.0, 25.0, 1.0, 0, PERIODS);
-        configure_spin(&imp.period_seconds_row, 1.0, 600.0, 5.0, 0, PERIOD_SECONDS);
-        configure_spin(&imp.increment_row, 0.0, 600.0, 1.0, 0, INCREMENT_SECONDS);
-
-        let strength_description = if has_human_model {
-            i18n::gettext("The human-like model imitates a rank instead of searching")
-        } else {
-            i18n::gettext("This engine has no human-like model loaded")
-        };
-        imp.strength_group
-            .set_description(Some(&strength_description));
-        let strengths = strength_labels();
-        set_owned(&imp.strength_row, &strengths);
-        grey_out_human(&imp.strength_row, has_human_model);
-        configure_spin(
-            &imp.visits_row,
-            1.0,
-            MAX_VISITS_PER_MOVE,
-            100.0,
-            0,
-            f64::from(DEFAULT_VISITS_PER_MOVE),
-        );
-        configure_spin(
-            &imp.seconds_row,
-            MIN_SECONDS_PER_MOVE,
-            MAX_SECONDS_PER_MOVE,
-            0.5,
-            1,
-            DEFAULT_SECONDS_PER_MOVE,
-        );
     }
 
     /// Puts every row where a new game starts: board, handicap, colour and clock at their
@@ -199,11 +133,367 @@ impl NewGameDialog {
     /// setting a spin row's value again formats its text and relays it out.
     fn reset(&self, play: &PlaySettings) {
         let imp = self.imp();
-        let has_human_model = imp.human_model.get();
-        imp.size_row.set_selected(2);
-        set_spin(&imp.custom_size_row, 19.0);
-        imp.handicap_row.set_selected(0);
-        imp.rules_row.set_selected(
+        // Strength handlers clear the flag; set it after they have run.
+        imp.coerced_strength
+            .set(imp.widgets.reset(play, imp.human_model.get()));
+    }
+
+    fn sync_komi(&self) {
+        let imp = self.imp();
+        if imp.syncing.replace(true) {
+            return;
+        }
+        imp.widgets.apply_komi();
+        imp.syncing.set(false);
+    }
+
+    fn start(&self) {
+        let imp = self.imp();
+        let Some(state) = imp.state.upgrade() else {
+            return;
+        };
+        let setup = imp.widgets.setup();
+        {
+            let mut config = state.config_mut();
+            config.play.rules = setup.rules;
+            config.play.strength = strength_to_save(
+                &config.play.strength,
+                &setup.strength,
+                imp.coerced_strength.get(),
+            );
+        }
+        state.save_config();
+        self.close();
+        let on_start = imp.on_start.borrow().clone();
+        if let Some(on_start) = on_start {
+            on_start(setup);
+        }
+    }
+}
+
+impl Widgets {
+    /// Choices and ranges a reopen keeps. Human-like is applied in `offer_human`, once the
+    /// engine for this presentation is known.
+    fn build() -> (adw::ToolbarView, Self) {
+        let cancel_button = gtk::Button::builder()
+            .name("cancel_button")
+            .label(i18n::gettext("Cancel"))
+            .build();
+        let start_button = gtk::Button::builder()
+            .name("start_button")
+            .label(i18n::gettext("Start Game"))
+            .build();
+        start_button.add_css_class("suggested-action");
+
+        let header = adw::HeaderBar::builder()
+            .show_start_title_buttons(false)
+            .show_end_title_buttons(false)
+            .build();
+        header.pack_start(&cancel_button);
+        header.pack_end(&start_button);
+
+        let custom = i18n::pgettext("size", "Custom");
+        let size_row = adw::ComboRow::builder()
+            .name("size_row")
+            .title(i18n::gettext("Size"))
+            .model(&gtk::StringList::new(&[
+                "9 × 9",
+                "13 × 13",
+                "19 × 19",
+                custom.as_str(),
+            ]))
+            .build();
+        let custom_size_row = adw::SpinRow::builder()
+            .name("custom_size_row")
+            .title(i18n::gettext("Custom Size"))
+            .visible(false)
+            .adjustment(&adjustment(19.0, 2.0, 19.0, 1.0))
+            .digits(0)
+            .climb_rate(0.0)
+            .build();
+        let handicap = handicap_labels();
+        let handicap_row = adw::ComboRow::builder()
+            .name("handicap_row")
+            .title(i18n::gettext("Handicap"))
+            .model(&string_list(&handicap))
+            .build();
+        let komi_row = adw::SpinRow::builder()
+            .name("komi_row")
+            .title(
+                // Translators: compensation points given to White.
+                i18n::gettext("Komi"),
+            )
+            .adjustment(&adjustment(0.0, -150.0, 150.0, 0.5))
+            .digits(1)
+            .climb_rate(0.0)
+            // KataGo accepts only an integer or half-integer komi. Snap arrow clicks
+            // and focus-out to that grid; `setup` still rounds a value that has not
+            // been committed yet.
+            .numeric(true)
+            .snap_to_ticks(true)
+            .build();
+        let rules = RuleSet::ALL
+            .iter()
+            .copied()
+            .map(i18n::rules_label)
+            .collect::<Vec<_>>();
+        let rules_row = adw::ComboRow::builder()
+            .name("rules_row")
+            .title(i18n::gettext("Rules"))
+            .model(&string_list(&rules))
+            .build();
+        let board = group(
+            adw::PreferencesGroup::builder()
+                .title(i18n::gettext("Board"))
+                .build(),
+            &[
+                size_row.upcast_ref(),
+                custom_size_row.upcast_ref(),
+                handicap_row.upcast_ref(),
+                komi_row.upcast_ref(),
+                rules_row.upcast_ref(),
+            ],
+        );
+
+        let colours = colour_labels();
+        let colour_row = adw::ComboRow::builder()
+            .name("colour_row")
+            .title(
+                // Translators: which colour the human plays.
+                i18n::gettext("You Play"),
+            )
+            .model(&string_list(&colours))
+            .build();
+        let players_group = group(
+            adw::PreferencesGroup::builder()
+                .name("players_group")
+                .title(i18n::gettext("Players"))
+                .description(i18n::gettext("The engine takes the other colour"))
+                .build(),
+            &[colour_row.upcast_ref()],
+        );
+
+        let times = time_labels();
+        let time_row = adw::ComboRow::builder()
+            .name("time_row")
+            .title(i18n::pgettext("time-control", "Type"))
+            .model(&string_list(&times))
+            .build();
+        let main_time_row = adw::SpinRow::builder()
+            .name("main_time_row")
+            .title(i18n::gettext("Main Time (Minutes)"))
+            .adjustment(&adjustment(MAIN_MINUTES, 0.0, 600.0, 1.0))
+            .digits(0)
+            .climb_rate(0.0)
+            .build();
+        let periods_row = adw::SpinRow::builder()
+            .name("periods_row")
+            .title(
+                // Translators: Japanese overtime, a fixed number of periods.
+                i18n::gettext("Byo-yomi Periods"),
+            )
+            .adjustment(&adjustment(PERIODS, 1.0, 25.0, 1.0))
+            .digits(0)
+            .climb_rate(0.0)
+            .build();
+        let period_seconds_row = adw::SpinRow::builder()
+            .name("period_seconds_row")
+            .title(i18n::gettext("Seconds per Period"))
+            .adjustment(&adjustment(PERIOD_SECONDS, 1.0, 600.0, 5.0))
+            .digits(0)
+            .climb_rate(0.0)
+            .build();
+        let increment_row = adw::SpinRow::builder()
+            .name("increment_row")
+            .title(i18n::gettext("Increment (Seconds)"))
+            .adjustment(&adjustment(INCREMENT_SECONDS, 0.0, 600.0, 1.0))
+            .digits(0)
+            .climb_rate(0.0)
+            .build();
+        let time = group(
+            adw::PreferencesGroup::builder()
+                .title(i18n::gettext("Time Control"))
+                .build(),
+            &[
+                time_row.upcast_ref(),
+                main_time_row.upcast_ref(),
+                periods_row.upcast_ref(),
+                period_seconds_row.upcast_ref(),
+                increment_row.upcast_ref(),
+            ],
+        );
+
+        let strengths = strength_labels();
+        let strength_row = adw::ComboRow::builder()
+            .name("strength_row")
+            .title(i18n::pgettext("strength", "Mode"))
+            .model(&string_list(&strengths))
+            .build();
+        let visits_row = adw::SpinRow::builder()
+            .name("visits_row")
+            .title(i18n::gettext("Visits per Move"))
+            .adjustment(&adjustment(
+                f64::from(DEFAULT_VISITS_PER_MOVE),
+                1.0,
+                MAX_VISITS_PER_MOVE,
+                100.0,
+            ))
+            .digits(0)
+            .climb_rate(0.0)
+            .build();
+        let seconds_row = adw::SpinRow::builder()
+            .name("seconds_row")
+            .title(i18n::gettext("Seconds per Move"))
+            .adjustment(&adjustment(
+                DEFAULT_SECONDS_PER_MOVE,
+                MIN_SECONDS_PER_MOVE,
+                MAX_SECONDS_PER_MOVE,
+                0.5,
+            ))
+            .digits(1)
+            .climb_rate(0.0)
+            .build();
+        let profile_row = adw::EntryRow::builder()
+            .name("profile_row")
+            .title(
+                // Translators: a KataGo human-SL profile name, such as rank_5k.
+                i18n::gettext("Human Model Profile"),
+            )
+            .build();
+        let strength_group = group(
+            adw::PreferencesGroup::builder()
+                .name("strength_group")
+                .title(i18n::gettext("Engine Strength"))
+                .build(),
+            &[
+                strength_row.upcast_ref(),
+                visits_row.upcast_ref(),
+                seconds_row.upcast_ref(),
+                profile_row.upcast_ref(),
+            ],
+        );
+
+        let page = adw::PreferencesPage::builder()
+            .title(i18n::gettext("New Game"))
+            .build();
+        page.set_widget_name("page");
+        for group in [&board, &players_group, &time, &strength_group] {
+            page.add(group);
+        }
+        let toolbar = adw::ToolbarView::builder().content(&page).build();
+        toolbar.add_top_bar(&header);
+
+        (
+            toolbar,
+            Self {
+                cancel_button,
+                start_button,
+                page,
+                size_row,
+                custom_size_row,
+                handicap_row,
+                komi_row,
+                rules_row,
+                players_group,
+                colour_row,
+                time_row,
+                main_time_row,
+                periods_row,
+                period_seconds_row,
+                increment_row,
+                strength_group,
+                strength_row,
+                visits_row,
+                seconds_row,
+                profile_row,
+            },
+        )
+    }
+
+    fn offer_human(&self, enabled: bool) {
+        let description = if enabled {
+            i18n::gettext("The human-like model imitates a rank instead of searching")
+        } else {
+            i18n::gettext("This engine has no human-like model loaded")
+        };
+        self.strength_group.set_description(Some(&description));
+        grey_out_human(&self.strength_row, enabled);
+    }
+
+    fn connect(&self, dialog: &NewGameDialog) {
+        self.cancel_button.connect_clicked(clone!(
+            #[weak(rename_to = dialog)]
+            dialog,
+            move |_| {
+                dialog.close();
+            }
+        ));
+        self.start_button.connect_clicked(clone!(
+            #[weak(rename_to = dialog)]
+            dialog,
+            move |_| dialog.start()
+        ));
+        self.size_row.connect_selected_notify(clone!(
+            #[weak(rename_to = dialog)]
+            dialog,
+            move |row| {
+                let widgets = &dialog.imp().widgets;
+                widgets
+                    .custom_size_row
+                    .set_visible(row.selected() == SIZE_CHOICES.len() as u32);
+                widgets.refresh_handicap();
+            }
+        ));
+        self.custom_size_row.connect_value_notify(clone!(
+            #[weak(rename_to = dialog)]
+            dialog,
+            move |_| dialog.imp().widgets.refresh_handicap()
+        ));
+        self.rules_row.connect_selected_notify(clone!(
+            #[weak(rename_to = dialog)]
+            dialog,
+            move |_| dialog.sync_komi()
+        ));
+        self.handicap_row.connect_selected_notify(clone!(
+            #[weak(rename_to = dialog)]
+            dialog,
+            move |_| dialog.sync_komi()
+        ));
+        self.refresh_time(self.time_row.selected());
+        self.time_row.connect_selected_notify(clone!(
+            #[weak(rename_to = dialog)]
+            dialog,
+            move |row| dialog.imp().widgets.refresh_time(row.selected())
+        ));
+        self.refresh_strength(self.strength_row.selected());
+        self.strength_row.connect_selected_notify(clone!(
+            #[weak(rename_to = dialog)]
+            dialog,
+            move |row| {
+                dialog.imp().coerced_strength.set(false);
+                dialog.imp().widgets.refresh_strength(row.selected());
+            }
+        ));
+        self.visits_row.connect_value_notify(clone!(
+            #[weak(rename_to = dialog)]
+            dialog,
+            move |_| dialog.imp().coerced_strength.set(false)
+        ));
+        self.refresh_players();
+        self.colour_row.connect_selected_notify(clone!(
+            #[weak(rename_to = dialog)]
+            dialog,
+            move |_| dialog.imp().widgets.refresh_players()
+        ));
+    }
+
+    /// The bool is the coerced-strength flag, set by the caller after this returns so the
+    /// strength handler above does not clear a value this call just stored.
+    fn reset(&self, play: &PlaySettings, has_human_model: bool) -> bool {
+        self.size_row.set_selected(2);
+        set_spin(&self.custom_size_row, 19.0);
+        self.handicap_row.set_selected(0);
+        self.rules_row.set_selected(
             RuleSet::ALL
                 .iter()
                 .position(|rules| *rules == play.rules)
@@ -211,13 +501,13 @@ impl NewGameDialog {
         );
         // Changed rules re-derive the komi through `sync_komi`; unchanged ones would leave
         // a komi edited last time.
-        set_spin(&imp.komi_row, play.rules.default_komi() as f64);
-        imp.colour_row.set_selected(0);
-        imp.time_row.set_selected(0);
-        set_spin(&imp.main_time_row, MAIN_MINUTES);
-        set_spin(&imp.periods_row, PERIODS);
-        set_spin(&imp.period_seconds_row, PERIOD_SECONDS);
-        set_spin(&imp.increment_row, INCREMENT_SECONDS);
+        set_spin(&self.komi_row, play.rules.default_komi() as f64);
+        self.colour_row.set_selected(0);
+        self.time_row.set_selected(0);
+        set_spin(&self.main_time_row, MAIN_MINUTES);
+        set_spin(&self.periods_row, PERIODS);
+        set_spin(&self.period_seconds_row, PERIOD_SECONDS);
+        set_spin(&self.increment_row, INCREMENT_SECONDS);
 
         let (visits, seconds, profile, saved_mode) = match &play.strength {
             StrengthSetting::Visits { visits } => (
@@ -239,235 +529,126 @@ impl NewGameDialog {
                 u32::from(has_human_model) * 2,
             ),
         };
-        set_spin(&imp.visits_row, visits);
-        set_spin(&imp.seconds_row, seconds);
-        if imp.profile_row.text() != profile {
-            imp.profile_row.set_text(profile);
+        set_spin(&self.visits_row, visits);
+        set_spin(&self.seconds_row, seconds);
+        if self.profile_row.text() != profile {
+            self.profile_row.set_text(profile);
         }
-        imp.strength_row.set_selected(saved_mode);
-        // Last: the strength handlers above clear it.
-        imp.coerced_strength
-            .set(matches!(play.strength, StrengthSetting::Human { .. }) && !has_human_model);
-
+        self.strength_row.set_selected(saved_mode);
         self.refresh_handicap();
-        self.refresh_time(imp.time_row.selected());
-        self.refresh_strength(imp.strength_row.selected());
+        self.refresh_time(self.time_row.selected());
+        self.refresh_strength(self.strength_row.selected());
         self.refresh_players();
-        imp.page.scroll_to_top();
-    }
-
-    fn connect_buttons(&self) {
-        let imp = self.imp();
-        imp.cancel_button.connect_clicked(clone!(
-            #[weak(rename_to = dialog)]
-            self,
-            move |_| {
-                dialog.close();
-            }
-        ));
-        imp.start_button.connect_clicked(clone!(
-            #[weak(rename_to = dialog)]
-            self,
-            move |_| {
-                let imp = dialog.imp();
-                let Some(state) = imp.state.upgrade() else {
-                    return;
-                };
-                let setup = dialog.setup();
-                {
-                    let mut config = state.config_mut();
-                    config.play.rules = setup.rules;
-                    config.play.strength = strength_to_save(
-                        &config.play.strength,
-                        &setup.strength,
-                        imp.coerced_strength.get(),
-                    );
-                }
-                state.save_config();
-                dialog.close();
-                let on_start = imp.on_start.borrow().clone();
-                if let Some(on_start) = on_start {
-                    on_start(setup);
-                }
-            }
-        ));
-        self.connect_closed(|dialog| dialog.imp().shown.set(false));
-    }
-
-    fn connect_dynamic_rows(&self) {
-        let imp = self.imp();
-        imp.size_row.connect_selected_notify(clone!(
-            #[weak(rename_to = dialog)]
-            self,
-            move |row| {
-                dialog
-                    .imp()
-                    .custom_size_row
-                    .set_visible(row.selected() == SIZE_CHOICES.len() as u32);
-                dialog.refresh_handicap();
-            }
-        ));
-        imp.custom_size_row.connect_value_notify(clone!(
-            #[weak(rename_to = dialog)]
-            self,
-            move |_| dialog.refresh_handicap()
-        ));
-        imp.rules_row.connect_selected_notify(clone!(
-            #[weak(rename_to = dialog)]
-            self,
-            move |_| dialog.sync_komi()
-        ));
-        imp.handicap_row.connect_selected_notify(clone!(
-            #[weak(rename_to = dialog)]
-            self,
-            move |_| dialog.sync_komi()
-        ));
-        self.refresh_time(imp.time_row.selected());
-        imp.time_row.connect_selected_notify(clone!(
-            #[weak(rename_to = dialog)]
-            self,
-            move |row| dialog.refresh_time(row.selected())
-        ));
-        self.refresh_strength(imp.strength_row.selected());
-        imp.strength_row.connect_selected_notify(clone!(
-            #[weak(rename_to = dialog)]
-            self,
-            move |row| {
-                dialog.imp().coerced_strength.set(false);
-                dialog.refresh_strength(row.selected());
-            }
-        ));
-        imp.visits_row.connect_value_notify(clone!(
-            #[weak(rename_to = dialog)]
-            self,
-            move |_| dialog.imp().coerced_strength.set(false)
-        ));
-        self.refresh_players();
-        imp.colour_row.connect_selected_notify(clone!(
-            #[weak(rename_to = dialog)]
-            self,
-            move |_| dialog.refresh_players()
-        ));
+        self.page.scroll_to_top();
+        matches!(play.strength, StrengthSetting::Human { .. }) && !has_human_model
     }
 
     fn selected_size(&self) -> Size {
-        let imp = self.imp();
-        match imp.size_row.selected() {
+        match self.size_row.selected() {
             index if (index as usize) < SIZE_CHOICES.len() => {
                 Size::square(SIZE_CHOICES[index as usize])
             }
-            _ => Size::square(imp.custom_size_row.value() as u8),
+            _ => Size::square(self.custom_size_row.value() as u8),
         }
     }
 
     /// Handicap stones exist only on odd square boards of 7 and up. Anywhere else the
     /// row is insensitive at None rather than accepting a count that places nothing.
     fn refresh_handicap(&self) {
-        let imp = self.imp();
-        let takes_handicap = takes_handicap(self.selected_size());
-        imp.handicap_row.set_sensitive(takes_handicap);
+        let takes = takes_handicap(self.selected_size());
+        self.handicap_row.set_sensitive(takes);
         // Unselecting notifies the handicap row, which re-derives komi. A size change
         // that keeps the handicap leaves a komi override alone.
-        if !takes_handicap {
-            imp.handicap_row.set_selected(0);
+        if !takes {
+            self.handicap_row.set_selected(0);
         }
     }
 
-    fn sync_komi(&self) {
-        let imp = self.imp();
-        if imp.syncing.replace(true) {
-            return;
-        }
-        let value = if selected_handicap(self.selected_size(), imp.handicap_row.selected()) > 0 {
+    fn apply_komi(&self) {
+        let value = if selected_handicap(self.selected_size(), self.handicap_row.selected()) > 0 {
             0.5
         } else {
-            rules_at(imp.rules_row.selected()).default_komi() as f64
+            rules_at(self.rules_row.selected()).default_komi() as f64
         };
-        imp.komi_row.set_value(value);
-        imp.syncing.set(false);
+        self.komi_row.set_value(value);
     }
 
     fn refresh_time(&self, kind: u32) {
-        let imp = self.imp();
-        imp.main_time_row.set_visible(kind != 0);
-        imp.periods_row.set_visible(kind == 2);
-        imp.period_seconds_row.set_visible(kind == 2);
-        imp.increment_row.set_visible(kind == 3);
+        self.main_time_row.set_visible(kind != 0);
+        self.periods_row.set_visible(kind == 2);
+        self.period_seconds_row.set_visible(kind == 2);
+        self.increment_row.set_visible(kind == 3);
     }
 
     fn refresh_strength(&self, kind: u32) {
-        let imp = self.imp();
-        imp.visits_row.set_visible(kind == 0);
-        imp.seconds_row.set_visible(kind == 1);
-        imp.profile_row.set_visible(kind == 2);
+        self.visits_row.set_visible(kind == 0);
+        self.seconds_row.set_visible(kind == 1);
+        self.profile_row.set_visible(kind == 2);
     }
 
     fn refresh_players(&self) {
-        let imp = self.imp();
-        let both = imp.colour_row.selected() == 2;
-        imp.strength_group.set_visible(!both);
+        let both = self.colour_row.selected() == 2;
+        self.strength_group.set_visible(!both);
         let description = if both {
             i18n::gettext("Play both sides on this device")
         } else {
             i18n::gettext("The engine takes the other colour")
         };
-        imp.players_group.set_description(Some(&description));
+        self.players_group.set_description(Some(&description));
     }
 
     fn setup(&self) -> GameSetup {
-        let imp = self.imp();
         // Commit typed text. Enter on Start does not always focus-out the row first,
         // and an uncommitted SpinRow still reports its previous value.
         for row in [
-            &imp.komi_row,
-            &imp.custom_size_row,
-            &imp.main_time_row,
-            &imp.periods_row,
-            &imp.period_seconds_row,
-            &imp.increment_row,
-            &imp.visits_row,
-            &imp.seconds_row,
+            &self.komi_row,
+            &self.custom_size_row,
+            &self.main_time_row,
+            &self.periods_row,
+            &self.period_seconds_row,
+            &self.increment_row,
+            &self.visits_row,
+            &self.seconds_row,
         ] {
             row.update();
         }
         let size = self.selected_size();
-        let handicap = selected_handicap(size, imp.handicap_row.selected());
-        let human = match imp.colour_row.selected() {
+        let handicap = selected_handicap(size, self.handicap_row.selected());
+        let human = match self.colour_row.selected() {
             0 => Some(Color::Black),
             1 => Some(Color::White),
             _ => None,
         };
-        let tc = match imp.time_row.selected() {
+        let tc = match self.time_row.selected() {
             1 => TimeControl {
-                main_s: (imp.main_time_row.value() * 60.0) as u32,
+                main_s: (self.main_time_row.value() * 60.0) as u32,
                 ..TimeControl::UNLIMITED
             },
             2 => TimeControl {
-                main_s: (imp.main_time_row.value() * 60.0) as u32,
-                byo_periods: imp.periods_row.value() as u8,
-                byo_period_s: imp.period_seconds_row.value() as u32,
+                main_s: (self.main_time_row.value() * 60.0) as u32,
+                byo_periods: self.periods_row.value() as u8,
+                byo_period_s: self.period_seconds_row.value() as u32,
                 increment_s: 0,
             },
             3 => TimeControl {
-                main_s: (imp.main_time_row.value() * 60.0) as u32,
+                main_s: (self.main_time_row.value() * 60.0) as u32,
                 byo_periods: 0,
                 byo_period_s: 0,
-                increment_s: imp.increment_row.value() as u32,
+                increment_s: self.increment_row.value() as u32,
             },
             _ => TimeControl::UNLIMITED,
         };
-        let strength = match imp.strength_row.selected() {
-            1 => Strength::TimeMs((imp.seconds_row.value() * 1000.0) as u32),
+        let strength = match self.strength_row.selected() {
+            1 => Strength::TimeMs((self.seconds_row.value() * 1000.0) as u32),
             2 => Strength::Human {
-                profile: imp.profile_row.text().to_string(),
+                profile: self.profile_row.text().to_string(),
             },
-            _ => Strength::Visits(imp.visits_row.value() as u32),
+            _ => Strength::Visits(self.visits_row.value() as u32),
         };
-
         GameSetup {
             size,
-            rules: rules_at(imp.rules_row.selected()),
-            komi: komi_points(imp.komi_row.value()),
+            rules: rules_at(self.rules_row.selected()),
+            komi: komi_points(self.komi_row.value()),
             handicap,
             human,
             tc,
@@ -476,11 +657,26 @@ impl NewGameDialog {
     }
 }
 
+fn group(group: adw::PreferencesGroup, rows: &[&adw::PreferencesRow]) -> adw::PreferencesGroup {
+    for row in rows {
+        group.add(*row);
+    }
+    group
+}
+
+fn string_list(items: &[String]) -> gtk::StringList {
+    gtk::StringList::new(&items.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
+fn adjustment(value: f64, min: f64, max: f64, step: f64) -> gtk::Adjustment {
+    gtk::Adjustment::new(value, min, max, step, step * 10.0, 0.0)
+}
+
 /// Presents `slot`'s New Game dialog over `parent`, building it on first use.
 ///
-/// The dialog is kept for the window's life: building its template and presenting it
-/// cost 20–55 ms of the GTK thread on every open, presenting a built one a few. Each
-/// presentation resets it to where a new game starts, as a fresh one would be.
+/// The dialog is kept for the window's life: building it and presenting it cost 20–55 ms
+/// of the GTK thread on every open, presenting a built one a few. Each presentation resets
+/// it to where a new game starts, as a fresh one would be.
 pub fn present(
     parent: &impl IsA<gtk::Widget>,
     slot: &RefCell<Option<NewGameDialog>>,
@@ -529,15 +725,6 @@ fn strength_to_save(
             profile: profile.clone(),
         },
     }
-}
-
-fn set_items(row: &adw::ComboRow, items: &[&str]) {
-    row.set_model(Some(&gtk::StringList::new(items)));
-}
-
-fn set_owned(row: &adw::ComboRow, items: &[String]) {
-    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
-    set_items(row, &refs);
 }
 
 fn handicap_labels() -> Vec<String> {
@@ -597,21 +784,6 @@ fn set_spin(row: &adw::SpinRow, value: f64) {
     if row.value() != value {
         row.set_value(value);
     }
-}
-
-fn configure_spin(row: &adw::SpinRow, min: f64, max: f64, step: f64, digits: u32, value: f64) {
-    row.configure(
-        Some(&gtk::Adjustment::new(
-            value,
-            min,
-            max,
-            step,
-            step * 10.0,
-            0.0,
-        )),
-        0.0,
-        digits,
-    );
 }
 
 fn takes_handicap(size: Size) -> bool {

@@ -24,10 +24,8 @@ use crate::config::{
     StrengthSetting, UiSettings,
 };
 use crate::i18n::{self, gettext, gettext_f, ngettext_f, pgettext};
-use crate::preferences_shell::{PreferencesDialog, PreferencesWidgets};
-use crate::profile_editor::{
-    LocalFormWidgets, LocalProfileForm, ProfileEditorPage, RemoteFormWidgets, RemoteProfileForm,
-};
+use crate::preferences_shell::PreferencesWidgets;
+use crate::profile_editor::{self, LocalFormWidgets, RemoteFormWidgets};
 use mirai_engine::{
     CalibrationConfig, CalibrationProgress, CalibrationResult, EngineTuning, TuningOverrides,
 };
@@ -79,16 +77,18 @@ impl CalibrationRun {
 /// Puts a page's settings back into its rows. Each runs before every presentation, since
 /// the config can change while the dialog is closed: the header's engine menu switches the
 /// active profile, and New Game saves the rules and strength it started with.
-type Reload = Box<dyn Fn()>;
+type Reload = Box<dyn Fn(&PreferencesWidgets)>;
 
 /// One window's preferences dialog, built the first time it is asked for and kept for the
 /// window's life.
 ///
-/// Building it is nearly all that opening it costs: the template's few hundred widgets,
+/// Building it is nearly all that opening it costs: the dialog's few hundred widgets,
 /// then the measure `adw_dialog_present` makes of all four pages, took 38–130 ms of the GTK
 /// thread on every open. Presenting the built dialog again takes 2–9 ms.
 pub struct Preferences {
-    dialog: PreferencesDialog,
+    dialog: adw::PreferencesDialog,
+    /// Signal handlers weak-capture this set rather than owning their emitter.
+    widgets: Rc<PreferencesWidgets>,
     reload: [Reload; 4],
     /// Presented and not yet closing.
     shown: Rc<Cell<bool>>,
@@ -110,15 +110,15 @@ pub fn present(
     // A profile editor left open is not where Preferences opens.
     while prefs.dialog.pop_subpage() {}
     for reload in &prefs.reload {
-        reload();
+        reload(&prefs.widgets);
     }
     prefs.shown.set(true);
     prefs.dialog.present(Some(parent));
 }
 
 fn build(state: &AppState) -> Preferences {
-    let dialog = PreferencesDialog::new();
-    let widgets = dialog.widgets();
+    let (dialog, widgets) = crate::preferences_shell::dialog();
+    let widgets = Rc::new(widgets);
     let reload = [
         connect_engines(&dialog, &widgets, state),
         connect_analysis(&dialog, &widgets, state),
@@ -132,6 +132,7 @@ fn build(state: &AppState) -> Preferences {
     });
     Preferences {
         dialog,
+        widgets,
         reload,
         shown,
     }
@@ -176,7 +177,7 @@ pub fn engine_menu_model(state: &AppState) -> gio::Menu {
 // -- Engines ----------------------------------------------------------------------------
 
 fn connect_engines(
-    dialog: &PreferencesDialog,
+    dialog: &adw::PreferencesDialog,
     widgets: &PreferencesWidgets,
     state: &AppState,
 ) -> Reload {
@@ -187,7 +188,7 @@ fn connect_engines(
         #[weak(rename_to = group)]
         widgets.profiles_group,
         move |_| {
-            open_editor(dialog.upcast_ref(), &group, &local_state, None, false);
+            open_editor(&dialog, &group, &local_state, None, false);
         }
     ));
 
@@ -198,22 +199,21 @@ fn connect_engines(
         #[weak(rename_to = group)]
         widgets.profiles_group,
         move |_| {
-            open_editor(dialog.upcast_ref(), &group, &remote_state, None, true);
+            open_editor(&dialog, &group, &remote_state, None, true);
         }
     ));
 
-    let group = widgets.profiles_group.clone();
     let dialog = dialog.clone();
     let state = state.clone();
     // What the rows were last built from: a reopen rebuilds them only if it moved.
     let shown: RefCell<Option<(Vec<EngineProfile>, Option<String>)>> = RefCell::default();
-    Box::new(move || {
+    Box::new(move |widgets| {
         let now = {
             let cfg = state.config();
             (cfg.engine_profiles.clone(), cfg.active_engine.clone())
         };
         if shown.borrow().as_ref() != Some(&now) {
-            refresh_profiles(&group, dialog.upcast_ref(), &state);
+            refresh_profiles(&widgets.profiles_group, &dialog, &state);
             *shown.borrow_mut() = Some(now);
         }
     })
@@ -401,12 +401,23 @@ struct Editor {
 }
 
 fn editor_shell(title: &str, content: &impl IsA<gtk::Widget>) -> Editor {
-    let page = ProfileEditorPage::new(title, content);
-    Editor {
-        save: page.save_button(),
-        banner: page.banner(),
-        page: page.upcast(),
-    }
+    let save = gtk::Button::builder()
+        .label(gettext("Save Profile"))
+        .css_classes(["suggested-action"])
+        .build();
+    let banner = adw::Banner::builder()
+        .title(gettext("The profile could not be saved"))
+        .build();
+    let header = adw::HeaderBar::new();
+    header.pack_end(&save);
+    let toolbar = adw::ToolbarView::builder().content(content).build();
+    toolbar.add_top_bar(&header);
+    toolbar.add_top_bar(&banner);
+    let page = adw::NavigationPage::builder()
+        .title(title)
+        .child(&toolbar)
+        .build();
+    Editor { page, save, banner }
 }
 
 fn complain(banner: &adw::Banner, message: impl AsRef<str>) {
@@ -630,8 +641,8 @@ fn candidate_labels(candidates: &[PathBuf]) -> Vec<(String, Option<String>)> {
 /// Configures a declared spin row. `0` means "use the default": mirai's own when it
 /// generates the analysis config, or whatever the file says when the user supplies one.
 ///
-/// The range stays in Rust: blueprint rejects an adjustment's step, and the maximum is an
-/// [`EngineTuning`] constant.
+/// The maximum is an [`EngineTuning`] constant and the value is the setting this
+/// row is showing, so the range is applied when the editor opens.
 fn configure_tuned(row: &adw::SpinRow, value: u32, max: f64) {
     row.configure(
         Some(&gtk::Adjustment::new(
@@ -766,21 +777,30 @@ fn measured_subtitle(result: &CalibrationResult) -> String {
     }
 }
 
-/// The modal a calibration runs behind (`tuning_dialog.blp`), with its bar and caption.
+/// The modal a calibration runs behind, with its bar and caption.
 fn tuning_progress() -> (adw::AlertDialog, gtk::ProgressBar, gtk::Label) {
-    let builder = gtk::Builder::from_string(include_str!(concat!(
-        env!("OUT_DIR"),
-        "/ui/tuning_dialog.ui"
-    )));
-    let dialog = builder
-        .object("dialog")
-        .expect("tuning_dialog.blp defines dialog");
-    let bar = builder
-        .object("bar")
-        .expect("tuning_dialog.blp defines bar");
-    let caption = builder
-        .object("caption")
-        .expect("tuning_dialog.blp defines caption");
+    let dialog = adw::AlertDialog::builder()
+        .heading(gettext("Tuning KataGo"))
+        .body(gettext("Every setting is timed in its own KataGo, so this takes a few minutes. Your engine stays stopped until the run ends."))
+        .default_response("cancel")
+        .close_response("cancel")
+        .build();
+    let bar = gtk::ProgressBar::builder()
+        .show_text(true)
+        .text(gettext("Starting…"))
+        .build();
+    let caption = gtk::Label::builder()
+        .label(gettext(
+            "Waiting for the current engine to let go of the GPU…",
+        ))
+        .wrap(true)
+        .css_classes(["dim-label"])
+        .build();
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    content.append(&bar);
+    content.append(&caption);
+    dialog.set_extra_child(Some(&content));
+    dialog.add_response("cancel", &gettext("Stop Tuning"));
     (dialog, bar, caption)
 }
 
@@ -854,7 +874,7 @@ fn local_editor(
     } else {
         gettext("Add Local Engine")
     };
-    let form = LocalProfileForm::new();
+    let (form, widgets) = profile_editor::local_form();
     let editor = editor_shell(&title, &form);
 
     let LocalFormWidgets {
@@ -876,7 +896,7 @@ fn local_editor(
         tuning_group: auto,
         tune_row,
         tune_button: tune,
-    } = form.widgets();
+    } = widgets;
     name_row.set_text(editing.as_deref().unwrap_or(""));
 
     let katago_path = wire_file_row(
@@ -1339,7 +1359,7 @@ fn remote_editor(
     } else {
         gettext("Add Remote Engine")
     };
-    let form = RemoteProfileForm::new();
+    let (form, widgets) = profile_editor::remote_form();
     let editor = editor_shell(&title, &form);
 
     let RemoteFormWidgets {
@@ -1349,7 +1369,7 @@ fn remote_editor(
         engine_row,
         trust_row,
         test_button: test,
-    } = form.widgets();
+    } = widgets;
     name_row.set_text(editing.as_deref().unwrap_or(""));
 
     // Only the address is shown and typed. mirai speaks one protocol, so its scheme says
@@ -1700,8 +1720,8 @@ impl Drop for AnalysisRestart {
 }
 
 fn connect_analysis(
-    dialog: &PreferencesDialog,
-    widgets: &PreferencesWidgets,
+    dialog: &adw::PreferencesDialog,
+    widgets: &Rc<PreferencesWidgets>,
     state: &AppState,
 ) -> Reload {
     // Loading a whole page back into its rows must not be mistaken for the user editing
@@ -1836,17 +1856,20 @@ fn connect_analysis(
         sgf_state.save_config();
     });
 
-    let reset_state = state.clone();
-    let reset_syncing = syncing.clone();
     widgets.analysis_reset_button.connect_activated(clone!(
         #[weak]
         dialog,
-        move |_| reset_analysis(&dialog, &reset_state, &reset_syncing)
+        #[weak]
+        widgets,
+        #[strong]
+        state,
+        #[strong]
+        syncing,
+        move |_| reset_analysis(&dialog, &widgets, &state, &syncing)
     ));
 
-    let dialog = dialog.clone();
     let state = state.clone();
-    Box::new(move || load_analysis(&dialog.widgets(), &state, &syncing))
+    Box::new(move |widgets| load_analysis(widgets, &state, &syncing))
 }
 
 /// Pushes `config.analysis` into the preference rows.
@@ -1888,13 +1911,13 @@ fn set_spin(row: &adw::SpinRow, value: f64) {
 }
 
 fn apply_analysis(
-    dialog: &PreferencesDialog,
+    widgets: &PreferencesWidgets,
     state: &AppState,
     syncing: &Cell<bool>,
     settings: AnalysisSettings,
 ) {
     state.config_mut().analysis = settings;
-    load_analysis(&dialog.widgets(), state, syncing);
+    load_analysis(widgets, state, syncing);
     state.save_config();
     // A live search is holding the old visit cap and report interval.
     state.restart_analysis();
@@ -1903,17 +1926,24 @@ fn apply_analysis(
 
 /// Restores the analysis defaults, offering the previous values back for as long as the
 /// toast is up. Engine profiles are user data and are never part of a reset.
-fn reset_analysis(dialog: &PreferencesDialog, state: &AppState, syncing: &Rc<Cell<bool>>) {
+fn reset_analysis(
+    dialog: &adw::PreferencesDialog,
+    widgets: &Rc<PreferencesWidgets>,
+    state: &AppState,
+    syncing: &Rc<Cell<bool>>,
+) {
     let previous = state.config().analysis.clone();
-    apply_analysis(dialog, state, syncing, AnalysisSettings::default());
+    apply_analysis(widgets, state, syncing, AnalysisSettings::default());
 
-    let undo_state = state.clone();
-    let undo_syncing = syncing.clone();
     let toast = undo_toast(&gettext("Analysis settings restored"));
     toast.connect_button_clicked(clone!(
         #[weak]
-        dialog,
-        move |_| apply_analysis(&dialog, &undo_state, &undo_syncing, previous.clone())
+        widgets,
+        #[strong]
+        state,
+        #[strong]
+        syncing,
+        move |_| apply_analysis(&widgets, &state, &syncing, previous.clone())
     ));
     dialog.add_toast(toast);
 }
@@ -1928,8 +1958,8 @@ fn undo_toast(title: &str) -> adw::Toast {
 // -- Play -------------------------------------------------------------------------------
 
 fn connect_play(
-    dialog: &PreferencesDialog,
-    widgets: &PreferencesWidgets,
+    dialog: &adw::PreferencesDialog,
+    widgets: &Rc<PreferencesWidgets>,
     state: &AppState,
 ) -> Reload {
     let syncing = Rc::new(Cell::new(false));
@@ -1962,22 +1992,22 @@ fn connect_play(
         .set_model(Some(&gtk::StringList::new(&label_refs)));
 
     // The mode and its three value rows all describe one setting, so they share a handler.
-    let on_strength: Rc<dyn Fn()> = {
-        let state = state.clone();
-        let syncing = syncing.clone();
-        let dialog = dialog.downgrade();
-        Rc::new(move || {
-            if syncing.get() {
-                return;
+    let on_strength: Rc<dyn Fn()> = Rc::new(clone!(
+        #[weak(rename_to = _dialog)]
+        dialog,
+        #[weak]
+        widgets,
+        #[strong]
+        state,
+        #[strong]
+        syncing,
+        move || {
+            if !syncing.get() {
+                sync_strength_rows(&widgets);
+                store_strength(&widgets, &state);
             }
-            let Some(dialog) = dialog.upgrade() else {
-                return;
-            };
-            let widgets = dialog.widgets();
-            sync_strength_rows(&widgets);
-            store_strength(&widgets, &state);
-        })
-    };
+        }
+    ));
     let on_kind = on_strength.clone();
     widgets
         .play_strength_kind_row
@@ -2039,17 +2069,20 @@ fn connect_play(
         rules_state.save_config();
     });
 
-    let reset_state = state.clone();
-    let reset_syncing = syncing.clone();
     widgets.play_reset_button.connect_activated(clone!(
         #[weak]
         dialog,
-        move |_| reset_play(&dialog, &reset_state, &reset_syncing)
+        #[weak]
+        widgets,
+        #[strong]
+        state,
+        #[strong]
+        syncing,
+        move |_| reset_play(&dialog, &widgets, &state, &syncing)
     ));
 
-    let dialog = dialog.clone();
     let state = state.clone();
-    Box::new(move || load_play(&dialog.widgets(), &state, &syncing))
+    Box::new(move |widgets| load_play(widgets, &state, &syncing))
 }
 
 /// Only the row the selected strength mode uses is shown.
@@ -2122,27 +2155,34 @@ fn load_play(widgets: &PreferencesWidgets, state: &AppState, syncing: &Cell<bool
 }
 
 fn apply_play(
-    dialog: &PreferencesDialog,
+    widgets: &PreferencesWidgets,
     state: &AppState,
     syncing: &Cell<bool>,
     settings: PlaySettings,
 ) {
     state.config_mut().play = settings;
-    load_play(&dialog.widgets(), state, syncing);
+    load_play(widgets, state, syncing);
     state.save_config();
 }
 
-fn reset_play(dialog: &PreferencesDialog, state: &AppState, syncing: &Rc<Cell<bool>>) {
+fn reset_play(
+    dialog: &adw::PreferencesDialog,
+    widgets: &Rc<PreferencesWidgets>,
+    state: &AppState,
+    syncing: &Rc<Cell<bool>>,
+) {
     let previous = state.config().play.clone();
-    apply_play(dialog, state, syncing, PlaySettings::default());
+    apply_play(widgets, state, syncing, PlaySettings::default());
 
-    let undo_state = state.clone();
-    let undo_syncing = syncing.clone();
     let toast = undo_toast(&gettext("Play settings restored"));
     toast.connect_button_clicked(clone!(
         #[weak]
-        dialog,
-        move |_| apply_play(&dialog, &undo_state, &undo_syncing, previous.clone())
+        widgets,
+        #[strong]
+        state,
+        #[strong]
+        syncing,
+        move |_| apply_play(&widgets, &state, &syncing, previous.clone())
     ));
     dialog.add_toast(toast);
 }
@@ -2150,7 +2190,7 @@ fn reset_play(dialog: &PreferencesDialog, state: &AppState, syncing: &Rc<Cell<bo
 // -- General ----------------------------------------------------------------------------
 
 fn connect_general(
-    dialog: &PreferencesDialog,
+    dialog: &adw::PreferencesDialog,
     widgets: &PreferencesWidgets,
     state: &AppState,
 ) -> Reload {
@@ -2182,19 +2222,20 @@ fn connect_general(
     });
 
     // These live on AppState; they are taken back when the dialog goes, with its window.
+    let row = &widgets.overlay_row;
     let ownership_id = state.connect_ownership_overlay_notify(clone!(
         #[weak]
-        dialog,
+        row,
         #[strong]
         overlay_syncing,
-        move |state| sync_overlay_row(&dialog, state, &overlay_syncing)
+        move |state| sync_overlay_row(&row, state, &overlay_syncing)
     ));
     let policy_id = state.connect_policy_overlay_notify(clone!(
         #[weak]
-        dialog,
+        row,
         #[strong]
         overlay_syncing,
-        move |state| sync_overlay_row(&dialog, state, &overlay_syncing)
+        move |state| sync_overlay_row(&row, state, &overlay_syncing)
     ));
     let watched = state.clone();
     let ids = RefCell::new(Some((ownership_id, policy_id)));
@@ -2206,10 +2247,6 @@ fn connect_general(
     });
 
     let scale = &widgets.stone_volume_scale;
-    // Range and steps are set here rather than as a Blueprint `Adjustment`: its
-    // `adjustment_prop_order` lint accepts only lower, upper and value, never the steps.
-    scale.set_range(0.0, 100.0);
-    scale.set_increments(5.0, 10.0);
     scale.set_format_value_func(|_, value| match value.round() as u8 {
         0 => gettext("Muted"),
         volume => format!("{volume}%"),
@@ -2220,17 +2257,21 @@ fn connect_general(
     });
 
     let reset_state = state.clone();
+    let reset_scale = scale.clone();
     widgets.general_reset_button.connect_activated(clone!(
         #[weak]
         dialog,
-        move |_| reset_ui(&dialog, &reset_state)
+        move |_| reset_ui(&dialog, &reset_scale, &reset_state)
     ));
 
     // The switches are bound and the overlay row follows AppState; the volume is only
     // ever written, so it is the one value this page has to reload.
-    let scale = scale.clone();
     let state = state.clone();
-    Box::new(move || scale.set_value(f64::from(state.config().ui.stone_volume)))
+    Box::new(move |widgets| {
+        widgets
+            .stone_volume_scale
+            .set_value(f64::from(state.config().ui.stone_volume))
+    })
 }
 
 fn overlay_index(ownership: bool, policy: bool) -> u32 {
@@ -2257,9 +2298,8 @@ fn apply_overlay_index(state: &AppState, index: u32) {
     }
 }
 
-fn sync_overlay_row(dialog: &PreferencesDialog, state: &AppState, syncing: &Cell<bool>) {
+fn sync_overlay_row(row: &adw::ComboRow, state: &AppState, syncing: &Cell<bool>) {
     let index = overlay_index(state.ownership_overlay(), state.policy_overlay());
-    let row = &dialog.widgets().overlay_row;
     if row.selected() == index {
         return;
     }
@@ -2270,7 +2310,7 @@ fn sync_overlay_row(dialog: &PreferencesDialog, state: &AppState, syncing: &Cell
 
 /// Display switches bind to `AppState` properties; the overlay combo maps onto
 /// the same two booleans. The sound slider owns its own key.
-fn apply_ui(dialog: &PreferencesDialog, state: &AppState, ui: UiSettings) {
+fn apply_ui(scale: &gtk::Scale, state: &AppState, ui: UiSettings) {
     state.set_show_coordinates(ui.show_coordinates);
     state.set_show_move_numbers(ui.show_move_numbers);
     apply_overlay_index(
@@ -2280,10 +2320,7 @@ fn apply_ui(dialog: &PreferencesDialog, state: &AppState, ui: UiSettings) {
     // Written directly: a hand-edited value above 100 sits at the scale's top already, so
     // moving the scale to 100 would not fire and would leave it in the file.
     set_stone_volume(state, ui.stone_volume);
-    dialog
-        .widgets()
-        .stone_volume_scale
-        .set_value(f64::from(ui.stone_volume));
+    scale.set_value(f64::from(ui.stone_volume));
     state.save_config();
 }
 
@@ -2296,22 +2333,19 @@ fn set_stone_volume(state: &AppState, volume: u8) {
     state.changed(crate::app::Change::StoneVolume);
 }
 
-fn reset_ui(dialog: &PreferencesDialog, state: &AppState) {
+fn reset_ui(dialog: &adw::PreferencesDialog, scale: &gtk::Scale, state: &AppState) {
     let previous = state.config().ui.clone();
-    apply_ui(dialog, state, UiSettings::default());
+    apply_ui(scale, state, UiSettings::default());
 
     let undo_state = state.clone();
+    let undo_scale = scale.clone();
     let toast = undo_toast(&gettext("General settings restored"));
-    toast.connect_button_clicked(clone!(
-        #[weak]
-        dialog,
-        move |_| apply_ui(&dialog, &undo_state, previous.clone())
-    ));
+    toast.connect_button_clicked(move |_| apply_ui(&undo_scale, &undo_state, previous.clone()));
     dialog.add_toast(toast);
 }
 
 /// `AppState` is the source: `sync_create` copies source to target, and binding from the
-/// row copied the template's unset `active = false` over the setting whenever Preferences
+/// row copied its unset `active = false` over the setting whenever Preferences
 /// opened, turning coordinates off.
 fn bind_switch(row: &adw::SwitchRow, state: &AppState, property: &'static str) {
     state

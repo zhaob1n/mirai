@@ -22,7 +22,6 @@ use std::cell::{Cell, OnceCell, RefCell};
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use gtk::{CompositeTemplate, glib};
 
 use mirai_client::kifu::{Player, Record, Server};
 
@@ -75,49 +74,9 @@ impl RecentText {
 mod imp {
     use super::*;
 
-    #[derive(Default, CompositeTemplate)]
-    #[template(file = "src/kifu_picker.blp")]
+    #[derive(Default)]
     pub struct KifuPickerDialog {
-        #[template_child]
-        pub toolbar: TemplateChild<adw::ToolbarView>,
-        #[template_child]
-        pub server_group: TemplateChild<adw::ToggleGroup>,
-        #[template_child]
-        pub entry: TemplateChild<gtk::SearchEntry>,
-        #[template_child]
-        pub search_button: TemplateChild<gtk::Button>,
-        #[template_child]
-        pub caption: TemplateChild<gtk::Label>,
-        #[template_child]
-        pub banner: TemplateChild<adw::Banner>,
-        #[template_child]
-        pub stack: TemplateChild<adw::ViewStack>,
-        #[template_child]
-        pub status_page: TemplateChild<adw::StatusPage>,
-        #[template_child]
-        pub loading_page: TemplateChild<adw::StatusPage>,
-        #[template_child]
-        pub recent_page: TemplateChild<adw::PreferencesPage>,
-        #[template_child]
-        pub recent_group: TemplateChild<adw::PreferencesGroup>,
-        #[template_child]
-        pub results_page: TemplateChild<adw::PreferencesPage>,
-        #[template_child]
-        pub result_group: TemplateChild<adw::PreferencesGroup>,
-        #[template_child]
-        pub players_page: TemplateChild<adw::PreferencesPage>,
-        #[template_child]
-        pub players_group: TemplateChild<adw::PreferencesGroup>,
-        #[template_child]
-        pub refresh_button: TemplateChild<gtk::Button>,
-        #[template_child]
-        pub pager: TemplateChild<gtk::CenterBox>,
-        #[template_child]
-        pub newer_button: TemplateChild<gtk::Button>,
-        #[template_child]
-        pub page_label: TemplateChild<gtk::Label>,
-        #[template_child]
-        pub older_button: TemplateChild<gtk::Button>,
+        pub(super) widgets: KifuPickerWidgets,
         /// The [`PAGE`] rows of `result_group`, in order.
         pub(super) slots: OnceCell<Vec<adw::ActionRow>>,
         /// The record each row shows. Rows a page turn has yet to refill still show the
@@ -184,28 +143,20 @@ mod imp {
 
         type Type = super::KifuPickerDialog;
         type ParentType = adw::Dialog;
-
-        fn class_init(klass: &mut Self::Class) {
-            klass.bind_template();
-        }
-
-        fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
-            obj.init_template();
-        }
     }
 
     impl ObjectImpl for KifuPickerDialog {
         fn constructed(&self) {
             self.parent_constructed();
-            if let Some(paintable) = self.loading_page.paintable()
-                && let Ok(spinner) = paintable.downcast::<adw::SpinnerPaintable>()
-            {
-                spinner.set_widget(Some(self.loading_page.upcast_ref::<gtk::Widget>()));
-            }
+            let dialog = self.obj();
+            dialog.set_title(&i18n::gettext("Download Game Record"));
+            dialog.set_content_width(640);
+            dialog.set_content_height(860);
+            dialog.set_child(Some(&self.widgets.toolbar));
             self.obj().build_slots();
             // The pager is the toolbar's bottom bar, up only with a page of records to turn.
             let weak = self.obj().downgrade();
-            self.stack.connect_visible_child_notify(move |_| {
+            self.widgets.stack.connect_visible_child_notify(move |_| {
                 if let Some(dialog) = weak.upgrade() {
                     dialog.sync_pager();
                 }
@@ -255,7 +206,7 @@ impl KifuPickerDialog {
                 // names it without one, with a warning.
                 row.set_action_target_value(Some(&(i as u32).to_variant()));
                 row.set_action_name(Some("picker.open-record"));
-                imp.result_group.add(&row);
+                imp.widgets.result_group.add(&row);
                 row
             })
             .collect();
@@ -263,26 +214,8 @@ impl KifuPickerDialog {
         imp.slot_games.replace(vec![None; PAGE]);
     }
 
-    pub fn widgets(&self) -> KifuPickerWidgets {
-        let imp = self.imp();
-        KifuPickerWidgets {
-            server_group: imp.server_group.get(),
-            entry: imp.entry.get(),
-            search_button: imp.search_button.get(),
-            caption: imp.caption.get(),
-            banner: imp.banner.get(),
-            stack: imp.stack.get(),
-            status_page: imp.status_page.get(),
-            loading_page: imp.loading_page.get(),
-            recent_page: imp.recent_page.get(),
-            results_page: imp.results_page.get(),
-            result_group: imp.result_group.get(),
-            players_page: imp.players_page.get(),
-            players_group: imp.players_group.get(),
-            refresh_button: imp.refresh_button.get(),
-            newer_button: imp.newer_button.get(),
-            older_button: imp.older_button.get(),
-        }
+    pub fn widgets(&self) -> &KifuPickerWidgets {
+        &self.imp().widgets
     }
 
     pub(crate) fn install_handler(&self, handler: impl Fn(crate::kifu::DownloadedGame) + 'static) {
@@ -351,7 +284,7 @@ impl KifuPickerDialog {
         self.feed();
         self.sync_pager();
         // A page shorter than the window may still be scrolled down from the last one.
-        imp.results_page.scroll_to_top();
+        imp.widgets.results_page.scroll_to_top();
     }
 
     /// Turns the page of whichever list is on screen, toward the older entries or the newer.
@@ -364,9 +297,9 @@ impl KifuPickerDialog {
                 page.saturating_sub(1)
             }
         };
-        if self.showing(imp.recent_page.upcast_ref()) {
+        if self.showing(imp.widgets.recent_page.upcast_ref()) {
             self.show_recent_page(turn(imp.recent_page_index.get()));
-        } else if self.showing(imp.players_page.upcast_ref()) {
+        } else if self.showing(imp.widgets.players_page.upcast_ref()) {
             self.show_players_page(turn(imp.players_page_index.get()));
         } else {
             self.show_page(turn(imp.page.get()));
@@ -374,7 +307,7 @@ impl KifuPickerDialog {
     }
 
     fn showing(&self, page: &gtk::Widget) -> bool {
-        self.imp().stack.visible_child().as_ref() == Some(page)
+        self.imp().widgets.stack.visible_child().as_ref() == Some(page)
     }
 
     /// Reveals the pager while the records, the recent searches or the players are on screen
@@ -386,27 +319,27 @@ impl KifuPickerDialog {
             Players,
         }
         let imp = self.imp();
-        let (list, page, count) = if self.showing(imp.results_page.upcast_ref()) {
+        let (list, page, count) = if self.showing(imp.widgets.results_page.upcast_ref()) {
             (List::Records, imp.page.get(), imp.texts.borrow().len())
-        } else if self.showing(imp.recent_page.upcast_ref()) {
+        } else if self.showing(imp.widgets.recent_page.upcast_ref()) {
             (
                 List::Searches,
                 imp.recent_page_index.get(),
                 imp.recent_matches.borrow().len(),
             )
-        } else if self.showing(imp.players_page.upcast_ref()) {
+        } else if self.showing(imp.widgets.players_page.upcast_ref()) {
             (
                 List::Players,
                 imp.players_page_index.get(),
                 imp.players.borrow().len(),
             )
         } else {
-            imp.toolbar.set_reveal_bottom_bars(false);
+            imp.widgets.toolbar.set_reveal_bottom_bars(false);
             return;
         };
         let pages = count.div_ceil(PAGE);
-        imp.newer_button.set_sensitive(page > 0);
-        imp.older_button.set_sensitive(page + 1 < pages);
+        imp.widgets.newer_button.set_sensitive(page > 0);
+        imp.widgets.older_button.set_sensitive(page + 1 < pages);
         let first = page * PAGE;
         let (first, last, count) = (
             (first + 1).to_string(),
@@ -426,8 +359,8 @@ impl KifuPickerDialog {
             // "11–20 of 21".
             List::Players => i18n::pgettext_f("players", "{first}–{last} of {count}", &args),
         };
-        imp.page_label.set_label(&range);
-        imp.toolbar.set_reveal_bottom_bars(pages > 1);
+        imp.widgets.page_label.set_label(&range);
+        imp.widgets.toolbar.set_reveal_bottom_bars(pages > 1);
     }
 
     /// Hides the rows, to come back a few a frame once the dialog is on screen, and the
@@ -546,7 +479,7 @@ impl KifuPickerDialog {
         self.fill_players();
         self.feed();
         self.sync_pager();
-        imp.players_page.scroll_to_top();
+        imp.widgets.players_page.scroll_to_top();
     }
 
     /// Fills the players' page's next [`ROWS_PER_FRAME`] rows, building those that do not
@@ -581,7 +514,7 @@ impl KifuPickerDialog {
                 // names it without one, with a warning.
                 row.set_action_target_value(Some(&((first + i) as u32).to_variant()));
                 row.set_action_name(Some("picker.open-player"));
-                imp.players_group.add(&row);
+                imp.widgets.players_group.add(&row);
                 rows.push(row);
             }
             let row = &rows[i];
@@ -653,7 +586,7 @@ impl KifuPickerDialog {
         self.fill_recent();
         self.feed();
         self.sync_pager();
-        imp.recent_page.scroll_to_top();
+        imp.widgets.recent_page.scroll_to_top();
     }
 
     /// Fills the recent page's next [`ROWS_PER_FRAME`] rows; false once all are filled.
@@ -707,7 +640,7 @@ impl KifuPickerDialog {
                 forget.set_action_target_value(Some(&query));
                 forget.set_action_name(Some("picker.forget"));
                 row.add_suffix(&forget);
-                imp.recent_group.add(&row);
+                imp.widgets.recent_group.add(&row);
                 recent.push((row, forget, RecentText::default()));
             }
             let (row, forget, shown) = &mut recent[i];
@@ -759,7 +692,11 @@ impl Default for KifuPickerDialog {
     }
 }
 
+/// Fixed controls built once with the dialog; names are harness targets.
 pub struct KifuPickerWidgets {
+    toolbar: adw::ToolbarView,
+    recent_group: adw::PreferencesGroup,
+    page_label: gtk::Label,
     pub server_group: adw::ToggleGroup,
     pub entry: gtk::SearchEntry,
     pub search_button: gtk::Button,
@@ -776,4 +713,183 @@ pub struct KifuPickerWidgets {
     pub refresh_button: gtk::Button,
     pub newer_button: gtk::Button,
     pub older_button: gtk::Button,
+}
+
+impl Default for KifuPickerWidgets {
+    fn default() -> Self {
+        // The server occupies the title's room so all ten records still fit underneath.
+        // The dialog title continues to name the dialog to a screen reader.
+        let server_group = adw::ToggleGroup::builder().name("server_group").build();
+        server_group
+            .upcast_ref::<gtk::Widget>()
+            .update_property(&[gtk::accessible::Property::Label(&i18n::gettext("Server"))]);
+        for (name, label) in [
+            ("fox", i18n::pgettext("server", "Fox")),
+            ("eweiqi", i18n::pgettext("server", "eWeiqi")),
+            ("yike", i18n::pgettext("server", "Yike")),
+        ] {
+            server_group.add(adw::Toggle::builder().name(name).label(label).build());
+        }
+        let header = adw::HeaderBar::builder()
+            .title_widget(&server_group)
+            .build();
+        let entry = gtk::SearchEntry::builder()
+            .name("entry")
+            .placeholder_text(i18n::gettext("Exact Fox nickname or numeric UID"))
+            .hexpand(true)
+            .build();
+        let search_button = gtk::Button::builder()
+            .name("search_button")
+            .label(i18n::pgettext("verb", "Search"))
+            .sensitive(false)
+            .build();
+        let search_line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        search_line.append(&entry);
+        search_line.append(&search_button);
+        let caption = gtk::Label::builder()
+            .name("caption")
+            .label(i18n::gettext(
+                "Public records only · Fox exposes at most the latest 200 games",
+            ))
+            .xalign(0.0)
+            .wrap(true)
+            .margin_top(6)
+            .margin_bottom(6)
+            .css_classes(["dim-label", "caption"])
+            .build();
+        // Clamp and inset like the PreferencesPages below, keeping the search aligned.
+        let search = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .margin_start(12)
+            .margin_end(12)
+            .margin_top(12)
+            .build();
+        search.append(&search_line);
+        search.append(&caption);
+        let clamp = adw::Clamp::builder().child(&search).build();
+        let banner = adw::Banner::builder()
+            .name("banner")
+            .title(i18n::gettext("Request failed"))
+            .revealed(false)
+            .build();
+        let status_page = adw::StatusPage::builder()
+            .name("status_page")
+            .icon_name("system-search-symbolic")
+            .title(i18n::gettext("Find a Fox Player"))
+            .description(i18n::gettext(
+                "Enter an exact nickname or UID to browse their recent public games.",
+            ))
+            .build();
+        let loading_page = adw::StatusPage::builder().name("loading_page").build();
+        loading_page.set_paintable(Some(&adw::SpinnerPaintable::new(Some(&loading_page))));
+        let recent_group = adw::PreferencesGroup::builder()
+            .name("recent_group")
+            .title(i18n::gettext("Recent Searches"))
+            .build();
+        let recent_page = adw::PreferencesPage::builder()
+            .title(i18n::gettext("Recent Searches"))
+            .build();
+        // PreferencesPage:name identifies a preferences page, not its GtkWidget.
+        recent_page.set_widget_name("recent_page");
+        recent_page.add(&recent_group);
+        let refresh_button = gtk::Button::builder()
+            .name("refresh_button")
+            .icon_name("view-refresh-symbolic")
+            .tooltip_text(i18n::gettext("Search Again"))
+            .valign(gtk::Align::Center)
+            .css_classes(["flat"])
+            .build();
+        let result_group = adw::PreferencesGroup::builder()
+            .name("result_group")
+            .title(i18n::gettext("Recent Games"))
+            .header_suffix(&refresh_button)
+            .build();
+        let results_page = adw::PreferencesPage::builder()
+            .title(i18n::gettext("Recent Games"))
+            .build();
+        results_page.set_widget_name("results_page");
+        results_page.add(&result_group);
+        let players_group = adw::PreferencesGroup::builder()
+            .name("players_group")
+            .title(i18n::gettext("Several Players Match"))
+            .description(i18n::gettext(
+                "Choose whose games to browse, or search an account number.",
+            ))
+            .build();
+        let players_page = adw::PreferencesPage::builder()
+            .title(i18n::gettext("Matching Players"))
+            .build();
+        players_page.set_widget_name("players_page");
+        players_page.add(&players_group);
+        let stack = adw::ViewStack::builder()
+            .name("stack")
+            .enable_transitions(true)
+            .vexpand(true)
+            .build();
+        for page in [
+            status_page.upcast_ref::<gtk::Widget>(),
+            loading_page.upcast_ref(),
+            recent_page.upcast_ref(),
+            results_page.upcast_ref(),
+            players_page.upcast_ref(),
+        ] {
+            // Pages are selected by widget identity, not by ViewStackPage names.
+            stack.add(page);
+        }
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        content.append(&clamp);
+        content.append(&banner);
+        content.append(&stack);
+        let newer_button = gtk::Button::builder()
+            .name("newer_button")
+            .icon_name("go-previous-symbolic")
+            .tooltip_text(i18n::gettext("Previous Page"))
+            .build();
+        // A live region announces which entries a page turn puts on screen.
+        let page_label = gtk::Label::builder()
+            .name("page_label")
+            .accessible_role(gtk::AccessibleRole::Status)
+            .css_classes(["dim-label", "numeric"])
+            .build();
+        let older_button = gtk::Button::builder()
+            .name("older_button")
+            .icon_name("go-next-symbolic")
+            .tooltip_text(i18n::gettext("Next Page"))
+            .build();
+        let pager = gtk::CenterBox::builder()
+            .name("pager")
+            .css_classes(["toolbar"])
+            .start_widget(&newer_button)
+            .center_widget(&page_label)
+            .end_widget(&older_button)
+            .build();
+        let toolbar = adw::ToolbarView::builder()
+            .name("toolbar")
+            .content(&content)
+            .reveal_bottom_bars(false)
+            .build();
+        toolbar.add_top_bar(&header);
+        toolbar.add_bottom_bar(&pager);
+        Self {
+            toolbar,
+            server_group,
+            entry,
+            search_button,
+            caption,
+            banner,
+            stack,
+            status_page,
+            loading_page,
+            recent_page,
+            recent_group,
+            results_page,
+            result_group,
+            players_page,
+            players_group,
+            refresh_button,
+            newer_button,
+            page_label,
+            older_button,
+        }
+    }
 }

@@ -227,8 +227,10 @@ Full detail, including how to drive the GUI headlessly and verify against a real
   that only holds under XWayland is not a fix.
 - **Follow the [GNOME Human Interface Guidelines](https://developer.gnome.org/hig/)** for every
   user-facing UI change; prefer standard GTK/libadwaita patterns and components.
-- **Use [Blueprint](https://jwestman.pages.gitlab.gnome.org/blueprint-compiler/)** for static UI
-  hierarchy and layout; keep state, business logic and genuinely dynamic UI in Rust.
+- **Build UI directly in Rust.** Use GTK/libadwaita typed builders and one typed control set
+  per view. Reserve GObject subclasses for state or widget behaviour, not just layout.
+  Borrow controls instead of adding a forwarding getter per field; signal handlers must
+  not strongly capture a control set containing their emitter.
 
 ### Toolchain
 
@@ -236,8 +238,7 @@ Rust stable, selected by `rust-toolchain.toml`. There is no minimum supported ve
 `rust-version`: mirai tracks the latest stable compiler and the latest release of every
 dependency, so update both freely and never hold one back for an older toolchain. No nightly
 feature is used, and none should be added. Let-chains (`if let Some(x) = a && cond`) are used
-throughout and are expected. GTK 4.22+, libadwaita 1.9+, libsoup 3 and Blueprint Compiler
-0.22+ are required to build `mirai`.
+throughout and are expected. GTK 4.22+, libadwaita 1.9+ and libsoup 3 are required to build `mirai`.
 
 ### Testing expectations
 

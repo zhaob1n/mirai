@@ -13,7 +13,6 @@ pot=po/mirai.pot
 # Every GUI source that calls a gettext function.
 rust=$(find crates/mirai/src -name '*.rs' -print0 | sort -z |
     xargs -0 grep -lE '\b[np]?gettext(_f)?\(')
-blp=$(find crates/mirai/src -name '*.blp' | sort)
 
 # A catalogue's diff should show what changed in its messages, not where code moved. So the
 # references name the file without a line, and no line is wrapped: an edit to a long
@@ -25,9 +24,6 @@ set -- --package-name=mirai --msgid-bugs-address=https://github.com/zhaob1n/mira
 # shellcheck disable=SC2086 # the file lists are space-free paths
 xgettext "$@" -L Rust -k -kgettext -kpgettext:1c,2 -kgettext_f -kpgettext_f:1c,2 -kngettext_f:1,2 \
     $rust
-# Blueprint's `_("…")` and `C_("context", "…")` lex as C, as blueprint-compiler documents.
-# shellcheck disable=SC2086
-xgettext "$@" -j -L C -k -k_ -kC_:1c,2 $blp
 # The desktop entry's Name is the brand, left as it is.
 xgettext "$@" -j -k -kGenericName -kComment -kKeywords data/io.github.zhaob1n.Mirai.desktop.in
 xgettext "$@" -j data/io.github.zhaob1n.Mirai.metainfo.xml.in

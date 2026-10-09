@@ -2,63 +2,80 @@
 // Copyright (C) 2026 Huang Zhaobin
 
 use adw::prelude::*;
-use adw::subclass::prelude::*;
 use glib::clone;
-use gtk::{CompositeTemplate, glib};
 
 use mirai_core::Point;
 
 use crate::app::NodeRef;
-use crate::i18n;
+use crate::i18n::{gettext, pgettext};
 use crate::window_shell::MiraiWindow;
 
-mod imp {
-    use super::*;
-
-    #[derive(Default, CompositeTemplate)]
-    #[template(file = "src/label_editor.blp")]
-    pub struct LabelEditorDialog {
-        #[template_child]
-        pub cancel_button: TemplateChild<gtk::Button>,
-        #[template_child]
-        pub apply_button: TemplateChild<gtk::Button>,
-        #[template_child]
-        pub entry: TemplateChild<gtk::Entry>,
-    }
-
-    #[glib::object_subclass]
-    impl ObjectSubclass for LabelEditorDialog {
-        const NAME: &'static str = "MiraiLabelEditorDialog";
-
-        type Type = super::LabelEditorDialog;
-        type ParentType = adw::Dialog;
-
-        fn class_init(klass: &mut Self::Class) {
-            klass.bind_template();
-        }
-
-        fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
-            obj.init_template();
-        }
-    }
-
-    impl ObjectImpl for LabelEditorDialog {}
-    impl WidgetImpl for LabelEditorDialog {}
-    impl AdwDialogImpl for LabelEditorDialog {}
+struct Editor {
+    dialog: adw::Dialog,
+    entry: gtk::Entry,
+    cancel: gtk::Button,
+    apply: gtk::Button,
 }
 
-glib::wrapper! {
-    pub struct LabelEditorDialog(ObjectSubclass<imp::LabelEditorDialog>)
-        @extends gtk::Widget, adw::Dialog,
-        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget,
-            gtk::ShortcutManager;
-}
+fn editor() -> Editor {
+    // Translators: a text mark on an intersection.
+    let title = pgettext("mark", "Edit Label");
+    let cancel = gtk::Button::builder()
+        .name("cancel_button")
+        .label(gettext("Cancel"))
+        .build();
+    // Translators: a text mark on an intersection.
+    let apply = gtk::Button::builder()
+        .name("apply_button")
+        .label(pgettext("mark", "Apply Label"))
+        .css_classes(["suggested-action"])
+        .build();
+    let header = adw::HeaderBar::builder()
+        .show_start_title_buttons(false)
+        .show_end_title_buttons(false)
+        .build();
+    header.pack_start(&cancel);
+    header.pack_end(&apply);
 
-impl LabelEditorDialog {
-    fn new() -> Self {
-        let dialog = glib::Object::new();
-        crate::widgets::sheet_texture::install(&dialog);
-        dialog
+    // Translators: a text mark on an intersection.
+    let entry = gtk::Entry::builder()
+        .name("entry")
+        .placeholder_text(pgettext("mark", "Label text"))
+        .hexpand(true)
+        .enable_undo(true)
+        .build();
+    // Translators: a text mark on an intersection.
+    let hint = gtk::Label::builder()
+        .label(gettext("Leave empty to remove the label"))
+        .wrap(true)
+        .xalign(0.0)
+        .css_classes(["caption"])
+        .build();
+    let content = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(12)
+        .margin_start(16)
+        .margin_end(16)
+        .margin_top(12)
+        .margin_bottom(16)
+        .build();
+    content.append(&entry);
+    content.append(&hint);
+
+    let toolbar = adw::ToolbarView::new();
+    toolbar.add_top_bar(&header);
+    toolbar.set_content(Some(&content));
+    let dialog = adw::Dialog::builder()
+        .title(&title)
+        .content_width(360)
+        .child(&toolbar)
+        .build();
+    crate::widgets::sheet_texture::install(&dialog);
+    Editor {
+        dialog,
+        entry,
+        cancel,
+        apply,
     }
 }
 
@@ -80,11 +97,15 @@ pub(crate) fn present(window: &MiraiWindow, point: Point) {
         return;
     };
 
-    let dialog = LabelEditorDialog::new();
-    let entry = dialog.imp().entry.get();
+    let Editor {
+        dialog,
+        entry,
+        cancel,
+        apply,
+    } = editor();
     entry.set_text(&prefill);
 
-    dialog.imp().cancel_button.connect_clicked(clone!(
+    cancel.connect_clicked(clone!(
         #[weak]
         dialog,
         move |_| {
@@ -93,12 +114,14 @@ pub(crate) fn present(window: &MiraiWindow, point: Point) {
     ));
 
     let weak = window.downgrade();
-    dialog.imp().apply_button.connect_clicked({
+    apply.connect_clicked({
         let weak = weak.clone();
         clone!(
             #[weak]
             dialog,
-            move |_| apply_label(&dialog, &weak, node, point)
+            #[weak]
+            entry,
+            move |_| apply_label(&dialog, &entry, &weak, node, point)
         )
     });
     entry.connect_activate({
@@ -106,7 +129,7 @@ pub(crate) fn present(window: &MiraiWindow, point: Point) {
         clone!(
             #[weak]
             dialog,
-            move |_| apply_label(&dialog, &weak, node, point)
+            move |entry| apply_label(&dialog, entry, &weak, node, point)
         )
     });
 
@@ -115,19 +138,19 @@ pub(crate) fn present(window: &MiraiWindow, point: Point) {
 }
 
 fn apply_label(
-    dialog: &LabelEditorDialog,
+    dialog: &adw::Dialog,
+    entry: &gtk::Entry,
     window: &glib::WeakRef<MiraiWindow>,
     node: NodeRef,
     point: Point,
 ) {
-    let text = dialog.imp().entry.text();
+    let text = entry.text();
     if let Some(window) = window.upgrade() {
         window.with_ui(|ui| {
             let cursor = ui.state.cursor();
             if ui.play.is_active() || ui.state.resolve_node(node) != Some(cursor) {
-                ui.state.toast(i18n::gettext(
-                    "The position changed; open the label editor again",
-                ));
+                ui.state
+                    .toast(gettext("The position changed; open the label editor again"));
             } else {
                 ui.state
                     .with_edit_session(|session| session.set_label(point, text.as_str()));

@@ -42,8 +42,8 @@ developers. Keep the `_` mnemonic of menu items: GNOME's CJK convention appends 
 
 ## Marking strings in the code
 
-Only `crates/mirai` is translated. Its strings go through `crates/mirai/src/i18n.rs`; the
-Blueprint templates use `_("…")` and `C_("context", "…")`.
+Only `crates/mirai` is translated. All UI strings, including fixed layouts, go through
+`crates/mirai/src/i18n.rs`.
 
 | Need | Write |
 |---|---|
@@ -52,7 +52,7 @@ Blueprint templates use `_("…")` and `C_("context", "…")`.
 | a count | `ngettext_f("{n} move", "{n} moves", n as u64, &[("n", &n.to_string())])` |
 | a short, ambiguous word | `pgettext("verb", "Pass")` |
 | an ambiguous string with values | `pgettext_f("records", "{first}–{last} of {count}", &[…])` |
-| a note for translators | `// Translators: …` on the line above (`/* Translators: … */` in Blueprint) |
+| a note for translators | `// Translators: …` on the line above |
 
 - Pass the literal straight to the function: `xgettext` extracts nothing else. It also skips
   the inside of a path-qualified macro, so write `clone!(…)`, not `glib::clone!(…)`;

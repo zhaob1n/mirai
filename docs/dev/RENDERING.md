@@ -281,12 +281,27 @@ same way once it is mapped.
 
 ### `adw_dialog_present` measures the whole dialog, synchronously
 
-Every page of Preferences, every row's text. Building the template and that measure took
+Every page of Preferences, every row's text. Building the dialog and that measure took
 38–130 ms
 per open; a dialog kept for the window and presented again costs 2–9 ms. Preferences,
 New Game and the Fox picker are kept and reset or reloaded on each presentation.
 Setting a spin row to the value it shows still formats and relays it out, so reloads
 compare first.
+
+The 2026-10-10 Rust-layout cutover did not eliminate that cost. One before/after pair of
+`tools/perf/ui-survey.sh dialogs main`, with `MIRAI_BIN=target/debug/mirai` on a 60 Hz output,
+measured these synchronous action times:
+
+| action | Blueprint layout (ms) | Rust layout (ms) |
+|---|---:|---:|
+| Preferences, first open | 40.71 | 39.04 |
+| Preferences, second open | 9.80 | 9.60 |
+| New Game, first open | 16.31 | 16.76 |
+| New Game, second open | 8.63 | 6.62 |
+
+This is one pair, not a controlled speedup claim. Typed Rust construction removes layout
+bindings and the compiler dependency; keeping dialogs, text caches and render nodes remains
+the performance work.
 
 ### A resize re-shaped the coordinates every frame
 

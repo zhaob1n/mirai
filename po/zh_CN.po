@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: mirai\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaob1n/mirai/issues\n"
-"POT-Creation-Date: 2026-10-05 03:33+0800\n"
+"POT-Creation-Date: 2026-10-10 03:32+0800\n"
 "PO-Revision-Date: 2026-09-28 06:00+0800\n"
 "Last-Translator: Huang Zhaobin <zhaob1n@foxmail.com>\n"
 "Language-Team: Chinese (China) <i18n-zh@googlegroups.com>\n"
@@ -16,7 +16,7 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
-#: crates/mirai/src/app.rs crates/mirai/src/window.blp
+#: crates/mirai/src/app.rs crates/mirai/src/window_shell.rs
 msgid "No Engine"
 msgstr "无引擎"
 
@@ -149,7 +149,7 @@ msgstr "关闭"
 msgid "Review Game"
 msgstr "复盘"
 
-#: crates/mirai/src/dialogs.rs crates/mirai/src/panels/analysis.blp
+#: crates/mirai/src/dialogs.rs crates/mirai/src/panels/analysis.rs
 msgid "Analyse Game"
 msgstr "全盘分析"
 
@@ -162,9 +162,9 @@ msgstr "信任此服务器？"
 msgid "{host} presented this certificate. Compare it with the fingerprint mirai-server printed at startup. The token is sent only after you trust it, and a later change is refused."
 msgstr "{host} 出示了此证书。请将它与 mirai-server 启动时打印的指纹进行比对。只有在你信任它之后才会发送令牌，此后证书若有变化将被拒绝。"
 
-#: crates/mirai/src/dialogs.rs crates/mirai/src/prefs.rs
-#: crates/mirai/src/window.rs crates/mirai/src/label_editor.blp
-#: crates/mirai/src/new_game.blp crates/mirai/src/window.blp
+#: crates/mirai/src/dialogs.rs crates/mirai/src/label_editor.rs
+#: crates/mirai/src/new_game.rs crates/mirai/src/prefs.rs
+#: crates/mirai/src/window.rs crates/mirai/src/window_shell.rs
 msgid "Cancel"
 msgstr "取消"
 
@@ -326,6 +326,11 @@ msgstr "与远程引擎的连接已断开：{error}"
 msgid "protocol error: {error}"
 msgstr "协议错误：{error}"
 
+#: crates/mirai/src/kifu_picker.rs crates/mirai/src/window.rs
+#: crates/mirai/src/window_shell.rs
+msgid "Download Game Record"
+msgstr "下载棋谱"
+
 #. Translators: which records of how many the page shows, such as "11–20 of 200".
 #: crates/mirai/src/kifu_picker.rs
 #, rust-format
@@ -353,20 +358,81 @@ msgstr "第 {first}–{last} 位，共 {count} 位"
 msgid "Remove From History"
 msgstr "从历史记录中移除"
 
-#: crates/mirai/src/kifu.rs crates/mirai/src/kifu_picker.blp
+#: crates/mirai/src/kifu_picker.rs crates/mirai/src/profile_editor.rs
+msgid "Server"
+msgstr "服务器"
+
+#: crates/mirai/src/kifu_picker.rs crates/mirai/src/kifu.rs
 msgctxt "server"
 msgid "Fox"
 msgstr "野狐"
 
-#: crates/mirai/src/kifu.rs crates/mirai/src/kifu_picker.blp
+#: crates/mirai/src/kifu_picker.rs crates/mirai/src/kifu.rs
 msgctxt "server"
 msgid "eWeiqi"
 msgstr "弈城"
 
-#: crates/mirai/src/kifu.rs crates/mirai/src/kifu_picker.blp
+#: crates/mirai/src/kifu_picker.rs crates/mirai/src/kifu.rs
 msgctxt "server"
 msgid "Yike"
 msgstr "弈客"
+
+#: crates/mirai/src/kifu_picker.rs crates/mirai/src/kifu.rs
+msgid "Exact Fox nickname or numeric UID"
+msgstr "准确的野狐昵称或数字 UID"
+
+#: crates/mirai/src/kifu_picker.rs
+msgctxt "verb"
+msgid "Search"
+msgstr "搜索"
+
+#: crates/mirai/src/kifu_picker.rs crates/mirai/src/kifu.rs
+msgid "Public records only · Fox exposes at most the latest 200 games"
+msgstr "仅限公开棋谱 · 野狐最多提供最近 200 盘"
+
+#: crates/mirai/src/kifu_picker.rs
+msgid "Request failed"
+msgstr "请求失败"
+
+#: crates/mirai/src/kifu_picker.rs crates/mirai/src/kifu.rs
+msgid "Find a Fox Player"
+msgstr "查找野狐玩家"
+
+#: crates/mirai/src/kifu_picker.rs crates/mirai/src/kifu.rs
+msgid "Enter an exact nickname or UID to browse their recent public games."
+msgstr "输入准确的昵称或 UID，浏览其最近的公开对局。"
+
+#: crates/mirai/src/kifu_picker.rs
+msgid "Recent Searches"
+msgstr "最近搜索"
+
+#: crates/mirai/src/kifu_picker.rs
+msgid "Search Again"
+msgstr "重新搜索"
+
+#: crates/mirai/src/kifu_picker.rs
+msgid "Recent Games"
+msgstr "最近对局"
+
+#: crates/mirai/src/kifu_picker.rs
+msgid "Several Players Match"
+msgstr "有多位棋手匹配"
+
+#: crates/mirai/src/kifu_picker.rs
+msgid "Choose whose games to browse, or search an account number."
+msgstr "选择要浏览谁的对局，或改用账号搜索。"
+
+#: crates/mirai/src/kifu_picker.rs
+msgid "Matching Players"
+msgstr "匹配的棋手"
+
+#: crates/mirai/src/kifu_picker.rs
+msgid "Previous Page"
+msgstr "上一页"
+
+#: crates/mirai/src/kifu_picker.rs
+msgid "Next Page"
+msgstr "下一页"
 
 #: crates/mirai/src/kifu.rs
 #, rust-format
@@ -401,22 +467,6 @@ msgstr "{server}上没有这个名字的棋手"
 #: crates/mirai/src/kifu.rs
 msgid "This player has hidden their game records"
 msgstr "该玩家隐藏了自己的棋谱"
-
-#: crates/mirai/src/kifu.rs crates/mirai/src/kifu_picker.blp
-msgid "Exact Fox nickname or numeric UID"
-msgstr "准确的野狐昵称或数字 UID"
-
-#: crates/mirai/src/kifu.rs crates/mirai/src/kifu_picker.blp
-msgid "Public records only · Fox exposes at most the latest 200 games"
-msgstr "仅限公开棋谱 · 野狐最多提供最近 200 盘"
-
-#: crates/mirai/src/kifu.rs crates/mirai/src/kifu_picker.blp
-msgid "Find a Fox Player"
-msgstr "查找野狐玩家"
-
-#: crates/mirai/src/kifu.rs crates/mirai/src/kifu_picker.blp
-msgid "Enter an exact nickname or UID to browse their recent public games."
-msgstr "输入准确的昵称或 UID，浏览其最近的公开对局。"
 
 #: crates/mirai/src/kifu.rs
 msgid "Player name or nickname on eWeiqi"
@@ -528,14 +578,128 @@ msgstr "正在下载对局"
 msgid "Could not download the game: {error}"
 msgstr "无法下载对局：{error}"
 
+#. Translators: a text mark on an intersection.
+#: crates/mirai/src/label_editor.rs
+msgctxt "mark"
+msgid "Edit Label"
+msgstr "编辑标签"
+
+#: crates/mirai/src/label_editor.rs
+msgctxt "mark"
+msgid "Apply Label"
+msgstr "应用标签"
+
+#: crates/mirai/src/label_editor.rs
+msgctxt "mark"
+msgid "Label text"
+msgstr "标签文字"
+
+#: crates/mirai/src/label_editor.rs
+msgid "Leave empty to remove the label"
+msgstr "留空则删除标签"
+
 #: crates/mirai/src/label_editor.rs
 msgid "The position changed; open the label editor again"
 msgstr "局面已改变，请重新打开标签编辑器"
+
+#: crates/mirai/src/new_game.rs crates/mirai/src/window.rs
+msgid "New Game"
+msgstr "新对局"
+
+#: crates/mirai/src/new_game.rs
+msgid "Start Game"
+msgstr "开始对局"
 
 #: crates/mirai/src/new_game.rs
 msgctxt "size"
 msgid "Custom"
 msgstr "自定义"
+
+#: crates/mirai/src/new_game.rs
+msgid "Size"
+msgstr "大小"
+
+#: crates/mirai/src/new_game.rs
+msgid "Custom Size"
+msgstr "自定义大小"
+
+#: crates/mirai/src/new_game.rs
+msgid "Handicap"
+msgstr "让子"
+
+#. Translators: compensation points given to White.
+#: crates/mirai/src/new_game.rs
+msgid "Komi"
+msgstr "贴目"
+
+#: crates/mirai/src/new_game.rs
+msgid "Rules"
+msgstr "规则"
+
+#: crates/mirai/src/new_game.rs crates/mirai/src/preferences_shell.rs
+msgid "Board"
+msgstr "棋盘"
+
+#. Translators: which colour the human plays.
+#: crates/mirai/src/new_game.rs
+msgid "You Play"
+msgstr "你执"
+
+#: crates/mirai/src/new_game.rs
+msgid "Players"
+msgstr "对局者"
+
+#: crates/mirai/src/new_game.rs
+msgid "The engine takes the other colour"
+msgstr "引擎执另一方"
+
+#: crates/mirai/src/new_game.rs
+msgctxt "time-control"
+msgid "Type"
+msgstr "类型"
+
+#: crates/mirai/src/new_game.rs
+msgid "Main Time (Minutes)"
+msgstr "基本用时（分钟）"
+
+#. Translators: Japanese overtime, a fixed number of periods.
+#: crates/mirai/src/new_game.rs
+msgid "Byo-yomi Periods"
+msgstr "读秒次数"
+
+#: crates/mirai/src/new_game.rs
+msgid "Seconds per Period"
+msgstr "每次秒数"
+
+#: crates/mirai/src/new_game.rs
+msgid "Increment (Seconds)"
+msgstr "每手加秒（秒）"
+
+#: crates/mirai/src/new_game.rs
+msgid "Time Control"
+msgstr "计时"
+
+#: crates/mirai/src/new_game.rs
+msgctxt "strength"
+msgid "Mode"
+msgstr "模式"
+
+#: crates/mirai/src/new_game.rs crates/mirai/src/preferences_shell.rs
+msgid "Visits per Move"
+msgstr "每手计算量"
+
+#: crates/mirai/src/new_game.rs crates/mirai/src/preferences_shell.rs
+msgid "Seconds per Move"
+msgstr "每手秒数"
+
+#. Translators: a KataGo human-SL profile name, such as rank_5k.
+#: crates/mirai/src/new_game.rs crates/mirai/src/preferences_shell.rs
+msgid "Human Model Profile"
+msgstr "拟人档位"
+
+#: crates/mirai/src/new_game.rs
+msgid "Engine Strength"
+msgstr "引擎棋力"
 
 #: crates/mirai/src/new_game.rs
 msgid "The human-like model imitates a rank instead of searching"
@@ -548,10 +712,6 @@ msgstr "此引擎没有加载拟人模型"
 #: crates/mirai/src/new_game.rs
 msgid "Play both sides on this device"
 msgstr "在本机上下双方"
-
-#: crates/mirai/src/new_game.rs crates/mirai/src/new_game.blp
-msgid "The engine takes the other colour"
-msgstr "引擎执另一方"
 
 #. Translators: no handicap stones.
 #: crates/mirai/src/new_game.rs
@@ -605,6 +765,22 @@ msgid "Human-like"
 msgstr "拟人"
 
 #: crates/mirai/src/panels/analysis.rs
+msgid "Analyse Position"
+msgstr "分析局面"
+
+#: crates/mirai/src/panels/analysis.rs
+msgid "Analyse this position and each one you move to (Space)"
+msgstr "分析当前局面，以及之后切换到的每个局面（Space）"
+
+#: crates/mirai/src/panels/analysis.rs
+msgid "Analyse every move of the main line (Ctrl+A)"
+msgstr "分析主线的每一手（Ctrl+A）"
+
+#: crates/mirai/src/panels/analysis.rs
+msgid "Blunders"
+msgstr "问题手"
+
+#: crates/mirai/src/panels/analysis.rs
 msgctxt "column"
 msgid "Move"
 msgstr "着手"
@@ -633,6 +809,10 @@ msgstr "计算量"
 msgctxt "column"
 msgid "Prior"
 msgstr "先验"
+
+#: crates/mirai/src/panels/analysis.rs crates/mirai/src/window_shell.rs
+msgid "_Loss and Prior Columns"
+msgstr "损失与先验列(_L)"
 
 #: crates/mirai/src/panels/analysis.rs
 msgid "Black to play"
@@ -671,10 +851,6 @@ msgstr "无引擎"
 #: crates/mirai/src/panels/analysis.rs
 msgid "Analysing…"
 msgstr "分析中…"
-
-#: crates/mirai/src/panels/analysis.rs crates/mirai/src/panels/analysis.blp
-msgid "Blunders"
-msgstr "问题手"
 
 #: crates/mirai/src/panels/analysis.rs
 #, rust-format
@@ -779,6 +955,213 @@ msgstr "黑 {black} — 白 {white}（估算）"
 msgid "Black {black} — White {white}"
 msgstr "黑 {black} — 白 {white}"
 
+#: crates/mirai/src/preferences_shell.rs
+msgid "Engine Profiles"
+msgstr "引擎配置"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "The selected profile provides analysis and plays as the computer."
+msgstr "选中的配置负责分析，并在对局中作为电脑一方。"
+
+#: crates/mirai/src/preferences_shell.rs crates/mirai/src/prefs.rs
+msgid "Add Local Engine"
+msgstr "添加本地引擎"
+
+#: crates/mirai/src/preferences_shell.rs crates/mirai/src/prefs.rs
+msgid "Add Remote Engine"
+msgstr "添加远程引擎"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Engines"
+msgstr "引擎"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Add Profile"
+msgstr "添加配置"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Maximum Visits"
+msgstr "最大计算量"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Where a live search stops thinking"
+msgstr "实时搜索达到此计算量后停止"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Report Interval"
+msgstr "报告间隔"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Milliseconds between updates from the engine"
+msgstr "引擎两次更新之间的毫秒数"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Candidate moves kept on the board and in the panel — “All” keeps every move the engine searched"
+msgstr "棋盘和面板上保留的候选手数量——“全部”保留引擎搜索过的每一手"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Suggestions Shown"
+msgstr "显示候选数"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Budget for each position when analysing a whole game"
+msgstr "全盘分析时每个局面的计算量"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Analyse on Open"
+msgstr "打开时分析"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Sweep the main line when a record is opened or downloaded"
+msgstr "打开或下载棋谱时自动分析主线"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Save Analysis in SGF"
+msgstr "在 SGF 中保存分析"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Write winrates and candidate moves alongside the moves"
+msgstr "将胜率和候选手随着手一起写入文件"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Restore Defaults"
+msgstr "恢复默认设置"
+
+#: crates/mirai/src/preferences_shell.rs crates/mirai/src/window.rs
+#: crates/mirai/src/window_shell.rs
+msgid "Analysis"
+msgstr "分析"
+
+#: crates/mirai/src/preferences_shell.rs crates/mirai/src/window.rs
+#: crates/mirai/src/window_shell.rs
+msgid "Live Analysis"
+msgstr "实时分析"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Used while the board follows the cursor."
+msgstr "用于跟随当前局面的实时分析。"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Whole-Game Analysis"
+msgstr "全盘分析"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Files"
+msgstr "文件"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Analysis Defaults"
+msgstr "分析默认值"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Mode"
+msgstr "模式"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Temperature"
+msgstr "温度"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "0 always plays the best move; higher values add variety"
+msgstr "0 总是下最佳着手；数值越高变化越多"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Resign Threshold"
+msgstr "认输阈值"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Winrate below which the computer considers resigning"
+msgstr "电脑胜率低于此值时考虑认输"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Resign Streak"
+msgstr "认输连续次数"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Consecutive hopeless moves before resigning"
+msgstr "连续多少手判断无望后才认输"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Default Ruleset"
+msgstr "默认规则"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Preselected in New Game, which remembers the last ruleset started"
+msgstr "新对局中预选的规则；开始对局后会记住所用的规则"
+
+#: crates/mirai/src/preferences_shell.rs
+msgctxt "noun"
+msgid "Play"
+msgstr "对局"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Computer Strength"
+msgstr "电脑棋力"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "How much thinking the computer does for each of its moves."
+msgstr "电脑每一手思考多少。"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Behaviour"
+msgstr "行为"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "New Games"
+msgstr "新对局"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Play Defaults"
+msgstr "对局默认值"
+
+#: crates/mirai/src/preferences_shell.rs crates/mirai/src/window.rs
+msgid "Coordinates"
+msgstr "坐标"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Letters and numbers around the board"
+msgstr "棋盘四周的字母和数字"
+
+#: crates/mirai/src/preferences_shell.rs crates/mirai/src/window.rs
+msgid "Move Numbers"
+msgstr "手数"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Number every stone; the last move’s number is red"
+msgstr "为每颗棋子标注手数；最后一手的手数为红色"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Overlay"
+msgstr "叠加显示"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Shade the board by predicted ownership or raw network policy"
+msgstr "按预测的地盘归属或神经网络的原始策略为棋盘着色"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Stone Sounds"
+msgstr "落子音效"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "A click for each move, and falling stones for a capture"
+msgstr "每手一声落子声，提子时伴有棋子落下的声音"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "General"
+msgstr "常规"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "Sound"
+msgstr "声音"
+
+#: crates/mirai/src/preferences_shell.rs
+msgid "General Defaults"
+msgstr "常规默认值"
+
+#: crates/mirai/src/preferences_shell.rs crates/mirai/src/window_shell.rs
+msgid "Preferences"
+msgstr "首选项"
+
 #: crates/mirai/src/prefs.rs
 msgid "No Engine Profiles"
 msgstr "没有引擎配置"
@@ -826,6 +1209,14 @@ msgid "Deleted “{name}”"
 msgstr "已删除“{name}”"
 
 #: crates/mirai/src/prefs.rs
+msgid "Save Profile"
+msgstr "保存配置"
+
+#: crates/mirai/src/prefs.rs
+msgid "The profile could not be saved"
+msgstr "无法保存配置"
+
+#: crates/mirai/src/prefs.rs
 msgid "Not chosen"
 msgstr "未选择"
 
@@ -871,12 +1262,28 @@ msgid_plural "Fastest here: {positions} positions in parallel, {threads} threads
 msgstr[0] "本机最快：并行 {positions} 个局面，每个 {threads} 个线程。按“保存配置”应用。"
 
 #: crates/mirai/src/prefs.rs
+msgid "Tuning KataGo"
+msgstr "正在调优 KataGo"
+
+#: crates/mirai/src/prefs.rs
+msgid "Every setting is timed in its own KataGo, so this takes a few minutes. Your engine stays stopped until the run ends."
+msgstr "每种设置都在单独的 KataGo 中计时，因此需要几分钟。调优结束之前，你的引擎会一直停止。"
+
+#: crates/mirai/src/prefs.rs
+msgid "Starting…"
+msgstr "正在启动…"
+
+#: crates/mirai/src/prefs.rs
+msgid "Waiting for the current engine to let go of the GPU…"
+msgstr "正在等待当前引擎释放 GPU…"
+
+#: crates/mirai/src/prefs.rs
+msgid "Stop Tuning"
+msgstr "停止调优"
+
+#: crates/mirai/src/prefs.rs
 msgid "Edit Local Engine"
 msgstr "编辑本地引擎"
-
-#: crates/mirai/src/prefs.rs crates/mirai/src/preferences.blp
-msgid "Add Local Engine"
-msgstr "添加本地引擎"
 
 #: crates/mirai/src/prefs.rs
 msgid "Select the KataGo Binary"
@@ -964,10 +1371,6 @@ msgstr "请选择分析配置。"
 msgid "Edit Remote Engine"
 msgstr "编辑远程引擎"
 
-#: crates/mirai/src/prefs.rs crates/mirai/src/preferences.blp
-msgid "Add Remote Engine"
-msgstr "添加远程引擎"
-
 #: crates/mirai/src/prefs.rs
 msgid "Enter the server address first."
 msgstr "请先输入服务器地址。"
@@ -976,7 +1379,7 @@ msgstr "请先输入服务器地址。"
 msgid "Checking…"
 msgstr "正在检查…"
 
-#: crates/mirai/src/prefs.rs crates/mirai/src/remote_profile_form.blp
+#: crates/mirai/src/prefs.rs crates/mirai/src/profile_editor.rs
 msgid "Test Connection"
 msgstr "测试连接"
 
@@ -1030,7 +1433,7 @@ msgstr "全部"
 msgid "Analysis settings restored"
 msgstr "已恢复分析设置"
 
-#: crates/mirai/src/prefs.rs crates/mirai/src/window.blp
+#: crates/mirai/src/prefs.rs crates/mirai/src/window_shell.rs
 msgid "Undo"
 msgstr "撤销"
 
@@ -1061,6 +1464,127 @@ msgstr "静音"
 msgid "General settings restored"
 msgstr "已恢复常规设置"
 
+#: crates/mirai/src/profile_editor.rs
+msgid "Name"
+msgstr "名称"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "KataGo Binary"
+msgstr "KataGo 程序"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Neural Network Model"
+msgstr "神经网络模型"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "KataGo"
+msgstr "KataGo"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Both must exist before the profile can be saved."
+msgstr "两者都存在时才能保存配置。"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Analysis Config"
+msgstr "分析配置"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Managed by mirai"
+msgstr "由 mirai 管理"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Custom file"
+msgstr "自定义文件"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Custom Analysis Config"
+msgstr "自定义分析配置"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Configuration"
+msgstr "配置文件"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Positions in Parallel"
+msgstr "并行局面数"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Threads per Position"
+msgstr "每局面线程数"
+
+#: crates/mirai/src/profile_editor.rs
+msgctxt "noun"
+msgid "Search"
+msgstr "搜索"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "GPU Batch Size"
+msgstr "GPU 批大小"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Neural-Net Cache"
+msgstr "神经网络缓存"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Batching and Memory"
+msgstr "批处理与内存"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Tune…"
+msgstr "调优…"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Measure This Machine"
+msgstr "测量本机"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Uses the binary and model chosen above, and stops the running engine while it works."
+msgstr "使用上面选择的程序和模型；运行期间会停止当前的引擎。"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Automatic Tuning"
+msgstr "自动调优"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Times KataGo on this machine at a series of thread settings and fills in the values above. It starts KataGo once per setting, so allow a few minutes."
+msgstr "在本机上以一系列线程设置为 KataGo 计时，并填入上面的数值。每种设置都会单独启动一次 KataGo，请预留几分钟。"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Engine Profile"
+msgstr "引擎配置"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Server Address"
+msgstr "服务器地址"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Token"
+msgstr "令牌"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Engine Name (Optional)"
+msgstr "引擎名称（可选）"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "For example 192.168.1.10, or 192.168.1.10:9678. The port defaults to 9678."
+msgstr "例如 192.168.1.10 或 192.168.1.10:9678。端口默认为 9678。"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Pinned Fingerprint"
+msgstr "已固定指纹"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Certificate"
+msgstr "证书"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "mirai checks the certificate before sending the token. Test the connection and compare the fingerprint with the one mirai-server printed at startup."
+msgstr "mirai 会在发送令牌之前检查证书。请测试连接，并将指纹与 mirai-server 启动时打印的指纹进行比对。"
+
+#: crates/mirai/src/profile_editor.rs
+msgid "Choose a File"
+msgstr "选择文件"
+
 #: crates/mirai/src/widgets/tree.rs crates/mirai/src/window.rs
 msgid "Set as Main Line"
 msgstr "设为主线"
@@ -1073,7 +1597,7 @@ msgstr "删除分支"
 msgid "Black win rate (solid) and Black score lead (dashed) over the main line"
 msgstr "主线上黑方的胜率（实线）和目差（虚线）"
 
-#: crates/mirai/src/window.rs crates/mirai/src/window.blp
+#: crates/mirai/src/window.rs crates/mirai/src/window_shell.rs
 msgid "Hide Sidebar (F9)"
 msgstr "隐藏侧边栏（F9）"
 
@@ -1157,7 +1681,7 @@ msgstr "{black} vs ?"
 msgid "? vs ?"
 msgstr "? vs ?"
 
-#: crates/mirai/src/window.rs crates/mirai/src/window.blp
+#: crates/mirai/src/window.rs crates/mirai/src/window_shell.rs
 msgid "Untitled"
 msgstr "未命名"
 
@@ -1181,7 +1705,7 @@ msgstr "实时分析需要引擎——请在引擎菜单中选择或添加一个
 msgid "Stop Live Analysis (Space)"
 msgstr "停止实时分析（Space）"
 
-#: crates/mirai/src/window.rs crates/mirai/src/window.blp
+#: crates/mirai/src/window.rs crates/mirai/src/window_shell.rs
 msgid "Start Live Analysis (Space)"
 msgstr "开始实时分析（Space）"
 
@@ -1273,6 +1797,22 @@ msgid "Could not save: {error}"
 msgstr "无法保存：{error}"
 
 #: crates/mirai/src/window.rs
+msgid "mirai did not shut down cleanly. An autosaved copy of the game record you were looking at is available."
+msgstr "mirai 未能正常退出。你当时查看的棋谱有一份自动保存的副本。"
+
+#: crates/mirai/src/window.rs
+msgid "Restore the Last Game?"
+msgstr "恢复上次的棋谱？"
+
+#: crates/mirai/src/window.rs
+msgid "Discard"
+msgstr "丢弃"
+
+#: crates/mirai/src/window.rs
+msgid "Restore"
+msgstr "恢复"
+
+#: crates/mirai/src/window.rs
 msgid "No engine to estimate the score with"
 msgstr "没有可用于形势判断的引擎"
 
@@ -1304,19 +1844,19 @@ msgstr "形势判断"
 msgid "Navigation"
 msgstr "导航"
 
-#: crates/mirai/src/window.rs crates/mirai/src/window.blp
+#: crates/mirai/src/window.rs crates/mirai/src/window_shell.rs
 msgid "First Move"
 msgstr "第一手"
 
-#: crates/mirai/src/window.rs crates/mirai/src/window.blp
+#: crates/mirai/src/window.rs crates/mirai/src/window_shell.rs
 msgid "Last Move"
 msgstr "最后一手"
 
-#: crates/mirai/src/window.rs crates/mirai/src/window.blp
+#: crates/mirai/src/window.rs crates/mirai/src/window_shell.rs
 msgid "Previous Move"
 msgstr "上一手"
 
-#: crates/mirai/src/window.rs crates/mirai/src/window.blp
+#: crates/mirai/src/window.rs crates/mirai/src/window_shell.rs
 msgid "Next Move"
 msgstr "下一手"
 
@@ -1328,23 +1868,13 @@ msgstr "后退十手"
 msgid "Forward Ten Moves"
 msgstr "前进十手"
 
-#: crates/mirai/src/window.rs crates/mirai/src/window.blp
+#: crates/mirai/src/window.rs crates/mirai/src/window_shell.rs
 msgid "Previous Variation"
 msgstr "上一个变化"
 
-#: crates/mirai/src/window.rs crates/mirai/src/window.blp
+#: crates/mirai/src/window.rs crates/mirai/src/window_shell.rs
 msgid "Next Variation"
 msgstr "下一个变化"
-
-#: crates/mirai/src/window.rs crates/mirai/src/preferences.blp
-#: crates/mirai/src/window.blp
-msgid "Analysis"
-msgstr "分析"
-
-#: crates/mirai/src/window.rs crates/mirai/src/preferences.blp
-#: crates/mirai/src/window.blp
-msgid "Live Analysis"
-msgstr "实时分析"
 
 #: crates/mirai/src/window.rs
 msgid "Analyse Whole Game"
@@ -1362,15 +1892,7 @@ msgstr "地盘图"
 msgid "Policy Overlay"
 msgstr "策略图"
 
-#: crates/mirai/src/window.rs crates/mirai/src/preferences.blp
-msgid "Coordinates"
-msgstr "坐标"
-
-#: crates/mirai/src/window.rs crates/mirai/src/preferences.blp
-msgid "Move Numbers"
-msgstr "手数"
-
-#: crates/mirai/src/window.rs crates/mirai/src/window.blp
+#: crates/mirai/src/window.rs crates/mirai/src/window_shell.rs
 msgid "Sidebar"
 msgstr "侧边栏"
 
@@ -1382,11 +1904,7 @@ msgstr "胜率图"
 msgid "Game"
 msgstr "对局"
 
-#: crates/mirai/src/window.rs crates/mirai/src/new_game.blp
-msgid "New Game"
-msgstr "新对局"
-
-#: crates/mirai/src/window.rs crates/mirai/src/window.blp
+#: crates/mirai/src/window.rs crates/mirai/src/window_shell.rs
 msgctxt "verb"
 msgid "Pass"
 msgstr "停一手"
@@ -1395,11 +1913,11 @@ msgstr "停一手"
 msgid "Undo Last Edit"
 msgstr "撤销上一次编辑"
 
-#: crates/mirai/src/window.rs crates/mirai/src/window.blp
+#: crates/mirai/src/window.rs crates/mirai/src/window_shell.rs
 msgid "Redo"
 msgstr "重做"
 
-#: crates/mirai/src/window.rs crates/mirai/src/window.blp
+#: crates/mirai/src/window.rs crates/mirai/src/window_shell.rs
 msgid "Switch Side to Play"
 msgstr "切换行棋方"
 
@@ -1407,11 +1925,6 @@ msgstr "切换行棋方"
 msgctxt "noun"
 msgid "File"
 msgstr "文件"
-
-#: crates/mirai/src/window.rs crates/mirai/src/kifu_picker.blp
-#: crates/mirai/src/window.blp
-msgid "Download Game Record"
-msgstr "下载棋谱"
 
 #: crates/mirai/src/window.rs
 msgid "Clear Board"
@@ -1473,777 +1986,255 @@ msgstr[0] "已粘贴一局 {moves} 手的棋谱"
 msgid "The clipboard holds no game record"
 msgstr "剪贴板中没有棋谱"
 
-#: crates/mirai/src/kifu_picker.blp crates/mirai/src/remote_profile_form.blp
-msgid "Server"
-msgstr "服务器"
-
-#: crates/mirai/src/kifu_picker.blp
-msgctxt "verb"
-msgid "Search"
-msgstr "搜索"
-
-#: crates/mirai/src/kifu_picker.blp
-msgid "Request failed"
-msgstr "请求失败"
-
-#: crates/mirai/src/kifu_picker.blp
-msgid "Recent Searches"
-msgstr "最近搜索"
-
-#: crates/mirai/src/kifu_picker.blp
-msgid "Recent Games"
-msgstr "最近对局"
-
-#: crates/mirai/src/kifu_picker.blp
-msgid "Search Again"
-msgstr "重新搜索"
-
-#: crates/mirai/src/kifu_picker.blp
-msgid "Matching Players"
-msgstr "匹配的棋手"
-
-#: crates/mirai/src/kifu_picker.blp
-msgid "Several Players Match"
-msgstr "有多位棋手匹配"
-
-#: crates/mirai/src/kifu_picker.blp
-msgid "Choose whose games to browse, or search an account number."
-msgstr "选择要浏览谁的对局，或改用账号搜索。"
-
-#: crates/mirai/src/kifu_picker.blp
-msgid "Previous Page"
-msgstr "上一页"
-
-#: crates/mirai/src/kifu_picker.blp
-msgid "Next Page"
-msgstr "下一页"
-
-#. Translators: a text mark on an intersection.
-#: crates/mirai/src/label_editor.blp
-msgctxt "mark"
-msgid "Edit Label"
-msgstr "编辑标签"
-
-#. Translators: a text mark on an intersection.
-#: crates/mirai/src/label_editor.blp
-msgctxt "mark"
-msgid "Apply Label"
-msgstr "应用标签"
-
-#. Translators: a text mark on an intersection.
-#: crates/mirai/src/label_editor.blp
-msgctxt "mark"
-msgid "Label text"
-msgstr "标签文字"
-
-#. Translators: a text mark on an intersection.
-#: crates/mirai/src/label_editor.blp
-msgid "Leave empty to remove the label"
-msgstr "留空则删除标签"
-
-#: crates/mirai/src/local_profile_form.blp
-#: crates/mirai/src/remote_profile_form.blp
-msgid "Engine Profile"
-msgstr "引擎配置"
-
-#: crates/mirai/src/local_profile_form.blp
-#: crates/mirai/src/remote_profile_form.blp
-msgid "Name"
-msgstr "名称"
-
-#: crates/mirai/src/local_profile_form.blp
-msgid "KataGo"
-msgstr "KataGo"
-
-#: crates/mirai/src/local_profile_form.blp
-msgid "Both must exist before the profile can be saved."
-msgstr "两者都存在时才能保存配置。"
-
-#: crates/mirai/src/local_profile_form.blp
-msgid "KataGo Binary"
-msgstr "KataGo 程序"
-
-#: crates/mirai/src/local_profile_form.blp
-msgid "Choose a File"
-msgstr "选择文件"
-
-#: crates/mirai/src/local_profile_form.blp
-msgid "Neural Network Model"
-msgstr "神经网络模型"
-
-#: crates/mirai/src/local_profile_form.blp
-msgid "Configuration"
-msgstr "配置文件"
-
-#: crates/mirai/src/local_profile_form.blp
-msgid "Analysis Config"
-msgstr "分析配置"
-
-#: crates/mirai/src/local_profile_form.blp
-msgid "Managed by mirai"
-msgstr "由 mirai 管理"
-
-#: crates/mirai/src/local_profile_form.blp
-msgid "Custom file"
-msgstr "自定义文件"
-
-#: crates/mirai/src/local_profile_form.blp
-msgid "Custom Analysis Config"
-msgstr "自定义分析配置"
-
-#. Translators: noun, the search-thread settings, not the verb.
-#: crates/mirai/src/local_profile_form.blp
-msgctxt "noun"
-msgid "Search"
-msgstr "搜索"
-
-#: crates/mirai/src/local_profile_form.blp
-msgid "Positions in Parallel"
-msgstr "并行局面数"
-
-#: crates/mirai/src/local_profile_form.blp
-msgid "Threads per Position"
-msgstr "每局面线程数"
-
-#: crates/mirai/src/local_profile_form.blp
-msgid "Batching and Memory"
-msgstr "批处理与内存"
-
-#: crates/mirai/src/local_profile_form.blp
-msgid "GPU Batch Size"
-msgstr "GPU 批大小"
-
-#: crates/mirai/src/local_profile_form.blp
-msgid "Neural-Net Cache"
-msgstr "神经网络缓存"
-
-#: crates/mirai/src/local_profile_form.blp
-msgid "Automatic Tuning"
-msgstr "自动调优"
-
-#: crates/mirai/src/local_profile_form.blp
-msgid "Times KataGo on this machine at a series of thread settings and fills in the values above. It starts KataGo once per setting, so allow a few minutes."
-msgstr "在本机上以一系列线程设置为 KataGo 计时，并填入上面的数值。每种设置都会单独启动一次 KataGo，请预留几分钟。"
-
-#: crates/mirai/src/local_profile_form.blp
-msgid "Measure This Machine"
-msgstr "测量本机"
-
-#: crates/mirai/src/local_profile_form.blp
-msgid "Uses the binary and model chosen above, and stops the running engine while it works."
-msgstr "使用上面选择的程序和模型；运行期间会停止当前的引擎。"
-
-#: crates/mirai/src/local_profile_form.blp
-msgid "Tune…"
-msgstr "调优…"
-
-#: crates/mirai/src/new_game.blp
-msgid "Start Game"
-msgstr "开始对局"
-
-#: crates/mirai/src/new_game.blp crates/mirai/src/preferences.blp
-msgid "Board"
-msgstr "棋盘"
-
-#: crates/mirai/src/new_game.blp
-msgid "Size"
-msgstr "大小"
-
-#: crates/mirai/src/new_game.blp
-msgid "Custom Size"
-msgstr "自定义大小"
-
-#: crates/mirai/src/new_game.blp
-msgid "Handicap"
-msgstr "让子"
-
-#. Translators: compensation points given to White.
-#: crates/mirai/src/new_game.blp
-msgid "Komi"
-msgstr "贴目"
-
-#: crates/mirai/src/new_game.blp
-msgid "Rules"
-msgstr "规则"
-
-#: crates/mirai/src/new_game.blp
-msgid "Players"
-msgstr "对局者"
-
-#. Translators: which colour the human plays.
-#: crates/mirai/src/new_game.blp
-msgid "You Play"
-msgstr "你执"
-
-#: crates/mirai/src/new_game.blp
-msgid "Time Control"
-msgstr "计时"
-
-#: crates/mirai/src/new_game.blp
-msgctxt "time-control"
-msgid "Type"
-msgstr "类型"
-
-#: crates/mirai/src/new_game.blp
-msgid "Main Time (Minutes)"
-msgstr "基本用时（分钟）"
-
-#. Translators: Japanese overtime, a fixed number of periods.
-#: crates/mirai/src/new_game.blp
-msgid "Byo-yomi Periods"
-msgstr "读秒次数"
-
-#: crates/mirai/src/new_game.blp
-msgid "Seconds per Period"
-msgstr "每次秒数"
-
-#: crates/mirai/src/new_game.blp
-msgid "Increment (Seconds)"
-msgstr "每手加秒（秒）"
-
-#: crates/mirai/src/new_game.blp
-msgid "Engine Strength"
-msgstr "引擎棋力"
-
-#: crates/mirai/src/new_game.blp
-msgctxt "strength"
-msgid "Mode"
-msgstr "模式"
-
-#: crates/mirai/src/new_game.blp crates/mirai/src/preferences.blp
-msgid "Visits per Move"
-msgstr "每手计算量"
-
-#: crates/mirai/src/new_game.blp crates/mirai/src/preferences.blp
-msgid "Seconds per Move"
-msgstr "每手秒数"
-
-#. Translators: a KataGo human-SL profile name, such as rank_5k.
-#: crates/mirai/src/new_game.blp crates/mirai/src/preferences.blp
-msgid "Human Model Profile"
-msgstr "拟人档位"
-
-#: crates/mirai/src/panels/analysis.blp
-msgid "Analyse Position"
-msgstr "分析局面"
-
-#: crates/mirai/src/panels/analysis.blp
-msgid "Analyse this position and each one you move to (Space)"
-msgstr "分析当前局面，以及之后切换到的每个局面（Space）"
-
-#: crates/mirai/src/panels/analysis.blp
-msgid "Analyse every move of the main line (Ctrl+A)"
-msgstr "分析主线的每一手（Ctrl+A）"
-
-#: crates/mirai/src/panels/analysis.blp crates/mirai/src/window.blp
-msgid "_Loss and Prior Columns"
-msgstr "损失与先验列(_L)"
-
-#: crates/mirai/src/preferences.blp crates/mirai/src/window.blp
-msgid "Preferences"
-msgstr "首选项"
-
-#: crates/mirai/src/preferences.blp
-msgid "Engines"
-msgstr "引擎"
-
-#: crates/mirai/src/preferences.blp
-msgid "Engine Profiles"
-msgstr "引擎配置"
-
-#: crates/mirai/src/preferences.blp
-msgid "The selected profile provides analysis and plays as the computer."
-msgstr "选中的配置负责分析，并在对局中作为电脑一方。"
-
-#: crates/mirai/src/preferences.blp
-msgid "Add Profile"
-msgstr "添加配置"
-
-#: crates/mirai/src/preferences.blp
-msgid "Used while the board follows the cursor."
-msgstr "用于跟随当前局面的实时分析。"
-
-#: crates/mirai/src/preferences.blp
-msgid "Maximum Visits"
-msgstr "最大计算量"
-
-#: crates/mirai/src/preferences.blp
-msgid "Where a live search stops thinking"
-msgstr "实时搜索达到此计算量后停止"
-
-#: crates/mirai/src/preferences.blp
-msgid "Report Interval"
-msgstr "报告间隔"
-
-#: crates/mirai/src/preferences.blp
-msgid "Milliseconds between updates from the engine"
-msgstr "引擎两次更新之间的毫秒数"
-
-#: crates/mirai/src/preferences.blp
-msgid "Suggestions Shown"
-msgstr "显示候选数"
-
-#. Translators: “All” is the word the suggestions row shows instead of 0, meaning every candidate.
-#: crates/mirai/src/preferences.blp
-msgid "Candidate moves kept on the board and in the panel — “All” keeps every move the engine searched"
-msgstr "棋盘和面板上保留的候选手数量——“全部”保留引擎搜索过的每一手"
-
-#: crates/mirai/src/preferences.blp
-msgid "Whole-Game Analysis"
-msgstr "全盘分析"
-
-#: crates/mirai/src/preferences.blp
-msgid "Budget for each position when analysing a whole game"
-msgstr "全盘分析时每个局面的计算量"
-
-#: crates/mirai/src/preferences.blp
-msgid "Analyse on Open"
-msgstr "打开时分析"
-
-#: crates/mirai/src/preferences.blp
-msgid "Sweep the main line when a record is opened or downloaded"
-msgstr "打开或下载棋谱时自动分析主线"
-
-#: crates/mirai/src/preferences.blp
-msgid "Files"
-msgstr "文件"
-
-#: crates/mirai/src/preferences.blp
-msgid "Save Analysis in SGF"
-msgstr "在 SGF 中保存分析"
-
-#: crates/mirai/src/preferences.blp
-msgid "Write winrates and candidate moves alongside the moves"
-msgstr "将胜率和候选手随着手一起写入文件"
-
-#: crates/mirai/src/preferences.blp
-msgid "Analysis Defaults"
-msgstr "分析默认值"
-
-#: crates/mirai/src/preferences.blp
-msgid "Restore Defaults"
-msgstr "恢复默认设置"
-
-#: crates/mirai/src/preferences.blp
-msgctxt "noun"
-msgid "Play"
-msgstr "对局"
-
-#: crates/mirai/src/preferences.blp
-msgid "Computer Strength"
-msgstr "电脑棋力"
-
-#: crates/mirai/src/preferences.blp
-msgid "How much thinking the computer does for each of its moves."
-msgstr "电脑每一手思考多少。"
-
-#: crates/mirai/src/preferences.blp
-msgid "Mode"
-msgstr "模式"
-
-#: crates/mirai/src/preferences.blp
-msgid "Behaviour"
-msgstr "行为"
-
-#: crates/mirai/src/preferences.blp
-msgid "Temperature"
-msgstr "温度"
-
-#: crates/mirai/src/preferences.blp
-msgid "0 always plays the best move; higher values add variety"
-msgstr "0 总是下最佳着手；数值越高变化越多"
-
-#: crates/mirai/src/preferences.blp
-msgid "Resign Threshold"
-msgstr "认输阈值"
-
-#: crates/mirai/src/preferences.blp
-msgid "Winrate below which the computer considers resigning"
-msgstr "电脑胜率低于此值时考虑认输"
-
-#: crates/mirai/src/preferences.blp
-msgid "Resign Streak"
-msgstr "认输连续次数"
-
-#: crates/mirai/src/preferences.blp
-msgid "Consecutive hopeless moves before resigning"
-msgstr "连续多少手判断无望后才认输"
-
-#: crates/mirai/src/preferences.blp
-msgid "New Games"
-msgstr "新对局"
-
-#: crates/mirai/src/preferences.blp
-msgid "Default Ruleset"
-msgstr "默认规则"
-
-#: crates/mirai/src/preferences.blp
-msgid "Preselected in New Game, which remembers the last ruleset started"
-msgstr "新对局中预选的规则；开始对局后会记住所用的规则"
-
-#: crates/mirai/src/preferences.blp
-msgid "Play Defaults"
-msgstr "对局默认值"
-
-#: crates/mirai/src/preferences.blp
-msgid "General"
-msgstr "常规"
-
-#: crates/mirai/src/preferences.blp
-msgid "Letters and numbers around the board"
-msgstr "棋盘四周的字母和数字"
-
-#: crates/mirai/src/preferences.blp
-msgid "Number every stone; the last move’s number is red"
-msgstr "为每颗棋子标注手数；最后一手的手数为红色"
-
-#: crates/mirai/src/preferences.blp
-msgid "Overlay"
-msgstr "叠加显示"
-
-#: crates/mirai/src/preferences.blp
-msgid "Shade the board by predicted ownership or raw network policy"
-msgstr "按预测的地盘归属或神经网络的原始策略为棋盘着色"
-
-#: crates/mirai/src/preferences.blp
-msgid "Sound"
-msgstr "声音"
-
-#: crates/mirai/src/preferences.blp
-msgid "Stone Sounds"
-msgstr "落子音效"
-
-#: crates/mirai/src/preferences.blp
-msgid "A click for each move, and falling stones for a capture"
-msgstr "每手一声落子声，提子时伴有棋子落下的声音"
-
-#: crates/mirai/src/preferences.blp
-msgid "General Defaults"
-msgstr "常规默认值"
-
-#: crates/mirai/src/profile_editor.blp
-msgid "Save Profile"
-msgstr "保存配置"
-
-#: crates/mirai/src/profile_editor.blp
-msgid "The profile could not be saved"
-msgstr "无法保存配置"
-
-#: crates/mirai/src/remote_profile_form.blp
-msgid "For example 192.168.1.10, or 192.168.1.10:9678. The port defaults to 9678."
-msgstr "例如 192.168.1.10 或 192.168.1.10:9678。端口默认为 9678。"
-
-#: crates/mirai/src/remote_profile_form.blp
-msgid "Server Address"
-msgstr "服务器地址"
-
-#: crates/mirai/src/remote_profile_form.blp
-msgid "Token"
-msgstr "令牌"
-
-#: crates/mirai/src/remote_profile_form.blp
-msgid "Engine Name (Optional)"
-msgstr "引擎名称（可选）"
-
-#: crates/mirai/src/remote_profile_form.blp
-msgid "Certificate"
-msgstr "证书"
-
-#: crates/mirai/src/remote_profile_form.blp
-msgid "mirai checks the certificate before sending the token. Test the connection and compare the fingerprint with the one mirai-server printed at startup."
-msgstr "mirai 会在发送令牌之前检查证书。请测试连接，并将指纹与 mirai-server 启动时打印的指纹进行比对。"
-
-#: crates/mirai/src/remote_profile_form.blp
-msgid "Pinned Fingerprint"
-msgstr "已固定指纹"
-
-#: crates/mirai/src/restore_dialog.blp
-msgid "Restore the Last Game?"
-msgstr "恢复上次的棋谱？"
-
-#. Translators: mirai is the application name; do not translate it.
-#: crates/mirai/src/restore_dialog.blp
-msgid "mirai did not shut down cleanly. An autosaved copy of the game record you were looking at is available."
-msgstr "mirai 未能正常退出。你当时查看的棋谱有一份自动保存的副本。"
-
-#: crates/mirai/src/restore_dialog.blp
-msgid "Discard"
-msgstr "丢弃"
-
-#: crates/mirai/src/restore_dialog.blp
-msgid "Restore"
-msgstr "恢复"
-
-#: crates/mirai/src/tuning_dialog.blp
-msgid "Tuning KataGo"
-msgstr "正在调优 KataGo"
-
-#: crates/mirai/src/tuning_dialog.blp
-msgid "Every setting is timed in its own KataGo, so this takes a few minutes. Your engine stays stopped until the run ends."
-msgstr "每种设置都在单独的 KataGo 中计时，因此需要几分钟。调优结束之前，你的引擎会一直停止。"
-
-#: crates/mirai/src/tuning_dialog.blp
-msgid "Starting…"
-msgstr "正在启动…"
-
-#: crates/mirai/src/tuning_dialog.blp
-msgid "Waiting for the current engine to let go of the GPU…"
-msgstr "正在等待当前引擎释放 GPU…"
-
-#: crates/mirai/src/tuning_dialog.blp
-msgid "Stop Tuning"
-msgstr "停止调优"
-
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Download a Public Game Record (Ctrl+Shift+O)"
 msgstr "下载公开棋谱（Ctrl+Shift+O）"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Open a File or Paste SGF"
 msgstr "打开文件或粘贴 SGF"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "New Game (Ctrl+N)"
 msgstr "新对局（Ctrl+N）"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "New Game…"
 msgstr "新对局…"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Analysis Engine"
 msgstr "分析引擎"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Main Menu"
 msgstr "主菜单"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Edit History"
 msgstr "编辑历史"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Undo the Last Edit (Ctrl+Z)"
 msgstr "撤销上一次编辑（Ctrl+Z）"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Redo the Last Edit (Ctrl+Shift+Z)"
 msgstr "重做上一次编辑（Ctrl+Shift+Z）"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Switch Side to Play (T)"
 msgstr "切换行棋方（T）"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Stone Tools"
 msgstr "棋子工具"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgctxt "verb"
 msgid "Play"
 msgstr "落子"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Play — Left-Click to Play, Right-Click to Take Back"
 msgstr "落子——左键落子，右键悔棋"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Setup Black"
 msgstr "摆黑子"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Setup Black — Left-Click Black, Right-Click White; Matching Color Removes the Stone"
 msgstr "摆黑子——左键摆黑子，右键摆白子；点击同色棋子则将其移除"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Setup White"
 msgstr "摆白子"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Setup White — Left-Click White, Right-Click Black; Matching Color Removes the Stone"
 msgstr "摆白子——左键摆白子，右键摆黑子；点击同色棋子则将其移除"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Marks"
 msgstr "标记"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgctxt "mark"
 msgid "Triangle"
 msgstr "三角"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgctxt "mark"
 msgid "Square"
 msgstr "方块"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgctxt "mark"
 msgid "Circle"
 msgstr "圆圈"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgctxt "mark"
 msgid "Cross"
 msgstr "叉号"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgctxt "mark"
 msgid "Label"
 msgstr "标签"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Erase Mark"
 msgstr "擦除标记"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "First Move (Home)"
 msgstr "第一手（Home）"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Previous Move (Left)"
 msgstr "上一手（←）"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Next Move (Right)"
 msgstr "下一手（→）"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Last Move (End)"
 msgstr "最后一手（End）"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Previous Variation (Up)"
 msgstr "上一个变化（↑）"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Next Variation (Down)"
 msgstr "下一个变化（↓）"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Move Number"
 msgstr "手数"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Editing Tools"
 msgstr "编辑工具"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Undo the Last Turn (Ctrl+Z)"
 msgstr "悔棋（Ctrl+Z）"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Pass This Turn (P)"
 msgstr "停一手（P）"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Retry"
 msgstr "重试"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Ask the Engine to Move Again"
 msgstr "让引擎重新落子"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Resign"
 msgstr "认输"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Resign the Current Game"
 msgstr "认输本局"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "No Engine Configured"
 msgstr "尚未配置引擎"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Add a local KataGo or a remote mirai-server in Preferences."
 msgstr "请在首选项中添加本地 KataGo 或远程 mirai-server。"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Moves"
 msgstr "棋谱树"
 
-#. Translators: the sidebar tab for the note on this position, not the verb.
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgctxt "noun"
 msgid "Comment"
 msgstr "注释"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "_Open File…"
 msgstr "打开文件(_O)…"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "_Paste SGF"
 msgstr "粘贴 SGF(_P)"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "_Clear Board"
 msgstr "清空棋盘(_C)"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "_Save"
 msgstr "保存(_S)"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Save _As…"
 msgstr "另存为(_A)…"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "_Copy SGF"
 msgstr "复制 SGF(_C)"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "Analyse _Game"
 msgstr "全盘分析(_G)"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "_Estimate Score"
 msgstr "形势判断(_E)"
 
-#: crates/mirai/src/window.blp
-msgid "_View"
-msgstr "视图(_V)"
-
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "_Sidebar"
 msgstr "侧边栏(_S)"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "_Win-Rate Graph"
 msgstr "胜率图(_W)"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "_Editing Tools"
 msgstr "编辑工具(_E)"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "_Coordinates"
 msgstr "坐标(_C)"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "_Move Numbers"
 msgstr "手数(_M)"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "_Ownership Overlay"
 msgstr "地盘图(_O)"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "_Policy Overlay"
 msgstr "策略图(_P)"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
+msgid "_View"
+msgstr "视图(_V)"
+
+#: crates/mirai/src/window_shell.rs
 msgid "_Preferences"
 msgstr "首选项(_P)"
 
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "_Keyboard Shortcuts"
 msgstr "键盘快捷键(_K)"
 
 #. Translators: mirai is the application name; do not translate it.
-#: crates/mirai/src/window.blp
+#: crates/mirai/src/window_shell.rs
 msgid "_About mirai"
 msgstr "关于 mirai(_A)"
 

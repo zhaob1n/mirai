@@ -2,10 +2,9 @@
 // Copyright (C) 2026 Huang Zhaobin
 //! Translation through gettext, the way GNOME applications do it.
 //!
-//! [`init`] binds the `mirai` catalogue before anything is shown. Lookups go through GLib's
-//! `g_dgettext` family, the same path GtkBuilder takes for the Blueprint templates'
-//! `_("…")` strings, so a language mirai has no catalogue for leaves GTK's own strings
-//! untranslated too instead of mixing languages in one window.
+//! [`init`] binds the `mirai` catalogue before anything is shown. A language mirai has no
+//! catalogue for leaves GTK's own strings untranslated too, rather than mixing languages
+//! in one window.
 //!
 //! Every function here is an `xgettext` keyword (`tools/i18n/update-po.sh`). A string that
 //! takes values uses a named `{placeholder}` and a `_f` function, never `format!` over a
