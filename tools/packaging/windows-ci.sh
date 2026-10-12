@@ -262,7 +262,9 @@ use_prefix_toolchain() {
             *) die "$tool resolved to $path, want $bin" ;;
         esac
     done
-    host=$(rustc -vV | awk '/^host:/{print $2; exit}')
+    # Read to the end: an early-exiting reader closes the pipe, and rustc panics on the
+    # write with exit code 101, which pipefail turns into a failed run.
+    host=$(rustc -vV | awk '/^host:/ { host = $2 } END { print host }')
     [[ $host == x86_64-pc-windows-gnu ]] ||
         die "rustc host is ${host:-unknown}, want x86_64-pc-windows-gnu"
     # Match windows-release.py, or its explicit tool paths dirty C build scripts

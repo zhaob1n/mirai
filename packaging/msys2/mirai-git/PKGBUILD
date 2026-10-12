@@ -69,7 +69,7 @@ _require_ucrt64_rust() {
     echo "CLANG64's rustc is x86_64-pc-windows-gnullvm. Do not use rustup." >&2
     exit 1
   fi
-  if ! rustc -vV | grep -q MSYS2; then
+  if ! rustc -vV | grep MSYS2 >/dev/null; then
     echo "rustc is not MSYS2's toolchain. Install ${MINGW_PACKAGE_PREFIX}-rust in a UCRT64 shell." >&2
     exit 1
   fi
