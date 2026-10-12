@@ -87,6 +87,14 @@ For stone sounds, install GStreamer's good plugins (`gst-plugins-good` on Arch,
 `gstreamer1.0-plugins-good` on Debian/Ubuntu, `gstreamer1-plugins-good` on Fedora),
 which GTK plays audio through; without them mirai runs silently.
 
+### Windows installer
+
+The [Windows release workflow](.github/workflows/windows-release.yml) produces
+`mirai-VERSION-windows-x86_64-setup.exe`. When attached to a GitHub release, it installs
+per user without MSYS2 or administrator rights; GTK and its runtime are included.
+KataGo and its model are separate. The installer is unsigned, so Windows may show a
+SmartScreen warning. Uninstall leaves settings and game records untouched.
+
 <a id="windows-msys2-ucrt64"></a>
 
 ### Windows (MSYS2 UCRT64)
@@ -109,12 +117,15 @@ makepkg-mingw -si
 package requires GTK 4.22 and libadwaita 1.9, the same floor as a source build. KataGo and its
 model are not in the package. For stone sounds, install
 `mingw-w64-ucrt-x86_64-gst-plugins-good` (WAV decoding) and
-`mingw-w64-ucrt-x86_64-gst-plugins-bad` (WASAPI2 output).
+`mingw-w64-ucrt-x86_64-gst-plugins-bad` (WASAPI2 output). The installer includes both
+required plugin subsets.
 
 Expect stutter, and do not treat a Wine run as a Windows test. GTK's Windows backend is less
 mature than its Linux ones: its GPU renderers draw a black band around every window, so GTK
 4.24 draws with Cairo on the CPU, and scrolling, resizing and animation can hitch. That is
-not fixed.
+not fixed. Native Windows CI covers the suite, installation/runtime/uninstall and an English
+GUI screenshot. Desktop GPU performance, Chinese text rendering and audio-device output
+remain unverified.
 
 From a checkout, with the package's build dependencies installed and `/ucrt64/bin`
 ahead of any rustup:

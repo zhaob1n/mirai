@@ -165,6 +165,89 @@ Without `MIRAI_BIN_DIR`, the path is `$CARGO_TARGET_DIR/$CARGO_BUILD_TARGET/$MIR
 when `CARGO_BUILD_TARGET` is set, else `$CARGO_TARGET_DIR/$MIRAI_PROFILE` (`release` by default).
 The recipes never build.
 
+CI sources each PKGBUILD in its own subshell with
+`MINGW_PACKAGE_PREFIX=mingw-w64-ucrt-x86_64` and installs the union of top-level `depends`
+and `makedepends`, preserving version constraints. `git` is the MSYS package. Release-only
+additions are Python, NSIS, icoutils and librsvg for the installer, plus
+`gst-plugins-good` and `gst-plugins-bad` for the stone-sound subset it bundles.
+
+`windows-ci.sh packages` prints that list without requiring an MSYS2 shell, so the
+workflow passes it to `setup-msys2`'s `install` input. Dependencies installed later in a
+separate script would miss the action's package cache. Its
+[implementation](https://github.com/msys2/setup-msys2/blob/ec48f7c5447b3140e2b088413ae3a55687bccb6e/index.js)
+caches `var/cache/pacman/pkg`, not the mutable installation. `release: true` starts from
+a fresh installer; `update: true` performs the core upgrade, restarts the MSYS2 runtime,
+then completes `pacman -Syuu` on every run, even after a cache hit.
+
+Cargo's registry/git downloads and release build outputs have their own cache. The key
+includes the installed `pacman -Q` package versions, Cargo manifests/lockfile,
+configuration and commit; fallback restores stay within the same SDK and dependency
+configuration. `CARGO_HOME` is isolated in the runner's temporary directory;
+credentials, `target/dist` and `target/resources` are not cached. Incremental outputs are
+disabled. Cache save runs even after a build/test failure, unless cancelled, so a fix can
+reuse completed dependency builds; release artifacts are uploaded only after success.
+Tests and packaging use the same explicit `RUSTC`, `CC`, `CXX`, `AR` and `PKG_CONFIG`
+paths. Switching between unset and explicit values dirties the C build scripts and
+rebuilds GTK/ring dependencies despite a cache hit.
+
+### Windows release
+
+`.github/workflows/windows-release.yml` runs on a native `windows-latest` UCRT64 runner:
+`cargo test --release`, the installer, then an installed release GUI screenshot and an
+installed-runtime/uninstall smoke. Everything is built in the release profile only.
+`workflow_dispatch` uploads Actions artifacts only. A `vVERSION` tag matching
+`[workspace.package].version` (optionally with a prerelease suffix) also attaches the
+installer to the GitHub release, creating the release if missing. Existing assets are
+preserved; only the matching Windows installer is replaced. The build job has read-only
+permissions; only the separate publish job receives a write token.
+
+`tools/packaging/windows-ci.sh` is the runner entry point.
+`tools/packaging/windows-release.py` must run under UCRT64's native Python and takes every
+tool from the prefix's `bin/`. It builds the checked-out source, stages through
+`just install`, resolves runtime DLLs from UCRT64, and invokes
+`packaging/windows/installer.nsi`:
+
+```sh
+python tools/packaging/windows-release.py --prefix "$(cygpath -m "$MINGW_PREFIX")" --target-dir target --version 0.1.0
+```
+
+The applications are cleaned before linking so they pick up the regenerated Windows
+version/icon resources; dependency builds stay cached. NSIS inputs use Windows
+backslashes: MSYS2 Python's canonical `D:/…` paths open in Python but fail NSIS 3.13's
+`!include`/`File` lookup.
+
+The output is `target/dist/mirai-VERSION-windows-x86_64-setup.exe`, not a portable zip.
+The runtime is self-contained, but KataGo and its models are not bundled.
+The installer is per-user and unsigned. Its uninstaller has a compiled-in owned-file list.
+Upgrade requires the registered installation path and runs that version's uninstaller;
+it never trusts a mutable manifest to choose deletion paths. Unrelated files and
+application settings are not installer-owned.
+Runtime copyright files come from the owning pacman packages. Shared, platform-neutral
+texts in `packaging/licenses/` cover packages that omit them; GPL 3 reuses the root
+`LICENSE`. No platform keeps its own copy. Unknown omissions fail the stage.
+The runtime subset is deliberate:
+
+- GIO ships GnuTLS and libproxy modules, their import closures, and a cache naming both.
+  TLS alone makes HTTPS work but leaves libsoup's default resolver returning `direct://`,
+  ignoring proxy settings.
+- The scanner's DLL imports live only in `bin/`.
+  [GStreamer's Win32 loader](https://gitlab.freedesktop.org/gstreamer/gstreamer/-/blob/1.28.7/subprojects/gstreamer/gst/gstpluginloader-win32.c)
+  prepends its own DLL directory to the scanner child's `PATH`.
+- No freedesktop MIME database or its catalogue:
+  [Win32 GIO content types](https://gitlab.gnome.org/GNOME/glib/-/blob/2.90.0/gio/gcontenttype-win32.c)
+  use the registry, and the SGF chooser filters by suffix.
+- Pixbuf retains PNG, JPEG, TIFF and SVG fallback, with a cache containing only those
+  loaders. Keep both complete icon themes; a source-only icon-name allowlist misses
+  GTK/libadwaita controls and fallbacks.
+- The staged hicolor `index.theme` lists `scalable/actions`. GTK walks that directory
+  list for embedded resource icons too; without it every custom edit-bar icon falls back
+  to `image-missing`.
+- Audio bundles WASAPI2, the sink Windows uses, plus DirectSound as a fallback, and fails
+  the stage if either is missing. Only those plugins and their import closures come from
+  `gst-plugins-bad`/`-good`.
+- Emoji annotations follow `po/LINGUAS` (currently `zh.gresource`); GTK embeds English.
+  Other system languages fall back to English emoji names, not missing glyphs.
+
 ### What is not claimed
 
 GTK's Windows backend is the limitation recorded when an earlier port was reverted, and it
@@ -173,5 +256,7 @@ every window with its GPU renderers (gtk#7567). GTK 4.24, which UCRT64 ships, av
 by drawing with Cairo on the CPU, and scrolling, resizing and animation can stutter. mirai
 picks no renderer.
 
-Wine is not a Windows test: it rejects the socket option quinn sets (`WSAEOPNOTSUPP`
-10045), so `mirai-server` networking does not work there.
+CI runs on a hosted Windows runner with no sound device or physical GPU. Desktop GPU
+performance, Chinese text rendering and audible output on real hardware are not
+established by it. Wine is not a substitute either: it rejects the socket option quinn
+sets (`WSAEOPNOTSUPP` 10045), so `mirai-server` networking does not work there.

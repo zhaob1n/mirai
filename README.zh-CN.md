@@ -61,6 +61,13 @@ sudo just uninstall      # 同上
 
 如需落子与吃子音效，还要安装 GStreamer 的 good 插件（Arch 上为 `gst-plugins-good`，Debian/Ubuntu 上为 `gstreamer1.0-plugins-good`，Fedora 上为 `gstreamer1-plugins-good`），GTK 通过它播放声音；缺少时 mirai 可以正常运行，只是没有声音。
 
+### Windows 安装包
+
+[Windows release workflow](.github/workflows/windows-release.yml) 会生成
+`mirai-VERSION-windows-x86_64-setup.exe`。发布到 GitHub release 后，可按用户安装，无需
+MSYS2 或管理员权限；已包含 GTK 及其运行库。KataGo 和模型需另行准备。
+安装包未签名，Windows 可能显示 SmartScreen 警告。卸载保留设置和棋谱。
+
 <a id="windows-msys2-ucrt64"></a>
 
 ### Windows（MSYS2 UCRT64）
@@ -74,9 +81,9 @@ pacman -S --needed git
 makepkg-mingw -si
 ```
 
-`makepkg-mingw` 会安装构建依赖，并把软件包装到 `/ucrt64`。GUI 包要求 GTK 4.22 和 libadwaita 1.9，与从源码构建的下限相同。软件包不含 KataGo 及其权重。如需落子与吃子音效，安装 `mingw-w64-ucrt-x86_64-gst-plugins-good`（WAV 解码）和 `mingw-w64-ucrt-x86_64-gst-plugins-bad`（WASAPI2 输出）。
+`makepkg-mingw` 会安装构建依赖，并把软件包装到 `/ucrt64`。GUI 包要求 GTK 4.22 和 libadwaita 1.9，与从源码构建的下限相同。软件包不含 KataGo 及其权重。如需落子与吃子音效，安装 `mingw-w64-ucrt-x86_64-gst-plugins-good`（WAV 解码）和 `mingw-w64-ucrt-x86_64-gst-plugins-bad`（WASAPI2 输出）。Windows 安装包已包含这两者所需的插件子集。
 
-请预期卡顿，不要把 Wine 下的运行当成 Windows 测试。GTK 的 Windows 后端远不如它的 Linux 后端成熟：它的 GPU 渲染器会在每个窗口周围画出一圈黑框，因此 GTK 4.24 改用 CPU 上的 Cairo 绘制，滚动、调整窗口大小和动画都可能卡顿。这一点没有修复。
+请预期卡顿，不要把 Wine 下的运行当成 Windows 测试。GTK 的 Windows 后端远不如它的 Linux 后端成熟：它的 GPU 渲染器会在每个窗口周围画出一圈黑框，因此 GTK 4.24 改用 CPU 上的 Cairo 绘制，滚动、调整窗口大小和动画都可能卡顿。这一点没有修复。原生 Windows CI 已覆盖测试、安装后的运行与卸载，以及英文 GUI 截图；桌面 GPU 性能、中文字体渲染和音频设备的实际输出仍未验证。
 
 从检出的源码构建时，先安装上述软件包的构建依赖，并把 `/ucrt64/bin` 放在任何 rustup 之前：
 
