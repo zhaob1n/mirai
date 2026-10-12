@@ -78,6 +78,12 @@ which sends Home then four Right keys, and record the device: expect four attack
 `gst-launch-1.0 -e wasapi2src loopback=true ! audioconvert ! wavenc ! filesink location=loop.wav`.
 `INSTALL` may be the staged `target/dist/mirai-VERSION-windows-x86_64`, which runs as installed.
 
+To be the runner — a desktop with no output device — hide every active render endpoint
+with `tools/packaging/windows-audio-endpoint.ps1` (no elevation; `-Visible 1` restores it),
+then run `tools/packaging/windows-stall-probe.py "$INSTALL/bin/mirai.exe" game.sgf`. It
+prints every GUI-thread stall over 100 ms and how long the window takes to close; a
+screenshot cannot show a stall, since the capture is served ahead of the posted keys.
+
 For installer changes, also exercise upgrade with a Unicode/spaced path, a live GUI
 (upgrade must fail without renaming files), an unrelated SGF inside the install tree,
 a foreign nonempty destination, a stale uninstaller and another application's `.sgf`
