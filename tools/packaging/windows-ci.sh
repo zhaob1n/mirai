@@ -333,6 +333,19 @@ smoke_installer() {
         /usr/bin/timeout --foreground 60 "$(cygpath -u "$MINGW_PREFIX")/bin/python.exe" \
         tools/packaging/windows-gui-smoke.py "$(cygpath -m "$installed/bin/mirai.exe")" \
         target/dist/release-smoke.png "$(cygpath -m "$PWD/target/dist/smoke-game.sgf")"
+    mkdir -p target/dist/probe
+    local attempt probe_status
+    for attempt in 1 2 3 4 5 6 7 8 9 10; do
+        probe_status=0
+        env -u DBUS_SESSION_BUS_ADDRESS PATH='/usr/bin:/bin' LANGUAGE=en \
+            GST_DEBUG=3 GST_DEBUG_FILE="$(cygpath -m "$PWD/target/dist/probe/gst-$attempt.log")" \
+            /usr/bin/timeout --foreground 60 "$(cygpath -u "$MINGW_PREFIX")/bin/python.exe" \
+            tools/packaging/windows-gui-smoke.py "$(cygpath -m "$installed/bin/mirai.exe")" \
+            "target/dist/probe/shot-$attempt.png" "$(cygpath -m "$PWD/target/dist/smoke-game.sgf")" \
+            >"target/dist/probe/run-$attempt.log" 2>&1 || probe_status=$?
+        printf 'probe: attempt %s status=%s\n' "$attempt" "$probe_status"
+        taskkill //F //IM mirai.exe >/dev/null 2>&1 || true
+    done
     cp target/windows-runtime-smoke.exe "$installed/bin/windows-runtime-smoke.exe"
     rm -f target/runtime-gst-registry.bin
     status=0

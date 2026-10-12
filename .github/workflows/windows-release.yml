@@ -119,6 +119,7 @@ jobs:
             target/dist/release-smoke.png
             target/dist/release-smoke.log
             target/dist/runtime-smoke.log
+            target/dist/probe
           if-no-files-found: ignore
           retention-days: 14
 
