@@ -34,8 +34,9 @@ For stone placement and capture sounds on Linux, GTK requires GStreamer's good p
 (`gst-plugins-good` on Arch, `gstreamer1.0-plugins-good` on Debian/Ubuntu,
 `gstreamer1-plugins-good` on Fedora); without them mirai runs silently.
 In an MSYS2 UCRT64 shell, install `mingw-w64-ucrt-x86_64-gst-plugins-good` for WAV
-decoding and `mingw-w64-ucrt-x86_64-gst-plugins-bad` for WASAPI2 output.
-A Windows build is experimental and can stutter; the [README](../../README.md#windows-msys2-ucrt64) says why.
+decoding and `mingw-w64-ucrt-x86_64-gst-plugins-bad` for WASAPI2 output; the Windows
+installer already includes the required plugin subsets.
+A Windows build is experimental and can stutter; the [README](../../README.md#windows-msys2-ucrt64) says why. Native Windows CI covers the suite and installed runtime; desktop GPU performance, Chinese text and audio-device output remain unverified.
 
 ## 2. First run
 

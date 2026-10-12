@@ -33,6 +33,46 @@ Native UCRT64 package builds are described in [PACKAGING](PACKAGING.md). Run the
 and GUI harness in that same shell with MSYS2's Rust, not a rustup MSVC toolchain.
 A release `mirai.exe` has no console and ignores the harness; use a debug build for it.
 
+`tools/packaging/windows-ci.sh` runs `cargo test --release`, then packages and silently
+installs the release artifact. It launches the installed server, captures the installed
+release GUI with `windows-gui-smoke.py`, runs the runtime probe, and verifies clean
+uninstall. `tools/packaging/windows-runtime-smoke.c` checks a libsoup request through a
+loopback proxy, HTTPS proxy lookup, decoded PNG/JPEG/TIFF/SVG dimensions and pixels, every
+embedded action icon's GTK theme lookup, WASAPI2's stone-PCM caps, and a non-silent memory
+WAV's duration. It embeds the app's resource bundle and runs from installed `bin/`
+without prefix DLL/data overrides, with a fresh GStreamer registry. Neither helper ships.
+Keep `MSYS2_ARG_CONV_EXCL='*'` on native installer/uninstaller calls: otherwise `/S`
+is translated as a Unix path rather than kept as NSIS's silent switch.
+NSIS's normal uninstaller copies itself to TEMP and exits its launcher before the child
+finishes. CI uses Windows PowerShell's
+[`Start-Process -Wait`](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/start-process?view=powershell-5.1#notes)
+to wait for that process tree before checking for residual files.
+CI only prepares audio: a runner need not have a sound device. On a machine that does:
+
+```sh
+glib-compile-resources crates/mirai/resources/mirai.gresource.xml \
+  --sourcedir=crates/mirai/resources --generate-source \
+  --target=target/windows-smoke-resources.c --c-name=windows_smoke
+gcc -Wall -Wextra -Werror tools/packaging/windows-runtime-smoke.c \
+  target/windows-smoke-resources.c -o target/windows-runtime-smoke.exe \
+  $(pkg-config --cflags --libs gtk4 libsoup-3.0 gstreamer-1.0)
+cp target/windows-runtime-smoke.exe "$INSTALL/bin/"
+env PATH='/usr/bin:/bin' GST_DEBUG=autodetect:6 "$INSTALL/bin/windows-runtime-smoke.exe" --play
+rm "$INSTALL/bin/windows-runtime-smoke.exe"
+```
+
+Set `INSTALL` to the installed prefix and clear any DLL, plugin or data overrides first.
+`--play` requires EOS; inspect the log to confirm a real sink, not `fakesink`. EOS is not
+audibility. For actual release stone output, pass a four-move SGF to
+`python tools/packaging/windows-gui-smoke.py "$INSTALL/bin/mirai.exe" target/release.png game.sgf`,
+which sends Home then four Right keys, and record the device: expect four attacks about
+0.8 seconds apart.
+
+For installer changes, also exercise upgrade with a Unicode/spaced path, a live GUI
+(upgrade must fail without renaming files), an unrelated SGF inside the install tree,
+a foreign nonempty destination, a stale uninstaller and another application's `.sgf`
+default. AppData settings and unrelated records must survive.
+
 For a Linux experiment with an MSYS2 library sysroot, keep cross settings scoped to the
 command; do not set a global Cargo target or point host builds at Windows pkg-config files:
 

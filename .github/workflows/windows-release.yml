@@ -1,0 +1,163 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Huang Zhaobin
+#
+# Native MSYS2 UCRT64 Windows installer. Tag pushes (v*) publish one asset onto the
+# existing GitHub release; workflow_dispatch only uploads Actions artifacts.
+# The build job has no write permission and no persisted credentials. It never clones
+# a VCS PKGBUILD — the checked-out ref is the source. Dependency names come from
+# packaging/msys2 PKGBUILDs inside tools/packaging/windows-ci.sh, not from this file.
+
+name: Windows release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
+
+jobs:
+  build:
+    name: Test and build installer
+    runs-on: windows-latest
+    timeout-minutes: 180
+    env:
+      CARGO_INCREMENTAL: "0"
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      # MSYS2 bash rejects CRLF. Do this before checkout; the runner's git otherwise
+      # converts LF scripts. See msys2/setup-msys2 "actions/checkout and line endings".
+      - name: Keep checkout LF
+        shell: pwsh
+        run: git config --global core.autocrlf input
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Read UCRT64 dependencies
+        id: dependencies
+        shell: bash
+        run: |
+          packages=$(bash tools/packaging/windows-ci.sh packages)
+          printf 'packages=%s\n' "${packages//$'\n'/ }" >> "$GITHUB_OUTPUT"
+
+      - name: MSYS2 UCRT64
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+        with:
+          msystem: UCRT64
+          # minimal does not inherit the runner's rustup or MSVC paths.
+          path-type: minimal
+          # Full core update, shell restart, then full system update on every run.
+          update: true
+          release: true
+          cache: true
+          install: ${{ steps.dependencies.outputs.packages }}
+
+      - name: Identify UCRT64 cache environment
+        id: sdk
+        run: |
+          printf 'packages=%s\n' "$(pacman -Q | sha256sum | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+          printf 'CARGO_HOME=%s/mirai-cargo\n' "$(cygpath -m "$RUNNER_TEMP")" >> "$GITHUB_ENV"
+
+      - name: Restore Cargo cache
+        id: cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          # target/release holds the host side of a --target build: build scripts and
+          # proc macros.
+          path: &cargo-cache-paths |
+            ${{ env.CARGO_HOME }}/registry
+            ${{ env.CARGO_HOME }}/git
+            target/release
+            target/x86_64-pc-windows-gnu/release
+          key: windows-ucrt64-cargo-v2-${{ steps.sdk.outputs.packages }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.cargo/config.toml', 'rust-toolchain.toml') }}-${{ github.sha }}
+          restore-keys: |
+            windows-ucrt64-cargo-v2-${{ steps.sdk.outputs.packages }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.cargo/config.toml', 'rust-toolchain.toml') }}-
+
+      - name: Test, smoke, and stage installer
+        env:
+          # Refs enter only as environment values. The script validates them;
+          # nothing below interpolates github.ref into a shell command.
+          MIRAI_GITHUB_EVENT_NAME: ${{ github.event_name }}
+          MIRAI_GITHUB_REF_TYPE: ${{ github.ref_type }}
+          MIRAI_GITHUB_REF_NAME: ${{ github.ref_name }}
+          MIRAI_GITHUB_REPOSITORY: ${{ github.repository }}
+        run: bash tools/packaging/windows-ci.sh
+
+      - name: Upload installer
+        if: success()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: windows-setup
+          path: target/dist/*-windows-x86_64-setup.exe
+          if-no-files-found: error
+          retention-days: 14
+          # NSIS already compresses the payload.
+          compression-level: 0
+
+      - name: Upload GUI and runtime smoke evidence
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: windows-gui-smoke
+          path: |
+            target/dist/release-smoke.png
+            target/dist/release-smoke.log
+            target/dist/runtime-smoke.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Save Cargo cache
+        if: ${{ always() && !cancelled() && steps.cargo-cache.outputs.cache-primary-key != '' && steps.cargo-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: *cargo-cache-paths
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+  publish:
+    name: Publish release asset
+    needs: build
+    # Manual runs and forks never reach a write token. A tag push to this
+    # repository is the only publish path.
+    if: >-
+      github.event_name == 'push' &&
+      github.ref_type == 'tag' &&
+      startsWith(github.ref, 'refs/tags/v') &&
+      github.repository == 'zhaob1n/mirai' &&
+      github.event.repository.fork == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Download installer
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: windows-setup
+          path: dist
+
+      - name: Upload asset, keep existing release assets
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          MIRAI_GITHUB_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash tools/packaging/windows-ci.sh publish dist
