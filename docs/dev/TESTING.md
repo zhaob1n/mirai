@@ -34,10 +34,18 @@ and GUI harness in that same shell with MSYS2's Rust, not a rustup MSVC toolchai
 A release `mirai.exe` has no console and ignores the harness; use a debug build for it.
 
 `tools/packaging/windows-ci.sh` runs `cargo test --release`, then packages and silently
-installs the release artifact. It launches the installed server, captures the installed
-release GUI with `windows-gui-smoke.py`, runs the runtime probe, and verifies clean
-uninstall. `tools/packaging/windows-runtime-smoke.c` checks a libsoup request through a
-loopback proxy, HTTPS proxy lookup, decoded PNG/JPEG/TIFF/SVG dimensions and pixels, every
+installs the release artifact. It launches the installed server, captures the idle
+installed release GUI with `windows-gui-smoke.py`, runs the runtime probe, and verifies
+clean uninstall. The capture stays idle on purpose. Stepping a record on the hosted runner
+froze the release's GUI thread for about 45 s in 12 of 13 runs; the capture then still
+shows the root position, because `PrintWindow`'s sent `WM_PRINT` is served ahead of the
+posted keys. The runner has no audio device: WASAPI2 fails there (`0x80070490`) and
+`autoaudiosink` falls back to a fake sink. A desktop in the same state, with every output
+endpoint disabled or with the Windows Audio service stopped, never stalled, so the cause is
+not established.
+`tools/packaging/windows-runtime-smoke.c`
+checks a libsoup request through a loopback proxy, HTTPS proxy lookup, decoded
+PNG/JPEG/TIFF/SVG dimensions and pixels, every
 embedded action icon's GTK theme lookup, WASAPI2's stone-PCM caps, and a non-silent memory
 WAV's duration. It embeds the app's resource bundle and runs from installed `bin/`
 without prefix DLL/data overrides, with a fresh GStreamer registry. Neither helper ships.
@@ -66,7 +74,9 @@ Set `INSTALL` to the installed prefix and clear any DLL, plugin or data override
 audibility. For actual release stone output, pass a four-move SGF to
 `python tools/packaging/windows-gui-smoke.py "$INSTALL/bin/mirai.exe" target/release.png game.sgf`,
 which sends Home then four Right keys, and record the device: expect four attacks about
-0.8 seconds apart.
+0.8 seconds apart. WASAPI2 records what the device plays, with no cable:
+`gst-launch-1.0 -e wasapi2src loopback=true ! audioconvert ! wavenc ! filesink location=loop.wav`.
+`INSTALL` may be the staged `target/dist/mirai-VERSION-windows-x86_64`, which runs as installed.
 
 For installer changes, also exercise upgrade with a Unicode/spaced path, a live GUI
 (upgrade must fail without renaming files), an unrelated SGF inside the install tree,
