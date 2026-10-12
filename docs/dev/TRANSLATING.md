@@ -81,6 +81,11 @@ build carries no build path, so one run from the tree is English. `just install`
 its own copies into the prefix and merges the translations into the desktop entry and
 metainfo from `data/*.in` with `msgfmt --desktop` and `--xml`.
 
+On MSYS2, `<prefix>/bin/mirai.exe` uses the same layout. `i18n.rs` links GNU libintl
+explicitly, adopts its locale with `libintl_setlocale`, and binds the directory with
+`libintl_wbindtextdomain`: an installation path outside the ANSI code page must still
+find its catalogues. GLib and mirai must use the same libintl DLL.
+
 Lookups go through GLib's `g_dgettext`, as GtkBuilder's do for the templates: in a language
 mirai has no catalogue for, GTK's own strings stay English too rather than mixing two
 languages in one window.

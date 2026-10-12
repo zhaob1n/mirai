@@ -87,6 +87,56 @@ For stone sounds, install GStreamer's good plugins (`gst-plugins-good` on Arch,
 `gstreamer1.0-plugins-good` on Debian/Ubuntu, `gstreamer1-plugins-good` on Fedora),
 which GTK plays audio through; without them mirai runs silently.
 
+### Windows installer
+
+The [Windows release workflow](.github/workflows/windows-release.yml) produces
+`mirai-VERSION-windows-x86_64-setup.exe`. When attached to a GitHub release, it installs
+per user without MSYS2 or administrator rights; GTK and its runtime are included. Its GTK
+is a [Direct3D 12 build](https://github.com/zhaob1n/gtk-d3d12) rather than MSYS2's.
+KataGo and its model are separate. The installer is unsigned, so Windows may show a
+SmartScreen warning. It adds a Start menu entry and offers mirai under *Open with* for
+`.sgf` records, opening them by default only if no other program already does. Uninstall
+removes those and leaves settings and game records untouched.
+
+<a id="windows-msys2-ucrt64"></a>
+
+### Windows (MSYS2 UCRT64)
+
+A native build uses an [MSYS2](https://www.msys2.org/) **UCRT64** shell, not MSYS, CLANG64 or
+MINGW64, and not rustup. UCRT64's rustc host is `x86_64-pc-windows-gnu` (GCC and UCRT).
+CLANG64's is `x86_64-pc-windows-gnullvm`. `rust-toolchain.toml` makes a rustup proxy ignore
+MSYS2's compiler.
+
+In that shell, from [`packaging/msys2/mirai-git`](packaging/msys2/mirai-git), and from
+[`packaging/msys2/mirai-server-git`](packaging/msys2/mirai-server-git) on a machine that should
+share KataGo (that package does not install GTK):
+
+```
+pacman -S --needed git
+makepkg-mingw -si
+```
+
+`makepkg-mingw` installs the build dependencies and the package under `/ucrt64`. The GUI
+package requires GTK 4.22 and libadwaita 1.9, the same floor as a source build. KataGo and its
+model are not in the package. For stone sounds, install
+`mingw-w64-ucrt-x86_64-gst-plugins-good` (WAV decoding) and
+`mingw-w64-ucrt-x86_64-gst-plugins-bad` (WASAPI2 output). The installer includes both
+required plugin subsets.
+
+Expect stutter, and do not treat a Wine run as a Windows test. MSYS2's GTK draws with Cairo on
+the CPU on Windows, because its GPU renderers draw a black band around every window, and
+scrolling, resizing and animation can hitch. That is not fixed. MSYS2's cairo also renders
+bold CJK labels a pixel out of line; the installer ships a cairo that fixes it. Desktop GPU
+performance and audio-device output remain unverified.
+
+From a checkout, with the package's build dependencies installed and `/ucrt64/bin`
+ahead of any rustup:
+
+```
+cargo build --locked --release --target x86_64-pc-windows-gnu -p mirai -p mirai-server
+MSYS2_ENV_CONV_EXCL=PREFIX PREFIX=/ucrt64 MIRAI_EXE_SUFFIX=.exe CARGO_BUILD_TARGET=x86_64-pc-windows-gnu just install
+```
+
 ## 🚀 Getting started
 
 ```

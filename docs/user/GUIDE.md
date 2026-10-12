@@ -2,8 +2,9 @@
 
 English | [简体中文](GUIDE.zh-CN.md)
 
-A Go board for Linux that talks to KataGo: live analysis, SGF review and editing, and games
-against the computer. The engine can run on the same machine or on another one on your network.
+A Go board for Linux, with experimental Windows support, that talks to KataGo: live
+analysis, SGF review and editing, and games against the computer. The engine can run
+on the same machine or on another one on your network.
 
 ---
 
@@ -15,9 +16,10 @@ needed to put the engine on another machine ([section 7](#7-using-a-remote-engin
 
 ### What you need from KataGo
 
-Supply a recent KataGo binary (`katago`) and a network (`*.bin.gz`); mirai does not download
-them. It generates KataGo's analysis config from your Preferences settings. To use your
-own, select **Preferences → Engines → Analysis Config → Custom file**; KataGo ships an
+Supply a recent KataGo binary (`katago`, or `katago.exe` on Windows) and a network
+(`*.bin.gz`); mirai does not download them. It generates KataGo's analysis config from your
+Preferences settings. To use your own, select **Preferences → Engines → Analysis Config →
+Custom file**; KataGo ships an
 `analysis.cfg` in its `configs` directory.
 
 > [!IMPORTANT]
@@ -28,9 +30,13 @@ If you already run KataGo under Lizzie, KaTrain or Sabaki, point mirai at the sa
 network; nothing of yours is copied or modified. Boards from 2×2 to 19×19, matching a stock
 KataGo build.
 
-For stone placement and capture sounds, GTK requires GStreamer's good plugins (`gst-plugins-good`
-on Arch, `gstreamer1.0-plugins-good` on Debian/Ubuntu, `gstreamer1-plugins-good` on Fedora);
-without them mirai runs silently.
+For stone placement and capture sounds on Linux, GTK requires GStreamer's good plugins
+(`gst-plugins-good` on Arch, `gstreamer1.0-plugins-good` on Debian/Ubuntu,
+`gstreamer1-plugins-good` on Fedora); without them mirai runs silently.
+In an MSYS2 UCRT64 shell, install `mingw-w64-ucrt-x86_64-gst-plugins-good` for WAV
+decoding and `mingw-w64-ucrt-x86_64-gst-plugins-bad` for WASAPI2 output; the Windows
+installer already includes the required plugin subsets.
+An MSYS2 build of mirai is experimental and can stutter; the [README](../../README.md#windows-msys2-ucrt64) says why. Desktop GPU performance and audio-device output remain unverified.
 
 ## 2. First run
 
@@ -406,14 +412,16 @@ cp crates/mirai-server/server.example.toml ~/.config/mirai/server.toml
 chmod 600 ~/.config/mirai/server.toml
 ```
 
-That path is `$XDG_CONFIG_HOME/mirai/server.toml` when the variable is set. Paste the
+That path is `$XDG_CONFIG_HOME/mirai/server.toml` when the variable is set. On Windows it is
+`%APPDATA%\zhaob1n\mirai\config\server.toml`, and `chmod 600` does not apply: Windows has no
+Unix mode bits, so the file is only as private as your user profile's ACLs. Paste the
 generated token into `[[token]]` (the example's all-zero token is rejected) and set
 the KataGo binary and model. Relative paths resolve next to the config file. A token longer
 than 256 bytes stops the server starting.
 
 > [!CAUTION]
-> The token is a bearer secret: keep the file readable only by your account. The server
-> warns if other users can read it.
+> The token is a bearer secret: keep the file readable only by your account. On Unix the
+> server warns if other users can read it. Windows does not do that check.
 
 **3. Start it.**
 
@@ -582,7 +590,8 @@ defaults. A running clock bounds the engine's thinking time.
 
 ### The settings file
 
-`~/.config/mirai/config.toml` (strictly `$XDG_CONFIG_HOME`). Plain text, editable by hand
+`~/.config/mirai/config.toml` (strictly `$XDG_CONFIG_HOME`). On Windows,
+`%APPDATA%\zhaob1n\mirai\config\config.toml`. Plain text, editable by hand
 while mirai is closed. A missing file is fine; a malformed one makes mirai fall back to a
 seeded first-run configuration rather than start with half of one. Saving does not repair
 that file: the error is reported and the text is left as it is. Preferences is the normal
@@ -615,7 +624,8 @@ token = "…"
 ```
 
 Leave `engine` out unless the server has several and you want one by name. Autosave, KataGo's
-logs and the generated analysis config live under `$XDG_DATA_HOME/mirai/`.
+logs and the generated analysis config live under `$XDG_DATA_HOME/mirai/`. On Windows those
+files are under `%LOCALAPPDATA%\zhaob1n\mirai\data\`.
 
 ## 9. Keyboard reference
 
@@ -690,7 +700,13 @@ No dedicated accelerator: switching engine profile, *Preferences*, *Keyboard Sho
 | `~/.local/share/mirai/katago-logs/` | KataGo's own logs, one file per engine start, and the generated `katago-analysis-*.cfg`; also `mirai-server`'s, for an `[[engine]]` without `log_dir`. Created private; a directory for generated configs is refused if another user owns it or can write to it, or to a directory on the way to it (a sticky one such as `/tmp` excepted) |
 | `~/.config/mirai/server.toml` | `mirai-server`'s settings, on the machine running it |
 
-(`$XDG_CONFIG_HOME` and `$XDG_DATA_HOME` are honoured if set.)
+(`$XDG_CONFIG_HOME` and `$XDG_DATA_HOME` are honoured if set. Windows does not use them.)
+
+On Windows the settings are `%APPDATA%\zhaob1n\mirai\config\config.toml` and
+`%APPDATA%\zhaob1n\mirai\config\server.toml`. Autosaves (`autosave-*.sgf`), KataGo logs
+(`katago-logs\`) and the kifu search cache (`kifu-searches.json`) are under
+`%LOCALAPPDATA%\zhaob1n\mirai\data\`. Windows has no Unix `0600`/`0700`: mirai does not set an
+equivalent ACL, so those files are as private as your user profile and no more.
 
 - **Autosave** runs every 30 seconds, and only when there is something worth keeping — a
   move, a setup stone, a mark, an explicit side to play, or a comment; a blank board is never
@@ -712,7 +728,8 @@ supplied are never modified.
 If the profile fails and the engine button reads “*name* Unavailable”, check that the
 binary and model still exist in **Preferences → Engines**. It must be KataGo's JSON
 analysis engine, not GTP ([setup](#1-katago-and-prerequisites)). For GPU errors or a
-mismatched model, read `~/.local/share/mirai/katago-logs/`; use a binary and model that
+mismatched model, read `~/.local/share/mirai/katago-logs/` (on Windows,
+`%LOCALAPPDATA%\zhaob1n\mirai\data\katago-logs\`); use a binary and model that
 work together.
 
 ### The very first start takes minutes

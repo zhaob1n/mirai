@@ -27,6 +27,111 @@ cargo test -p mirai-proto --test wire_size -- --nocapture   # prints the measure
 `just check` runs formatting, all-target Clippy with warnings denied, and the full
 workspace suite with the lockfile — the checks every commit owes.
 
+### Windows / MSYS2
+
+Native UCRT64 package builds are described in [PACKAGING](PACKAGING.md). Run the suite
+and GUI harness in that same shell with MSYS2's Rust, not a rustup MSVC toolchain.
+A release `mirai.exe` has no console and ignores the harness; use a debug build for it.
+
+The release workflow only builds the installer; nothing below runs in CI. Before a
+release, run `cargo test --release --locked --workspace --target x86_64-pc-windows-gnu`
+natively: Wine rejects `IPV6_V6ONLY` (WSAEOPNOTSUPP 10045), so QUIC tests fail there.
+Then install the artifact and check it from the installed `bin/`, so module lookup and
+DLL resolution cannot borrow UCRT64.
+
+`tools/packaging/windows-gui-smoke.py` captures the installed release window and closes
+it. When it ran in CI it showed two runner-only behaviours, both unexplained. Stepping a
+record froze the release's GUI thread for about 45 s in 12 of 13 runs; the capture then
+still shows the root position, because `PrintWindow`'s sent `WM_PRINT` is served ahead of
+the posted keys. And the idle release sometimes did not exit within 30 s of `WM_CLOSE`
+(2 of 4 runs, with the official cairo as well as the patched one). The runner has no
+audio device: WASAPI2 fails there (`0x80070490`) and `autoaudiosink` falls back to a fake
+sink. A desktop in the same state, with every output endpoint disabled or with the Windows
+Audio service stopped, never stalled, and closes there always exit within seconds.
+`tools/packaging/windows-runtime-smoke.c`
+checks a libsoup request through a loopback proxy, HTTPS proxy lookup, decoded
+PNG/JPEG/TIFF/SVG dimensions and pixels, every
+embedded action icon's GTK theme lookup, WASAPI2's stone-PCM caps, and a non-silent memory
+WAV's duration. It embeds the app's resource bundle and runs from installed `bin/`
+without prefix DLL/data overrides, with a fresh GStreamer registry. Neither helper ships.
+Keep `MSYS2_ARG_CONV_EXCL='*'` on native installer/uninstaller calls: otherwise `/S`
+is translated as a Unix path rather than kept as NSIS's silent switch.
+NSIS's normal uninstaller copies itself to TEMP and exits its launcher before the child
+finishes; wait for that process tree, as Windows PowerShell's
+[`Start-Process -Wait`](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/start-process?view=powershell-5.1#notes)
+does, before checking for residual files.
+On a machine with a sound device:
+
+```sh
+glib-compile-resources crates/mirai/resources/mirai.gresource.xml \
+  --sourcedir=crates/mirai/resources --generate-source \
+  --target=target/windows-smoke-resources.c --c-name=windows_smoke
+gcc -Wall -Wextra -Werror tools/packaging/windows-runtime-smoke.c \
+  target/windows-smoke-resources.c -o target/windows-runtime-smoke.exe \
+  $(pkg-config --cflags --libs gtk4 libsoup-3.0 gstreamer-1.0)
+cp target/windows-runtime-smoke.exe "$INSTALL/bin/"
+env PATH='/usr/bin:/bin' GST_REGISTRY="$(cygpath -m "$PWD/target/runtime-gst-registry.bin")" \
+  GST_DEBUG=autodetect:6 "$INSTALL/bin/windows-runtime-smoke.exe" --play
+rm "$INSTALL/bin/windows-runtime-smoke.exe" target/runtime-gst-registry.bin
+```
+
+Set `INSTALL` to the installed prefix and clear any DLL, plugin or data overrides first.
+`--play` requires EOS; inspect the log to confirm a real sink, not `fakesink`. EOS is not
+audibility. For actual release stone output, pass a four-move SGF to
+`python tools/packaging/windows-gui-smoke.py "$INSTALL/bin/mirai.exe" target/release.png game.sgf`,
+which sends Home then four Right keys, and record the device: expect four attacks about
+0.8 seconds apart. WASAPI2 records what the device plays, with no cable:
+`gst-launch-1.0 -e wasapi2src loopback=true ! audioconvert ! wavenc ! filesink location=loop.wav`.
+`INSTALL` may be the staged `target/dist/mirai-VERSION-windows-x86_64`, which runs as installed.
+An UCRT64 login shell exports two variables Explorer does not: `XDG_DATA_DIRS` makes GTK
+read the prefix's icon themes instead of the staged ones, and `LANG=C.UTF-8` forces an
+English UI over the Windows locale. Unset both (`env -u XDG_DATA_DIRS -u LANG`). A debug
+`mirai.exe` copied into the staged `bin/` runs the harness against the staged runtime;
+with `GTK_DEBUG=icontheme` it logs every icon lookup.
+
+To be the runner — a desktop with no output device — hide every active render endpoint
+with `tools/packaging/windows-audio-endpoint.ps1` (no elevation; `-Visible 1` restores it),
+then run `tools/packaging/windows-stall-probe.py "$INSTALL/bin/mirai.exe" game.sgf`. It
+prints every GUI-thread stall over 100 ms and how long the window takes to close; a
+screenshot cannot show a stall, since the capture is served ahead of the posted keys.
+
+For installer changes, also exercise upgrade with a Unicode/spaced path, a live GUI
+(upgrade must fail without renaming files), an unrelated SGF inside the install tree,
+a foreign nonempty destination, a stale uninstaller and another application's `.sgf`
+default. AppData settings and unrelated records must survive.
+
+For a Linux experiment with an MSYS2 library sysroot, keep cross settings scoped to the
+command; do not set a global Cargo target or point host builds at Windows pkg-config files:
+
+```sh
+root="$HOME/.local/opt/msys2"
+env PKG_CONFIG_LIBDIR_x86_64_pc_windows_gnu="$root/ucrt64/lib/pkgconfig:$root/ucrt64/share/pkgconfig" \
+    PKG_CONFIG_SYSROOT_DIR_x86_64_pc_windows_gnu="$root" \
+    PKG_CONFIG_PATH_x86_64_pc_windows_gnu= \
+    cargo build --locked --workspace --target x86_64-pc-windows-gnu
+WINEPATH="$(winepath -w "$root/ucrt64/bin")" LANGUAGE=en \
+    MIRAI_HARNESS='wait:1500,board:primary:D4,action:win.preferences,wait:1000,close-dialog,close-window' \
+    wine target/x86_64-pc-windows-gnu/debug/mirai.exe
+```
+
+The host needs Rust's Windows GNU target, MinGW GCC and Wine. Verify the CRT in the PE
+imports: UCRT API-set DLLs, not `msvcrt.dll`. To test translations, install the binary
+and catalogues under the same prefix first; a cross-built debug binary's `OUT_DIR` is a
+host path, not a Windows catalogue directory. Include a non-ASCII installation path.
+
+Endless-stream tests use `gio::ReadInputStream` over `std::io::repeat`, not `/dev/zero`:
+Wine resolves that Unix device through its Linux host; native Windows does not.
+
+Wine smoke is not real-Windows proof. With Wine 11.19, the GUI harness and Windows HTTP
+tests run, but QUIC endpoint creation can fail with Winsock 10045: quinn-udp queries
+`IPV6_V6ONLY` on an IPv4 socket, and the same standalone Winsock call fails under Wine.
+Do not skip the production error or weaken tests to make this environment pass; verify
+the network suite and rendering on Windows.
+
+Wine's Win32 font lookup may also deform CJK glyphs while gettext is working;
+`PANGOCAIRO_BACKEND=fontconfig` isolates the font backend. It is a diagnostic, not a
+shipped override or proof of Windows text rendering.
+
 | Changed | Check |
 |---|---|
 | Rust | `cargo fmt --all --check`. Avoid `cargo clippy --fix`: it rewrites files you have not reviewed |

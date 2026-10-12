@@ -2,6 +2,9 @@
 // Copyright (C) 2026 Huang Zhaobin
 //! mirai — a KataGo analysis and playing GUI.
 
+// Release builds have no console window; debug builds keep it for logs and the harness.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod app;
 mod application_shell;
 mod batch;
@@ -73,6 +76,17 @@ fn main() -> glib::ExitCode {
             gtk::IconTheme::for_display(&display)
                 .add_resource_path(&format!("{RESOURCE_PREFIX}/icons/hicolor"));
             gtk::Window::set_default_icon_name(APP_ID);
+        }
+        // GDK hands GTK the Windows message font, by default Segoe UI 9 pt (12 px at 96 dpi):
+        // the size of Win32 dialogs, and small for an interface laid out for GNOME's 11 pt.
+        // Keep the system family, and the CJK fallback Windows gives it; take GNOME's size.
+        #[cfg(windows)]
+        if let Some(settings) = gtk::Settings::default()
+            && let Some(name) = settings.gtk_font_name()
+        {
+            let mut font = gtk::pango::FontDescription::from_string(&name);
+            font.set_size(11 * gtk::pango::SCALE);
+            settings.set_gtk_font_name(Some(&font.to_str()));
         }
         // Two sheets: the static one from the resource bundle, then the badge colours generated
         // from `palette::GRADE_RAMP`, so a badge and its blob on the board cannot drift

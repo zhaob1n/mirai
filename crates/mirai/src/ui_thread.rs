@@ -17,6 +17,7 @@
 //! starts — the runtime's workers, KataGo — from inheriting it.
 
 /// Out of 1024: at least half, which schedutil turns into about 60 % of the top clock.
+#[cfg(target_os = "linux")]
 const CLAMP: u32 = 512;
 
 /// Applies the clamp to the calling thread, which must be the GTK thread. Failure only

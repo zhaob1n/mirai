@@ -1,0 +1,3 @@
+# LF on every checkout. Git for Windows defaults to core.autocrlf=true, and CRLF breaks
+# the UCRT64 tooling: bash scripts, PKGBUILDs and `sha256sum --check` on the GTK pin.
+* text=auto eol=lf

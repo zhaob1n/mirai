@@ -61,6 +61,37 @@ sudo just uninstall      # 同上
 
 如需落子与吃子音效，还要安装 GStreamer 的 good 插件（Arch 上为 `gst-plugins-good`，Debian/Ubuntu 上为 `gstreamer1.0-plugins-good`，Fedora 上为 `gstreamer1-plugins-good`），GTK 通过它播放声音；缺少时 mirai 可以正常运行，只是没有声音。
 
+### Windows 安装包
+
+[Windows release workflow](.github/workflows/windows-release.yml) 会生成
+`mirai-VERSION-windows-x86_64-setup.exe`。发布到 GitHub release 后，可按用户安装，无需
+MSYS2 或管理员权限；已包含 GTK 及其运行库，其中 GTK 是 [Direct3D 12 版本](https://github.com/zhaob1n/gtk-d3d12)，而非 MSYS2 官方构建。KataGo 和模型需另行准备。
+安装包未签名，Windows 可能显示 SmartScreen 警告。安装后会在开始菜单添加入口，并在 `.sgf` 棋谱的“打开方式”里提供 mirai；只有在没有其他程序打开 `.sgf` 时，才设为默认程序。卸载会移除这些，保留设置和棋谱。
+
+<a id="windows-msys2-ucrt64"></a>
+
+### Windows（MSYS2 UCRT64）
+
+原生构建使用 [MSYS2](https://www.msys2.org/) 的 **UCRT64** shell，而不是 MSYS、CLANG64 或 MINGW64，也不使用 rustup。UCRT64 的 rustc 宿主三元组是 `x86_64-pc-windows-gnu`（GCC 与 UCRT）。CLANG64 的是 `x86_64-pc-windows-gnullvm`。`rust-toolchain.toml` 会让 rustup 的代理忽略 MSYS2 的编译器。
+
+在该 shell 中，进入 [`packaging/msys2/mirai-git`](packaging/msys2/mirai-git)；要共享 KataGo 的机器再进入 [`packaging/msys2/mirai-server-git`](packaging/msys2/mirai-server-git)（该包不安装 GTK）：
+
+```
+pacman -S --needed git
+makepkg-mingw -si
+```
+
+`makepkg-mingw` 会安装构建依赖，并把软件包装到 `/ucrt64`。GUI 包要求 GTK 4.22 和 libadwaita 1.9，与从源码构建的下限相同。软件包不含 KataGo 及其权重。如需落子与吃子音效，安装 `mingw-w64-ucrt-x86_64-gst-plugins-good`（WAV 解码）和 `mingw-w64-ucrt-x86_64-gst-plugins-bad`（WASAPI2 输出）。Windows 安装包已包含这两者所需的插件子集。
+
+请预期卡顿，不要把 Wine 下的运行当成 Windows 测试。MSYS2 的 GTK 在 Windows 上用 CPU 上的 Cairo 绘制，因为它的 GPU 渲染器会在每个窗口周围画出一圈黑框，滚动、调整窗口大小和动画都可能卡顿。这一点没有修复。MSYS2 的 cairo 还会让粗体中日韩文字上下错开一个像素；安装包附带的 cairo 修复了这个问题。桌面 GPU 性能和音频设备的实际输出仍未验证。
+
+从检出的源码构建时，先安装上述软件包的构建依赖，并把 `/ucrt64/bin` 放在任何 rustup 之前：
+
+```
+cargo build --locked --release --target x86_64-pc-windows-gnu -p mirai -p mirai-server
+MSYS2_ENV_CONV_EXCL=PREFIX PREFIX=/ucrt64 MIRAI_EXE_SUFFIX=.exe CARGO_BUILD_TARGET=x86_64-pc-windows-gnu just install
+```
+
 ## 🚀 快速上手
 
 ```

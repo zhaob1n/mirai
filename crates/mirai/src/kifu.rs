@@ -1375,9 +1375,12 @@ mod tests {
 
     #[test]
     fn an_endless_response_is_cut_off_at_the_cap() {
-        // `/dev/zero` never ends: buffering it whole before checking its size would run the
+        // Buffering an endless stream whole before checking its size would run the
         // process out of memory. The capped reader must stop once it passes the cap.
-        let result = read_file_capped(Path::new("/dev/zero"), 1024 * 1024);
+        let result = glib::MainContext::new().block_on(async {
+            let stream = gio::ReadInputStream::new(std::io::repeat(0));
+            read_capped(stream.upcast_ref(), 1024 * 1024).await
+        });
         assert!(
             matches!(result, Err(TransportError::TooLarge)),
             "{result:?}"
