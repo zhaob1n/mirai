@@ -19,7 +19,7 @@
 
 如果你已经在 Lizzie、KaTrain 或 Sabaki 下跑 KataGo，把 mirai 指到同一份程序和权重即可；你的文件不会被复制或修改。棋盘从 2×2 到 19×19，与原版 KataGo 构建一致。
 
-Linux 上如需落子与吃子音效，GTK 需要 GStreamer 的 good 插件（Arch 上为 `gst-plugins-good`，Debian/Ubuntu 上为 `gstreamer1.0-plugins-good`，Fedora 上为 `gstreamer1-plugins-good`）；缺少时 mirai 正常运行，只是没有声音。MSYS2 UCRT64 shell 中请安装 `mingw-w64-ucrt-x86_64-gst-plugins-good`（WAV 解码）和 `mingw-w64-ucrt-x86_64-gst-plugins-bad`（WASAPI2 输出）；Windows 安装包已包含所需的插件子集。用 MSYS2 构建的 mirai 仍是实验性的，可能卡顿，原因见 [README](../../README.zh-CN.md#windows-msys2-ucrt64)。桌面 GPU 性能和音频设备的实际输出仍未验证。
+Linux 上如需落子与吃子音效，GTK 需要 GStreamer 的 good 插件（Arch 上为 `gst-plugins-good`，Debian/Ubuntu 上为 `gstreamer1.0-plugins-good`，Fedora 上为 `gstreamer1-plugins-good`）；缺少时 mirai 正常运行，只是没有声音。MSYS2 UCRT64 shell 中请安装 `mingw-w64-ucrt-x86_64-gst-plugins-good`（WAV 解码）和 `mingw-w64-ucrt-x86_64-gst-plugins-bad`（WASAPI2 输出）；Windows 安装包已包含所需的插件子集。用 MSYS2 构建的 mirai 仍是实验性的，可能卡顿，原因见 [README](../../README.zh-CN.md#windows-msys2-ucrt64)。
 
 ## 2. 首次运行
 

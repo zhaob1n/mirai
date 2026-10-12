@@ -93,10 +93,9 @@ The [Windows release workflow](.github/workflows/windows-release.yml) produces
 `mirai-VERSION-windows-x86_64-setup.exe`. When attached to a GitHub release, it installs
 per user without MSYS2 or administrator rights; GTK and its runtime are included. Its GTK
 is a [Direct3D 12 build](https://github.com/zhaob1n/gtk-d3d12) rather than MSYS2's.
-KataGo and its model are separate. The installer is unsigned, so Windows may show a
-SmartScreen warning. It adds a Start menu entry and offers mirai under *Open with* for
-`.sgf` records, opening them by default only if no other program already does. Uninstall
-removes those and leaves settings and game records untouched.
+KataGo and its model are separate. The installer adds a Start menu entry and offers mirai
+under *Open with* for `.sgf` records, opening them by default only if no other program
+already does. Uninstall removes those and leaves settings and game records untouched.
 
 <a id="windows-msys2-ucrt64"></a>
 
@@ -126,8 +125,7 @@ required plugin subsets.
 Expect stutter, and do not treat a Wine run as a Windows test. MSYS2's GTK draws with Cairo on
 the CPU on Windows, because its GPU renderers draw a black band around every window, and
 scrolling, resizing and animation can hitch. That is not fixed. MSYS2's cairo also renders
-bold CJK labels a pixel out of line; the installer ships a cairo that fixes it. Desktop GPU
-performance and audio-device output remain unverified.
+bold CJK labels a pixel out of line; the installer ships a cairo that fixes it.
 
 From a checkout, with the package's build dependencies installed and `/ucrt64/bin`
 ahead of any rustup:
