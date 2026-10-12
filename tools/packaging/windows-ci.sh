@@ -24,7 +24,8 @@
 # and are not duplicated. No zip.
 #
 # The installer runtime then replaces GTK with the D3D12 build pinned in
-# packaging/windows/gtk4-d3d12.sha256.
+# packaging/windows/gtk4-d3d12.sha256 and adds the GStreamer plugin packages without their
+# dependencies: only a few plugins ship, and bundle_imports checks their imports.
 #
 # Tag pushes must be named v<workspace semver> or v<workspace semver>-<prerelease>.
 # workflow_dispatch and a local run with no event use the Cargo workspace version and
@@ -185,7 +186,7 @@ package_list() {
     [[ $contributed -eq 1 ]] ||
         die "PKGBUILD depends and makedepends are empty; keep those arrays at top level"
     # Release-only tools the bundler invokes. Not a second GUI library list.
-    for extra in python nsis icoutils librsvg gst-plugins-good gst-plugins-bad; do
+    for extra in python nsis icoutils librsvg; do
         specs+=("${MINGW_PACKAGE_PREFIX}-${extra}")
     done
     for spec in "${specs[@]}"; do
@@ -213,7 +214,8 @@ install_packages() {
     pacman -S --needed --noconfirm "${pkgs[@]}"
 }
 
-# The pinned D3D12 GTK package, downloaded outside setup-msys2's cache.
+# Runtime packages outside setup-msys2's cache: the pinned D3D12 GTK and the GStreamer
+# plugin packages. The workflow caches this directory.
 RUNTIME_PACKAGES=target/windows-packages
 GTK_RELEASES=https://github.com/zhaob1n/gtk-d3d12/releases/download
 
@@ -236,6 +238,9 @@ install_runtime_packages() {
         [[ ${#official[@]} -eq 0 ]] || pacman -Rdd --noconfirm "${official[@]}"
         pacman -U --noconfirm --cachedir "$cache" "$cache/$file"
     fi
+    pacman -Sdd --needed --noconfirm --cachedir "$cache" \
+        mingw-w64-ucrt-x86_64-gst-plugins-good mingw-w64-ucrt-x86_64-gst-plugins-bad
+    paccache -rq -k1 -c "$cache"
 }
 
 use_prefix_toolchain() {
