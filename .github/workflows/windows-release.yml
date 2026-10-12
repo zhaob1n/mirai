@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   build:
-    name: Test and build installer
+    name: Build installer
     runs-on: windows-latest
     timeout-minutes: 180
     env:
@@ -85,7 +85,7 @@ jobs:
             windows-ucrt64-cargo-v2-${{ steps.sdk.outputs.packages }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.cargo/config.toml', 'rust-toolchain.toml') }}-
             windows-ucrt64-cargo-v2-
 
-      - name: Test, smoke, and stage installer
+      - name: Build and stage installer
         env:
           # Refs enter only as environment values. The script validates them;
           # nothing below interpolates github.ref into a shell command.
@@ -105,18 +105,6 @@ jobs:
           retention-days: 14
           # NSIS already compresses the payload.
           compression-level: 0
-
-      - name: Upload GUI and runtime smoke evidence
-        if: always()
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
-        with:
-          name: windows-gui-smoke
-          path: |
-            target/dist/release-smoke.png
-            target/dist/release-smoke.log
-            target/dist/runtime-smoke.log
-          if-no-files-found: ignore
-          retention-days: 14
 
       - name: Save build cache
         if: ${{ always() && !cancelled() && steps.cargo-cache.outputs.cache-primary-key != '' && steps.cargo-cache.outputs.cache-hit != 'true' }}

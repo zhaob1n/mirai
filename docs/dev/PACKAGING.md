@@ -209,17 +209,14 @@ and Cargo manifests/lockfile, then fall back to any earlier build: Cargo rebuild
 newer rustc or lockfile invalidates. C objects in build-script outputs are not rebuilt for
 a newer GCC alone. `CARGO_HOME` is isolated in the runner's temporary directory;
 credentials, `target/dist` and `target/resources` are not cached. Incremental outputs are
-disabled. Cache save runs even after a build/test failure, unless cancelled, so a fix can
+disabled. Cache save runs even after a build failure, unless cancelled, so a fix can
 reuse completed dependency builds; release artifacts are uploaded only after success.
-Tests and packaging use the same explicit `RUSTC`, `CC`, `CXX`, `AR` and `PKG_CONFIG`
-paths. Switching between unset and explicit values dirties the C build scripts and
-rebuilds GTK/ring dependencies despite a cache hit.
 
 ### Windows release
 
-`.github/workflows/windows-release.yml` runs on a native `windows-latest` UCRT64 runner:
-`cargo test --release`, the installer, then an installed release GUI screenshot and an
-installed-runtime/uninstall smoke. Everything is built in the release profile only.
+`.github/workflows/windows-release.yml` runs on a native `windows-latest` UCRT64 runner
+and only builds the installer, in the release profile. Tests and the installed-runtime
+checks are manual ([TESTING](TESTING.md#windows--msys2)).
 `workflow_dispatch` uploads Actions artifacts only. A `vVERSION` tag matching
 `[workspace.package].version` (optionally with a prerelease suffix) also attaches the
 installer to the GitHub release, creating the release if missing. Existing assets are

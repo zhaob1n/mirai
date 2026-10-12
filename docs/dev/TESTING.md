@@ -33,16 +33,21 @@ Native UCRT64 package builds are described in [PACKAGING](PACKAGING.md). Run the
 and GUI harness in that same shell with MSYS2's Rust, not a rustup MSVC toolchain.
 A release `mirai.exe` has no console and ignores the harness; use a debug build for it.
 
-`tools/packaging/windows-ci.sh` runs `cargo test --release`, then packages and silently
-installs the release artifact. It launches the installed server, captures the idle
-installed release GUI with `windows-gui-smoke.py`, runs the runtime probe, and verifies
-clean uninstall. The capture stays idle on purpose. Stepping a record on the hosted runner
-froze the release's GUI thread for about 45 s in 12 of 13 runs; the capture then still
-shows the root position, because `PrintWindow`'s sent `WM_PRINT` is served ahead of the
-posted keys. The runner has no audio device: WASAPI2 fails there (`0x80070490`) and
-`autoaudiosink` falls back to a fake sink. A desktop in the same state, with every output
-endpoint disabled or with the Windows Audio service stopped, never stalled, so the cause is
-not established.
+The release workflow only builds the installer; nothing below runs in CI. Before a
+release, run `cargo test --release --locked --workspace --target x86_64-pc-windows-gnu`
+natively: Wine rejects `IPV6_V6ONLY` (WSAEOPNOTSUPP 10045), so QUIC tests fail there.
+Then install the artifact and check it from the installed `bin/`, so module lookup and
+DLL resolution cannot borrow UCRT64.
+
+`tools/packaging/windows-gui-smoke.py` captures the installed release window and closes
+it. When it ran in CI it showed two runner-only behaviours, both unexplained. Stepping a
+record froze the release's GUI thread for about 45 s in 12 of 13 runs; the capture then
+still shows the root position, because `PrintWindow`'s sent `WM_PRINT` is served ahead of
+the posted keys. And the idle release sometimes did not exit within 30 s of `WM_CLOSE`
+(2 of 4 runs, with the official cairo as well as the patched one). The runner has no
+audio device: WASAPI2 fails there (`0x80070490`) and `autoaudiosink` falls back to a fake
+sink. A desktop in the same state, with every output endpoint disabled or with the Windows
+Audio service stopped, never stalled, and closes there always exit within seconds.
 `tools/packaging/windows-runtime-smoke.c`
 checks a libsoup request through a loopback proxy, HTTPS proxy lookup, decoded
 PNG/JPEG/TIFF/SVG dimensions and pixels, every
@@ -52,10 +57,10 @@ without prefix DLL/data overrides, with a fresh GStreamer registry. Neither help
 Keep `MSYS2_ARG_CONV_EXCL='*'` on native installer/uninstaller calls: otherwise `/S`
 is translated as a Unix path rather than kept as NSIS's silent switch.
 NSIS's normal uninstaller copies itself to TEMP and exits its launcher before the child
-finishes. CI uses Windows PowerShell's
+finishes; wait for that process tree, as Windows PowerShell's
 [`Start-Process -Wait`](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/start-process?view=powershell-5.1#notes)
-to wait for that process tree before checking for residual files.
-CI only prepares audio: a runner need not have a sound device. On a machine that does:
+does, before checking for residual files.
+On a machine with a sound device:
 
 ```sh
 glib-compile-resources crates/mirai/resources/mirai.gresource.xml \
@@ -65,8 +70,9 @@ gcc -Wall -Wextra -Werror tools/packaging/windows-runtime-smoke.c \
   target/windows-smoke-resources.c -o target/windows-runtime-smoke.exe \
   $(pkg-config --cflags --libs gtk4 libsoup-3.0 gstreamer-1.0)
 cp target/windows-runtime-smoke.exe "$INSTALL/bin/"
-env PATH='/usr/bin:/bin' GST_DEBUG=autodetect:6 "$INSTALL/bin/windows-runtime-smoke.exe" --play
-rm "$INSTALL/bin/windows-runtime-smoke.exe"
+env PATH='/usr/bin:/bin' GST_REGISTRY="$(cygpath -m "$PWD/target/runtime-gst-registry.bin")" \
+  GST_DEBUG=autodetect:6 "$INSTALL/bin/windows-runtime-smoke.exe" --play
+rm "$INSTALL/bin/windows-runtime-smoke.exe" target/runtime-gst-registry.bin
 ```
 
 Set `INSTALL` to the installed prefix and clear any DLL, plugin or data overrides first.

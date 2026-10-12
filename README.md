@@ -123,10 +123,8 @@ required plugin subsets.
 
 Expect stutter, and do not treat a Wine run as a Windows test. MSYS2's GTK draws with Cairo on
 the CPU on Windows, because its GPU renderers draw a black band around every window, and
-scrolling, resizing and animation can hitch. That is
-not fixed. Native Windows CI covers the suite, installation/runtime/uninstall and an English
-GUI screenshot. Desktop GPU performance, Chinese text rendering and audio-device output
-remain unverified.
+scrolling, resizing and animation can hitch. That is not fixed. Desktop GPU performance,
+Chinese text rendering and audio-device output remain unverified.
 
 From a checkout, with the package's build dependencies installed and `/ucrt64/bin`
 ahead of any rustup:

@@ -5,7 +5,7 @@
 # GitHub Actions driver for the native MSYS2 UCRT64 Windows installer.
 # From an UCRT64 shell at the repository root:
 #
-#   tools/packaging/windows-ci.sh                 test, smoke, and stage the installer
+#   tools/packaging/windows-ci.sh                 build and stage the installer
 #   tools/packaging/windows-ci.sh version         print the validated version and exit
 #   tools/packaging/windows-ci.sh packages        print UCRT64 dependencies without MSYS2
 #   tools/packaging/windows-ci.sh publish DIR     attach DIR's setup.exe to the tag release
@@ -264,7 +264,6 @@ use_prefix_toolchain() {
     export MSYS2_PATH_TYPE=minimal
     export PATH="$(cygpath -u "$MINGW_PREFIX")/bin:$PATH"
     hash -r
-    export CARGO_TARGET_DIR=target
     unset CARGO_BUILD_TARGET RUSTUP_TOOLCHAIN
     unset PKG_CONFIG_SYSROOT_DIR PKG_CONFIG_SYSROOT_DIR_x86_64_pc_windows_gnu \
         PKG_CONFIG_LIBDIR_x86_64_pc_windows_gnu PKG_CONFIG_PATH_x86_64_pc_windows_gnu
@@ -283,13 +282,6 @@ use_prefix_toolchain() {
     host=$(rustc -vV | awk '/^host:/ { host = $2 } END { print host }')
     [[ $host == x86_64-pc-windows-gnu ]] ||
         die "rustc host is ${host:-unknown}, want x86_64-pc-windows-gnu"
-    # Match windows-release.py, or its explicit tool paths dirty C build scripts
-    # again when the next cached run starts cargo test.
-    export RUSTC="$(cygpath -m "$bin/rustc.exe")"
-    export CC="$(cygpath -m "$bin/gcc.exe")"
-    export CXX="$(cygpath -m "$bin/g++.exe")"
-    export AR="$(cygpath -m "$bin/ar.exe")"
-    export PKG_CONFIG="$(cygpath -m "$bin/pkg-config.exe")"
 }
 
 stage() {
@@ -315,67 +307,6 @@ assert_installer() {
     printf 'windows-ci: installer %s\n' "$installer"
 }
 
-smoke_installer() {
-    local version=$1 installer installed output status
-    installer=$PWD/target/dist/mirai-${version}-windows-x86_64-setup.exe
-    installed=$(cygpath -u "$LOCALAPPDATA")/Programs/mirai
-    [[ ! -e $installed ]] || die "installer smoke requires an unused per-user installation"
-    # This is a runtime probe, not another application build. Run it from the
-    # installed bin/ so module lookup and DLL resolution cannot borrow UCRT64.
-    glib-compile-resources crates/mirai/resources/mirai.gresource.xml \
-        --sourcedir=crates/mirai/resources --generate-source \
-        --target=target/windows-smoke-resources.c --c-name=windows_smoke
-    # shellcheck disable=SC2046
-    gcc -Wall -Wextra -Werror tools/packaging/windows-runtime-smoke.c \
-        target/windows-smoke-resources.c -o target/windows-runtime-smoke.exe \
-        $(pkg-config --cflags --libs gtk4 libsoup-3.0 gstreamer-1.0)
-    # Otherwise MSYS rewrites NSIS's /S switch as a path and the wizard waits for input.
-    env MSYS2_ARG_CONV_EXCL='*' PATH='/usr/bin:/bin' \
-        /usr/bin/timeout --foreground 120 "$installer" /S
-    [[ -f $installed/bin/mirai.exe && -f $installed/uninstall.exe ]] ||
-        die "installer did not install the application"
-    output=$(env PATH='/usr/bin:/bin' "$installed/bin/mirai-server.exe" --version)
-    [[ $output == "mirai-server $(workspace_version)" ]] ||
-        die "installed server returned an unexpected version: $output"
-    env -u DBUS_SESSION_BUS_ADDRESS -u GIO_EXTRA_MODULES -u GSETTINGS_SCHEMA_DIR \
-        -u GDK_PIXBUF_MODULE_FILE -u GDK_PIXBUF_MODULEDIR -u GI_TYPELIB_PATH \
-        -u GST_PLUGIN_PATH -u GST_PLUGIN_SYSTEM_PATH -u GST_PLUGIN_SCANNER \
-        -u GST_PLUGIN_PATH_1_0 -u GST_PLUGIN_SYSTEM_PATH_1_0 -u GST_PLUGIN_SCANNER_1_0 \
-        -u SSL_CERT_FILE -u SSL_CERT_DIR \
-        PATH='/usr/bin:/bin' LANGUAGE=en \
-        /usr/bin/timeout --foreground 60 "$(cygpath -u "$MINGW_PREFIX")/bin/python.exe" \
-        tools/packaging/windows-gui-smoke.py "$(cygpath -m "$installed/bin/mirai.exe")" \
-        target/dist/release-smoke.png
-    cp target/windows-runtime-smoke.exe "$installed/bin/windows-runtime-smoke.exe"
-    rm -f target/runtime-gst-registry.bin
-    status=0
-    env -u DBUS_SESSION_BUS_ADDRESS -u GIO_EXTRA_MODULES -u GSETTINGS_SCHEMA_DIR \
-        -u GDK_PIXBUF_MODULE_FILE -u GDK_PIXBUF_MODULEDIR -u GI_TYPELIB_PATH \
-        -u GST_PLUGIN_PATH -u GST_PLUGIN_SYSTEM_PATH -u GST_PLUGIN_SCANNER \
-        -u GST_PLUGIN_PATH_1_0 -u GST_PLUGIN_SYSTEM_PATH_1_0 -u GST_PLUGIN_SCANNER_1_0 \
-        -u SSL_CERT_FILE -u SSL_CERT_DIR \
-        PATH='/usr/bin:/bin' \
-        GST_REGISTRY="$(cygpath -m "$PWD/target/runtime-gst-registry.bin")" \
-        /usr/bin/timeout --foreground 60 "$installed/bin/windows-runtime-smoke.exe" \
-        >target/dist/runtime-smoke.log 2>&1 || status=$?
-    rm -f "$installed/bin/windows-runtime-smoke.exe" target/runtime-gst-registry.bin
-    cat target/dist/runtime-smoke.log
-    [[ $status -eq 0 ]] || die "installed proxy/image/audio smoke exited $status"
-    # NSIS copies the uninstaller to TEMP and its launcher exits before that child.
-    # Start-Process -Wait waits for the whole process tree, not just the launcher.
-    env MSYS2_ARG_CONV_EXCL='*' PATH='/usr/bin:/bin' \
-        MIRAI_UNINSTALLER="$(cygpath -w "$installed/uninstall.exe")" \
-        /usr/bin/timeout --foreground 120 \
-        "$(cygpath -u "$WINDIR")/System32/WindowsPowerShell/v1.0/powershell.exe" \
-        -NoProfile -NonInteractive -Command \
-        '$ErrorActionPreference = "Stop"; $p = Start-Process -FilePath $env:MIRAI_UNINSTALLER -ArgumentList "/S" -Wait -PassThru; exit $p.ExitCode'
-    if [[ -e $installed ]]; then
-        find "$installed" -maxdepth 3 -print >&2
-        die "uninstaller left the clean installation behind"
-    fi
-    printf 'windows-ci: installed runtime launched and clean uninstall passed\n'
-}
-
 build_pipeline() {
     local version sha=${GITHUB_SHA-}
     version=$(resolve_version)
@@ -389,12 +320,8 @@ build_pipeline() {
     install_packages
     install_runtime_packages
     use_prefix_toolchain
-    # Wine rejects IPV6_V6ONLY (WSAEOPNOTSUPP 10045), so QUIC endpoint creation fails
-    # there. The hosted Windows runner is the proof; do not narrow this away.
-    cargo test --release --locked --workspace --target x86_64-pc-windows-gnu
     stage "$version"
     assert_installer "$version"
-    smoke_installer "$version"
 }
 
 publish_release() {

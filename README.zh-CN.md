@@ -83,7 +83,7 @@ makepkg-mingw -si
 
 `makepkg-mingw` 会安装构建依赖，并把软件包装到 `/ucrt64`。GUI 包要求 GTK 4.22 和 libadwaita 1.9，与从源码构建的下限相同。软件包不含 KataGo 及其权重。如需落子与吃子音效，安装 `mingw-w64-ucrt-x86_64-gst-plugins-good`（WAV 解码）和 `mingw-w64-ucrt-x86_64-gst-plugins-bad`（WASAPI2 输出）。Windows 安装包已包含这两者所需的插件子集。
 
-请预期卡顿，不要把 Wine 下的运行当成 Windows 测试。MSYS2 的 GTK 在 Windows 上用 CPU 上的 Cairo 绘制，因为它的 GPU 渲染器会在每个窗口周围画出一圈黑框，滚动、调整窗口大小和动画都可能卡顿。这一点没有修复。原生 Windows CI 已覆盖测试、安装后的运行与卸载，以及英文 GUI 截图；桌面 GPU 性能、中文字体渲染和音频设备的实际输出仍未验证。
+请预期卡顿，不要把 Wine 下的运行当成 Windows 测试。MSYS2 的 GTK 在 Windows 上用 CPU 上的 Cairo 绘制，因为它的 GPU 渲染器会在每个窗口周围画出一圈黑框，滚动、调整窗口大小和动画都可能卡顿。这一点没有修复。桌面 GPU 性能、中文字体渲染和音频设备的实际输出仍未验证。
 
 从检出的源码构建时，先安装上述软件包的构建依赖，并把 `/ucrt64/bin` 放在任何 rustup 之前：
 

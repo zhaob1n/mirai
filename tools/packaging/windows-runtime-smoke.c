@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Huang Zhaobin
-// Run from an installed bin/ with no MSYS2 DLL/data overrides. --play also
-// exercises the real audio sink; CI prepares the stream without needing a device.
+// Run from an installed bin/ with no MSYS2 DLL/data overrides. Without --play the stone
+// stream is only prepared, which needs no output device; --play drives the real sink.
 #include <gtk/gtk.h>
 #include <gst/gst.h>
 #include <libsoup/soup.h>
