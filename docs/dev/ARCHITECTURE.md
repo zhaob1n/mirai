@@ -94,6 +94,12 @@ Settings use roaming AppData, but autosaves, record-search history and KataGo lo
 permission bits. Gettext uses GNU libintl and a UTF-16 catalogue directory
 ([TRANSLATING](TRANSLATING.md#how-a-build-finds-its-catalogues)).
 
+The interface font is 11 pt, GNOME's default. GDK hands GTK the Windows message font,
+by default Segoe UI 9 pt (12 px at 96 dpi), which leaves a layout made for GNOME's size
+small ([gtk#8158](https://gitlab.gnome.org/GNOME/gtk/-/work_items/8158)). `main`'s startup
+keeps the system family, and with it the CJK fallback Windows gives it, and sets only the
+size.
+
 Packaging and the known GTK Windows rendering limits are in [PACKAGING](PACKAGING.md).
 
 ---
