@@ -1,0 +1,87 @@
+# Maintainer: Huang Zhaobin <zhaob1n@foxmail.com>
+# SPDX-License-Identifier: 0BSD
+#
+# Native UCRT64 package for the headless server. It does not depend on GTK.
+# Build in a UCRT64 shell with makepkg-mingw. Not CLANG64, not rustup, not a
+# Linux cross toolchain.
+#
+# CI may source this file with MINGW_PACKAGE_PREFIX=mingw-w64-ucrt-x86_64 and
+# read the top-level depends and makedepends arrays only. There is no
+# optdepends. git is the MSYS package, not a mingw-w64-* package.
+
+_realname=mirai-server
+_repo=mirai
+_rust_target=x86_64-pc-windows-gnu
+pkgname="${MINGW_PACKAGE_PREFIX}-${_realname}-git"
+pkgver=r0.0000000
+pkgrel=1
+pkgdesc='Headless host sharing KataGo with mirai clients over the network (mingw-w64)'
+arch=('any')
+mingw_arch=('ucrt64')
+url='https://github.com/zhaob1n/mirai'
+msys2_repository_url="${url}"
+license=('spdx:GPL-3.0-or-later')
+depends=(
+  "${MINGW_PACKAGE_PREFIX}-cc-libs"
+)
+makedepends=(
+  "${MINGW_PACKAGE_PREFIX}-cc"
+  "${MINGW_PACKAGE_PREFIX}-just"
+  "${MINGW_PACKAGE_PREFIX}-rust"
+  'git'
+)
+provides=("${MINGW_PACKAGE_PREFIX}-${_realname}")
+conflicts=("${MINGW_PACKAGE_PREFIX}-${_realname}")
+# makepkg LTO compiles the C inside ring and zstd-sys to bitcode rustc's linker
+# cannot read. UCRT64's makepkg.conf already has !lto; keep it if a host config enables LTO.
+options=('!lto')
+source=("${_repo}::git+${url}.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "${_repo}"
+  printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+_require_ucrt64_rust() {
+  export PATH="${MINGW_PREFIX}/bin:${PATH}"
+  local host
+  host="$(rustc --print host-tuple)"
+  if [[ "${host}" != "${_rust_target}" ]]; then
+    echo "mirai-server's UCRT64 package needs MSYS2 rustc host ${_rust_target}, not ${host}." >&2
+    echo "CLANG64's rustc is x86_64-pc-windows-gnullvm. Do not use rustup." >&2
+    exit 1
+  fi
+  if ! rustc -vV | grep -q MSYS2; then
+    echo "rustc is not MSYS2's toolchain. Install ${MINGW_PACKAGE_PREFIX}-rust in a UCRT64 shell." >&2
+    exit 1
+  fi
+}
+
+prepare() {
+  cd "${_repo}"
+  _require_ucrt64_rust
+  cargo fetch --locked --target "${_rust_target}"
+}
+
+build() {
+  cd "${_repo}"
+  _require_ucrt64_rust
+  export CARGO_TARGET_DIR=target
+  export CARGO_BUILD_TARGET="${_rust_target}"
+  cargo build --frozen --release --target "${_rust_target}" -p mirai-server
+}
+
+package() {
+  cd "${_repo}"
+  export PATH="${MINGW_PREFIX}/bin:${PATH}"
+  export MSYS2_ENV_CONV_EXCL="${MSYS2_ENV_CONV_EXCL};DESTDIR;PREFIX;MIRAI_BIN_DIR;CARGO_TARGET_DIR;CARGO_BUILD_TARGET"
+  export CARGO_TARGET_DIR=target
+  export CARGO_BUILD_TARGET="${_rust_target}"
+  unset MIRAI_BIN_DIR
+  DESTDIR="${pkgdir}" \
+    PREFIX="${MINGW_PREFIX}" \
+    MIRAI_EXE_SUFFIX=.exe \
+    MIRAI_PROFILE=release \
+    just install mirai-server
+}

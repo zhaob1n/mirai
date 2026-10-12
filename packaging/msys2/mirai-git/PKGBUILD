@@ -1,0 +1,109 @@
+# Maintainer: Huang Zhaobin <zhaob1n@foxmail.com>
+# SPDX-License-Identifier: 0BSD
+#
+# Native UCRT64 package. Build in a UCRT64 shell with makepkg-mingw, which uses
+# this environment's rustc (host x86_64-pc-windows-gnu). Not CLANG64
+# (x86_64-pc-windows-gnullvm), not rustup, not a Linux cross toolchain.
+#
+# CI may source this file with MINGW_PACKAGE_PREFIX=mingw-w64-ucrt-x86_64 and
+# read the top-level depends and makedepends arrays only. optdepends is not a
+# build requirement. git is the MSYS package, not a mingw-w64-* package.
+
+_realname=mirai
+_repo=mirai
+_rust_target=x86_64-pc-windows-gnu
+pkgname="${MINGW_PACKAGE_PREFIX}-${_realname}-git"
+pkgver=r0.0000000
+pkgrel=1
+pkgdesc='GTK4/libadwaita Go board for analysis, review and play with KataGo (mingw-w64)'
+arch=('any')
+mingw_arch=('ucrt64')
+url='https://github.com/zhaob1n/mirai'
+msys2_repository_url="${url}"
+license=('spdx:GPL-3.0-or-later')
+depends=(
+  "${MINGW_PACKAGE_PREFIX}-cc-libs"
+  "${MINGW_PACKAGE_PREFIX}-gettext-runtime"
+  "${MINGW_PACKAGE_PREFIX}-glib2"
+  "${MINGW_PACKAGE_PREFIX}-graphene"
+  "${MINGW_PACKAGE_PREFIX}-gtk4>=4.22"
+  "${MINGW_PACKAGE_PREFIX}-hicolor-icon-theme"
+  "${MINGW_PACKAGE_PREFIX}-libadwaita>=1.9"
+  "${MINGW_PACKAGE_PREFIX}-libsoup3"
+  "${MINGW_PACKAGE_PREFIX}-pango"
+)
+makedepends=(
+  "${MINGW_PACKAGE_PREFIX}-cc"
+  "${MINGW_PACKAGE_PREFIX}-gettext-tools"
+  "${MINGW_PACKAGE_PREFIX}-just"
+  "${MINGW_PACKAGE_PREFIX}-pkgconf"
+  "${MINGW_PACKAGE_PREFIX}-rust"
+  'git'
+)
+optdepends=(
+  "${MINGW_PACKAGE_PREFIX}-gst-plugins-good: stone-sound WAV decoding and DirectSound fallback"
+  "${MINGW_PACKAGE_PREFIX}-gst-plugins-bad: stone-sound WASAPI2 output"
+)
+provides=("${MINGW_PACKAGE_PREFIX}-${_realname}")
+conflicts=("${MINGW_PACKAGE_PREFIX}-${_realname}")
+# makepkg LTO compiles the C inside ring and zstd-sys to bitcode rustc's linker
+# cannot read. UCRT64's makepkg.conf already has !lto; keep it if a host config enables LTO.
+options=('!lto')
+source=("${_repo}::git+${url}.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "${_repo}"
+  printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+_require_ucrt64_rust() {
+  # rust-toolchain.toml is read only by a rustup proxy. This environment's
+  # cargo.exe is not one; keep it first so a user rustup cannot divert the build
+  # to upstream stable (often msvc, or a gnu that is not UCRT).
+  export PATH="${MINGW_PREFIX}/bin:${PATH}"
+  local host
+  host="$(rustc --print host-tuple)"
+  if [[ "${host}" != "${_rust_target}" ]]; then
+    echo "mirai's UCRT64 package needs MSYS2 rustc host ${_rust_target}, not ${host}." >&2
+    echo "CLANG64's rustc is x86_64-pc-windows-gnullvm. Do not use rustup." >&2
+    exit 1
+  fi
+  if ! rustc -vV | grep -q MSYS2; then
+    echo "rustc is not MSYS2's toolchain. Install ${MINGW_PACKAGE_PREFIX}-rust in a UCRT64 shell." >&2
+    exit 1
+  fi
+}
+
+prepare() {
+  cd "${_repo}"
+  _require_ucrt64_rust
+  # --target pins the fetched crates and, at build time, the artifact directory
+  # to target/${_rust_target}/release, the same path an explicit --target build uses.
+  cargo fetch --locked --target "${_rust_target}"
+}
+
+build() {
+  cd "${_repo}"
+  _require_ucrt64_rust
+  export CARGO_TARGET_DIR=target
+  export CARGO_BUILD_TARGET="${_rust_target}"
+  cargo build --frozen --release --target "${_rust_target}" -p mirai
+}
+
+package() {
+  cd "${_repo}"
+  export PATH="${MINGW_PREFIX}/bin:${PATH}"
+  # just.exe is a Windows program. Do not let MSYS rewrite these to drive-letter
+  # paths before just interpolates them into an MSYS shell script.
+  export MSYS2_ENV_CONV_EXCL="${MSYS2_ENV_CONV_EXCL};DESTDIR;PREFIX;MIRAI_BIN_DIR;CARGO_TARGET_DIR;CARGO_BUILD_TARGET"
+  export CARGO_TARGET_DIR=target
+  export CARGO_BUILD_TARGET="${_rust_target}"
+  unset MIRAI_BIN_DIR
+  DESTDIR="${pkgdir}" \
+    PREFIX="${MINGW_PREFIX}" \
+    MIRAI_EXE_SUFFIX=.exe \
+    MIRAI_PROFILE=release \
+    MIRAI_DESKTOP=1 \
+    just install mirai
+}

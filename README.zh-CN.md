@@ -61,6 +61,30 @@ sudo just uninstall      # 同上
 
 如需落子与吃子音效，还要安装 GStreamer 的 good 插件（Arch 上为 `gst-plugins-good`，Debian/Ubuntu 上为 `gstreamer1.0-plugins-good`，Fedora 上为 `gstreamer1-plugins-good`），GTK 通过它播放声音；缺少时 mirai 可以正常运行，只是没有声音。
 
+<a id="windows-msys2-ucrt64"></a>
+
+### Windows（MSYS2 UCRT64）
+
+原生构建使用 [MSYS2](https://www.msys2.org/) 的 **UCRT64** shell，而不是 MSYS、CLANG64 或 MINGW64，也不使用 rustup。UCRT64 的 rustc 宿主三元组是 `x86_64-pc-windows-gnu`（GCC 与 UCRT）。CLANG64 的是 `x86_64-pc-windows-gnullvm`。`rust-toolchain.toml` 会让 rustup 的代理忽略 MSYS2 的编译器。
+
+在该 shell 中，进入 [`packaging/msys2/mirai-git`](packaging/msys2/mirai-git)；要共享 KataGo 的机器再进入 [`packaging/msys2/mirai-server-git`](packaging/msys2/mirai-server-git)（该包不安装 GTK）：
+
+```
+pacman -S --needed git
+makepkg-mingw -si
+```
+
+`makepkg-mingw` 会安装构建依赖，并把软件包装到 `/ucrt64`。GUI 包要求 GTK 4.22 和 libadwaita 1.9，与从源码构建的下限相同。软件包不含 KataGo 及其权重。如需落子与吃子音效，安装 `mingw-w64-ucrt-x86_64-gst-plugins-good`（WAV 解码）和 `mingw-w64-ucrt-x86_64-gst-plugins-bad`（WASAPI2 输出）。
+
+请预期卡顿，不要把 Wine 下的运行当成 Windows 测试。GTK 的 Windows 后端远不如它的 Linux 后端成熟：它的 GPU 渲染器会在每个窗口周围画出一圈黑框，因此 GTK 4.24 改用 CPU 上的 Cairo 绘制，滚动、调整窗口大小和动画都可能卡顿。这一点没有修复。
+
+从检出的源码构建时，先安装上述软件包的构建依赖，并把 `/ucrt64/bin` 放在任何 rustup 之前：
+
+```
+cargo build --locked --release --target x86_64-pc-windows-gnu -p mirai -p mirai-server
+MSYS2_ENV_CONV_EXCL=PREFIX PREFIX=/ucrt64 MIRAI_EXE_SUFFIX=.exe CARGO_BUILD_TARGET=x86_64-pc-windows-gnu just install
+```
+
 ## 🚀 快速上手
 
 ```

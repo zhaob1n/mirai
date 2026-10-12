@@ -47,10 +47,11 @@ def scan(path):
             continue
         if fence is not None:
             continue
+        slugs.update(re.findall(r'<a\s+id="([^"]+)"', line))
         if heading := HEADING.match(line):
             title = re.sub(r"<[^>]*>", "", heading.group(1))
             title = re.sub(r"[`*_]", "", title).lower()
-            slug = re.sub(r"\s+", "-", re.sub(r"[^\w\- ]", "", title).strip())
+            slug = re.sub(r"\s", "-", re.sub(r"[^\w\- ]", "", title))
             suffix = seen[slug]
             slugs.add(slug if suffix == 0 else f"{slug}-{suffix}")
             seen[slug] += 1

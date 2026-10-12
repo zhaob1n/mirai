@@ -2,6 +2,9 @@
 // Copyright (C) 2026 Huang Zhaobin
 //! mirai — a KataGo analysis and playing GUI.
 
+// Release builds have no console window; debug builds keep it for logs and the harness.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod app;
 mod application_shell;
 mod batch;

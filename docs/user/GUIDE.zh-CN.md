@@ -2,7 +2,7 @@
 
 [English](GUIDE.md) | 简体中文
 
-Linux 上的围棋棋盘，对接 KataGo：实时分析、SGF 棋谱的复盘与编辑，以及与电脑对弈。引擎可以跑在本机，也可以跑在你网络上的另一台机器上。
+面向 Linux、实验性支持 Windows 的围棋棋盘，对接 KataGo：实时分析、SGF 棋谱的复盘与编辑，以及与电脑对弈。引擎可以跑在本机，也可以跑在你网络上的另一台机器上。
 
 ---
 
@@ -12,14 +12,14 @@ Linux 上的围棋棋盘，对接 KataGo：实时分析、SGF 棋谱的复盘与
 
 ### 需要从 KataGo 准备什么
 
-请自行提供较新的 KataGo 程序（`katago`）和权重（`*.bin.gz`）；mirai 不会下载它们。它会根据你在首选项里的设置生成 KataGo 的分析配置。要用自己的，选择**首选项 → 引擎 → 分析配置 → 自定义文件**；KataGo 在其 `configs` 目录里附带一份 `analysis.cfg`。
+请自行提供较新的 KataGo 程序（`katago`，Windows 上为 `katago.exe`）和权重（`*.bin.gz`）；mirai 不会下载它们。它会根据你在首选项里的设置生成 KataGo 的分析配置。要用自己的，选择**首选项 → 引擎 → 分析配置 → 自定义文件**；KataGo 在其 `configs` 目录里附带一份 `analysis.cfg`。
 
 > [!IMPORTANT]
 > mirai 驱动的是 KataGo 的 JSON **分析**引擎，绝不是 GTP——只讲 GTP 的机器人或包装脚本无法使用。
 
 如果你已经在 Lizzie、KaTrain 或 Sabaki 下跑 KataGo，把 mirai 指到同一份程序和权重即可；你的文件不会被复制或修改。棋盘从 2×2 到 19×19，与原版 KataGo 构建一致。
 
-如需落子与吃子音效，GTK 需要 GStreamer 的 good 插件（Arch 上为 `gst-plugins-good`，Debian/Ubuntu 上为 `gstreamer1.0-plugins-good`，Fedora 上为 `gstreamer1-plugins-good`）；缺少时 mirai 正常运行，只是没有声音。
+Linux 上如需落子与吃子音效，GTK 需要 GStreamer 的 good 插件（Arch 上为 `gst-plugins-good`，Debian/Ubuntu 上为 `gstreamer1.0-plugins-good`，Fedora 上为 `gstreamer1-plugins-good`）；缺少时 mirai 正常运行，只是没有声音。MSYS2 UCRT64 shell 中请安装 `mingw-w64-ucrt-x86_64-gst-plugins-good`（WAV 解码）和 `mingw-w64-ucrt-x86_64-gst-plugins-bad`（WASAPI2 输出）。Windows 构建仍是实验性的，可能卡顿，原因见 [README](../../README.zh-CN.md#windows-msys2-ucrt64)。
 
 ## 2. 首次运行
 
@@ -283,10 +283,10 @@ cp crates/mirai-server/server.example.toml ~/.config/mirai/server.toml
 chmod 600 ~/.config/mirai/server.toml
 ```
 
-若设置了该变量，路径就是 `$XDG_CONFIG_HOME/mirai/server.toml`。把生成的令牌贴进 `[[token]]`（示例中的全零令牌会被拒绝），并设置 KataGo 程序和权重。相对路径相对于配置文件所在目录解析。令牌超过 256 字节时，服务器不会启动。
+若设置了该变量，路径就是 `$XDG_CONFIG_HOME/mirai/server.toml`。在 Windows 上则是 `%APPDATA%\zhaob1n\mirai\config\server.toml`，`chmod 600` 不适用：Windows 没有 Unix 权限位，文件的私密程度只等于你的用户配置文件夹的 ACL。把生成的令牌贴进 `[[token]]`（示例中的全零令牌会被拒绝），并设置 KataGo 程序和权重。相对路径相对于配置文件所在目录解析。令牌超过 256 字节时，服务器不会启动。
 
 > [!CAUTION]
-> 令牌是密钥：请只允许自己的账号读取配置文件。如果其他用户可读，服务器会警告。
+> 令牌是密钥：请只允许自己的账号读取配置文件。在 Unix 上，如果其他用户可读，服务器会警告。Windows 不做这项检查。
 
 **3. 启动。**
 
@@ -416,7 +416,7 @@ mirai-server --config ~/.config/mirai/server.toml
 
 ### 设置文件
 
-`~/.config/mirai/config.toml`（严格来说是 `$XDG_CONFIG_HOME`）。纯文本，在 mirai 关闭时可以手改。文件缺失没有关系；格式错误时，mirai 会退回一份填好的首次运行配置，而不是带着半份配置启动。保存不会修复那个文件：错误会被报告，文本保持原样。平时用首选项来编辑。手写文件只需要写上你正在添加的配置；省略的分析、对局和显示设置键都用上面表格里的默认值。
+`~/.config/mirai/config.toml`（严格来说是 `$XDG_CONFIG_HOME`）。在 Windows 上是 `%APPDATA%\zhaob1n\mirai\config\config.toml`。纯文本，在 mirai 关闭时可以手改。文件缺失没有关系；格式错误时，mirai 会退回一份填好的首次运行配置，而不是带着半份配置启动。保存不会修复那个文件：错误会被报告，文本保持原样。平时用首选项来编辑。手写文件只需要写上你正在添加的配置；省略的分析、对局和显示设置键都用上面表格里的默认值。
 
 本地配置：
 
@@ -442,7 +442,7 @@ url = "mirai://192.168.1.10:9678"
 token = "…"
 ```
 
-除非服务器有多个引擎、而你想按名称指定一个，否则不要写 `engine`。自动保存、KataGo 的日志和生成的分析配置都在 `$XDG_DATA_HOME/mirai/` 下。
+除非服务器有多个引擎、而你想按名称指定一个，否则不要写 `engine`。自动保存、KataGo 的日志和生成的分析配置都在 `$XDG_DATA_HOME/mirai/` 下。在 Windows 上，这些文件在 `%LOCALAPPDATA%\zhaob1n\mirai\data\` 下。
 
 ## 9. 键盘参考
 
@@ -507,7 +507,9 @@ token = "…"
 | `~/.local/share/mirai/katago-logs/` | KataGo 自己的日志，每次引擎启动一个文件，以及生成的 `katago-analysis-*.cfg`；没有 `log_dir` 的 `[[engine]]`，`mirai-server` 的也在这里。创建时为私有。若生成配置所用的目录由其他用户拥有或可写，或者通往它的某一级目录如此（`/tmp` 这类粘滞位目录除外），则会拒绝 |
 | `~/.config/mirai/server.toml` | `mirai-server` 的设置，在运行它的那台机器上 |
 
-（若设置了 `$XDG_CONFIG_HOME` 和 `$XDG_DATA_HOME`，则遵从它们。）
+（若设置了 `$XDG_CONFIG_HOME` 和 `$XDG_DATA_HOME`，则遵从它们。Windows 不使用这两个变量。）
+
+在 Windows 上，设置是 `%APPDATA%\zhaob1n\mirai\config\config.toml` 和 `%APPDATA%\zhaob1n\mirai\config\server.toml`。自动保存（`autosave-*.sgf`）、KataGo 日志（`katago-logs\`）和棋谱搜索缓存（`kifu-searches.json`）在 `%LOCALAPPDATA%\zhaob1n\mirai\data\` 下。Windows 没有 Unix 的 `0600`/`0700`：mirai 不会设置等效的 ACL，这些文件的私密程度只等于你的用户配置文件夹。
 
 - **自动保存**每 30 秒一次，且只在有值得保留的内容时进行——一手棋、一颗摆子、一个标记、明确的行棋方，或一条注释；空盘从不保存。
 - **关闭窗口会删除它的自动保存**，因此下次启动时还在的文件，就是崩溃留下的，mirai 提议恢复的就是它。自动保存不是你的文件：恢复它并不会让一次普通的保存写到那里。
@@ -520,7 +522,7 @@ token = "…"
 
 ### 引擎无法启动
 
-如果配置失败，引擎按钮显示“*配置名* 不可用”，请到**首选项 → 引擎**检查程序和权重是否还在。它必须是 KataGo 的 JSON 分析引擎，而不是 GTP（[引擎要求](#1-katago-与准备工作)）。GPU 报错或权重不匹配时，阅读 `~/.local/share/mirai/katago-logs/`；使用彼此匹配的程序和权重。
+如果配置失败，引擎按钮显示“*配置名* 不可用”，请到**首选项 → 引擎**检查程序和权重是否还在。它必须是 KataGo 的 JSON 分析引擎，而不是 GTP（[引擎要求](#1-katago-与准备工作)）。GPU 报错或权重不匹配时，阅读 `~/.local/share/mirai/katago-logs/`（Windows 上为 `%LOCALAPPDATA%\zhaob1n\mirai\data\katago-logs\`）；使用彼此匹配的程序和权重。
 
 ### 首次启动需要数分钟
 

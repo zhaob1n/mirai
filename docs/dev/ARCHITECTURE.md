@@ -81,6 +81,21 @@ queued. A lagging consumer skips intermediate reports; do not treat this stream 
 Ownership is still requested when its overlay is off: score estimates and stored analysis
 use it. Rendering decisions and measurements live in [`RENDERING.md`](RENDERING.md).
 
+### 2.5 Windows uses MSYS2 UCRT64
+
+The GUI and server retain the same crate boundaries and query lifecycle. `config::which`
+adds the executable suffix; `LocalEngine::spawn` starts KataGo with `CREATE_NO_WINDOW`.
+Release GUI builds use the Windows GUI subsystem; debug builds and the server keep a
+console. Both route Ctrl-C, Ctrl-Break and console close through their normal shutdown
+paths; GUI-subsystem programs receive no console events.
+
+Settings use roaming AppData, but autosaves, record-search history and KataGo logs use
+`ProjectDirs::data_local_dir`. Windows relies on the user's directory ACLs, not Unix
+permission bits. Gettext uses GNU libintl and a UTF-16 catalogue directory
+([TRANSLATING](TRANSLATING.md#how-a-build-finds-its-catalogues)).
+
+Packaging and the known GTK Windows rendering limits are in [PACKAGING](PACKAGING.md).
+
 ---
 
 ## 3. Module map

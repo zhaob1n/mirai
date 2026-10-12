@@ -27,6 +27,44 @@ cargo test -p mirai-proto --test wire_size -- --nocapture   # prints the measure
 `just check` runs formatting, all-target Clippy with warnings denied, and the full
 workspace suite with the lockfile — the checks every commit owes.
 
+### Windows / MSYS2
+
+Native UCRT64 package builds are described in [PACKAGING](PACKAGING.md). Run the suite
+and GUI harness in that same shell with MSYS2's Rust, not a rustup MSVC toolchain.
+A release `mirai.exe` has no console and ignores the harness; use a debug build for it.
+
+For a Linux experiment with an MSYS2 library sysroot, keep cross settings scoped to the
+command; do not set a global Cargo target or point host builds at Windows pkg-config files:
+
+```sh
+root="$HOME/.local/opt/msys2"
+env PKG_CONFIG_LIBDIR_x86_64_pc_windows_gnu="$root/ucrt64/lib/pkgconfig:$root/ucrt64/share/pkgconfig" \
+    PKG_CONFIG_SYSROOT_DIR_x86_64_pc_windows_gnu="$root" \
+    PKG_CONFIG_PATH_x86_64_pc_windows_gnu= \
+    cargo build --locked --workspace --target x86_64-pc-windows-gnu
+WINEPATH="$(winepath -w "$root/ucrt64/bin")" LANGUAGE=en \
+    MIRAI_HARNESS='wait:1500,board:primary:D4,action:win.preferences,wait:1000,close-dialog,close-window' \
+    wine target/x86_64-pc-windows-gnu/debug/mirai.exe
+```
+
+The host needs Rust's Windows GNU target, MinGW GCC and Wine. Verify the CRT in the PE
+imports: UCRT API-set DLLs, not `msvcrt.dll`. To test translations, install the binary
+and catalogues under the same prefix first; a cross-built debug binary's `OUT_DIR` is a
+host path, not a Windows catalogue directory. Include a non-ASCII installation path.
+
+Endless-stream tests use `gio::ReadInputStream` over `std::io::repeat`, not `/dev/zero`:
+Wine resolves that Unix device through its Linux host; native Windows does not.
+
+Wine smoke is not real-Windows proof. With Wine 11.19, the GUI harness and Windows HTTP
+tests run, but QUIC endpoint creation can fail with Winsock 10045: quinn-udp queries
+`IPV6_V6ONLY` on an IPv4 socket, and the same standalone Winsock call fails under Wine.
+Do not skip the production error or weaken tests to make this environment pass; verify
+the network suite and rendering on Windows.
+
+Wine's Win32 font lookup may also deform CJK glyphs while gettext is working;
+`PANGOCAIRO_BACKEND=fontconfig` isolates the font backend. It is a diagnostic, not a
+shipped override or proof of Windows text rendering.
+
 | Changed | Check |
 |---|---|
 | Rust | `cargo fmt --all --check`. Avoid `cargo clippy --fix`: it rewrites files you have not reviewed |

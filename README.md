@@ -87,6 +87,43 @@ For stone sounds, install GStreamer's good plugins (`gst-plugins-good` on Arch,
 `gstreamer1.0-plugins-good` on Debian/Ubuntu, `gstreamer1-plugins-good` on Fedora),
 which GTK plays audio through; without them mirai runs silently.
 
+<a id="windows-msys2-ucrt64"></a>
+
+### Windows (MSYS2 UCRT64)
+
+A native build uses an [MSYS2](https://www.msys2.org/) **UCRT64** shell, not MSYS, CLANG64 or
+MINGW64, and not rustup. UCRT64's rustc host is `x86_64-pc-windows-gnu` (GCC and UCRT).
+CLANG64's is `x86_64-pc-windows-gnullvm`. `rust-toolchain.toml` makes a rustup proxy ignore
+MSYS2's compiler.
+
+In that shell, from [`packaging/msys2/mirai-git`](packaging/msys2/mirai-git), and from
+[`packaging/msys2/mirai-server-git`](packaging/msys2/mirai-server-git) on a machine that should
+share KataGo (that package does not install GTK):
+
+```
+pacman -S --needed git
+makepkg-mingw -si
+```
+
+`makepkg-mingw` installs the build dependencies and the package under `/ucrt64`. The GUI
+package requires GTK 4.22 and libadwaita 1.9, the same floor as a source build. KataGo and its
+model are not in the package. For stone sounds, install
+`mingw-w64-ucrt-x86_64-gst-plugins-good` (WAV decoding) and
+`mingw-w64-ucrt-x86_64-gst-plugins-bad` (WASAPI2 output).
+
+Expect stutter, and do not treat a Wine run as a Windows test. GTK's Windows backend is less
+mature than its Linux ones: its GPU renderers draw a black band around every window, so GTK
+4.24 draws with Cairo on the CPU, and scrolling, resizing and animation can hitch. That is
+not fixed.
+
+From a checkout, with the package's build dependencies installed and `/ucrt64/bin`
+ahead of any rustup:
+
+```
+cargo build --locked --release --target x86_64-pc-windows-gnu -p mirai -p mirai-server
+MSYS2_ENV_CONV_EXCL=PREFIX PREFIX=/ucrt64 MIRAI_EXE_SUFFIX=.exe CARGO_BUILD_TARGET=x86_64-pc-windows-gnu just install
+```
+
 ## 🚀 Getting started
 
 ```
