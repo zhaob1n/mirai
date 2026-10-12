@@ -170,18 +170,30 @@ CI sources each PKGBUILD in its own subshell with
 and `makedepends`, preserving version constraints. `git` is the MSYS package. Release-only
 additions are Python, NSIS, icoutils and librsvg for the installer.
 
-The installer runtime then differs from that SDK in two ways, installed outside
+The installer runtime then differs from that SDK in three ways, installed outside
 setup-msys2's cache into `target/windows-packages`, which the build cache keeps:
 
 - GTK is the D3D12 build from [zhaob1n/gtk-d3d12](https://github.com/zhaob1n/gtk-d3d12),
   pinned by file name and SHA-256 in `packaging/windows/gtk4-d3d12.sha256`. It replaces
   the official `gtk4` (`pacman -Rdd`, then `-U`; it provides `gtk4`, so libadwaita's
-  dependency holds). To move the pin, replace that line with the new release asset's
-  `SHA256SUMS` entry.
+  dependency holds).
+- cairo is the build from [zhaob1n/cairo](https://github.com/zhaob1n/cairo), pinned in
+  `packaging/windows/cairo.sha256`: MSYS2's package plus
+  [DWrite: Use the font's recommended rendering mode](https://github.com/zhaob1n/cairo/commit/ecc13f1b7d75567a5985f3f7b9c3f5dd60b71779).
+  GTK rasterises glyphs in grayscale, and cairo's grayscale DirectWrite path forced
+  `NATURAL_SYMMETRIC`, so bold CJK labels sat a row apart and Latin text blurred
+  vertically. The recipe is the fork's `contrib/msys2/PKGBUILD`, with `pkgrel` one
+  decimal above the official build it replaces (1.18.6-2.1 over 1.18.6-2). `-U` would
+  downgrade a newer official cairo under packages built against it, so CI fails once
+  MSYS2 ships anything newer than the pin, a pkgrel bump included: rebase the branch on
+  that build and republish. Drop the pin once upstream and MSYS2 carry the fix.
 - `gst-plugins-good` and `-bad` install with `-Sdd`: the installer takes a handful of
   audio plugins, while `gst-plugins-bad`'s dependency closure alone added 71 packages and
   540 MiB to every run. `bundle_imports` fails the stage if a shipped plugin imports a DLL
   that is not there.
+
+Each pin installs from the release tagged `NAME-VERSION` of its fork. To move one,
+replace its line with the new release asset's `SHA256SUMS` entry.
 
 `windows-ci.sh packages` prints that list without requiring an MSYS2 shell, so the
 workflow passes it to `setup-msys2`'s `install` input. Dependencies installed later in a

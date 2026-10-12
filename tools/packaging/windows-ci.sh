@@ -24,7 +24,8 @@
 # and are not duplicated. No zip.
 #
 # The installer runtime then replaces GTK with the D3D12 build pinned in
-# packaging/windows/gtk4-d3d12.sha256 and adds the GStreamer plugin packages without their
+# packaging/windows/gtk4-d3d12.sha256 and cairo with the build pinned in
+# packaging/windows/cairo.sha256, and adds the GStreamer plugin packages without their
 # dependencies: only a few plugins ship, and bundle_imports checks their imports.
 #
 # Tag pushes must be named v<workspace semver> or v<workspace semver>-<prerelease>.
@@ -214,30 +215,45 @@ install_packages() {
     pacman -S --needed --noconfirm "${pkgs[@]}"
 }
 
-# Runtime packages outside setup-msys2's cache: the pinned D3D12 GTK and the GStreamer
-# plugin packages. The workflow caches this directory.
+# Runtime packages outside setup-msys2's cache: the pinned GTK and cairo builds and the
+# GStreamer plugin packages. The workflow caches this directory.
 RUNTIME_PACKAGES=target/windows-packages
-GTK_RELEASES=https://github.com/zhaob1n/gtk-d3d12/releases/download
 
-install_runtime_packages() {
-    local pin=$PWD/packaging/windows/gtk4-d3d12.sha256 cache=$PWD/$RUNTIME_PACKAGES file version
+# install_pinned NAME RELEASES [OFFICIAL...]
+# Installs mingw-w64-ucrt-x86_64-NAME as pinned by packaging/windows/NAME.sha256, from
+# RELEASES/NAME-VERSION/, first removing the OFFICIAL packages it replaces (without their
+# dependents: what depends on them is satisfied by the package's provides).
+install_pinned() {
+    local name=$1 releases=$2 pin=$PWD/packaging/windows/$1.sha256 cache=$PWD/$RUNTIME_PACKAGES
+    local file version installed
+    shift 2
     file=$(awk 'NR == 1 { print $2 }' "$pin")
-    [[ $file =~ ^mingw-w64-ucrt-x86_64-gtk4-d3d12-([0-9A-Za-z.+_-]+)-any\.pkg\.tar\.zst$ ]] ||
+    [[ $file =~ ^mingw-w64-ucrt-x86_64-$name-([0-9A-Za-z.+_-]+)-any\.pkg\.tar\.zst$ ]] ||
         die "unexpected package name in $pin"
     version=${BASH_REMATCH[1]}
-    mkdir -p "$cache"
     if ! (cd "$cache" && sha256sum --check --status "$pin" 2>/dev/null); then
-        curl -fsSL --retry 3 -o "$cache/$file" "$GTK_RELEASES/gtk4-d3d12-$version/$file"
+        curl -fsSL --retry 3 -o "$cache/$file" "$releases/$name-$version/$file"
         (cd "$cache" && sha256sum --check "$pin") || die "$file checksum mismatch"
     fi
-    if [[ $(pacman -Q mingw-w64-ucrt-x86_64-gtk4-d3d12 2>/dev/null) != "mingw-w64-ucrt-x86_64-gtk4-d3d12 $version" ]]; then
-        local -a official=()
-        mapfile -t official < <(pacman -Qq mingw-w64-ucrt-x86_64-gtk4 \
-            mingw-w64-ucrt-x86_64-gtk4-media-gstreamer 2>/dev/null || true)
-        # libadwaita depends on gtk4, which the D3D12 package provides.
-        [[ ${#official[@]} -eq 0 ]] || pacman -Rdd --noconfirm "${official[@]}"
-        pacman -U --noconfirm --cachedir "$cache" "$cache/$file"
-    fi
+    installed=$(pacman -Q "mingw-w64-ucrt-x86_64-$name" 2>/dev/null | awk '{ print $2 }' || true)
+    [[ $installed != "$version" ]] || return 0
+    # Replacing the official package in place, the pin must stay ahead of it, or -U
+    # downgrades it under packages built against the newer one.
+    [[ $# -ne 0 || -z $installed || $(vercmp "$installed" "$version") -lt 0 ]] ||
+        die "MSYS2's $name $installed is not older than the pinned $version; rebase the fork and republish"
+    local -a official=()
+    [[ $# -eq 0 ]] || mapfile -t official < <(pacman -Qq "$@" 2>/dev/null || true)
+    [[ ${#official[@]} -eq 0 ]] || pacman -Rdd --noconfirm "${official[@]}"
+    pacman -U --noconfirm --cachedir "$cache" "$cache/$file"
+}
+
+install_runtime_packages() {
+    local cache=$PWD/$RUNTIME_PACKAGES
+    mkdir -p "$cache"
+    install_pinned gtk4-d3d12 https://github.com/zhaob1n/gtk-d3d12/releases/download \
+        mingw-w64-ucrt-x86_64-gtk4 mingw-w64-ucrt-x86_64-gtk4-media-gstreamer
+    # Same package name as the official cairo, so -U replaces it in place.
+    install_pinned cairo https://github.com/zhaob1n/cairo/releases/download
     pacman -Sdd --needed --noconfirm --cachedir "$cache" \
         mingw-w64-ucrt-x86_64-gst-plugins-good mingw-w64-ucrt-x86_64-gst-plugins-bad
     paccache -rq -k1 -c "$cache"
