@@ -72,7 +72,7 @@ jobs:
           printf 'packages=%s\n' "$(pacman -Q | sha256sum | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
           printf 'CARGO_HOME=%s/mirai-cargo\n' "$(cygpath -m "$RUNNER_TEMP")" >> "$GITHUB_ENV"
 
-      - name: Restore Cargo cache
+      - name: Restore build cache
         id: cargo-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
@@ -83,9 +83,13 @@ jobs:
             ${{ env.CARGO_HOME }}/git
             target/release
             target/x86_64-pc-windows-gnu/release
+            target/windows-packages
           key: windows-ucrt64-cargo-v2-${{ steps.sdk.outputs.packages }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.cargo/config.toml', 'rust-toolchain.toml') }}-${{ github.sha }}
+          # Same SDK and manifests first, then any earlier build: Cargo rebuilds whatever a
+          # newer rustc or lockfile invalidates and keeps the rest.
           restore-keys: |
             windows-ucrt64-cargo-v2-${{ steps.sdk.outputs.packages }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.cargo/config.toml', 'rust-toolchain.toml') }}-
+            windows-ucrt64-cargo-v2-
 
       - name: Test, smoke, and stage installer
         env:
@@ -120,7 +124,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Save Cargo cache
+      - name: Save build cache
         if: ${{ always() && !cancelled() && steps.cargo-cache.outputs.cache-primary-key != '' && steps.cargo-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:

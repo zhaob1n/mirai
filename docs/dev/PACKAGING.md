@@ -168,14 +168,20 @@ The recipes never build.
 CI sources each PKGBUILD in its own subshell with
 `MINGW_PACKAGE_PREFIX=mingw-w64-ucrt-x86_64` and installs the union of top-level `depends`
 and `makedepends`, preserving version constraints. `git` is the MSYS package. Release-only
-additions are Python, NSIS, icoutils and librsvg for the installer, plus
-`gst-plugins-good` and `gst-plugins-bad` for the stone-sound subset it bundles.
+additions are Python, NSIS, icoutils and librsvg for the installer.
 
-The installer's GTK is then the D3D12 build from
-[zhaob1n/gtk-d3d12](https://github.com/zhaob1n/gtk-d3d12), pinned by file name and SHA-256
-in `packaging/windows/gtk4-d3d12.sha256`. It replaces the official `gtk4` (`pacman -Rdd`, then `-U`; it provides `gtk4`, so libadwaita's
-dependency holds). To move the pin, replace that line with the new release asset's
-`SHA256SUMS` entry.
+The installer runtime then differs from that SDK in two ways, installed outside
+setup-msys2's cache into `target/windows-packages`, which the build cache keeps:
+
+- GTK is the D3D12 build from [zhaob1n/gtk-d3d12](https://github.com/zhaob1n/gtk-d3d12),
+  pinned by file name and SHA-256 in `packaging/windows/gtk4-d3d12.sha256`. It replaces
+  the official `gtk4` (`pacman -Rdd`, then `-U`; it provides `gtk4`, so libadwaita's
+  dependency holds). To move the pin, replace that line with the new release asset's
+  `SHA256SUMS` entry.
+- `gst-plugins-good` and `-bad` install with `-Sdd`: the installer takes a handful of
+  audio plugins, while `gst-plugins-bad`'s dependency closure alone added 71 packages and
+  540 MiB to every run. `bundle_imports` fails the stage if a shipped plugin imports a DLL
+  that is not there.
 
 `windows-ci.sh packages` prints that list without requiring an MSYS2 shell, so the
 workflow passes it to `setup-msys2`'s `install` input. Dependencies installed later in a
@@ -185,10 +191,11 @@ caches `var/cache/pacman/pkg`, not the mutable installation. `release: true` sta
 a fresh installer; `update: true` performs the core upgrade, restarts the MSYS2 runtime,
 then completes `pacman -Syuu` on every run, even after a cache hit.
 
-Cargo's registry/git downloads and release build outputs have their own cache. The key
-includes the installed `pacman -Q` package versions, Cargo manifests/lockfile,
-configuration and commit; fallback restores stay within the same SDK and dependency
-configuration. `CARGO_HOME` is isolated in the runner's temporary directory;
+Cargo's registry/git downloads, release build outputs and those runtime packages have
+their own cache, saved on every run. Restores prefer the same `pacman -Q` package versions
+and Cargo manifests/lockfile, then fall back to any earlier build: Cargo rebuilds what a
+newer rustc or lockfile invalidates. C objects in build-script outputs are not rebuilt for
+a newer GCC alone. `CARGO_HOME` is isolated in the runner's temporary directory;
 credentials, `target/dist` and `target/resources` are not cached. Incremental outputs are
 disabled. Cache save runs even after a build/test failure, unless cancelled, so a fix can
 reuse completed dependency builds; release artifacts are uploaded only after success.
