@@ -250,8 +250,14 @@ The runtime subset is deliberate:
   [Win32 GIO content types](https://gitlab.gnome.org/GNOME/glib/-/blob/2.90.0/gio/gcontenttype-win32.c)
   use the registry, and the SGF chooser filters by suffix.
 - Pixbuf retains PNG, JPEG, TIFF and SVG fallback, with a cache containing only those
-  loaders. Keep both complete icon themes; a source-only icon-name allowlist misses
-  GTK/libadwaita controls and fallbacks.
+  loaders.
+- Icons are Adwaita whole (about 800 files), without AdwaitaLegacy (1,861). Legacy holds
+  full-colour PNGs of about 370 pre-symbolic names (`accessories-calculator`, `edit-copy`,
+  …) at five sizes, a fallback GNOME keeps for applications that still ask for them. A
+  `GTK_DEBUG=icontheme` trace of the main window and its dialogs resolved every themed
+  lookup in Adwaita's `symbolic/`, none in Legacy. Cut whole themes, not names: an
+  icon-name allowlist taken from mirai's source missed GTK/libadwaita controls and
+  fallbacks.
 - The staged hicolor `index.theme` lists `scalable/actions`. GTK walks that directory
   list for embedded resource icons too; without it every custom edit-bar icon falls back
   to `image-missing`.

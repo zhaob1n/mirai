@@ -890,11 +890,11 @@ def stage_runtime(prefix: Path, stage: Path, objdump: Path) -> None:
         die("glib-compile-schemas produced no gschemas.compiled")
     assert_no_sysroot(compiled, prefix, extra=(b"/ucrt64",))
 
-    for theme in ("Adwaita", "AdwaitaLegacy"):
-        src = prefix / "share" / "icons" / theme
-        if not src.is_dir():
-            die(f"missing icon theme {src}")
-        copy_tree(src, stage / "share" / "icons" / theme, index, noted)
+    # Adwaita whole; not AdwaitaLegacy, the full-colour PNGs GNOME keeps for applications
+    # that still ask for pre-symbolic names. A GTK_DEBUG=icontheme trace through the main
+    # window and its dialogs resolved nothing from it. Adwaita's own index inherits it, and
+    # GTK skips an inherited theme that is not installed.
+    copy_tree(prefix / "share" / "icons" / "Adwaita", stage / "share" / "icons" / "Adwaita", index, noted)
     index_theme = stage / "share" / "icons" / "hicolor" / "index.theme"
     index_theme.parent.mkdir(parents=True, exist_ok=True)
     index_theme.write_text(HICOLOR_INDEX, encoding="utf-8", newline="\n")

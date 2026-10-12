@@ -77,6 +77,11 @@ which sends Home then four Right keys, and record the device: expect four attack
 0.8 seconds apart. WASAPI2 records what the device plays, with no cable:
 `gst-launch-1.0 -e wasapi2src loopback=true ! audioconvert ! wavenc ! filesink location=loop.wav`.
 `INSTALL` may be the staged `target/dist/mirai-VERSION-windows-x86_64`, which runs as installed.
+An UCRT64 login shell exports two variables Explorer does not: `XDG_DATA_DIRS` makes GTK
+read the prefix's icon themes instead of the staged ones, and `LANG=C.UTF-8` forces an
+English UI over the Windows locale. Unset both (`env -u XDG_DATA_DIRS -u LANG`). A debug
+`mirai.exe` copied into the staged `bin/` runs the harness against the staged runtime;
+with `GTK_DEBUG=icontheme` it logs every icon lookup.
 
 To be the runner — a desktop with no output device — hide every active render endpoint
 with `tools/packaging/windows-audio-endpoint.ps1` (no elevation; `-Visible 1` restores it),
