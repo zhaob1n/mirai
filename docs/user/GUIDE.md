@@ -779,6 +779,11 @@ GTK plays stone placement and capture audio through GStreamer; the plugins it ne
 [section 1](#1-katago-and-prerequisites). Then check that the **Stone Sounds** slider in
 Preferences → General is not muted.
 
+Bluetooth headphones, and some USB and HDMI outputs, sleep when nothing plays and swallow
+the start of the next sound. On Windows, mirai keeps the output awake with an inaudible
+signal for two minutes after your last input or stone sound; the first click after a longer
+pause can still be faint.
+
 ---
 
 Contributors and agents: start at [AGENTS.md](../../AGENTS.md). That is the entry for

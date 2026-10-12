@@ -390,6 +390,17 @@ pub fn present(
             }
         });
     }
+    if crate::sound::KEEP_AWAKE {
+        // Every input event, seen before any widget handles it, counts as someone at the board.
+        let weak = window.downgrade();
+        let input = gtk::EventControllerLegacy::new();
+        input.set_propagation_phase(gtk::PropagationPhase::Capture);
+        input.connect_event(move |_, _| {
+            with_window_ui(&weak, |ui| ui.sounds.user_active(&ui.state));
+            glib::Propagation::Proceed
+        });
+        window.add_controller(input);
+    }
 
     // Cross-widget wiring the two panels cannot do for themselves.
     window.with_ui(|ui| ui.play.attach_board(&board));
