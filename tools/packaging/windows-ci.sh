@@ -321,6 +321,9 @@ smoke_installer() {
     output=$(env PATH='/usr/bin:/bin' "$installed/bin/mirai-server.exe" --version)
     [[ $output == "mirai-server $(workspace_version)" ]] ||
         die "installed server returned an unexpected version: $output"
+    # Four moves: the release steps through them, so stone sounds and the keep-awake
+    # stream are playing when the window closes.
+    printf '(;GM[1]FF[4]SZ[19];B[pd];W[dp];B[pp];W[dd])\n' >target/dist/smoke-game.sgf
     env -u DBUS_SESSION_BUS_ADDRESS -u GIO_EXTRA_MODULES -u GSETTINGS_SCHEMA_DIR \
         -u GDK_PIXBUF_MODULE_FILE -u GDK_PIXBUF_MODULEDIR -u GI_TYPELIB_PATH \
         -u GST_PLUGIN_PATH -u GST_PLUGIN_SYSTEM_PATH -u GST_PLUGIN_SCANNER \
@@ -329,7 +332,7 @@ smoke_installer() {
         PATH='/usr/bin:/bin' LANGUAGE=en \
         /usr/bin/timeout --foreground 60 "$(cygpath -u "$MINGW_PREFIX")/bin/python.exe" \
         tools/packaging/windows-gui-smoke.py "$(cygpath -m "$installed/bin/mirai.exe")" \
-        target/dist/release-smoke.png
+        target/dist/release-smoke.png "$(cygpath -m "$PWD/target/dist/smoke-game.sgf")"
     cp target/windows-runtime-smoke.exe "$installed/bin/windows-runtime-smoke.exe"
     rm -f target/runtime-gst-registry.bin
     status=0

@@ -34,10 +34,13 @@ and GUI harness in that same shell with MSYS2's Rust, not a rustup MSVC toolchai
 A release `mirai.exe` has no console and ignores the harness; use a debug build for it.
 
 `tools/packaging/windows-ci.sh` runs `cargo test --release`, then packages and silently
-installs the release artifact. It launches the installed server, captures the installed
-release GUI with `windows-gui-smoke.py`, runs the runtime probe, and verifies clean
-uninstall. `tools/packaging/windows-runtime-smoke.c` checks a libsoup request through a
-loopback proxy, HTTPS proxy lookup, decoded PNG/JPEG/TIFF/SVG dimensions and pixels, every
+installs the release artifact. It launches the installed server, and `windows-gui-smoke.py`
+steps the installed release through a four-move record (keys posted to the window, since a
+hosted runner refuses foreground focus), captures it and closes it: stone sounds and the
+keep-awake stream are playing at close, which once hung the process. It then runs the
+runtime probe and verifies clean uninstall. `tools/packaging/windows-runtime-smoke.c`
+checks a libsoup request through a loopback proxy, HTTPS proxy lookup, decoded
+PNG/JPEG/TIFF/SVG dimensions and pixels, every
 embedded action icon's GTK theme lookup, WASAPI2's stone-PCM caps, and a non-silent memory
 WAV's duration. It embeds the app's resource bundle and runs from installed `bin/`
 without prefix DLL/data overrides, with a fresh GStreamer registry. Neither helper ships.

@@ -49,9 +49,6 @@ def main():
     user.GetWindowDC.restype = w.HDC
     user.PrintWindow.argtypes = [w.HWND, w.HDC, w.UINT]
     user.PostMessageW.argtypes = [w.HWND, w.UINT, w.WPARAM, w.LPARAM]
-    user.SetForegroundWindow.argtypes = [w.HWND]
-    user.GetForegroundWindow.restype = w.HWND
-    user.keybd_event.argtypes = [w.BYTE, w.BYTE, w.DWORD, ctypes.c_size_t]
     user.ReleaseDC.argtypes = [w.HWND, w.HDC]
     gdi.CreateCompatibleDC.argtypes = [w.HDC]
     gdi.CreateCompatibleDC.restype = w.HDC
@@ -88,12 +85,12 @@ def main():
             window = windows[0]
             time.sleep(3)
             if len(sys.argv) == 4:
-                user.SetForegroundWindow(window)
-                for key in [0x24, 0x27, 0x27, 0x27, 0x27]:  # Home, Right × 4
-                    if user.GetForegroundWindow() != window:
-                        raise RuntimeError("Release lost input focus")
-                    user.keybd_event(key, 0, 0, 0)
-                    user.keybd_event(key, 0, 2, 0)
+                # Posted to the window, not synthesized globally: a hosted runner's desktop
+                # often refuses SetForegroundWindow, and then keybd_event goes elsewhere.
+                for key, scan in [(0x24, 0x47), (0x27, 0x4D), (0x27, 0x4D), (0x27, 0x4D), (0x27, 0x4D)]:
+                    extended = 1 | scan << 16 | 1 << 24  # Home, Right × 4
+                    user.PostMessageW(window, 0x0100, key, extended)  # WM_KEYDOWN
+                    user.PostMessageW(window, 0x0101, key, extended | 0xC0000000)  # WM_KEYUP
                     time.sleep(0.8)
             rect = w.RECT()
             if not user.GetWindowRect(window, ctypes.byref(rect)):
