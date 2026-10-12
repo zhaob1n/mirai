@@ -171,6 +171,12 @@ and `makedepends`, preserving version constraints. `git` is the MSYS package. Re
 additions are Python, NSIS, icoutils and librsvg for the installer, plus
 `gst-plugins-good` and `gst-plugins-bad` for the stone-sound subset it bundles.
 
+The installer's GTK is then the D3D12 build from
+[zhaob1n/gtk-d3d12](https://github.com/zhaob1n/gtk-d3d12), pinned by file name and SHA-256
+in `packaging/windows/gtk4-d3d12.sha256`. It replaces the official `gtk4` (`pacman -Rdd`, then `-U`; it provides `gtk4`, so libadwaita's
+dependency holds). To move the pin, replace that line with the new release asset's
+`SHA256SUMS` entry.
+
 `windows-ci.sh packages` prints that list without requiring an MSYS2 shell, so the
 workflow passes it to `setup-msys2`'s `install` input. Dependencies installed later in a
 separate script would miss the action's package cache. Its
@@ -253,11 +259,12 @@ The runtime subset is deliberate:
 
 ### What is not claimed
 
-GTK's Windows backend is the limitation recorded when an earlier port was reverted, and it
-is not fixed. GTK 4.22 composites through DirectComposition and draws a black band around
-every window with its GPU renderers (gtk#7567). GTK 4.24, which UCRT64 ships, avoids the band
-by drawing with Cairo on the CPU, and scrolling, resizing and animation can stutter. mirai
-picks no renderer.
+GTK's Windows backend is the limitation recorded when an earlier port was reverted. GTK 4.22
+composites through DirectComposition and draws a black band around every window with its
+GPU renderers (gtk#7567); GTK 4.24, which UCRT64 ships, avoids the band by drawing with Cairo
+on the CPU, and scrolling, resizing and animation can stutter. That is what the MSYS2
+packages get. The installer ships the D3D12 build instead: D3D12 by default, falling back
+to OpenGL and then Cairo; Vulkan is disabled. mirai picks no renderer.
 
 CI runs on a hosted Windows runner with no sound device or physical GPU. Desktop GPU
 performance, Chinese text rendering and audible output on real hardware are not

@@ -91,7 +91,8 @@ which GTK plays audio through; without them mirai runs silently.
 
 The [Windows release workflow](.github/workflows/windows-release.yml) produces
 `mirai-VERSION-windows-x86_64-setup.exe`. When attached to a GitHub release, it installs
-per user without MSYS2 or administrator rights; GTK and its runtime are included.
+per user without MSYS2 or administrator rights; GTK and its runtime are included. Its GTK
+is a [Direct3D 12 build](https://github.com/zhaob1n/gtk-d3d12) rather than MSYS2's.
 KataGo and its model are separate. The installer is unsigned, so Windows may show a
 SmartScreen warning. Uninstall leaves settings and game records untouched.
 
@@ -120,9 +121,9 @@ model are not in the package. For stone sounds, install
 `mingw-w64-ucrt-x86_64-gst-plugins-bad` (WASAPI2 output). The installer includes both
 required plugin subsets.
 
-Expect stutter, and do not treat a Wine run as a Windows test. GTK's Windows backend is less
-mature than its Linux ones: its GPU renderers draw a black band around every window, so GTK
-4.24 draws with Cairo on the CPU, and scrolling, resizing and animation can hitch. That is
+Expect stutter, and do not treat a Wine run as a Windows test. MSYS2's GTK draws with Cairo on
+the CPU on Windows, because its GPU renderers draw a black band around every window, and
+scrolling, resizing and animation can hitch. That is
 not fixed. Native Windows CI covers the suite, installation/runtime/uninstall and an English
 GUI screenshot. Desktop GPU performance, Chinese text rendering and audio-device output
 remain unverified.
