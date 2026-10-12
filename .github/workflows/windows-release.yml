@@ -35,12 +35,6 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      # MSYS2 bash rejects CRLF. Do this before checkout; the runner's git otherwise
-      # converts LF scripts. See msys2/setup-msys2 "actions/checkout and line endings".
-      - name: Keep checkout LF
-        shell: pwsh
-        run: git config --global core.autocrlf input
-
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
