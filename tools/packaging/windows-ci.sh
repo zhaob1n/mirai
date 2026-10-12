@@ -23,6 +23,9 @@
 # are added after that union. rust, just, gcc (via cc) and gettext are already in the arrays
 # and are not duplicated. No zip.
 #
+# The installer runtime then replaces GTK with the D3D12 build pinned in
+# packaging/windows/gtk4-d3d12.sha256.
+#
 # Tag pushes must be named v<workspace semver> or v<workspace semver>-<prerelease>.
 # workflow_dispatch and a local run with no event use the Cargo workspace version and
 # do not publish. Untrusted ref names arrive only in MIRAI_GITHUB_REF_NAME / RELEASE_TAG
@@ -210,6 +213,31 @@ install_packages() {
     pacman -S --needed --noconfirm "${pkgs[@]}"
 }
 
+# The pinned D3D12 GTK package, downloaded outside setup-msys2's cache.
+RUNTIME_PACKAGES=target/windows-packages
+GTK_RELEASES=https://github.com/zhaob1n/gtk-d3d12/releases/download
+
+install_runtime_packages() {
+    local pin=$PWD/packaging/windows/gtk4-d3d12.sha256 cache=$PWD/$RUNTIME_PACKAGES file version
+    file=$(awk 'NR == 1 { print $2 }' "$pin")
+    [[ $file =~ ^mingw-w64-ucrt-x86_64-gtk4-d3d12-([0-9A-Za-z.+_-]+)-any\.pkg\.tar\.zst$ ]] ||
+        die "unexpected package name in $pin"
+    version=${BASH_REMATCH[1]}
+    mkdir -p "$cache"
+    if ! (cd "$cache" && sha256sum --check --status "$pin" 2>/dev/null); then
+        curl -fsSL --retry 3 -o "$cache/$file" "$GTK_RELEASES/gtk4-d3d12-$version/$file"
+        (cd "$cache" && sha256sum --check "$pin") || die "$file checksum mismatch"
+    fi
+    if [[ $(pacman -Q mingw-w64-ucrt-x86_64-gtk4-d3d12 2>/dev/null) != "mingw-w64-ucrt-x86_64-gtk4-d3d12 $version" ]]; then
+        local -a official=()
+        mapfile -t official < <(pacman -Qq mingw-w64-ucrt-x86_64-gtk4 \
+            mingw-w64-ucrt-x86_64-gtk4-media-gstreamer 2>/dev/null || true)
+        # libadwaita depends on gtk4, which the D3D12 package provides.
+        [[ ${#official[@]} -eq 0 ]] || pacman -Rdd --noconfirm "${official[@]}"
+        pacman -U --noconfirm --cachedir "$cache" "$cache/$file"
+    fi
+}
+
 use_prefix_toolchain() {
     # Native UCRT64 Cargo must win over any rustup or MSVC rustc that leaked onto PATH.
     export MSYS2_PATH_TYPE=minimal
@@ -336,6 +364,7 @@ build_pipeline() {
     fi
     require_ucrt64
     install_packages
+    install_runtime_packages
     use_prefix_toolchain
     # Wine rejects IPV6_V6ONLY (WSAEOPNOTSUPP 10045), so QUIC endpoint creation fails
     # there. The hosted Windows runner is the proof; do not narrow this away.
