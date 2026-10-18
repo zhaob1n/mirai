@@ -1164,9 +1164,8 @@ impl AppState {
     }
 
     fn acquire_profile(&self, name: &str, profile: crate::config::EngineProfile, activation: u64) {
-        let log_dir = crate::config::Config::data_dir()
-            .unwrap_or_else(|_| std::env::temp_dir())
-            .join("katago-logs");
+        // A remote profile needs no log directory, so a missing home only stops a local one.
+        let log_dir = crate::config::Config::katago_log_dir().ok();
         let acquire = self.pool().acquire(profile, log_dir, self.runtime());
         let this = self.clone();
         let profile_name = name.to_string();

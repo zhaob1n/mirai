@@ -105,7 +105,7 @@ impl EnginePool {
     pub async fn acquire(
         self: Rc<Self>,
         profile: EngineProfile,
-        log_dir: PathBuf,
+        log_dir: Option<PathBuf>,
         runtime: tokio::runtime::Handle,
     ) -> Result<Built, String> {
         let starting = profile.clone();
@@ -234,7 +234,7 @@ impl Drop for EnginePool {
 /// Runs the blocking start on the tokio runtime and lands the result back on this thread.
 async fn start(
     profile: EngineProfile,
-    log_dir: PathBuf,
+    log_dir: Option<PathBuf>,
     runtime: tokio::runtime::Handle,
 ) -> Result<Built, String> {
     let (tx, rx) = oneshot::channel();
@@ -248,8 +248,9 @@ async fn start(
     }
 }
 
-/// Builds an engine from a profile.
-async fn build(profile: EngineProfile, log_dir: PathBuf) -> Result<Built, EngineError> {
+/// Builds an engine from a profile. `log_dir` is `None` when there is no home directory
+/// for KataGo's logs, which only a local profile needs.
+async fn build(profile: EngineProfile, log_dir: Option<PathBuf>) -> Result<Built, EngineError> {
     match profile.kind {
         ProfileKind::Local {
             katago,
@@ -260,6 +261,11 @@ async fn build(profile: EngineProfile, log_dir: PathBuf) -> Result<Built, Engine
             nn_max_batch_size,
             nn_cache_size_power_of_two,
         } => {
+            let Some(log_dir) = log_dir else {
+                return Err(EngineError::Startup(crate::i18n::gettext(
+                    "no home directory to keep KataGo's logs in",
+                )));
+            };
             let tuning = TuningOverrides {
                 analysis_threads,
                 search_threads,

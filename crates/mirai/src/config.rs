@@ -449,6 +449,13 @@ impl Config {
         Ok(dirs.data_local_dir().to_path_buf())
     }
 
+    /// KataGo's `logDir`, which also holds the generated analysis configs. Never the
+    /// shared temp directory in its place: another local user could create it first and
+    /// read the logs, or own the directory a generated config is refused in.
+    pub fn katago_log_dir() -> Result<PathBuf, ConfigError> {
+        Ok(Self::data_dir()?.join("katago-logs"))
+    }
+
     /// Loads the configuration. A missing file is an empty config, not an error; a
     /// malformed one is an error.
     ///

@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: mirai\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaob1n/mirai/issues\n"
-"POT-Creation-Date: 2026-10-10 03:32+0800\n"
+"POT-Creation-Date: 2026-10-18 20:11+0800\n"
 "PO-Revision-Date: 2026-09-28 06:00+0800\n"
 "Last-Translator: Huang Zhaobin <zhaob1n@foxmail.com>\n"
 "Language-Team: Chinese (China) <i18n-zh@googlegroups.com>\n"
@@ -176,6 +176,10 @@ msgstr "信任"
 #: crates/mirai/src/engines.rs
 msgid "engine startup was cancelled"
 msgstr "引擎启动已取消"
+
+#: crates/mirai/src/engines.rs
+msgid "no home directory to keep KataGo's logs in"
+msgstr "没有可存放 KataGo 日志的主目录"
 
 #: crates/mirai/src/engines.rs
 #, rust-format
@@ -1317,6 +1321,10 @@ msgstr "调优前请关闭其他 mirai 窗口：它们会让当前的 KataGo 继
 #: crates/mirai/src/prefs.rs
 msgid "Wait for engine startup, or finish or cancel the running whole-game analysis before tuning."
 msgstr "调优前请等待引擎启动完成，或者完成或取消正在进行的全盘分析。"
+
+#: crates/mirai/src/prefs.rs
+msgid "There is no home directory to keep KataGo's logs in."
+msgstr "没有可存放 KataGo 日志的主目录。"
 
 #: crates/mirai/src/prefs.rs
 msgid "Tuning stopped because another mirai window opened."

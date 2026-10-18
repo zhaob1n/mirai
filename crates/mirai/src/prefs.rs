@@ -1051,9 +1051,13 @@ fn local_editor(
                 "" => "tuning".to_string(),
                 named => named.to_string(),
             };
-            let log_dir = crate::config::Config::data_dir()
-                .unwrap_or_else(|_| std::env::temp_dir())
-                .join("katago-logs");
+            let Ok(log_dir) = crate::config::Config::katago_log_dir() else {
+                complain(
+                    &tune_banner,
+                    gettext("There is no home directory to keep KataGo's logs in."),
+                );
+                return;
+            };
             let config = CalibrationConfig::new(name, katago, model, log_dir, tuning);
 
             // Hand the GPU over: dropping this window's engine leaves nobody holding the
