@@ -113,10 +113,11 @@ impl PlayController {
     pub fn start(&self, setup: GameSetup) {
         self.stop();
 
+        // The profile, as the engine button shows it: a remote engine's own name is the
+        // server's, which says nothing about which machine played.
         let engine_name = self
             .state
-            .engine_desc()
-            .map(|d| d.name)
+            .engine_profile()
             .unwrap_or_else(|| "KataGo".to_string());
         let date = glib::DateTime::now_local()
             .ok()

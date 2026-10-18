@@ -223,7 +223,7 @@ impl Drop for Ui {
         // Synchronously: the debounced write would fire after this window, and possibly
         // the process, is gone.
         self.state.flush_config();
-        self.state.set_engine(None);
+        self.state.clear_engine();
         // `autosave` deletes its file as it drops, with the rest of the fields.
     }
 }

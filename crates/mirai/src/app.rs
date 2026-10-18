@@ -926,28 +926,39 @@ impl AppState {
         self.changed(Change::Engine);
     }
 
-    pub fn set_engine(&self, engine: Option<Built>) {
-        let state = match &engine {
-            Some(built) => {
-                let desc = built.engine.describe();
-                let description = if desc.katago_version.is_empty() {
-                    desc.name.clone()
-                } else {
-                    i18n::gettext_f(
-                        "{name} ({version})",
-                        &[("name", &desc.name), ("version", &desc.katago_version)],
-                    )
-                };
-                EngineState::Ready {
-                    profile: desc.name,
-                    description,
-                }
-            }
-            None => EngineState::None,
+    /// Installs the engine `profile` started. The label names the profile rather than
+    /// [`EngineDesc::name`]: a remote engine's is the server's own name for it, often
+    /// `default`, and not the profile the user picked.
+    pub fn set_engine(&self, profile: &str, engine: Built) {
+        let version = engine.engine.describe().katago_version;
+        let description = if version.is_empty() {
+            profile.to_string()
+        } else {
+            i18n::gettext_f(
+                "{name} ({version})",
+                &[("name", profile), ("version", &version)],
+            )
         };
-        self.replace_engine(engine);
-        self.set_engine_state(state);
+        self.replace_engine(Some(engine));
+        self.set_engine_state(EngineState::Ready {
+            profile: profile.to_string(),
+            description,
+        });
         self.restart_analysis();
+    }
+
+    pub fn clear_engine(&self) {
+        self.replace_engine(None);
+        self.set_engine_state(EngineState::None);
+        self.restart_analysis();
+    }
+
+    /// The profile whose engine is in use.
+    pub fn engine_profile(&self) -> Option<String> {
+        match &*self.imp().engine_state.borrow() {
+            EngineState::Ready { profile, .. } => Some(profile.clone()),
+            _ => None,
+        }
     }
 
     /// Every write to the engine slot comes through here, so the link being followed is
@@ -1016,7 +1027,7 @@ impl AppState {
             self.set_busy(false);
             self.set_status(String::new());
             self.remember_active(name);
-            self.set_engine(Some(engine));
+            self.set_engine(name, engine);
             return;
         }
 
@@ -1183,7 +1194,7 @@ impl AppState {
             match result {
                 Ok(engine) => {
                     this.remember_active(&profile_name);
-                    this.set_engine(Some(engine));
+                    this.set_engine(&profile_name, engine);
                 }
                 Err(e) => this.fail_activation(&profile_name, e),
             }
@@ -1373,7 +1384,7 @@ impl AppState {
         tracing::warn!(%e, "engine error");
         self.toast(i18n::engine_error(&e));
         if matches!(e, EngineError::EngineExited(_) | EngineError::Startup(_)) {
-            self.set_engine(None);
+            self.clear_engine();
         }
     }
 
@@ -1672,10 +1683,13 @@ mod tests {
             let asked = Arc::new(AtomicU32::new(0));
             let (status, link) = tokio::sync::watch::channel(RemoteStatus::Connected);
             state.set_live_analysis(true);
-            state.set_engine(Some(Built {
-                engine: Arc::new(Counting(Arc::clone(&asked))),
-                link: Some(link),
-            }));
+            state.set_engine(
+                "remote",
+                Built {
+                    engine: Arc::new(Counting(Arc::clone(&asked))),
+                    link: Some(link),
+                },
+            );
             settle().await;
             assert_eq!(asked.load(Ordering::SeqCst), 1);
             assert_eq!(reconnects(), 0, "the first status is not a return");
@@ -1702,7 +1716,7 @@ mod tests {
             assert_eq!(reconnects(), 1, "coalesced reconnect stalled play");
 
             // Replaced: that engine's link is none of this window's business any more.
-            state.set_engine(None);
+            state.clear_engine();
             status.send_replace(RemoteStatus::Reconnecting { attempt: 2 });
             settle().await;
             status.send_replace(RemoteStatus::Connected);
@@ -1712,5 +1726,45 @@ mod tests {
 
             state.cancel_tasks();
         });
+    }
+
+    /// A remote engine describes itself by the server's name for it. The window names the
+    /// profile the user picked, and a game played against it records that profile too.
+    #[test]
+    fn an_engine_is_shown_under_its_profile_name() {
+        struct Served;
+        impl Engine for Served {
+            fn subscribe(&self, _req: AnalyzeReq) -> mirai_engine::Subscription {
+                unreachable!("live analysis is off")
+            }
+            fn describe(&self) -> EngineDesc {
+                EngineDesc {
+                    katago_version: "1.18.0".into(),
+                    ..EngineDesc::placeholder("default")
+                }
+            }
+        }
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime");
+        let state = AppState::new(
+            Config::default(),
+            PathBuf::from("/tmp/mirai-engine-label-test.toml"),
+            runtime.handle().clone(),
+            Rc::new(EnginePool::default()),
+        );
+        state.set_engine(
+            "desktop",
+            Built {
+                engine: Arc::new(Served),
+                link: None,
+            },
+        );
+        assert_eq!(state.engine_label(), "desktop (1.18.0)");
+        assert_eq!(state.engine_profile().as_deref(), Some("desktop"));
+
+        state.clear_engine();
+        assert_eq!(state.engine_profile(), None);
     }
 }

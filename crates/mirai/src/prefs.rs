@@ -378,7 +378,7 @@ fn confirm_delete(
                 state.save_config();
                 if was_active {
                     // The engine it points at is gone; stop using it.
-                    state.set_engine(None);
+                    state.clear_engine();
                 } else {
                     state.changed(Change::Engine);
                 }
@@ -1065,7 +1065,7 @@ fn local_editor(
             // when the run ends, whichever way it ends.
             let previous = tune_state.config().active_engine.clone();
             if tune_state.engine().is_some() {
-                tune_state.set_engine(None);
+                tune_state.clear_engine();
             }
 
             button.set_sensitive(false);
