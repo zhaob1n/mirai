@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, bail};
-use mirai_engine::{EngineTuning, LocalEngineConfig, TuningOverrides};
+use mirai_engine::{LocalEngineConfig, TuningOverrides};
 use serde::Deserialize;
 
 use crate::session::MAX_HELLO_FIELD;
@@ -230,33 +230,21 @@ impl EngineCfg {
                 bail!("no home directory to keep KataGo's logs in; set log_dir in this [[engine]]")
             }
         };
-        let overrides = TuningOverrides {
+        let tuning = TuningOverrides {
             analysis_threads: self.analysis_threads,
             search_threads: self.search_threads,
             nn_max_batch_size: self.nn_max_batch_size,
             nn_cache_size_power_of_two: self.nn_cache_size_power_of_two,
         };
-        // No config file given: write the one mirai would generate, with this block's
-        // tuning applied over the defaults. A user-supplied file keeps its own tuning
-        // but the two thread counts.
-        let custom = self.config.is_some();
-        let config = match &self.config {
-            Some(path) => path.clone(),
-            None => EngineTuning::with_overrides(overrides)
-                .write_to(&log_dir)
-                .with_context(|| {
-                    format!("writing the analysis config into {}", log_dir.display())
-                })?,
-        };
-
-        let mut lc = LocalEngineConfig::new(
+        let mut lc = LocalEngineConfig::prepare(
             self.name.clone(),
             self.katago.clone(),
             self.model.clone(),
-            config,
-        );
-        lc.log_dir = log_dir;
-        lc.apply_config_overrides(custom, overrides);
+            self.config.clone(),
+            log_dir.clone(),
+            tuning,
+        )
+        .with_context(|| format!("writing the analysis config into {}", log_dir.display()))?;
         if let Some(s) = self.startup_timeout_s {
             lc.startup_timeout = Duration::from_secs(s);
         }

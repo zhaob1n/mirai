@@ -64,8 +64,9 @@ navigation and multiplexing need no mirrored board. Search does not persist acro
 
 mirai owns the managed config, using static defaults rather than unasked hardware detection
 (`EngineTuning::render` in `crates/mirai-engine/src/tuning.rs`).
-A user-supplied file is left unchanged; only its two thread counts get tuning overrides
-(`LocalEngineConfig::apply_config_overrides` in `crates/mirai-engine/src/local.rs`).
+A user-supplied file is left unchanged; only its two thread counts get tuning overrides.
+`LocalEngineConfig::prepare` in `crates/mirai-engine/src/local.rs` makes that choice for both
+the desktop pool and `mirai-server`, so the two cannot drift.
 
 Calibration is opt-in (`crates/mirai-engine/src/calibrate.rs`). Preferences releases the
 usual engine and refuses calibration while another window, startup or whole-game analysis
@@ -126,7 +127,7 @@ boundaries are [§1](#1-the-system). User settings and shortcuts are in
 | framing, QUIC, a `mirai://` URL, or a cert pin | `crates/mirai-proto/src/frame.rs`, `crates/mirai-proto/src/transport.rs`, `crates/mirai-proto/src/endpoint.rs`, `crates/mirai-proto/src/sha256.rs` | `read_msg`, `connect`, `parse_url`, `fingerprint` |
 | the engine contract | `crates/mirai-engine/src/lib.rs` | `Engine::subscribe` |
 | a KataGo query field, or how a response is read | `crates/mirai-engine/src/query.rs`, `crates/mirai-engine/src/decode.rs` | `build_query`, `decode_report` |
-| the KataGo command line or its overrides | `crates/mirai-engine/src/local.rs` | `LocalEngine::spawn`, `apply_config_overrides`, `override_config` |
+| the KataGo command line or its overrides | `crates/mirai-engine/src/local.rs` | `LocalEngine::spawn`, `LocalEngineConfig::prepare`, `override_config` |
 | the generated analysis config, or automatic tuning | `crates/mirai-engine/src/tuning.rs`, `crates/mirai-engine/src/calibrate.rs` | `EngineTuning::render`, `calibrate` |
 | a remote engine connection | `crates/mirai-engine/src/remote.rs` | `RemoteEngine::connect` |
 | drive an engine with no GUI, or regenerate the self-play fixture | `crates/mirai-engine/examples/probe.rs`, `crates/mirai-engine/examples/sweep.rs`, `crates/mirai-client/examples/selfplay.rs` | [TESTING §4](TESTING.md#4-verifying-against-a-real-engine) |

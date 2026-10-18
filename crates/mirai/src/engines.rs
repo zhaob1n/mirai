@@ -37,7 +37,7 @@ use std::sync::{Arc, Weak};
 
 use gtk::glib;
 use mirai_engine::remote::RemoteStatus;
-use mirai_engine::{Engine, EngineError, EngineTuning, TuningOverrides};
+use mirai_engine::{Engine, EngineError, TuningOverrides};
 use tokio::sync::{oneshot, watch};
 
 use crate::config::{EngineProfile, ProfileKind};
@@ -260,35 +260,30 @@ async fn build(profile: EngineProfile, log_dir: PathBuf) -> Result<Built, Engine
             nn_max_batch_size,
             nn_cache_size_power_of_two,
         } => {
-            let overrides = TuningOverrides {
+            let tuning = TuningOverrides {
                 analysis_threads,
                 search_threads,
                 nn_max_batch_size,
                 nn_cache_size_power_of_two,
             };
-            // A custom config is the user's file. It keeps its own tuning but the two
-            // thread counts. Otherwise mirai writes one next to the logs, and that
-            // file is the only source of the four keys.
-            let custom = config.is_some();
-            let config = match config {
-                Some(path) => path,
-                None => EngineTuning::with_overrides(overrides)
-                    .write_to(&log_dir)
-                    .map_err(|e| {
-                        // Translators: {dir} is a directory path; {error} is the operating-system's own message.
-                        EngineError::Startup(crate::i18n::gettext_f(
-                            "could not write the analysis config into {dir}: {error}",
-                            &[
-                                ("dir", &log_dir.display().to_string()),
-                                ("error", &e.to_string()),
-                            ],
-                        ))
-                    })?,
-            };
-
-            let mut cfg = mirai_engine::LocalEngineConfig::new(profile.name, katago, model, config);
-            cfg.log_dir = log_dir;
-            cfg.apply_config_overrides(custom, overrides);
+            let cfg = mirai_engine::LocalEngineConfig::prepare(
+                profile.name,
+                katago,
+                model,
+                config,
+                log_dir.clone(),
+                tuning,
+            )
+            .map_err(|e| {
+                // Translators: {dir} is a directory path; {error} is the operating-system's own message.
+                EngineError::Startup(crate::i18n::gettext_f(
+                    "could not write the analysis config into {dir}: {error}",
+                    &[
+                        ("dir", &log_dir.display().to_string()),
+                        ("error", &e.to_string()),
+                    ],
+                ))
+            })?;
             let engine = mirai_engine::LocalEngine::spawn(cfg).await?;
             Ok(Built {
                 engine: Arc::new(engine),

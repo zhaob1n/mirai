@@ -7,6 +7,7 @@
 //! position — so there is no engine state to keep in sync and no replay/undo machinery.
 
 use std::collections::{HashMap, VecDeque};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,7 +24,7 @@ use tokio::task::JoinHandle;
 
 use crate::decode::{RawResponse, decode_report};
 use crate::query::{action_query, build_query, terminate_query};
-use crate::tuning::TuningOverrides;
+use crate::tuning::{EngineTuning, TuningOverrides};
 use crate::{CancelGuard, Engine, EngineError, SubEvent, Subscription};
 
 /// How many stderr lines to keep for diagnosing a failed start.
@@ -73,18 +74,36 @@ impl LocalEngineConfig {
         }
     }
 
-    /// Which tuning keys may be forced with `-override-config`.
+    /// The engine a profile describes. `config` is the user's own analysis.cfg; without
+    /// one, mirai's is written into `log_dir` with `tuning` over the defaults, and writing
+    /// it is the only thing that can fail.
     ///
-    /// A user-supplied analysis.cfg (`custom`) keeps its own tuning but the two
-    /// thread counts. A generated config already contains every key; overriding
-    /// them again would give one value two sources of truth. Either way,
-    /// `override_config` forces the reporting perspective and logging.
-    pub fn apply_config_overrides(&mut self, custom: bool, overrides: TuningOverrides) {
-        (self.analysis_threads, self.search_threads) = if custom {
-            (overrides.analysis_threads, overrides.search_threads)
-        } else {
-            (None, None)
+    /// A user's file keeps its own tuning but the two thread counts, which are forced with
+    /// `-override-config`. A generated file already holds every key, so it gets no
+    /// override: one value, one source. Either way `override_config` forces the reporting
+    /// perspective and logging.
+    pub fn prepare(
+        name: impl Into<String>,
+        katago: impl Into<PathBuf>,
+        model: impl Into<PathBuf>,
+        config: Option<PathBuf>,
+        log_dir: PathBuf,
+        tuning: TuningOverrides,
+    ) -> io::Result<LocalEngineConfig> {
+        let (config, analysis_threads, search_threads) = match config {
+            Some(path) => (path, tuning.analysis_threads, tuning.search_threads),
+            None => (
+                EngineTuning::with_overrides(tuning).write_to(&log_dir)?,
+                None,
+                None,
+            ),
         };
+        Ok(LocalEngineConfig {
+            log_dir,
+            analysis_threads,
+            search_threads,
+            ..LocalEngineConfig::new(name, katago, model, config)
+        })
     }
 }
 
@@ -814,30 +833,57 @@ mod tests {
 
     /// A user-supplied file keeps its own tuning but the two thread counts; cache size
     /// and batch size named by the caller must not reach `-override-config`. A
-    /// generated file is the only source of its keys, so it gets no thread override.
+    /// generated file is the only source of its keys: the tuning lands in it, and no
+    /// thread count is forced over it.
     #[test]
     fn a_custom_config_is_overridden_only_for_the_two_thread_counts() {
-        let overrides = TuningOverrides {
+        let tuning = TuningOverrides {
             analysis_threads: Some(2),
             search_threads: Some(8),
             nn_max_batch_size: Some(32),
             nn_cache_size_power_of_two: Some(23),
         };
-        let mut custom = cfg();
-        custom.apply_config_overrides(true, overrides);
+        let custom = LocalEngineConfig::prepare(
+            "local",
+            "/bin/katago",
+            "/nets/m.bin.gz",
+            Some("/etc/a.cfg".into()),
+            "/var/log/mirai".into(),
+            tuning,
+        )
+        .unwrap();
+        assert_eq!(custom.config, Path::new("/etc/a.cfg"));
         let line = override_config(&custom).unwrap();
         assert!(
             line.ends_with("numAnalysisThreads=2,numSearchThreadsPerAnalysisThread=8"),
             "{line}"
         );
 
-        let mut generated = cfg();
-        generated.analysis_threads = Some(4);
-        generated.apply_config_overrides(false, overrides);
-        assert_eq!(
-            override_config(&generated).unwrap(),
-            override_config(&cfg()).unwrap()
-        );
+        let dir =
+            std::env::temp_dir().join(format!("mirai-prepare-generated-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let generated = LocalEngineConfig::prepare(
+            "local",
+            "/bin/katago",
+            "/nets/m.bin.gz",
+            None,
+            dir.clone(),
+            tuning,
+        )
+        .unwrap();
+        let written = std::fs::read_to_string(&generated.config).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(generated.config.parent(), Some(dir.as_path()));
+        for key in [
+            "numAnalysisThreads = 2",
+            "numSearchThreadsPerAnalysisThread = 8",
+            "nnMaxBatchSize = 32",
+            "nnCacheSizePowerOfTwo = 23",
+        ] {
+            assert!(written.contains(key), "{key} missing from\n{written}");
+        }
+        let line = override_config(&generated).unwrap();
+        assert!(!line.contains("Threads"), "{line}");
     }
 
     /// A shell script standing in for `katago`, in a fresh directory, and a config that
