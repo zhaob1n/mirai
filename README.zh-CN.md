@@ -12,29 +12,29 @@
 
 ![mirai 正在用 KataGo 实时分析一局棋](https://github.com/zhaob1n/mirai/releases/download/readme-assets/preview.png)
 
-mirai 把 KataGo 的计算结果放到一块原生 Linux 棋盘上。每个候选手亏多少、这个判断有多可信，一眼就能看出；胜率图标出整局的每一步问题手；棋谱树保留你试过的每个变化。你可以和任意强度的引擎对弈，也可以从野狐、弈城或弈客拉一盘棋下来，让 KataGo 陪你复盘。
+mirai 把 KataGo 的计算结果摆在一块为 Linux 而生的棋盘上。每个候选手亏了多少、这个判断有多可信，一眼就能看出；胜率图逐手标出整局的问题手；棋谱树保留你试过的每一条变化。你可以和任意强度的引擎对弈，也可以从野狐、弈城或弈客下载一盘棋，让 KataGo 陪你复盘。
 
-引擎不必和 mirai 在同一台电脑上。另一台机器算力更强，或者你需要远程分析时，在那台机器上运行 `mirai-server`，再通过网络连接即可。
+引擎不必和 mirai 在同一台电脑上。当另一台机器算力更强，或你需要远程分析时，在那台机器上运行 `mirai-server`，再通过网络连接即可。
 
 ---
 
 ## ✨ 亮点
 
-- 🎯 **一目了然的分析。** 每个候选手都标出胜率、目差和计算量。颜色表示它比引擎首选亏了多少：从青色经过绿色、黄色一直到红色；色块越实，背后的计算越充分。鼠标悬停在候选手上，就能在棋盘上看到它的变化，而不会改动棋谱。
-- 📈 **全盘复盘。** 一个按键就能分析整条主线。胜率和目差曲线随之补全，图下方的问题手条从落子一方的角度标出每一步失误，问题手列表可以直接跳到那一手。
-- 🗺️ **地盘图和策略图** 显示 KataGo 认为每个点最终归谁，以及神经网络在搜索之前最想下在哪里。
-- ✏️ **真正的 SGF 编辑器。** 变化、摆子、标记、标签和注释，都能撤销和重做。支持多局合集；mirai 不显示的属性会原样保留，其他软件的棋谱存回去也不会丢东西。
-- ⚫ **和 KataGo 对弈**：按计算量、按每手用时，或者配合拟人网络按段位模仿人类棋风。棋盘从 2×2 到 19×19，支持让子、九种规则，以及包干、读秒和费舍尔加秒三种计时。双方停一手后由 KataGo 判断死子，判断错的棋块点一下就能改。也可以不用引擎，自己下双方。
+- 🎯 **一目了然的分析。** 每个候选手都标出胜率、目差和计算量。颜色表示它比引擎首选亏了多少：从青色，经绿色、黄色，一直到红色；色块越不透明，背后的计算越充分。鼠标悬停在候选手上，就能在棋盘上看到它的变化，而不会改动棋谱。
+- 📈 **全盘复盘。** 按一个键就能扫完整条主线。胜率和目差曲线随之补全，图下方的问题手条按落子方的视角标出每一处失误，问题手列表里点一下就能跳到那一手。
+- 🗺️ **地盘图和策略图**显示 KataGo 认为每个点最终归谁，以及神经网络在搜索之前最想下在哪里。
+- ✏️ **真正的 SGF 编辑器。** 变化、摆子、标记、标签和注释，都支持撤销和重做。支持多局合集；mirai 不显示的属性会原样保留，其他软件的棋谱存回去也不会丢东西。
+- ⚫ **和 KataGo 对弈**：按计算量、按每手用时，或者配合拟人网络按段位模仿人类棋风。棋盘从 2×2 到 19×19，支持让子、九种规则，以及包干、读秒和费舍尔加秒三种计时。双方停一手后由 KataGo 判断死子，判断错的棋块点一下就能改。也可以不用引擎，双方都由自己来下。
 - 🔎 **网络棋谱。** 在野狐（昵称或 UID）、弈城（姓名或昵称，限其赛事棋谱目录）或弈客（昵称、账号或职业棋手姓名）上查找棋手，打开其最近的任意一盘公开对局。
 - 🔒 **安全的远程引擎。** `mirai-server` 通过 QUIC 把一个或多个 KataGo 共享给局域网里的所有客户端。客户端用令牌认证，并在第一次连接时固定服务器的证书指纹。
 - ⚡ **原生、流畅。** 基于 GTK 4 和 libadwaita，支持浅色和深色样式，界面渲染经过专门调优，在高刷新率屏幕上同样流畅。多个窗口共用一个 KataGo；程序意外退出后，自动保存会把你的棋谱找回来。
-- 🌏 **说你的语言。** 目前支持英文和简体中文，欢迎贡献更多翻译。
+- 🌏 **支持你的语言。** 目前支持英文和简体中文，欢迎贡献更多翻译。
 
 ## 📦 安装
 
 ### Arch Linux
 
-从 AUR 安装 [`mirai-git`](https://aur.archlinux.org/packages/mirai-git)；要共享 KataGo 的机器上再装 [`mirai-server-git`](https://aur.archlinux.org/packages/mirai-server-git)。两者构建的都是最新提交。
+从 AUR 安装 [`mirai-git`](https://aur.archlinux.org/packages/mirai-git)；要共享 KataGo 的机器上再装 [`mirai-server-git`](https://aur.archlinux.org/packages/mirai-server-git)。两者都构建最新提交。
 
 ### 从源码构建
 
@@ -64,9 +64,9 @@ sudo just uninstall      # 同上
 ### Windows 安装包
 
 [Windows release workflow](.github/workflows/windows-release.yml) 会生成
-`mirai-VERSION-windows-x86_64-setup.exe`。发布到 GitHub release 后，可按用户安装，无需
+`mirai-VERSION-windows-x86_64-setup.exe`。附带在 GitHub release 中时，可按用户安装，无需
 MSYS2 或管理员权限；已包含 GTK 及其运行库，其中 GTK 是 [Direct3D 12 版本](https://github.com/zhaob1n/gtk-d3d12)，而非 MSYS2 官方构建。KataGo 和模型需另行准备。
-安装后会在开始菜单添加入口，并在 `.sgf` 棋谱的“打开方式”里提供 mirai；只有在没有其他程序打开 `.sgf` 时，才设为默认程序。卸载会移除这些，保留设置和棋谱。
+安装后会在开始菜单添加入口，并在 `.sgf` 棋谱的“打开方式”里提供 mirai；只有在没有其他程序已关联 `.sgf` 时，才会设为默认程序。卸载会移除这些，保留设置和棋谱。
 
 <a id="windows-msys2-ucrt64"></a>
 
@@ -83,9 +83,9 @@ makepkg-mingw -si
 
 `makepkg-mingw` 会安装构建依赖，并把软件包装到 `/ucrt64`。GUI 包要求 GTK 4.22 和 libadwaita 1.9，与从源码构建的下限相同。软件包不含 KataGo 及其权重。如需落子与吃子音效，安装 `mingw-w64-ucrt-x86_64-gst-plugins-good`（WAV 解码）和 `mingw-w64-ucrt-x86_64-gst-plugins-bad`（WASAPI2 输出）。Windows 安装包已包含这两者所需的插件子集。
 
-请预期卡顿，不要把 Wine 下的运行当成 Windows 测试。MSYS2 的 GTK 在 Windows 上用 CPU 上的 Cairo 绘制，因为它的 GPU 渲染器会在每个窗口周围画出一圈黑框，滚动、调整窗口大小和动画都可能卡顿。这一点没有修复。MSYS2 的 cairo 还会让粗体中日韩文字上下错开一个像素；安装包附带的 cairo 修复了这个问题。
+会有卡顿，不要把 Wine 下的运行当成 Windows 测试。MSYS2 的 GTK 在 Windows 上用 CPU 上的 Cairo 绘制，因为它的 GPU 渲染器会在每个窗口周围画出一圈黑框，滚动、调整窗口大小和动画都可能卡顿。这一点没有修复。MSYS2 的 cairo 还会让粗体中日韩文字错位一个像素；安装包附带的 cairo 修复了这个问题。
 
-从检出的源码构建时，先安装上述软件包的构建依赖，并把 `/ucrt64/bin` 放在任何 rustup 之前：
+从检出的源码构建时，先安装上述软件包的构建依赖，并确保 `/ucrt64/bin` 在 `PATH` 中排在所有 rustup 路径之前：
 
 ```
 cargo build --locked --release --target x86_64-pc-windows-gnu -p mirai -p mirai-server
@@ -109,7 +109,7 @@ mirai game.sgf
 
 打开一份棋谱，按 <kbd>Space</kbd> 开始实时分析，按 <kbd>Ctrl</kbd>+<kbd>A</kbd> 进行全盘分析。
 
-mirai 跟随桌面的语言设置。想换一种语言试试，可以用 `LANGUAGE` 启动，例如 `LANGUAGE=zh_CN mirai`。
+mirai 跟随桌面的语言设置。想试试其他语言，可以用 `LANGUAGE` 启动，例如 `LANGUAGE=zh_CN mirai`。
 
 ## 🌐 通过网络使用引擎
 
@@ -124,7 +124,7 @@ mirai-server --config server.toml
 
 ## 💬 反馈
 
-mirai 还很年轻，变化很快，目前还没有正式版本：请从本仓库构建。欢迎把 bug、不顺手的地方和各种想法提到 [issues](https://github.com/zhaob1n/mirai/issues)。请写明你在做什么、期望发生什么、实际发生了什么；如果是引擎的问题，`~/.local/share/mirai/katago-logs/` 里最新的日志通常能说明原因。
+mirai 还很年轻，变化很快，目前还没有正式版本：请从本仓库构建。欢迎通过 [issues](https://github.com/zhaob1n/mirai/issues) 反馈 bug、不顺手的地方和各种想法。请写明你在做什么、期望发生什么、实际发生了什么；如果是引擎的问题，`~/.local/share/mirai/katago-logs/` 里最新的日志通常能说明原因。
 
 ## 📖 文档
 

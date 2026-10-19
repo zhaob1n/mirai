@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: mirai\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaob1n/mirai/issues\n"
 "POT-Creation-Date: 2026-10-18 20:11+0800\n"
-"PO-Revision-Date: 2026-09-28 06:00+0800\n"
+"PO-Revision-Date: 2026-10-19 12:00+0800\n"
 "Last-Translator: Huang Zhaobin <zhaob1n@foxmail.com>\n"
 "Language-Team: Chinese (China) <i18n-zh@googlegroups.com>\n"
 "Language: zh_CN\n"
@@ -74,7 +74,7 @@ msgstr "全盘分析已在进行中"
 
 #: crates/mirai/src/batch.rs
 msgid "No engine — start one in Preferences first"
-msgstr "没有引擎——请先在首选项中启动一个"
+msgstr "没有引擎——请先在首选项中启动一个引擎"
 
 #: crates/mirai/src/batch.rs
 msgid "Nothing to analyse yet"
@@ -160,7 +160,7 @@ msgstr "信任此服务器？"
 #: crates/mirai/src/dialogs.rs
 #, rust-format
 msgid "{host} presented this certificate. Compare it with the fingerprint mirai-server printed at startup. The token is sent only after you trust it, and a later change is refused."
-msgstr "{host} 出示了此证书。请将它与 mirai-server 启动时打印的指纹进行比对。只有在你信任它之后才会发送令牌，此后证书若有变化将被拒绝。"
+msgstr "{host} 提供了此证书。请将它与 mirai-server 启动时打印的指纹比对。只有在你信任它之后才会发送令牌，此后证书若有变化将被拒绝。"
 
 #: crates/mirai/src/dialogs.rs crates/mirai/src/label_editor.rs
 #: crates/mirai/src/new_game.rs crates/mirai/src/prefs.rs
@@ -295,7 +295,7 @@ msgstr "该点已有棋子"
 
 #: crates/mirai/src/i18n.rs
 msgid "That move would be suicide"
-msgstr "此处落子为自杀，不允许"
+msgstr "这手棋属于自杀，不能下"
 
 #: crates/mirai/src/i18n.rs
 msgid "That move breaks the ko rule"
@@ -383,7 +383,7 @@ msgstr "弈客"
 
 #: crates/mirai/src/kifu_picker.rs crates/mirai/src/kifu.rs
 msgid "Exact Fox nickname or numeric UID"
-msgstr "准确的野狐昵称或数字 UID"
+msgstr "精确的野狐昵称或数字 UID"
 
 #: crates/mirai/src/kifu_picker.rs
 msgctxt "verb"
@@ -404,7 +404,7 @@ msgstr "查找野狐玩家"
 
 #: crates/mirai/src/kifu_picker.rs crates/mirai/src/kifu.rs
 msgid "Enter an exact nickname or UID to browse their recent public games."
-msgstr "输入准确的昵称或 UID，浏览其最近的公开对局。"
+msgstr "输入精确的昵称或 UID，浏览其最近的公开对局。"
 
 #: crates/mirai/src/kifu_picker.rs
 msgid "Recent Searches"
@@ -420,11 +420,11 @@ msgstr "最近对局"
 
 #: crates/mirai/src/kifu_picker.rs
 msgid "Several Players Match"
-msgstr "有多位棋手匹配"
+msgstr "匹配到多位棋手"
 
 #: crates/mirai/src/kifu_picker.rs
 msgid "Choose whose games to browse, or search an account number."
-msgstr "选择要浏览谁的对局，或改用账号搜索。"
+msgstr "选择要浏览哪位棋手的对局，或改用账号搜索。"
 
 #: crates/mirai/src/kifu_picker.rs
 msgid "Matching Players"
@@ -441,22 +441,22 @@ msgstr "下一页"
 #: crates/mirai/src/kifu.rs
 #, rust-format
 msgid "Could not reach {server}: {error}"
-msgstr "无法连接{server}：{error}"
+msgstr "无法连接到{server}：{error}"
 
 #: crates/mirai/src/kifu.rs
 #, rust-format
 msgid "Could not reach {server}: response was not UTF-8 ({error})"
-msgstr "无法连接{server}：响应不是 UTF-8（{error}）"
+msgstr "无法连接到{server}：响应不是 UTF-8（{error}）"
 
 #: crates/mirai/src/kifu.rs
 #, rust-format
 msgid "Could not reach {server}: response was unexpectedly large"
-msgstr "无法连接{server}：响应意外过大"
+msgstr "无法连接到{server}：响应意外过大"
 
 #: crates/mirai/src/kifu.rs
 #, rust-format
 msgid "Could not reach {server}: request timed out"
-msgstr "无法连接{server}：请求超时"
+msgstr "无法连接到{server}：请求超时"
 
 #: crates/mirai/src/kifu.rs
 #, rust-format
@@ -466,7 +466,7 @@ msgstr "{server}返回了无效数据：{error}"
 #: crates/mirai/src/kifu.rs
 #, rust-format
 msgid "{server} has no player by that name"
-msgstr "{server}上没有这个名字的棋手"
+msgstr "{server}上没有叫这个名字的棋手"
 
 #: crates/mirai/src/kifu.rs
 msgid "This player has hidden their game records"
@@ -478,7 +478,7 @@ msgstr "弈城上的棋手姓名或昵称"
 
 #: crates/mirai/src/kifu.rs
 msgid "Public tournament records only · names match in part · at most the latest 200 games"
-msgstr "仅限公开赛事棋谱 · 名字部分匹配 · 最多最新 200 盘"
+msgstr "仅限公开赛事棋谱 · 名字部分匹配 · 最多显示最近 200 盘"
 
 #: crates/mirai/src/kifu.rs
 msgid "Search eWeiqi’s Records"
@@ -494,7 +494,7 @@ msgstr "弈客昵称、账号或职业棋手姓名"
 
 #: crates/mirai/src/kifu.rs
 msgid "Public records only · at most the latest 100 games"
-msgstr "仅限公开棋谱 · 最多最近 100 盘"
+msgstr "仅限公开棋谱 · 最多显示最近 100 盘"
 
 #: crates/mirai/src/kifu.rs
 msgid "Find a Yike Player"
@@ -547,7 +547,7 @@ msgstr "正在查找该玩家及其最近的对局。"
 #: crates/mirai/src/kifu.rs
 #, rust-format
 msgid "{error}. Showing the games saved {time}."
-msgstr "{error}。正在显示 {time} 保存的对局。"
+msgstr "{error}。正在显示保存于 {time} 的对局。"
 
 #: crates/mirai/src/kifu.rs
 msgid "Couldn’t Load Games"
@@ -560,7 +560,7 @@ msgstr "没有公开对局"
 #: crates/mirai/src/kifu.rs
 #, rust-format
 msgid "{server} lists no public games for this search."
-msgstr "{server}没有这次搜索的公开对局。"
+msgstr "{server}上没有这次搜索的公开对局。"
 
 #: crates/mirai/src/kifu.rs
 #, rust-format
@@ -655,7 +655,7 @@ msgstr "对局者"
 
 #: crates/mirai/src/new_game.rs
 msgid "The engine takes the other colour"
-msgstr "引擎执另一方"
+msgstr "引擎执另一种颜色"
 
 #: crates/mirai/src/new_game.rs
 msgctxt "time-control"
@@ -673,7 +673,7 @@ msgstr "读秒次数"
 
 #: crates/mirai/src/new_game.rs
 msgid "Seconds per Period"
-msgstr "每次秒数"
+msgstr "每次读秒秒数"
 
 #: crates/mirai/src/new_game.rs
 msgid "Increment (Seconds)"
@@ -715,7 +715,7 @@ msgstr "此引擎没有加载拟人模型"
 
 #: crates/mirai/src/new_game.rs
 msgid "Play both sides on this device"
-msgstr "在本机上下双方"
+msgstr "在本机上同时执黑白"
 
 #. Translators: no handicap stones.
 #: crates/mirai/src/new_game.rs
@@ -825,7 +825,7 @@ msgstr "黑方行棋"
 #: crates/mirai/src/panels/analysis.rs
 #, rust-format
 msgid "Black to play · final score spread ±{points} points"
-msgstr "黑方行棋 · 终局目差波动 ±{points} 目"
+msgstr "黑方行棋 · 终局目差分布 ±{points} 目"
 
 #: crates/mirai/src/panels/analysis.rs
 msgid "White to play"
@@ -834,7 +834,7 @@ msgstr "白方行棋"
 #: crates/mirai/src/panels/analysis.rs
 #, rust-format
 msgid "White to play · final score spread ±{points} points"
-msgstr "白方行棋 · 终局目差波动 ±{points} 目"
+msgstr "白方行棋 · 终局目差分布 ±{points} 目"
 
 #: crates/mirai/src/panels/analysis.rs
 #, rust-format
@@ -895,11 +895,11 @@ msgstr "你"
 #: crates/mirai/src/play.rs
 #, rust-format
 msgid "{result} — click a group to mark it dead"
-msgstr "{result}——点击棋块可标记死活"
+msgstr "{result}——点击棋块可切换死活"
 
 #: crates/mirai/src/play.rs
 msgid "No engine is running — start one in Preferences"
-msgstr "没有正在运行的引擎——请在首选项中启动一个"
+msgstr "没有正在运行的引擎——请在首选项中启动一个引擎"
 
 #: crates/mirai/src/play.rs
 #, rust-format
@@ -909,7 +909,7 @@ msgstr[0] "思考中… 计算量 {visits}"
 
 #: crates/mirai/src/play.rs
 msgid "The engine ended the search without a move"
-msgstr "引擎结束了搜索，但没有给出着手"
+msgstr "引擎结束了搜索，但没有落子"
 
 #: crates/mirai/src/play.rs
 msgid "Counting…"
@@ -942,12 +942,12 @@ msgstr "白方超时负。"
 #: crates/mirai/src/play.rs
 #, rust-format
 msgid "Count on the board: {result} ({black} — {white}, estimated)"
-msgstr "盘面计数：{result}（{black} — {white}，估算）"
+msgstr "盘面目数：{result}（{black} — {white}，估算）"
 
 #: crates/mirai/src/play.rs
 #, rust-format
 msgid "Count on the board: {result} ({black} — {white})"
-msgstr "盘面计数：{result}（{black} — {white}）"
+msgstr "盘面目数：{result}（{black} — {white}）"
 
 #: crates/mirai/src/play.rs
 #, rust-format
@@ -1025,7 +1025,7 @@ msgstr "在 SGF 中保存分析"
 
 #: crates/mirai/src/preferences_shell.rs
 msgid "Write winrates and candidate moves alongside the moves"
-msgstr "将胜率和候选手随着手一起写入文件"
+msgstr "把胜率和候选手与着手一起写入文件"
 
 #: crates/mirai/src/preferences_shell.rs
 msgid "Restore Defaults"
@@ -1043,7 +1043,7 @@ msgstr "实时分析"
 
 #: crates/mirai/src/preferences_shell.rs
 msgid "Used while the board follows the cursor."
-msgstr "用于跟随当前局面的实时分析。"
+msgstr "棋盘跟随当前节点时使用。"
 
 #: crates/mirai/src/preferences_shell.rs
 msgid "Whole-Game Analysis"
@@ -1132,7 +1132,7 @@ msgstr "手数"
 
 #: crates/mirai/src/preferences_shell.rs
 msgid "Number every stone; the last move’s number is red"
-msgstr "为每颗棋子标注手数；最后一手的手数为红色"
+msgstr "给每颗棋子标上手数；最后一手的数字为红色"
 
 #: crates/mirai/src/preferences_shell.rs
 msgid "Overlay"
@@ -1233,7 +1233,7 @@ msgstr "{path} 不存在。"
 #, rust-format
 msgid "Choose the Discovered File"
 msgid_plural "Choose One of {n} Discovered Files"
-msgstr[0] "从发现的 {n} 个文件中选择"
+msgstr[0] "从已发现的 {n} 个文件中选择"
 
 #. Translators: {power} is the cache-size exponent used when the row is left at 0.
 #: crates/mirai/src/prefs.rs
@@ -1271,7 +1271,7 @@ msgstr "正在调优 KataGo"
 
 #: crates/mirai/src/prefs.rs
 msgid "Every setting is timed in its own KataGo, so this takes a few minutes. Your engine stays stopped until the run ends."
-msgstr "每种设置都在单独的 KataGo 中计时，因此需要几分钟。调优结束之前，你的引擎会一直停止。"
+msgstr "每种设置都会单独启动 KataGo 计时，因此需要几分钟。调优结束之前，你的引擎会一直停止。"
 
 #: crates/mirai/src/prefs.rs
 msgid "Starting…"
@@ -1320,7 +1320,7 @@ msgstr "调优前请关闭其他 mirai 窗口：它们会让当前的 KataGo 继
 
 #: crates/mirai/src/prefs.rs
 msgid "Wait for engine startup, or finish or cancel the running whole-game analysis before tuning."
-msgstr "调优前请等待引擎启动完成，或者完成或取消正在进行的全盘分析。"
+msgstr "调优前请先等引擎启动完成，并完成或取消正在进行的全盘分析。"
 
 #: crates/mirai/src/prefs.rs
 msgid "There is no home directory to keep KataGo's logs in."
@@ -1424,12 +1424,12 @@ msgstr "尚未固定"
 
 #: crates/mirai/src/prefs.rs
 msgid "The profile needs a name."
-msgstr "配置需要一个名称。"
+msgstr "请为配置填写名称。"
 
 #: crates/mirai/src/prefs.rs
 #, rust-format
 msgid "There is already a profile called “{name}”."
-msgstr "已经有名为“{name}”的配置。"
+msgstr "已存在名为“{name}”的配置。"
 
 #. Translators: the suggestions row, meaning every candidate rather than a number.
 #: crates/mirai/src/prefs.rs
@@ -1490,7 +1490,7 @@ msgstr "KataGo"
 
 #: crates/mirai/src/profile_editor.rs
 msgid "Both must exist before the profile can be saved."
-msgstr "两者都存在时才能保存配置。"
+msgstr "两者都存在后才能保存配置。"
 
 #: crates/mirai/src/profile_editor.rs
 msgid "Analysis Config"
@@ -1510,7 +1510,7 @@ msgstr "自定义分析配置"
 
 #: crates/mirai/src/profile_editor.rs
 msgid "Configuration"
-msgstr "配置文件"
+msgstr "配置"
 
 #: crates/mirai/src/profile_editor.rs
 msgid "Positions in Parallel"
@@ -1555,7 +1555,7 @@ msgstr "自动调优"
 
 #: crates/mirai/src/profile_editor.rs
 msgid "Times KataGo on this machine at a series of thread settings and fills in the values above. It starts KataGo once per setting, so allow a few minutes."
-msgstr "在本机上以一系列线程设置为 KataGo 计时，并填入上面的数值。每种设置都会单独启动一次 KataGo，请预留几分钟。"
+msgstr "在本机上用一系列线程设置给 KataGo 计时，并填入上面的数值。每种设置都会单独启动一次 KataGo，请预留几分钟。"
 
 #: crates/mirai/src/profile_editor.rs
 msgid "Engine Profile"
@@ -2253,7 +2253,7 @@ msgstr "围棋分析棋盘"
 #: data/io.github.zhaob1n.Mirai.desktop.in
 #: data/io.github.zhaob1n.Mirai.metainfo.xml.in
 msgid "Analyse, review and play Go with KataGo"
-msgstr "使用 KataGo 分析、复盘和对弈围棋"
+msgstr "使用 KataGo 分析、复盘并下围棋"
 
 #: data/io.github.zhaob1n.Mirai.desktop.in
 msgid "Go;Baduk;Weiqi;KataGo;SGF;"
