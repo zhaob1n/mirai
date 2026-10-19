@@ -66,6 +66,8 @@ To release:
    the Windows installer and creates the GitHub release
    ([Windows release](#windows-release)).
 4. Refresh each AUR package's `.SRCINFO` from GitHub ([below](#changing-and-publishing-a-pkgbuild)).
+   `pkgver()` needs a reachable `v*` tag; `makepkg-local.sh` clones this checkout, so a local
+   tag is enough to test before pushing.
 
 ## Arch and the AUR
 
@@ -106,9 +108,10 @@ cd ~/aur/$pkg && git add -A && git commit -m '…' && git push
 
 ### Decisions
 
-**VCS packages.** There are no release tags. `pkgver()` reads the version from the clone at
-build time, and the AUR guidelines forbid commits that only bump a VCS `pkgver`. A tagged
-release would add PKGBUILDs pinned to a tarball and checksum.
+**VCS packages.** `pkgver()` reads `git describe` against the `v*` tags at build time
+(`0.1.0.r21.gead50ec`; a prerelease drops its hyphen, `0.1.0rc.1.r3.g…`, because `vercmp`
+orders `0.1.0rc` before `0.1.0` but `0.1.0.rc` after it). The AUR guidelines forbid commits
+that only bump a VCS `pkgver`. There are no PKGBUILDs pinned to a release tarball.
 
 **Two pkgbases, not a split package.** `makedepends` belong to the whole `pkgbase`: split,
 building `mirai-server` on a headless host would install GTK.
