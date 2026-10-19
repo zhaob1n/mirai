@@ -4,17 +4,18 @@
 
 # mirai
 
-**Go analysis, review and play with KataGo, made for the GNOME desktop.**
+**Go analysis, review and play with KataGo, following the [GNOME Human Interface Guidelines](https://developer.gnome.org/hig/).**
 
 English | [简体中文](README.zh-CN.md)
 </div>
 
 ![mirai reviewing a game with live KataGo analysis](https://github.com/zhaob1n/mirai/releases/download/readme-assets/preview.png)
 
-mirai puts KataGo's reading on a board that feels at home on Linux. Every candidate move
-tells you at a glance how much it loses and how far to trust that number; a win-rate graph
-marks each blunder of a game; a move tree keeps every variation you try. Play the engine at
-any strength, or pull a game from Fox, eWeiqi or Yike and replay it with KataGo beside you.
+mirai puts KataGo's reading on a board that feels at home on Linux, its primary platform,
+and runs on Windows too. Every candidate move tells you at a glance how much it loses and
+how far to trust that number; a win-rate graph marks each blunder of a game; a move tree
+keeps every variation you try. Play the engine at any strength, or pull a game from Fox,
+eWeiqi or Yike and replay it with KataGo beside you.
 
 The engine does not have to be on the same computer. When another machine has more compute,
 or you need to analyse remotely, run `mirai-server` there and connect over the network.

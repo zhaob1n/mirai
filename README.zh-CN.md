@@ -4,7 +4,7 @@
 
 # mirai
 
-**为 GNOME 桌面打造的围棋分析、复盘与对弈工具，由 KataGo 驱动。**
+**KataGo 驱动的围棋分析、复盘与对弈工具，遵循 [GNOME 人机界面指南](https://developer.gnome.org/hig/)。**
 
 [English](README.md) | 简体中文
 
@@ -12,7 +12,7 @@
 
 ![mirai 正在用 KataGo 实时分析一局棋](https://github.com/zhaob1n/mirai/releases/download/readme-assets/preview.png)
 
-mirai 把 KataGo 的计算结果摆在一块为 Linux 而生的棋盘上。每个候选手亏了多少、这个判断有多可信，一眼就能看出；胜率图逐手标出整局的问题手；棋谱树保留你试过的每一条变化。你可以和任意强度的引擎对弈，也可以从野狐、弈城或弈客下载一盘棋，让 KataGo 陪你复盘。
+mirai 把 KataGo 的计算结果摆在一块棋盘上，在 Linux 上最自在——Linux 是主要平台——Windows 上也能运行。每个候选手亏了多少、这个判断有多可信，一眼就能看出；胜率图逐手标出整局的问题手；棋谱树保留你试过的每一条变化。你可以和任意强度的引擎对弈，也可以从野狐、弈城或弈客下载一盘棋，让 KataGo 陪你复盘。
 
 引擎不必和 mirai 在同一台电脑上。当另一台机器算力更强，或你需要远程分析时，在那台机器上运行 `mirai-server`，再通过网络连接即可。
 

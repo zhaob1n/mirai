@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: mirai\n"
 "Report-Msgid-Bugs-To: https://github.com/zhaob1n/mirai/issues\n"
-"POT-Creation-Date: 2026-10-18 20:11+0800\n"
+"POT-Creation-Date: 2026-10-19 23:59+0800\n"
 "PO-Revision-Date: 2026-10-19 12:00+0800\n"
 "Last-Translator: Huang Zhaobin <zhaob1n@foxmail.com>\n"
 "Language-Team: Chinese (China) <i18n-zh@googlegroups.com>\n"
@@ -1959,9 +1959,10 @@ msgstr "粘贴 SGF"
 msgid "translator-credits"
 msgstr "Huang Zhaobin <zhaob1n@foxmail.com>"
 
-#: crates/mirai/src/window.rs
-msgid "A KataGo analysis and playing board for GNOME."
-msgstr "用于 GNOME 的 KataGo 围棋分析与对弈棋盘。"
+#: crates/mirai/src/window.rs data/io.github.zhaob1n.Mirai.desktop.in
+#: data/io.github.zhaob1n.Mirai.metainfo.xml.in
+msgid "Analyse, review and play Go with KataGo"
+msgstr "使用 KataGo 分析、复盘并下围棋"
 
 #: crates/mirai/src/window.rs
 msgid "The root node cannot be deleted"
@@ -2249,11 +2250,6 @@ msgstr "关于 mirai(_A)"
 #: data/io.github.zhaob1n.Mirai.desktop.in
 msgid "Go Analysis Board"
 msgstr "围棋分析棋盘"
-
-#: data/io.github.zhaob1n.Mirai.desktop.in
-#: data/io.github.zhaob1n.Mirai.metainfo.xml.in
-msgid "Analyse, review and play Go with KataGo"
-msgstr "使用 KataGo 分析、复盘并下围棋"
 
 #: data/io.github.zhaob1n.Mirai.desktop.in
 msgid "Go;Baduk;Weiqi;KataGo;SGF;"

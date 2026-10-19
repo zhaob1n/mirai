@@ -2,9 +2,9 @@
 
 English | [简体中文](GUIDE.zh-CN.md)
 
-A Go board for Linux, with experimental Windows support, that talks to KataGo: live
-analysis, SGF review and editing, and games against the computer. The engine can run
-on the same machine or on another one on your network.
+A Go board that talks to KataGo: live analysis, SGF review and editing, and games against
+the computer. Linux is its primary platform; it runs on Windows too. The engine can run on
+the same machine or on another one on your network.
 
 ---
 

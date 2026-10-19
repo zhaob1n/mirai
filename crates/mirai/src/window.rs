@@ -2092,7 +2092,7 @@ fn show_about(ui: &Ui) {
         .developer_name("Huang Zhaobin")
         // Translators: put your names here, one per line, in place of "translator-credits".
         .translator_credits(gettext("translator-credits"))
-        .comments(gettext("A KataGo analysis and playing board for GNOME."))
+        .comments(gettext("Analyse, review and play Go with KataGo"))
         .build();
     crate::widgets::sheet_texture::install(&about);
     about.present(ui.window().as_ref());
