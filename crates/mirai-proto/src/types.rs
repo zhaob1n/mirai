@@ -15,8 +15,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// The three components of the protocol version, carried in `Hello` and `Welcome`.
 ///
-/// Peers require an exact match. While mirai is in development the number stays
-/// [`PROTO_VERSION`] even when the protocol changes: peers are built from the same tree.
+/// Peers require an exact match, so any change to the wire format moves [`PROTO_VERSION`]:
+/// peers from different releases then refuse each other instead of misreading frames.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct ProtoVersion {
     pub major: u16,

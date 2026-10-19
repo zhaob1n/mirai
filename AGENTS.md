@@ -7,9 +7,11 @@ one document your task points at. Do not re-explore the tree; it is mapped for y
 and play, either as a local subprocess or over a network via a purpose-built protocol
 (MRP). Six crates, GPL-3.0-or-later.
 
-The code is complete and reviewed, and it is still in development: there are no external
-users yet, so compatibility with older builds is not a constraint. Treat it as a working
-system to extend carefully, not a draft to rewrite.
+The code is complete and reviewed, and it is released
+([versions and releases](docs/dev/PACKAGING.md#versions-and-releases)): what a released build
+wrote — configuration, autosaves, record-search history, SGF — must still load, and a
+change to MRP's wire format moves `PROTO_VERSION`. Treat it as a working system to extend
+carefully, not a draft to rewrite.
 
 ---
 
@@ -122,8 +124,8 @@ that tells it when to re-request.
 
 **INV-6 — quantisation.** Wire floats are fixed-point; the scales live in
 `crates/mirai-proto/src/types.rs`. Round-trip error is budgeted and tested: winrate ≤ 1e-4,
-score lead ≤ 0.02 points, ownership ≤ 0.005. Changing a scale means updating
-`tests/wire_size.rs` (during development the protocol version does not move).
+score lead ≤ 0.02 points, ownership ≤ 0.005. Changing a scale changes the wire format:
+update `tests/wire_size.rs` and move the protocol version.
 
 **INV-7 — one source of truth, per window.** `AppState` (`crates/mirai/src/app.rs`) owns
 application state. One `Change` dispatcher in `window.rs` pushes projections to widgets; widgets

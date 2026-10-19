@@ -730,8 +730,8 @@ The protocol version is `0.1.0` (`PROTO_VERSION` in `mirai-proto/src/types.rs`),
 match it exactly; a mismatch is `BadVersion` ([§8.1](#81-handshake)), and the error names
 both versions.
 
-During development, peers are built from the same tree and the version does not
-change for every protocol edit. It starts moving when external users need compatibility.
+Any change to the wire format moves the version, so peers from different releases refuse
+each other with `BadVersion` rather than misread a frame.
 
 ---
 
