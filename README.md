@@ -11,11 +11,10 @@ English | [简体中文](README.zh-CN.md)
 
 ![mirai reviewing a game with live KataGo analysis](https://github.com/zhaob1n/mirai/releases/download/readme-assets/preview.png)
 
-mirai puts KataGo's reading on a board that feels at home on Linux, its primary platform,
-and runs on Windows too. Every candidate move tells you at a glance how much it loses and
-how far to trust that number; a win-rate graph marks each blunder of a game; a move tree
-keeps every variation you try. Play the engine at any strength, or pull a game from Fox,
-eWeiqi or Yike and replay it with KataGo beside you.
+mirai puts KataGo's reading on a cross-platform board. Every candidate move tells you at a
+glance how much it loses and how far to trust that number; a win-rate graph marks each
+blunder of a game; a move tree keeps every variation you try. Play the engine at any
+strength, or pull a game from Fox, eWeiqi or Yike and replay it with KataGo beside you.
 
 The engine does not have to be on the same computer. When another machine has more compute,
 or you need to analyse remotely, run `mirai-server` there and connect over the network.
@@ -52,6 +51,8 @@ or you need to analyse remotely, run `mirai-server` there and connect over the n
 - 🌏 **In your language.** English and Simplified Chinese so far; translations are welcome.
 
 ## 📦 Installing
+
+Linux is the primary platform; Windows is supported as well.
 
 ### Arch Linux
 
