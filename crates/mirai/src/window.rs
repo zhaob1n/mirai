@@ -464,6 +464,18 @@ fn refresh_engine_menu(ui: &Ui) {
     ui.engine_menu.set_menu_model(Some(&model));
 }
 
+/// Moves the engine menu's radio dot onto the profile the window is using.
+///
+/// The dot is the state of `win.set-engine`, which only the menu itself sets. A selection
+/// made in Preferences, or a start still in flight, would otherwise leave it on the
+/// profile the file last recorded while the button beside it names another.
+fn sync_engine_action(ui: &Ui) {
+    if let Some(action) = win_simple(ui, "set-engine") {
+        let profile = ui.state.selected_profile().unwrap_or_default();
+        action.set_state(&profile.to_variant());
+    }
+}
+
 // -- signal wiring ----------------------------------------------------------------------
 
 /// Runs `f` with the state of a live window. Handlers never own that state.
@@ -566,6 +578,7 @@ fn handle_change(ui: &Ui, change: Change) {
         Change::Samples => ui.winrate.refresh(),
         Change::StoneVolume => ui.sounds.volume_changed(&ui.state),
         Change::Engine => {
+            sync_engine_action(ui);
             refresh_engine_menu(ui);
             update_engine_actions(ui);
             update_analysis_page(ui);
@@ -2729,7 +2742,7 @@ fn install_actions(window: &MiraiWindow, ui: &Ui) {
     add("about", Box::new(show_about));
 
     // Stateful so the engine menu can render a radio dot next to the live profile.
-    let initial = ui.state.config().active_engine.clone().unwrap_or_default();
+    let initial = ui.state.selected_profile().unwrap_or_default();
     let set_engine = gio::SimpleAction::new_stateful(
         "set-engine",
         Some(glib::VariantTy::STRING),

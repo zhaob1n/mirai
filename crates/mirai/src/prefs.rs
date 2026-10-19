@@ -208,10 +208,10 @@ fn connect_engines(
     // What the rows were last built from: a reopen rebuilds them only if it moved.
     let shown: RefCell<Option<(Vec<EngineProfile>, Option<String>)>> = RefCell::default();
     Box::new(move |widgets| {
-        let now = {
-            let cfg = state.config();
-            (cfg.engine_profiles.clone(), cfg.active_engine.clone())
-        };
+        // The checked row follows the engine this window is using, which during a start
+        // is not yet the profile `active_engine` records.
+        let profiles = state.config().engine_profiles.clone();
+        let now = (profiles, state.selected_profile());
         if shown.borrow().as_ref() != Some(&now) {
             refresh_profiles(&widgets.profiles_group, &dialog, &state);
             *shown.borrow_mut() = Some(now);
@@ -235,10 +235,8 @@ fn refresh_profiles(
         group.remove(&row);
     }
 
-    let (profiles, active) = {
-        let cfg = state.config();
-        (cfg.engine_profiles.clone(), cfg.active_engine.clone())
-    };
+    let profiles = state.config().engine_profiles.clone();
+    let active = state.selected_profile();
 
     if profiles.is_empty() {
         let empty = adw::ActionRow::builder()
@@ -277,13 +275,10 @@ fn refresh_profiles(
 
         let toggle_state = state.clone();
         let toggle_name = name.clone();
+        // Rows are built checked, before this is connected, so only a click on an unchecked
+        // row arrives here: a selection, whatever the file still records.
         radio.connect_toggled(move |button| {
-            if !button.is_active() {
-                return;
-            }
-            let already =
-                toggle_state.config().active_engine.as_deref() == Some(toggle_name.as_str());
-            if !already {
+            if button.is_active() {
                 toggle_state.activate_profile(&toggle_name);
             }
         });
@@ -366,22 +361,7 @@ fn confirm_delete(
                 if response != "delete" {
                     return;
                 }
-                let was_active = {
-                    let mut cfg = state.config_mut();
-                    cfg.engine_profiles.retain(|p| p.name != name);
-                    let was_active = cfg.active_engine.as_deref() == Some(name.as_str());
-                    if was_active {
-                        cfg.active_engine = None;
-                    }
-                    was_active
-                };
-                state.save_config();
-                if was_active {
-                    // The engine it points at is gone; stop using it.
-                    state.clear_engine();
-                } else {
-                    state.changed(Change::Engine);
-                }
+                state.delete_profile(&name);
                 state.toast(gettext_f("Deleted “{name}”", &[("name", &name)]));
                 refresh_profiles(&group, &dialog, &state);
             }
@@ -1328,7 +1308,7 @@ fn local_editor(
                         .flatten(),
                 },
             };
-            commit_profile(&save_state, profile, editing.as_deref());
+            save_state.save_profile(profile, editing.as_deref());
             dialog.pop_subpage();
             refresh_profiles(&group, &dialog, &save_state);
         }
@@ -1562,7 +1542,7 @@ fn remote_editor(
                     cert_sha256,
                 },
             };
-            commit_profile(&save_state, profile, editing.as_deref());
+            save_state.save_profile(profile, editing.as_deref());
             dialog.pop_subpage();
             refresh_profiles(&group, &dialog, &save_state);
         }
@@ -1624,41 +1604,6 @@ fn check_name(state: &AppState, name: &str, editing: Option<&str>) -> Result<(),
         ));
     }
     Ok(())
-}
-
-/// Inserts or replaces a profile, persists the config, and restarts the engine when the
-/// profile that changed is the one in use.
-fn commit_profile(state: &AppState, profile: EngineProfile, editing: Option<&str>) {
-    let name = profile.name.clone();
-    let index = editing.and_then(|old| {
-        state
-            .config()
-            .engine_profiles
-            .iter()
-            .position(|p| p.name == old)
-    });
-
-    {
-        let mut cfg = state.config_mut();
-        match index {
-            Some(i) => cfg.engine_profiles[i] = profile,
-            None => cfg.engine_profiles.push(profile),
-        }
-        // A rename carries the active pointer with it, and the very first profile becomes
-        // the active one.
-        if cfg.active_engine.as_deref() == editing || cfg.active_engine.is_none() {
-            cfg.active_engine = Some(name.clone());
-        }
-    }
-    state.save_config();
-
-    let is_active = state.config().active_engine.as_deref() == Some(name.as_str());
-    if is_active {
-        // Re-reads the profile, so edited paths and thread counts take effect immediately.
-        state.activate_profile(&name);
-    } else {
-        state.changed(Change::Engine);
-    }
 }
 
 // -- Analysis ---------------------------------------------------------------------------

@@ -24,7 +24,7 @@ use mirai_core::{Color, GameTree, IllegalMove, NodeAnalysis, NodeId, Point, Posi
 use mirai_engine::remote::RemoteStatus;
 use mirai_engine::{AnalyzeReq, Engine, EngineDesc, EngineError, Report, SubEvent, Want};
 
-use crate::config::{Config, ConfigError, ProfileKind};
+use crate::config::{Config, ConfigError, EngineProfile, ProfileKind};
 use crate::engines::{Built, EnginePool};
 use crate::i18n;
 
@@ -947,7 +947,10 @@ impl AppState {
         self.restart_analysis();
     }
 
+    /// Leaves this window with no engine. A start still in flight is abandoned with it:
+    /// one that landed later would install an engine nobody asked for any more.
     pub fn clear_engine(&self) {
+        self.supersede_activation();
         self.replace_engine(None);
         self.set_engine_state(EngineState::None);
         self.restart_analysis();
@@ -958,6 +961,17 @@ impl AppState {
         match &*self.imp().engine_state.borrow() {
             EngineState::Ready { profile, .. } => Some(profile.clone()),
             _ => None,
+        }
+    }
+
+    /// The profile this window is using: the engine being started or running. With no
+    /// engine, the profile the file names is still the one the next start would use.
+    pub fn selected_profile(&self) -> Option<String> {
+        match &*self.imp().engine_state.borrow() {
+            EngineState::Starting { profile } | EngineState::Ready { profile, .. } => {
+                Some(profile.clone())
+            }
+            EngineState::Failed { .. } | EngineState::None => self.config().active_engine.clone(),
         }
     }
 
@@ -1001,6 +1015,28 @@ impl AppState {
         self.changed(Change::Reconnected);
     }
 
+    /// Ends whatever start is in flight — its waiter, its trust dialog and the busy flag it
+    /// holds — and returns the id the next activation runs under. Every older completion
+    /// compares unequal and is dropped.
+    fn supersede_activation(&self) -> u64 {
+        let imp = self.imp();
+        // Bumped first: closing the trust dialog answers it with Cancel, which must find
+        // its activation already superseded.
+        let activation = imp.activation.get().wrapping_add(1);
+        imp.activation.set(activation);
+        if let Some(task) = imp.activation_task.borrow_mut().take() {
+            task.abort();
+        }
+        self.dismiss_trust_dialog();
+        // The aborted waiter would have cleared this when it landed. A batch holds the same
+        // flag, but no batch runs while an engine is starting.
+        let starting = matches!(*imp.engine_state.borrow(), EngineState::Starting { .. });
+        if starting {
+            self.set_busy(false);
+        }
+        activation
+    }
+
     /// Starts (or connects to) the named profile and installs it as the active engine.
     ///
     /// The engine comes from the application-wide [`EnginePool`], so a second window on the
@@ -1015,13 +1051,8 @@ impl AppState {
             ));
             return;
         };
-        if let Some(task) = self.imp().activation_task.borrow_mut().take() {
-            task.abort();
-        }
-        self.dismiss_trust_dialog();
         // Starting an engine is slow. A later selection supersedes this one.
-        let activation = self.imp().activation.get().wrapping_add(1);
-        self.imp().activation.set(activation);
+        let activation = self.supersede_activation();
 
         if let Some(engine) = self.pool().running(&profile) {
             self.set_busy(false);
@@ -1230,6 +1261,64 @@ impl AppState {
         };
         if changed {
             self.save_config();
+        }
+    }
+
+    /// Inserts `profile`, or replaces the one called `editing`, and restarts the engine when
+    /// the profile saved is the one in use. A rename counts: the engine state still carries
+    /// the old name.
+    pub fn save_profile(&self, profile: EngineProfile, editing: Option<&str>) {
+        let name = profile.name.clone();
+        {
+            let mut cfg = self.config_mut();
+            let index =
+                editing.and_then(|old| cfg.engine_profiles.iter().position(|p| p.name == old));
+            match index {
+                Some(i) => cfg.engine_profiles[i] = profile,
+                None => cfg.engine_profiles.push(profile),
+            }
+            // A rename carries the active pointer with it, and the very first profile becomes
+            // the active one.
+            if cfg.active_engine.as_deref() == editing || cfg.active_engine.is_none() {
+                cfg.active_engine = Some(name.clone());
+            }
+        }
+        self.save_config();
+
+        let in_use = self
+            .selected_profile()
+            .is_some_and(|p| p == name || Some(p.as_str()) == editing);
+        if in_use {
+            // Re-reads the profile, so edited paths and thread counts take effect immediately.
+            self.activate_profile(&name);
+        } else {
+            self.changed(Change::Engine);
+        }
+    }
+
+    /// Removes a profile. The file stops pointing at it only if it did; an engine shown
+    /// under its name — running, starting or failed — is dropped, and any other start
+    /// carries on.
+    pub fn delete_profile(&self, name: &str) {
+        {
+            let mut cfg = self.config_mut();
+            cfg.engine_profiles.retain(|p| p.name != name);
+            if cfg.active_engine.as_deref() == Some(name) {
+                cfg.active_engine = None;
+            }
+        }
+        self.save_config();
+
+        let shown = match &*self.imp().engine_state.borrow() {
+            EngineState::Starting { profile }
+            | EngineState::Ready { profile, .. }
+            | EngineState::Failed { profile, .. } => profile == name,
+            EngineState::None => false,
+        };
+        if shown {
+            self.clear_engine();
+        } else {
+            self.changed(Change::Engine);
         }
     }
 
@@ -1724,6 +1813,116 @@ mod tests {
             assert_eq!(asked.load(Ordering::SeqCst), 3);
             assert_eq!(reconnects(), 0);
 
+            state.cancel_tasks();
+        });
+    }
+
+    /// `save_config` arms its debounce on the process-wide default main context, which one
+    /// thread at a time may own; a test that saves holds this so a parallel one cannot.
+    fn own_default_context() -> std::sync::MutexGuard<'static, ()> {
+        static DEFAULT_CONTEXT: Mutex<()> = Mutex::new(());
+        DEFAULT_CONTEXT
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn unstartable(name: &str) -> EngineProfile {
+        EngineProfile {
+            name: name.into(),
+            kind: ProfileKind::Local {
+                katago: "/nonexistent/katago".into(),
+                model: "/nonexistent/model.bin.gz".into(),
+                config: None,
+                analysis_threads: None,
+                search_threads: None,
+                nn_max_batch_size: None,
+                nn_cache_size_power_of_two: None,
+            },
+        }
+    }
+
+    fn with_profiles(
+        runtime: &tokio::runtime::Runtime,
+        names: &[&str],
+        recorded: &str,
+    ) -> AppState {
+        let config = Config {
+            engine_profiles: names.iter().map(|name| unstartable(name)).collect(),
+            active_engine: Some(recorded.into()),
+            ..Config::default()
+        };
+        AppState::new(
+            config,
+            PathBuf::from("/tmp/mirai-profile-test.toml"),
+            runtime.handle().clone(),
+            Rc::new(EnginePool::default()),
+        )
+    }
+
+    /// `active_engine` records a start only once it succeeds, so while one profile starts
+    /// the file still names the previous one. Deleting that previous profile must leave the
+    /// start alone; deleting the one starting must abandon it and its busy flag.
+    #[test]
+    fn deleting_a_profile_stops_only_the_engine_shown_under_it() {
+        let _context = own_default_context();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime");
+        let state = with_profiles(&runtime, &["recorded", "next"], "recorded");
+        state.set_engine_state(EngineState::Starting {
+            profile: "next".into(),
+        });
+        state.set_busy(true);
+
+        state.delete_profile("recorded");
+        assert!(
+            matches!(state.engine_state(), EngineState::Starting { profile } if profile == "next"),
+            "the start in flight was dropped with a profile it does not use"
+        );
+        assert!(state.busy());
+        assert_eq!(state.config().active_engine, None);
+        assert_eq!(state.selected_profile().as_deref(), Some("next"));
+
+        state.delete_profile("next");
+        assert!(matches!(state.engine_state(), EngineState::None));
+        assert!(!state.busy(), "an abandoned start left the window busy");
+
+        // A failed start is still what the header names, so it goes with its profile too.
+        let state = with_profiles(&runtime, &["recorded", "broken"], "recorded");
+        state.set_engine_state(EngineState::Failed {
+            profile: "broken".into(),
+            message: "no such binary".into(),
+        });
+        state.delete_profile("broken");
+        assert!(matches!(state.engine_state(), EngineState::None));
+        assert_eq!(state.config().active_engine.as_deref(), Some("recorded"));
+    }
+
+    /// The engine state carries the profile's old name after a rename, so the save must be
+    /// recognised as one of the profile in use and restart it under the new name.
+    #[test]
+    fn renaming_the_running_profile_restarts_it_under_the_new_name() {
+        let _context = own_default_context();
+        glib::MainContext::new().block_on(async {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .expect("runtime");
+            let state = with_profiles(&runtime, &["desktop"], "desktop");
+            let asked = Arc::new(std::sync::atomic::AtomicU32::new(0));
+            state.set_engine(
+                "desktop",
+                Built {
+                    engine: Arc::new(Counting(asked)),
+                    link: None,
+                },
+            );
+
+            state.save_profile(unstartable("workstation"), Some("desktop"));
+            assert!(
+                matches!(state.engine_state(), EngineState::Starting { profile } if profile == "workstation"),
+                "the renamed profile kept running under its old name"
+            );
+            assert_eq!(state.config().active_engine.as_deref(), Some("workstation"));
             state.cancel_tasks();
         });
     }
