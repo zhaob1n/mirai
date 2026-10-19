@@ -124,7 +124,7 @@ mirai-server --config server.toml
 
 ## 💬 反馈
 
-mirai 还很年轻，变化很快，目前还没有正式版本：请从本仓库构建。欢迎通过 [issues](https://github.com/zhaob1n/mirai/issues) 反馈 bug、不顺手的地方和各种想法。请写明你在做什么、期望发生什么、实际发生了什么；如果是引擎的问题，`~/.local/share/mirai/katago-logs/` 里最新的日志通常能说明原因。
+mirai 还很年轻，变化很快。欢迎通过 [issues](https://github.com/zhaob1n/mirai/issues) 反馈 bug、不顺手的地方和各种想法。请写明你在做什么、期望发生什么、实际发生了什么；如果是引擎的问题，`~/.local/share/mirai/katago-logs/` 里最新的日志通常能说明原因。
 
 ## 📖 文档
 

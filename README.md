@@ -177,8 +177,7 @@ the [remote-engine guide](docs/user/GUIDE.md#7-using-a-remote-engine).
 
 ## 💬 Feedback
 
-mirai is young and moving quickly, and there are no releases yet: build it from this
-repository. Bugs, rough edges and ideas are all welcome as
+mirai is young and moving quickly. Bugs, rough edges and ideas are all welcome as
 [issues](https://github.com/zhaob1n/mirai/issues). Tell us what you were doing, what you
 expected and what happened instead; for an engine problem, the newest file in
 `~/.local/share/mirai/katago-logs/` usually says why.
