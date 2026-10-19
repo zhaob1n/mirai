@@ -33,7 +33,7 @@ use session::{Host, NamedEngine, Token};
 #[derive(Parser, Debug)]
 #[command(
     name = "mirai-server",
-    version,
+    version = env!("MIRAI_VERSION"),
     about = "Headless KataGo host speaking the mirai remote-analysis protocol"
 )]
 struct Args {

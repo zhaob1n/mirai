@@ -16,7 +16,7 @@ When something changes:
 - **An installed file added or moved** → `install` and `uninstall` in the `justfile`; the
   packages follow.
 - **A language added** → nothing: `just install` and `uninstall` read `po/LINGUAS`.
-- **A release** → add a `<release>` to the metainfo template.
+- **A release** → see [Versions and releases](#versions-and-releases).
 
 **`just install`, not a package per distribution.** `cargo install` places only binaries,
 not the desktop entry, metainfo and icons. The install recipes never build, so
@@ -40,6 +40,32 @@ the host's ROCm or CUDA, so the host's KataGo cannot run inside the sandbox. The
 it outside through `flatpak-spawn --host`, which Flathub rejects as a sandbox escape. A
 bundled OpenCL KataGo does run inside; measured on an RX 6800 XT (b10 network, 16 threads,
 400 visits) it managed 123 visits/s against 472 for the host's ROCm build.
+
+## Versions and releases
+
+`[workspace.package].version` in `Cargo.toml` names the release, and a `v`-prefixed tag of
+exactly that version (or that version plus a semver prerelease, `v0.1.0-rc.1`) marks it.
+`readme-assets` is a tag too, for the README images; everything that reads tags matches
+`v[0-9]*`.
+
+The binaries report `MIRAI_VERSION`, which the `mirai` and `mirai-server` build scripts set
+through `tools/build/version.rs`: `0.1.0` on the tag, `0.1.0+21.gead50ec` 21 commits past
+it, `0.1.0+gead50ec` with no such tag reachable (a shallow clone, or the release commit
+before it is tagged), the Cargo version alone outside a mirai checkout. The About dialog,
+`mirai-server --version` and `Welcome.server` show it. Library crates keep
+`CARGO_PKG_VERSION` (`AP` in a written SGF, `Hello.client`): a build script there would
+rebuild every dependent crate on each commit. A build with uncommitted changes is not
+marked; watching the working tree would rerun the script on every edit.
+
+To release:
+
+1. Set the version in `[workspace.package]` and in the four internal path dependencies
+   under `[workspace.dependencies]`.
+2. Add a `<release>` to the metainfo template, dated the release day.
+3. Commit, tag `vVERSION` (annotated), push the commit, then the tag. The tag push builds
+   the Windows installer and creates the GitHub release
+   ([Windows release](#windows-release)).
+4. Refresh each AUR package's `.SRCINFO` from GitHub ([below](#changing-and-publishing-a-pkgbuild)).
 
 ## Arch and the AUR
 

@@ -2088,7 +2088,7 @@ fn show_about(ui: &Ui) {
     let about = adw::AboutDialog::builder()
         .application_name("mirai")
         .application_icon("io.github.zhaob1n.Mirai")
-        .version(env!("CARGO_PKG_VERSION"))
+        .version(env!("MIRAI_VERSION"))
         .developer_name("Huang Zhaobin")
         // Translators: put your names here, one per line, in place of "translator-credits".
         .translator_credits(gettext("translator-credits"))

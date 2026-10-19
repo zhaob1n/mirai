@@ -26,7 +26,7 @@ use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 /// Reported in `Welcome.server`.
-pub const SERVER_NAME: &str = concat!("mirai-server/", env!("CARGO_PKG_VERSION"));
+pub const SERVER_NAME: &str = concat!("mirai-server/", env!("MIRAI_VERSION"));
 
 /// QUIC application error code for a rejected or torn-down connection.
 const CODE_REJECTED: u32 = 1;

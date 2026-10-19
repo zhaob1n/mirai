@@ -3,6 +3,9 @@
 use std::path::Path;
 use std::process::Command;
 
+#[path = "../../tools/build/version.rs"]
+mod version;
+
 fn main() {
     glib_build_tools::compile_resources(
         &["resources"],
@@ -10,6 +13,7 @@ fn main() {
         "mirai.gresource",
     );
     compile_catalogues();
+    version::emit();
 }
 
 /// Compiles each language in `po/LINGUAS` into `$OUT_DIR/locale`, which a debug build run
