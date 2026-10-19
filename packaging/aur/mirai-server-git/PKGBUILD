@@ -3,7 +3,7 @@
 
 pkgname=mirai-server-git
 _repo=mirai
-pkgver=r390.37c474e
+pkgver=0.1.0.r0.g76ce40a
 pkgrel=1
 pkgdesc='Headless host sharing KataGo with mirai clients over the network'
 arch=('x86_64' 'aarch64')
