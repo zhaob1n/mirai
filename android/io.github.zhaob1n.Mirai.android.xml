@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pixiewood manifest for the Android build of mirai; build with android/build-apk.sh. -->
+<app xmlns="https://sp1rit.arpa/pixiewood/" xmlns:xi="http://www.w3.org/2001/XInclude">
+  <metainfo target="io.github.zhaob1n.Mirai.metainfo.xml" vercalc="sem121010">
+    <xi:include href="build://aarch64/io.github.zhaob1n.Mirai.metainfo.xml" parse="xml"/>
+  </metainfo>
+  <style>
+    <theme name="adw"/>
+    <icon type="generate">
+      <drawable target="foreground" scale=".66" type="svg" path="src:../crates/mirai/resources/icons/hicolor/scalable/apps/io.github.zhaob1n.Mirai.svg"/>
+      <color target="background">#FFFFFF</color>
+    </icon>
+  </style>
+  <dependencies>
+    <glib>
+      <patch>hack</patch>
+    </glib>
+    <gtk revision="4.24.1"/>
+    <libadwaita revision="1.10.0"/>
+  </dependencies>
+  <build target="mirai">
+    <architectures>
+      <arch>aarch64</arch>
+      <arch>x86_64</arch>
+    </architectures>
+    <configure-options>
+      <!-- Debian 13's glib-mkenums (2.84) cannot parse libadwaita 1.10's G_GNUC_FLAG_ENUM;
+           point meson at glib >= 2.86's script. Adjust the path for your machine. -->
+      <option>--cross-file=/workspace/gtk-android/hosttools/mkenums.cross</option>
+      <!-- blueprint-compiler >= 0.22 for cargo's build script -->
+      <option>-Dhosttools=/workspace/gtk-android/hosttools/bin</option>
+      <option>-Dgtk:media-gstreamer=disabled</option>
+      <option>-Dlibsoup:tls_check=false</option>
+      <option>-Dlibsoup:tests=false</option>
+      <option>-Dlibsoup:introspection=disabled</option>
+      <option>-Dlibsoup:vapi=disabled</option>
+      <option>-Dlibsoup:docs=disabled</option>
+      <option>-Dlibsoup:sysprof=disabled</option>
+      <option>-Dlibsoup:gssapi=disabled</option>
+      <option>-Dlibsoup:ntlm=disabled</option>
+      <option>-Dlibsoup:brotli=disabled</option>
+    </configure-options>
+  </build>
+</app>

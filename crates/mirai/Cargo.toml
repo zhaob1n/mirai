@@ -13,6 +13,13 @@ categories = ["games", "gui"]
 name = "mirai"
 path = "src/main.rs"
 
+# The Android port (`android/`): the same program as a static library exporting
+# `mirai_android_main`, linked into the shared object GTK's Android backend loads.
+[[example]]
+name = "mirai-android"
+path = "src/main.rs"
+crate-type = ["staticlib"]
+
 [dependencies]
 mirai-core.workspace = true
 mirai-client.workspace = true

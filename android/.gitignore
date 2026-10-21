@@ -1,0 +1,9 @@
+.pixiewood/
+out/
+# pixiewood writes the GTK stack wraps at prepare time; only libsoup's are ours
+subprojects/*
+!subprojects/libsoup.wrap
+!subprojects/libpsl.wrap
+!subprojects/nghttp2.wrap
+!subprojects/sqlite3.wrap
+.buildconfig

@@ -1,0 +1,2 @@
+option('hosttools', type: 'string', value: '',
+  description: 'Directory prepended to PATH for cargo (blueprint-compiler >= 0.22, msgfmt)')

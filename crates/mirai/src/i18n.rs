@@ -26,8 +26,13 @@ const DOMAIN: &std::ffi::CStr = c"mirai";
 // dependency (as in `mirai_proto::atomic`). A port to a C library without libintl links it.
 unsafe extern "C" {
     fn setlocale(category: c_int, locale: *const c_char) -> *mut c_char;
+    // Bionic has no libintl: Android builds link GLib's proxy-libintl, which prefixes its
+    // symbols with `g_libintl_`.
+    #[cfg_attr(target_os = "android", link_name = "g_libintl_bindtextdomain")]
     fn bindtextdomain(domain: *const c_char, dir: *const c_char) -> *mut c_char;
+    #[cfg_attr(target_os = "android", link_name = "g_libintl_bind_textdomain_codeset")]
     fn bind_textdomain_codeset(domain: *const c_char, codeset: *const c_char) -> *mut c_char;
+    #[cfg_attr(target_os = "android", link_name = "g_libintl_textdomain")]
     fn textdomain(domain: *const c_char) -> *mut c_char;
 }
 

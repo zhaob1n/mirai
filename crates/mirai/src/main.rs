@@ -125,3 +125,15 @@ fn main() -> glib::ExitCode {
     }
     code
 }
+
+/// Entry point of the Android build. GTK's Android backend loads the application as a
+/// shared library and calls its C `main`; `android/main.c` provides that and forwards here.
+/// The `mirai-android` example target (see `Cargo.toml`) builds this file as a static library.
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "C" fn mirai_android_main(
+    _argc: std::ffi::c_int,
+    _argv: *mut *mut std::ffi::c_char,
+) -> std::ffi::c_int {
+    i32::from(main())
+}

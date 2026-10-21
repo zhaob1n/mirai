@@ -1,0 +1,10 @@
+[wrap-file]
+directory = libpsl-0.23.3
+source_url = https://github.com/rockdaboot/libpsl/releases/download/0.23.3/libpsl-0.23.3.tar.gz
+source_filename = libpsl-0.23.3.tar.gz
+source_hash = 93941f85a1e7bd593fa94f299233cb5dfc91cd144fd9a78a6ceb75001c5b03be
+source_fallback_url = https://wrapdb.mesonbuild.com/v2/libpsl_0.23.3-1/get_source/libpsl-0.23.3.tar.gz
+wrapdb_version = 0.23.3-1
+
+[provide]
+libpsl = libpsl_dep
