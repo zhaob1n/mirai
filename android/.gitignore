@@ -7,3 +7,5 @@ subprojects/*
 !subprojects/nghttp2.wrap
 !subprojects/sqlite3.wrap
 .buildconfig
+!subprojects/glib-networking.wrap
+!subprojects/openssl.wrap

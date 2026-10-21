@@ -1,0 +1,7 @@
+[wrap-git]
+url = https://gitlab.gnome.org/GNOME/glib-networking.git
+revision = 2.80.1
+depth = 1
+
+[provide]
+dependency_names = gioopenssl

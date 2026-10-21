@@ -14,6 +14,18 @@ gtk_dep = dependency('gtk4', version: '>= 4.22')
 adw_dep = dependency('libadwaita-1', version: '>= 1.9')
 soup_dep = dependency('libsoup-3.0', version: '>= 3.0')
 intl_dep = dependency('intl')
+# TLS for libsoup: glib-networking's OpenSSL backend, built as a static GIO module and
+# registered from main.c (an APK has no GIO_MODULE_DIR to scan). OpenSSL is linked in
+# statically too.
+openssl_dep = dependency('openssl', default_options: ['default_library=static'])
+gioopenssl_dep = dependency('gioopenssl', default_options: [
+  'default_library=static',
+  'openssl=enabled',
+  'gnutls=disabled',
+  'libproxy=disabled',
+  'gnome_proxy=disabled',
+  'environment_proxy=disabled',
+])
 # Linked directly by the Rust code (rustc --print native-static-libs).
 direct_deps = [
   dependency('gio-2.0'),
@@ -52,7 +64,7 @@ icon_resources = gnome.compile_resources('mirai-android-icons', 'icons.gresource
   c_name: 'mirai_android_icons')
 
 executable('mirai', 'main.c', icon_resources,
-  dependencies: [gtk_dep, adw_dep, soup_dep, intl_dep, direct_deps, log_dep, unwind_dep, dl_dep, m_dep],
+  dependencies: [gtk_dep, adw_dep, soup_dep, gioopenssl_dep, openssl_dep, intl_dep, direct_deps, log_dep, unwind_dep, dl_dep, m_dep],
   link_with: libmirai_rust,
   android_exe_type: 'application',
   install: true)
@@ -62,8 +74,11 @@ executable('mirai', 'main.c', icon_resources,
 custom_target('metainfo',
   input: '../data/io.github.zhaob1n.Mirai.metainfo.xml.in',
   output: 'io.github.zhaob1n.Mirai.metainfo.xml',
+  # Also declare optional network use, which makes pixiewood request the INTERNET
+  # permission (game-record downloads, remote engines).
   command: [find_program('sed'),
-            's|<component type=|<component xmlns="https://specifications.freedesktop.org/metainfo/1.0" type=|',
+            '-e', 's|<component type=|<component xmlns="https://specifications.freedesktop.org/metainfo/1.0" type=|',
+            '-e', 's|</component>|  <suggests>\\n    <internet>always</internet>\\n  </suggests>\\n</component>|',
             '@INPUT@'],
   capture: true,
   build_by_default: true)
