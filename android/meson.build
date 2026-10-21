@@ -44,7 +44,14 @@ libmirai_rust = custom_target('libmirai_android.a',
   build_always_stale: true,
   console: true)
 
-executable('mirai', 'main.c',
+# Android has no icon theme: compile the Adwaita symbolic icons mirai uses (copied by
+# update-icons.sh) into libmirai.so. They sit under mirai's own icon resource path, which
+# main.rs adds to the GtkIconTheme, so no Rust change is needed.
+gnome = import('gnome')
+icon_resources = gnome.compile_resources('mirai-android-icons', 'icons.gresource.xml',
+  c_name: 'mirai_android_icons')
+
+executable('mirai', 'main.c', icon_resources,
   dependencies: [gtk_dep, adw_dep, soup_dep, intl_dep, direct_deps, log_dep, unwind_dep, dl_dep, m_dep],
   link_with: libmirai_rust,
   android_exe_type: 'application',
