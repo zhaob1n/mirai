@@ -228,6 +228,12 @@ impl Geom {
     }
 }
 
+/// Where a drag that started at widget x `start` and has moved `dx` is, as the f32 the
+/// geometry works in.
+fn scrub_x(start: f64, dx: f64) -> f32 {
+    (start + dx) as f32
+}
+
 /// The main-line node under widget x, copied out so the projection borrow can end.
 fn node_at(projection: &GraphProjection, geom: &Geom, x: f32) -> Option<NodeId> {
     if projection.line.is_empty() {
@@ -242,7 +248,6 @@ mod imp {
     #[derive(Default)]
     pub struct WinrateGraph {
         pub state: OnceCell<AppState>,
-        pub pressed: Cell<bool>,
         pub(super) projection: RefCell<GraphProjection>,
         pub(super) render_cache: RefCell<Option<(RenderKey, gsk::RenderNode)>>,
         pub(super) axis_metrics: Cell<Option<AxisMetrics>>,
@@ -322,56 +327,34 @@ impl WinrateGraph {
         );
         this.set_tooltip_text(Some(&summary));
         this.update_property(&[gtk::accessible::Property::Description(&summary)]);
-        let click = gtk::GestureClick::new();
-        click.set_button(gdk::BUTTON_PRIMARY);
+        // Press to jump, drag to scrub. A drag gesture rather than a click plus a motion
+        // controller: a finger produces touch events, which motion controllers never see,
+        // so scrubbing only worked with a mouse. The gesture follows a mouse or a finger
+        // alike, keeps following it outside the widget (the index clamps to the ends), and
+        // claims the sequence so the paned and other containers leave the drag alone.
+        let drag = gtk::GestureDrag::new();
+        drag.set_button(gdk::BUTTON_PRIMARY);
         {
             let weak = this.downgrade();
-            click.connect_pressed(move |_, _, x, _| {
+            drag.connect_drag_begin(move |gesture, x, _| {
                 if let Some(this) = weak.upgrade() {
+                    gesture.set_state(gtk::EventSequenceState::Claimed);
                     crate::widgets::release_focus(&this);
-                    this.imp().pressed.set(true);
                     this.jump_to(x as f32);
                 }
             });
         }
         {
             let weak = this.downgrade();
-            click.connect_released(move |_, _, _, _| {
-                if let Some(this) = weak.upgrade() {
-                    this.imp().pressed.set(false);
-                }
-            });
-        }
-        {
-            let weak = this.downgrade();
-            click.connect_cancel(move |_, _| {
-                if let Some(this) = weak.upgrade() {
-                    this.imp().pressed.set(false);
-                }
-            });
-        }
-        this.add_controller(click);
-
-        let motion = gtk::EventControllerMotion::new();
-        {
-            let weak = this.downgrade();
-            motion.connect_motion(move |_, x, _| {
+            drag.connect_drag_update(move |gesture, dx, _| {
                 if let Some(this) = weak.upgrade()
-                    && this.imp().pressed.get()
+                    && let Some((x, _)) = gesture.start_point()
                 {
-                    this.jump_to(x as f32);
+                    this.jump_to(scrub_x(x, dx));
                 }
             });
         }
-        {
-            let weak = this.downgrade();
-            motion.connect_leave(move |_| {
-                if let Some(this) = weak.upgrade() {
-                    this.imp().pressed.set(false);
-                }
-            });
-        }
-        this.add_controller(motion);
+        this.add_controller(drag);
 
         this
     }
@@ -981,5 +964,18 @@ mod tests {
         assert_eq!(node_at(&GraphProjection::default(), &g, g.x(0)), None);
         let g1 = Geom::new(300.0, 140.0, 1, 70.0, 98.0);
         assert_eq!(g1.index_at(123.0, 1), 0);
+    }
+
+    /// Scrubbing follows the finger or mouse from where the drag began, and clamps to the
+    /// first and last node when it is dragged past either end of the plot.
+    #[test]
+    fn a_drag_scrubs_from_its_start_and_clamps_at_the_ends() {
+        let g = Geom::new(300.0, 140.0, 11, 70.0, 98.0);
+        let start = f64::from(g.x(2));
+        let step = f64::from(g.x(1) - g.x(0));
+        assert_eq!(g.index_at(scrub_x(start, 0.0), 11), 2);
+        assert_eq!(g.index_at(scrub_x(start, 3.0 * step), 11), 5);
+        assert_eq!(g.index_at(scrub_x(start, -1000.0), 11), 0);
+        assert_eq!(g.index_at(scrub_x(start, 1000.0), 11), 10);
     }
 }

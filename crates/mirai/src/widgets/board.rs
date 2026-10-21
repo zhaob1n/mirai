@@ -131,6 +131,32 @@ impl Layout {
     }
 }
 
+/// One finger on the board. A touch has no hover, so the ghost stone follows the finger
+/// while it is down and the stone is placed where it is lifted. Sliding off the grid
+/// abandons the stroke for good, even if the finger comes back: that is how a touch that
+/// was going to place a stone in the wrong spot is called off.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct TouchStroke {
+    abandoned: bool,
+}
+
+impl TouchStroke {
+    /// Feeds the finger position in widget coordinates. Returns where the ghost stone
+    /// should be drawn (the position itself), or `None` once the stroke is abandoned.
+    fn track(&mut self, layout: &Layout, size: Size, x: f64, y: f64) -> Option<(f64, f64)> {
+        if !layout.on_grid(size, x, y) {
+            self.abandoned = true;
+        }
+        (!self.abandoned).then_some((x, y))
+    }
+
+    /// The finger came up at `(x, y)`: the position to deliver as a primary click, if any.
+    fn release(mut self, layout: &Layout, size: Size, x: f64, y: f64) -> Option<(f64, f64)> {
+        self.track(layout, size, x, y)
+            .filter(|&(x, y)| layout.hit(size, x, y).is_some())
+    }
+}
+
 /// Opacity floor and ceiling for a candidate blob.
 ///
 /// Hue is how much the move loses ([`crate::palette`]), or grey when there is not enough search
@@ -393,6 +419,8 @@ mod imp {
         /// change, and neither emits a motion event. The ghost stone is hit-tested from this
         /// at draw time so it follows the position, tool and geometry without bookkeeping.
         pub pointer: Cell<Option<(f64, f64)>>,
+        /// The finger stroke in progress on a touchscreen; see [`super::TouchStroke`].
+        pub(super) touch: Cell<Option<super::TouchStroke>>,
         /// Set while a game is running and a click would not place a stone for the person:
         /// the engine's turn, scoring, a finished game.
         pub play_locked: Cell<bool>,
@@ -1278,6 +1306,13 @@ fn draw_stone(snapshot: &gtk::Snapshot, cx: f32, cy: f32, r: f32, color: Color, 
     }
 }
 
+/// Whether the event a gesture is handling came from a touchscreen (a finger, not a mouse).
+fn is_touch(gesture: &impl IsA<gtk::EventController>) -> bool {
+    gesture
+        .current_event_device()
+        .is_some_and(|device| device.source() == gdk::InputSource::Touchscreen)
+}
+
 glib::wrapper! {
     pub struct BoardView(ObjectSubclass<imp::BoardView>)
         @extends gtk::Widget,
@@ -1652,11 +1687,63 @@ impl BoardView {
                 #[weak(rename_to = view)]
                 self,
                 move |gesture, _, x, y| {
+                    // A finger is the touch gesture's below, which claims its sequence; this
+                    // is only a fallback should the two ever run in the other order.
+                    if is_touch(gesture) {
+                        return;
+                    }
                     view.click_at(gesture.current_button(), x, y);
                 }
             ));
             self.add_controller(gesture);
         }
+
+        // A finger has no hover: GTK turns a touch into GDK_TOUCH_* events, which motion
+        // controllers never see (only GDK_MOTION_NOTIFY drives them, and no crossing is
+        // synthesized for a touch), so the ghost stone never appeared on a touchscreen.
+        // Track the finger with a drag instead: down shows the ghost, moving moves it,
+        // lifting places the stone, and sliding off the grid calls it off. Claiming the
+        // sequence keeps the click gesture above (and swipes of the containers) out of it.
+        let touch = gtk::GestureDrag::new();
+        touch.set_touch_only(true);
+        touch.connect_drag_begin(clone!(
+            #[weak(rename_to = view)]
+            self,
+            move |gesture, x, y| {
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                crate::widgets::release_focus(&view);
+                view.imp().touch.set(Some(TouchStroke::default()));
+                view.touch_moved(x, y);
+            }
+        ));
+        touch.connect_drag_update(clone!(
+            #[weak(rename_to = view)]
+            self,
+            move |gesture, dx, dy| {
+                if let Some((x, y)) = gesture.start_point() {
+                    view.touch_moved(x + dx, y + dy);
+                }
+            }
+        ));
+        // GTK emits `cancel` before `drag-end` when the sequence is taken away.
+        touch.connect_cancel(clone!(
+            #[weak(rename_to = view)]
+            self,
+            move |_, _| {
+                view.imp().touch.set(None);
+                view.update_hover(None);
+            }
+        ));
+        touch.connect_drag_end(clone!(
+            #[weak(rename_to = view)]
+            self,
+            move |gesture, dx, dy| {
+                if let Some((x, y)) = gesture.start_point() {
+                    view.touch_released(x + dx, y + dy);
+                }
+            }
+        ));
+        self.add_controller(touch);
 
         let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
         scroll.connect_scroll(clone!(
@@ -1687,6 +1774,28 @@ impl BoardView {
             move |_| view.update_hover(None)
         ));
         self.add_controller(motion);
+    }
+
+    fn touch_moved(&self, x: f64, y: f64) {
+        let Some(mut stroke) = self.imp().touch.get() else {
+            return;
+        };
+        let layout = self.imp().layout.get();
+        let ghost = stroke.track(&layout, self.imp().board_size(), x, y);
+        self.imp().touch.set(Some(stroke));
+        self.update_hover(ghost);
+    }
+
+    fn touch_released(&self, x: f64, y: f64) {
+        let Some(stroke) = self.imp().touch.take() else {
+            return;
+        };
+        let layout = self.imp().layout.get();
+        let place = stroke.release(&layout, self.imp().board_size(), x, y);
+        self.update_hover(None);
+        if let Some((x, y)) = place {
+            self.click_at(gdk::BUTTON_PRIMARY, x, y);
+        }
     }
 
     pub(crate) fn update_hover(&self, pointer: Option<(f64, f64)>) {
@@ -2017,5 +2126,44 @@ mod tests {
         // The number is left in the vec; `draw_numbers` skips an empty point, which is
         // what the old in-snapshot replay did too.
         assert_eq!(nums[p(4, 4).index()], 2);
+    }
+
+    /// A finger shows the ghost wherever it is on the grid and places on lift; once it has
+    /// slid off the grid the stroke is over, even if it comes back, and lifting between
+    /// intersections or on the coordinate margin places nothing.
+    #[test]
+    fn a_touch_stroke_places_on_lift_and_is_abandoned_off_the_grid() {
+        let size = Size::square(19);
+        let l = layout();
+        let (x0, y0) = (50.0, 40.0); // the 1-1 point
+        let mut stroke = TouchStroke::default();
+        assert_eq!(stroke.track(&l, size, x0, y0), Some((x0, y0)));
+        assert_eq!(
+            stroke.track(&l, size, x0 + 61.0, y0 + 2.0),
+            Some((x0 + 61.0, y0 + 2.0))
+        );
+        assert_eq!(
+            stroke.release(&l, size, x0 + 61.0, y0 + 2.0),
+            Some((x0 + 61.0, y0 + 2.0))
+        );
+        // Lifted halfway between intersections: on the grid, but no point to play.
+        assert_eq!(
+            TouchStroke::default().release(&l, size, x0 + 15.0, y0 + 15.0),
+            None
+        );
+
+        let mut stroke = TouchStroke::default();
+        assert!(stroke.track(&l, size, x0, y0).is_some());
+        assert_eq!(
+            stroke.track(&l, size, x0 - 40.0, y0),
+            None,
+            "off the left edge"
+        );
+        assert_eq!(
+            stroke.track(&l, size, x0, y0),
+            None,
+            "coming back does not revive it"
+        );
+        assert_eq!(stroke.release(&l, size, x0, y0), None);
     }
 }
