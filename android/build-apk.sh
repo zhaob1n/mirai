@@ -10,7 +10,13 @@
 #   MESON         meson >= 1.11 (GTK 4.24 needs it)
 #   KEYSTORE      keystore to sign with (default: ~/.android/debug.keystore, pass "android")
 # Host tools: cargo with the *-linux-android targets, blueprint-compiler >= 0.22, msgfmt,
-# glib-mkenums >= 2.86 (see the --cross-file / -Dhosttools options in the manifest).
+# glib-mkenums >= 2.86 (see the --cross-file / -Dhosttools options in the manifest), python3-gi
+# for blueprint-compiler. Meson downloads the wraps (GStreamer 1.28.7, glib-networking, OpenSSL,
+# libsoup, ...) on the first build.
+# Regenerating checked-in files (not needed for a build):
+#   update-icons.sh <adwaita-icon-theme checkout>   -> icons/, icons.gresource.xml (needs rg)
+#   gstreamer/gen-options.py <dir with the unpacked gstreamer, gst-plugins-{base,good,bad}
+#                             tarballs>              -> gstreamer/meson.build
 set -euo pipefail
 W=/workspace/gtk-android
 : "${ANDROID_HOME:=$W/sdk}" "${ANDROID_NDK:=$ANDROID_HOME/ndk/27.2.12479018}"

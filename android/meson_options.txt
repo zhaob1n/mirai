@@ -1,2 +1,4 @@
 option('hosttools', type: 'string', value: '',
   description: 'Directory prepended to PATH for cargo (blueprint-compiler >= 0.22, msgfmt)')
+option('gstreamer', type: 'boolean', value: true,
+  description: 'Build GStreamer so GtkMediaFile can play sounds (also pass -Dgtk:media-gstreamer=enabled)')

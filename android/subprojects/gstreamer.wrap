@@ -1,0 +1,9 @@
+[wrap-file]
+directory = gstreamer-1.28.7
+source_url = https://gstreamer.freedesktop.org/src/gstreamer/gstreamer-1.28.7.tar.xz
+source_filename = gstreamer-1.28.7.tar.xz
+source_hash = 787329b2c5758e228a71d926a6dcf960bceaacca3cadd63874ba665dfcda013e
+
+[provide]
+gstreamer-1.0 = gst_dep
+gstreamer-base-1.0 = gst_base_dep

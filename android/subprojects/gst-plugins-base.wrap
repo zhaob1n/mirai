@@ -1,0 +1,12 @@
+[wrap-file]
+directory = gst-plugins-base-1.28.7
+source_url = https://gstreamer.freedesktop.org/src/gst-plugins-base/gst-plugins-base-1.28.7.tar.xz
+source_filename = gst-plugins-base-1.28.7.tar.xz
+source_hash = ed6e5410f496d171818763af2265e7977154bc7f9b827e98acf8c5bed21dd5a7
+
+[provide]
+gstreamer-gl-1.0 = gstgl_dep
+gstreamer-allocators-1.0 = allocators_dep
+gstreamer-audio-1.0 = audio_dep
+gstreamer-video-1.0 = video_dep
+gstreamer-pbutils-1.0 = pbutils_dep

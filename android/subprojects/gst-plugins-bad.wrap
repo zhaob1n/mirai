@@ -1,0 +1,8 @@
+[wrap-file]
+directory = gst-plugins-bad-1.28.7
+source_url = https://gstreamer.freedesktop.org/src/gst-plugins-bad/gst-plugins-bad-1.28.7.tar.xz
+source_filename = gst-plugins-bad-1.28.7.tar.xz
+source_hash = dc525383c18b2c265bbe6a43d498656cd918aaa130aa4e3abeabcdaa741c3ffe
+
+[provide]
+gstreamer-play-1.0 = gstplay_dep

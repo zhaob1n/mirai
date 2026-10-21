@@ -9,3 +9,7 @@ subprojects/*
 .buildconfig
 !subprojects/glib-networking.wrap
 !subprojects/openssl.wrap
+!subprojects/gstreamer.wrap
+!subprojects/gst-plugins-base.wrap
+!subprojects/gst-plugins-good.wrap
+!subprojects/gst-plugins-bad.wrap

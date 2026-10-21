@@ -1,0 +1,5 @@
+[wrap-file]
+directory = gst-plugins-good-1.28.7
+source_url = https://gstreamer.freedesktop.org/src/gst-plugins-good/gst-plugins-good-1.28.7.tar.xz
+source_filename = gst-plugins-good-1.28.7.tar.xz
+source_hash = 87256969c82cf3bc8574301f3e7044a90de0ac500a5a27d8ba38c4dde894dd8b

@@ -29,7 +29,7 @@
       <option>--cross-file=/workspace/gtk-android/hosttools/mkenums.cross</option>
       <!-- blueprint-compiler >= 0.22 for cargo's build script -->
       <option>-Dhosttools=/workspace/gtk-android/hosttools/bin</option>
-      <option>-Dgtk:media-gstreamer=disabled</option>
+      <option>-Dgtk:media-gstreamer=enabled</option>
       <option>-Dlibsoup:tls_check=false</option>
       <option>-Dlibsoup:tests=false</option>
       <option>-Dlibsoup:introspection=disabled</option>

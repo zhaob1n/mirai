@@ -10,6 +10,17 @@ assert(host_machine.system() == 'android', 'this project only builds for Android
 
 cc = meson.get_compiler('c')
 
+# GStreamer for GtkMediaFile (mirai's stone sounds); must be configured before GTK.
+c_args = []
+gst_deps = []
+if get_option('gstreamer')
+  subdir('gstreamer')
+  gst_deps += gst_dep
+  c_args += '-DMIRAI_HAVE_GSTREAMER'
+  meson.add_install_script('gstreamer/flatten-plugins.sh', get_option('libdir'),
+    install_tag: 'runtime')
+endif
+
 gtk_dep = dependency('gtk4', version: '>= 4.22')
 adw_dep = dependency('libadwaita-1', version: '>= 1.9')
 soup_dep = dependency('libsoup-3.0', version: '>= 3.0')
@@ -64,7 +75,8 @@ icon_resources = gnome.compile_resources('mirai-android-icons', 'icons.gresource
   c_name: 'mirai_android_icons')
 
 executable('mirai', 'main.c', icon_resources,
-  dependencies: [gtk_dep, adw_dep, soup_dep, gioopenssl_dep, openssl_dep, intl_dep, direct_deps, log_dep, unwind_dep, dl_dep, m_dep],
+  c_args: c_args,
+  dependencies: [gtk_dep, adw_dep, soup_dep, gioopenssl_dep, openssl_dep, gst_deps, intl_dep, direct_deps, log_dep, unwind_dep, dl_dep, m_dep],
   link_with: libmirai_rust,
   android_exe_type: 'application',
   install: true)

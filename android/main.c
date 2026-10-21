@@ -16,6 +16,10 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#ifdef MIRAI_HAVE_GSTREAMER
+#include <gmodule.h>
+#include <gst/gst.h>
+#endif
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -250,6 +254,49 @@ out:
   return NULL;
 }
 
+#ifdef MIRAI_HAVE_GSTREAMER
+/* GStreamer finds plugins by scanning directories, and an APK has none: the plugins are
+ * plain shared libraries in lib/<abi>/ (see gstreamer/flatten-plugins.sh). Open each by
+ * name, which the Android linker resolves inside the APK, and register it statically. These
+ * are what GtkMediaFile needs to play mirai's in-memory WAV clips. */
+static void
+setup_gstreamer (void)
+{
+  static const char *const plugins[] = {
+    "coreelements", "typefindfunctions", "playback", "audioconvert", "audioresample",
+    "volume", "autodetect", "wavparse", "opensles", "gio",
+  };
+  GError *error = NULL;
+
+  g_setenv ("GST_REGISTRY_FORK", "no", FALSE);
+  g_setenv ("GST_PLUGIN_SYSTEM_PATH_1_0", "", FALSE);
+  if (!gst_init_check (NULL, NULL, &error))
+    {
+      __android_log_print (ANDROID_LOG_ERROR, "mirai", "gst_init: %s", error->message);
+      g_error_free (error);
+      return;
+    }
+  for (gsize i = 0; i < G_N_ELEMENTS (plugins); i++)
+    {
+      char *lib = g_strdup_printf ("libgst%s.so", plugins[i]);
+      char *sym = g_strdup_printf ("gst_plugin_%s_register", plugins[i]);
+      GModule *module = g_module_open (lib, G_MODULE_BIND_LOCAL);
+      void (*plugin_register) (void) = NULL;
+
+      if (module && g_module_symbol (module, sym, (gpointer *) &plugin_register))
+        {
+          plugin_register ();
+          g_module_make_resident (module);
+        }
+      else
+        __android_log_print (ANDROID_LOG_WARN, "mirai", "GStreamer plugin %s: %s", plugins[i],
+                             g_module_error ());
+      g_free (lib);
+      g_free (sym);
+    }
+}
+#endif
+
 static void
 android_setup (void)
 {
@@ -315,6 +362,10 @@ android_setup (void)
         }
       g_strfreev (pairs);
     }
+
+#ifdef MIRAI_HAVE_GSTREAMER
+  setup_gstreamer ();
+#endif
 
   /* GIO finds TLS backends by scanning GIO_MODULE_DIR, which an APK does not have. */
   g_io_openssl_load (NULL);
